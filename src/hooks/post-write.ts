@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { readStdin, parsePayload, findProjectRoot } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
@@ -17,12 +18,14 @@ interface WriteOp {
   deleted: boolean;
 }
 
-function toWriteOps(payload: Record<string, unknown>, root: string): WriteOp[] {
+function toWriteOps(payload: Record<string, unknown>, root: string, cwd: string): WriteOp[] {
   const toolName = payload.tool_name;
   const toolInput = (payload.tool_input ?? {}) as Record<string, unknown>;
 
+  // Relative tool paths are relative to the session cwd, which may be a
+  // subdirectory of the project root.
   const rel = (p: string): string | null => {
-    const abs = path.isAbsolute(p) ? p : path.resolve(root, p);
+    const abs = path.isAbsolute(p) ? p : path.resolve(cwd, p);
     const r = path.relative(root, abs);
     if (r.startsWith("..") || path.isAbsolute(r)) return null; // outside project
     return r.split(path.sep).join("/");
@@ -53,13 +56,14 @@ async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());
   if (!payload) return;
 
-  const root = findProjectRoot(typeof payload.cwd === "string" ? payload.cwd : process.cwd());
+  const cwd = typeof payload.cwd === "string" ? payload.cwd : process.cwd();
+  const root = findProjectRoot(cwd);
   if (!root) return;
 
   const crankDir = path.join(root, CRANK_DIR);
   const config = loadConfig(crankDir);
 
-  const ops = toWriteOps(payload, root);
+  const ops = toWriteOps(payload, root, cwd);
   if (ops.length === 0) return;
 
   withLock(crankDir, HOOK_LOCK_BUDGET_MS, () => {
@@ -74,9 +78,17 @@ async function main(): Promise<void> {
         continue;
       }
       const abs = path.join(root, op.relPath);
+      // Cheap size/exclusion gate before slurping the file — a hook must not
+      // read a large or binary write just to reject it.
+      let size: number;
+      try {
+        size = fs.statSync(abs).size;
+      } catch {
+        continue;
+      }
+      if (!isIndexable(op.relPath, size, config)) continue;
       const entry = indexFile(abs, "hook");
       if (!entry) continue;
-      if (!isIndexable(op.relPath, entry.size, config)) continue;
       index.files[op.relPath] = entry;
       dirty = true;
     }

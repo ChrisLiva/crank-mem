@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import type { HooksMap } from "./settings.ts";
+import { CRANK_HOOK_MARKER, type HooksMap } from "./settings.ts";
 
 // Opt-in Codex per-hook trust: compute trusted_hash entries the way codex-rs
 // does (ADR 0002, verified against rust-v0.144.5: hooks/src/engine/
@@ -33,12 +33,18 @@ export interface TrustEntry {
   hash: string;
 }
 
-/** Compute the [hooks.state] entries for our hooks.json wiring. */
+/**
+ * Compute the [hooks.state] entries for the crank handlers in a hooks map,
+ * using each group's ACTUAL index — codex keys trust by position in the
+ * discovered list, so a crank group merged after pre-existing user groups
+ * must be keyed at its real index.
+ */
 export function trustEntries(hooksJsonPath: string, hooks: HooksMap): TrustEntry[] {
   const out: TrustEntry[] = [];
   for (const [event, groups] of Object.entries(hooks)) {
     groups.forEach((group, groupIdx) => {
-      group.hooks.forEach((handler, handlerIdx) => {
+      (group.hooks ?? []).forEach((handler, handlerIdx) => {
+        if (!handler.command?.includes(CRANK_HOOK_MARKER)) return;
         const normalized = {
           event_name: EVENT_SNAKE[event] ?? event.toLowerCase(),
           matcher: group.matcher,
@@ -61,6 +67,18 @@ export function trustEntries(hooksJsonPath: string, hooks: HooksMap): TrustEntry
     });
   }
   return out;
+}
+
+/** Trust entries computed from the hooks.json actually on disk. */
+export function trustEntriesFromFile(hooksJsonPath: string): TrustEntry[] {
+  try {
+    const root = JSON.parse(fs.readFileSync(hooksJsonPath, "utf-8"));
+    const hooks = root?.hooks;
+    if (typeof hooks !== "object" || hooks === null) return [];
+    return trustEntries(hooksJsonPath, hooks as HooksMap);
+  } catch {
+    return [];
+  }
 }
 
 export function userCodexConfigPath(): string {

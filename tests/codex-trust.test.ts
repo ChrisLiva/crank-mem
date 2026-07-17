@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { crankHooks } from "../src/cli/settings.ts";
-import { trustEntries, writeTrustEntries, removeTrustEntries } from "../src/cli/codex-trust.ts";
+import { crankHooks, mergeHooksIntoFile } from "../src/cli/settings.ts";
+import { trustEntries, trustEntriesFromFile, writeTrustEntries, removeTrustEntries } from "../src/cli/codex-trust.ts";
 
 function tmpFile(): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crank-trust-")), "config.toml");
@@ -28,6 +28,25 @@ describe("trustEntries", () => {
   test("hash changes when the command changes", () => {
     const other = trustEntries("/proj/.codex/hooks.json", crankHooks("node", "codex"));
     expect(other[0]!.hash).not.toBe(entries[0]!.hash);
+  });
+});
+
+describe("trustEntriesFromFile", () => {
+  test("crank group merged after a pre-existing user group gets its real index", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "crank-trust-"));
+    const hooksJson = path.join(dir, "hooks.json");
+    fs.writeFileSync(hooksJson, JSON.stringify({
+      hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo user-hook" }] }] },
+    }, null, 2));
+    mergeHooksIntoFile(hooksJson, crankHooks("bun", "codex"));
+    const entries = trustEntriesFromFile(hooksJson);
+    expect(entries.map((e) => e.key).sort()).toEqual([
+      `${hooksJson}:PostToolUse:0:0`,
+      `${hooksJson}:SessionStart:1:0`, // after the user's group
+    ]);
+  });
+  test("missing file yields no entries", () => {
+    expect(trustEntriesFromFile("/nonexistent/hooks.json")).toEqual([]);
   });
 });
 

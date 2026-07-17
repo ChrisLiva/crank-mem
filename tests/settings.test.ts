@@ -88,6 +88,14 @@ describe("ignore lines", () => {
     addIgnoreLines(f);
     expect(fs.readFileSync(f, "utf-8")).toBe("dist/\n# crank-mem\ncrank/\n");
   });
+  test("user's own crank/ line survives add + remove untouched", () => {
+    const f = tmpFile(".gitignore");
+    const original = "crank/\ndist/";
+    fs.writeFileSync(f, original);
+    addIgnoreLines(f); // skips: crank/ already covered
+    removeIgnoreLines(f); // must not strip the user's line
+    expect(fs.readFileSync(f, "utf-8")).toBe(original);
+  });
 });
 
 describe("codex features toml", () => {

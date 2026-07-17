@@ -35,6 +35,18 @@ describe("parseApplyPatch", () => {
   test("garbage patch yields no ops", () => {
     expect(parseApplyPatch("not a patch")).toEqual([]);
   });
+  test("Move to: old path dropped, new path indexed", () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: src/old-name.ts",
+      "*** Move to: src/new-name.ts",
+      "*** End Patch",
+    ].join("\n");
+    expect(parseApplyPatch(patch)).toEqual([
+      { path: "src/old-name.ts", deleted: true },
+      { path: "src/new-name.ts", deleted: false },
+    ]);
+  });
 });
 
 describe("post-write hook (black-box)", () => {
@@ -97,6 +109,27 @@ describe("post-write hook (black-box)", () => {
     const index = loadIndex(path.join(root, "crank"));
     expect(index.files[".env"]).toBeUndefined();
     expect(index.files["crank/cerebrum.md"]).toBeUndefined();
+  });
+
+  test("relative apply_patch path resolves against session cwd, not project root", () => {
+    const root = makeCrankProject({ "sub/dir/a.ts": "const a = 1;" });
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, "sub/dir/fresh.ts"), "/** Fresh in subdir. */\nexport const f = 1;\n");
+    const payload = {
+      ...(codexApplyPatch(root, "*** Begin Patch\n*** Add File: fresh.ts\n+x\n*** End Patch") as object),
+      cwd: path.join(root, "sub/dir"),
+    };
+    const run = runHook(HOOK, JSON.stringify(payload));
+    expect(run.status).toBe(0);
+    expect(loadIndex(path.join(root, "crank")).files["sub/dir/fresh.ts"]!.description).toBe("Fresh in subdir.");
+  });
+
+  test("oversized file is skipped", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, "huge.ts"), "x".repeat(1024 * 1024 + 1));
+    runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "huge.ts"))));
+    expect(loadIndex(path.join(root, "crank")).files["huge.ts"]).toBeUndefined();
   });
 
   test("path outside project is ignored", () => {

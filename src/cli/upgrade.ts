@@ -3,8 +3,7 @@ import * as path from "node:path";
 import { cliVersion } from "./version.ts";
 import { vendorHooks } from "./vendor.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
-import { crankHooks } from "./settings.ts";
-import { trustEntries, writeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
+import { trustEntriesFromFile, writeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
 import { loadConfig, saveConfig, CRANK_DIR } from "../hooks/lib/config.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone. Never
@@ -41,7 +40,7 @@ export async function run(_args: string[]): Promise<number> {
   if (config.codex_trust_written) {
     const codexHooksJson = path.join(root, ".codex", "hooks.json");
     backupFile(backupDir, userCodexConfigPath());
-    writeTrustEntries(userCodexConfigPath(), trustEntries(codexHooksJson, crankHooks(config.runtime, "codex")));
+    writeTrustEntries(userCodexConfigPath(), trustEntriesFromFile(codexHooksJson));
     console.log(`  recomputed Codex trusted_hash entries`);
   }
 

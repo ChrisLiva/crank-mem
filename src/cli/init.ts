@@ -9,7 +9,7 @@ import { newBackupDir, backupFile } from "./backups.ts";
 import {
   crankHooks, mergeHooksIntoFile, addIgnoreLines, ensureCodexFeatures,
 } from "./settings.ts";
-import { trustEntries, writeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
+import { trustEntriesFromFile, writeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
 import { defaultConfig, saveConfig, CRANK_DIR } from "../hooks/lib/config.ts";
 import { fullScan } from "../hooks/lib/scanner.ts";
 import { saveIndex, saveAnatomyMd } from "../hooks/lib/store.ts";
@@ -110,7 +110,7 @@ export async function run(args: string[]): Promise<number> {
     mergeHooksIntoFile(codexHooksJson, crankHooks(runtime, "codex"));
     ensureCodexFeatures(codexConfigToml);
     if (codexTrust === "write") {
-      writeTrustEntries(userCodexConfigPath(), trustEntries(codexHooksJson, crankHooks(runtime, "codex")));
+      writeTrustEntries(userCodexConfigPath(), trustEntriesFromFile(codexHooksJson));
     }
   }
 

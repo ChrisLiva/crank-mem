@@ -3,9 +3,9 @@ import * as path from "node:path";
 import { parseArgs } from "./args.ts";
 import { choose } from "./prompt.ts";
 import {
-  crankHooks, removeCrankHooksFromFile, removeIgnoreLines, removeCodexFeatures,
+  removeCrankHooksFromFile, removeIgnoreLines, removeCodexFeatures,
 } from "./settings.ts";
-import { trustEntries, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
+import { trustEntriesFromFile, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
 import { loadConfig, CRANK_DIR } from "../hooks/lib/config.ts";
 import { latestBackupDir, restoreBackup } from "./backups.ts";
 
@@ -32,9 +32,10 @@ export async function run(args: string[]): Promise<number> {
 
   const codexHooksJson = path.join(root, ".codex", "hooks.json");
 
-  // Trust entries first: key computation needs hooks.json paths, nothing else.
+  // Trust entries first: keys come from hooks.json as it stands, before we
+  // strip our groups out of it.
   if (config.codex_trust_written) {
-    const keys = trustEntries(codexHooksJson, crankHooks(config.runtime, "codex")).map((e) => e.key);
+    const keys = trustEntriesFromFile(codexHooksJson).map((e) => e.key);
     removeTrustEntries(userCodexConfigPath(), keys);
     console.log(`  removed trusted_hash entries from ${userCodexConfigPath()}`);
   }

@@ -104,22 +104,27 @@ export function removeCrankHooksFromFile(file: string): boolean {
 
 export const IGNORE_LINE = "crank/";
 export const IGNORE_COMMENT = "# crank-mem";
+const IGNORE_BLOCK = `${IGNORE_COMMENT}\n${IGNORE_LINE}\n`;
 
-/** Append our ignore lines if absent. Creates the file if needed. */
+/** Append our ignore block if crank/ isn't covered. Creates the file if needed. */
 export function addIgnoreLines(file: string): void {
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
   if (existing.split("\n").some((l) => l.trim() === IGNORE_LINE)) return;
   const sep = existing === "" || existing.endsWith("\n") ? "" : "\n";
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, existing + sep + `${IGNORE_COMMENT}\n${IGNORE_LINE}\n`);
+  fs.writeFileSync(file, existing + sep + IGNORE_BLOCK);
 }
 
-/** Remove exactly the lines addIgnoreLines added. */
+/**
+ * Remove exactly the block addIgnoreLines appended. A user's own `crank/`
+ * line (which made addIgnoreLines skip) has no crank-mem comment and is
+ * left untouched; no match means no rewrite.
+ */
 export function removeIgnoreLines(file: string): void {
   if (!fs.existsSync(file)) return;
-  const lines = fs.readFileSync(file, "utf-8").split("\n");
-  const kept = lines.filter((l) => l.trim() !== IGNORE_LINE && l.trim() !== IGNORE_COMMENT);
-  fs.writeFileSync(file, kept.join("\n"));
+  const content = fs.readFileSync(file, "utf-8");
+  if (!content.includes(IGNORE_BLOCK)) return;
+  fs.writeFileSync(file, content.replace(IGNORE_BLOCK, ""));
 }
 
 export const CODEX_FEATURES_SNIPPET = "\n# crank-mem\n[features]\nhooks = true\n";

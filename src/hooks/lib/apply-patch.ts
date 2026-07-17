@@ -8,7 +8,7 @@ export interface PatchOp {
   deleted: boolean;
 }
 
-/** Parse apply_patch text: Add/Update ⇒ reindex, Delete ⇒ drop. */
+/** Parse apply_patch text: Add/Update ⇒ reindex, Delete ⇒ drop, Move to ⇒ both. */
 export function parseApplyPatch(patchText: string): PatchOp[] {
   const ops: PatchOp[] = [];
   for (const line of patchText.split("\n")) {
@@ -18,7 +18,17 @@ export function parseApplyPatch(patchText: string): PatchOp[] {
       continue;
     }
     m = line.match(/^\*\*\* Delete File: (.+)$/);
-    if (m) ops.push({ path: m[1]!.trim(), deleted: true });
+    if (m) {
+      ops.push({ path: m[1]!.trim(), deleted: true });
+      continue;
+    }
+    // Rename: "*** Update File: old" followed by "*** Move to: new" — the old
+    // path is gone, the content now lives at the new path.
+    m = line.match(/^\*\*\* Move to: (.+)$/);
+    if (m && ops.length > 0) {
+      ops[ops.length - 1]!.deleted = true;
+      ops.push({ path: m[1]!.trim(), deleted: false });
+    }
   }
   return ops;
 }
