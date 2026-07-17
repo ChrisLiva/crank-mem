@@ -139,7 +139,13 @@ export async function run(args: string[]): Promise<number> {
     scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
   } catch (err) {
     console.error(`crank-mem: ${err instanceof Error ? err.message : String(err)}`);
-    console.error("init failed partway — run `crank-mem uninstall --restore` to roll back.");
+    // uninstall needs crank/config.json; before it exists nothing outside
+    // crank/ has been touched yet, so the honest hint is just to delete it.
+    if (fs.existsSync(path.join(crankDir, "config.json"))) {
+      console.error("init failed partway — run `crank-mem uninstall --restore` to roll back.");
+    } else {
+      console.error("init failed before wiring anything — delete crank/ and retry.");
+    }
     return 1;
   }
 
