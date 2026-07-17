@@ -45,15 +45,25 @@ export async function run(args: string[]): Promise<number> {
   }
 
   // ── Choices ──────────────────────────────────────────────────────────────
-  const gitMode = (
-    typeof flags.git === "string" ? flags.git
-    : yes ? "exclude"
-    : await choose("Track crank/ in git?", ["commit", "ignore", "exclude"], "exclude")
-  ) as GitMode;
-  if (!["commit", "ignore", "exclude"].includes(gitMode)) {
-    console.error(`crank-mem: invalid --git ${gitMode}`);
-    return 1;
+  // Strict choice flags: reject bad values before prompting or touching disk.
+  const CHOICE_FLAGS = [
+    ["git", ["commit", "ignore", "exclude"]],
+    ["codex", ["merge", "skip"]],
+    ["codex-trust", ["write", "skip"]],
+  ] as const;
+  for (const [name, choices] of CHOICE_FLAGS) {
+    const value = flags[name];
+    if (typeof value === "string" && !(choices as readonly string[]).includes(value)) {
+      console.error(`crank-mem: invalid --${name} ${value} (expected: ${choices.join(" | ")})`);
+      return 1;
+    }
   }
+
+  const gitMode: GitMode = (
+    typeof flags.git === "string" ? (flags.git as GitMode)
+    : yes ? "exclude"
+    : ((await choose("Track crank/ in git?", ["commit", "ignore", "exclude"], "exclude")) as GitMode)
+  );
 
   const adrPath = typeof flags.adr === "string" ? flags.adr : "docs/adr";
 
@@ -92,37 +102,46 @@ export async function run(args: string[]): Promise<number> {
   if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) backupFile(backupDir, gitExclude);
   if (codexTrust === "write") backupFile(backupDir, userCodexConfigPath());
 
-  // ── Vendor hooks + write config ──────────────────────────────────────────
-  vendorHooks(crankDir);
-  const config = {
-    ...defaultConfig(),
-    adr_path: adrPath,
-    git: gitMode,
-    runtime,
-    vendored_version: cliVersion(),
-    codex_trust_written: codexTrust === "write" && codexMode === "merge",
-  };
-  saveConfig(crankDir, config);
+  // Backups are secured — from here on, a partial failure is recoverable via
+  // `uninstall --restore`, so surface that instead of auto-rolling back.
+  let scanned: ReturnType<typeof commitIndex>;
+  try {
+    // ── Vendor hooks + write config ────────────────────────────────────────
+    vendorHooks(crankDir);
+    const config = {
+      ...defaultConfig(),
+      adr_path: adrPath,
+      git: gitMode,
+      runtime,
+      vendored_version: cliVersion(),
+      codex_trust_written: codexTrust === "write" && codexMode === "merge",
+    };
+    saveConfig(crankDir, config);
 
-  // ── Agent wiring ─────────────────────────────────────────────────────────
-  mergeHooksIntoFile(claudeSettings, crankHooks(runtime, "claude"));
-  if (codexMode === "merge") {
-    mergeHooksIntoFile(codexHooksJson, crankHooks(runtime, "codex"));
-    ensureCodexFeatures(codexConfigToml);
-    if (codexTrust === "write") {
-      writeTrustEntries(userCodexConfigPath(), trustEntriesFromFile(codexHooksJson));
+    // ── Agent wiring ───────────────────────────────────────────────────────
+    mergeHooksIntoFile(claudeSettings, crankHooks(runtime, "claude"));
+    if (codexMode === "merge") {
+      mergeHooksIntoFile(codexHooksJson, crankHooks(runtime, "codex"));
+      ensureCodexFeatures(codexConfigToml);
+      if (codexTrust === "write") {
+        writeTrustEntries(userCodexConfigPath(), trustEntriesFromFile(codexHooksJson));
+      }
     }
+
+    // ── Git mode ───────────────────────────────────────────────────────────
+    if (gitMode === "ignore") addIgnoreLines(gitignore);
+    if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) addIgnoreLines(gitExclude);
+    // Even in commit mode, backups and the lockfile never belong in git.
+    fs.writeFileSync(path.join(crankDir, ".gitignore"), "backups/\nanatomy-index.lock\n*.tmp\n");
+
+    // ── Seed cerebrum + first scan ─────────────────────────────────────────
+    fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, "cerebrum.md"));
+    scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
+  } catch (err) {
+    console.error(`crank-mem: ${err instanceof Error ? err.message : String(err)}`);
+    console.error("init failed partway — run `crank-mem uninstall --restore` to roll back.");
+    return 1;
   }
-
-  // ── Git mode ─────────────────────────────────────────────────────────────
-  if (gitMode === "ignore") addIgnoreLines(gitignore);
-  if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) addIgnoreLines(gitExclude);
-  // Even in commit mode, backups and the lockfile never belong in git.
-  fs.writeFileSync(path.join(crankDir, ".gitignore"), "backups/\nanatomy-index.lock\n*.tmp\n");
-
-  // ── Seed cerebrum + first scan ───────────────────────────────────────────
-  fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, "cerebrum.md"));
-  const scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
 
   // ── Summary ──────────────────────────────────────────────────────────────
   console.log(`crank-mem ${cliVersion()} initialized (runtime: ${runtime}, git: ${gitMode})`);

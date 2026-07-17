@@ -141,6 +141,16 @@ describe("init → uninstall round-trip", () => {
     expect(JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8"))).toEqual({});
   });
 
+  test("invalid --codex value exits 1 and leaves the project untouched", () => {
+    const { root, codexHome } = makeProject();
+    const before = snapshot(root);
+    const res = cli(root, codexHome, "init", "--yes", "--codex", "bogus");
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("invalid --codex bogus");
+    expect(snapshot(root)).toEqual(before);
+    expect(fs.existsSync(path.join(root, "crank"))).toBe(false);
+  });
+
   test("double init refuses", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--codex", "skip");
