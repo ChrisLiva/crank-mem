@@ -2,22 +2,19 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { cliVersion } from "./version.ts";
 import { vendorHooks } from "./vendor.ts";
+import { openProject } from "./project.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import { trustEntriesFromFile, writeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
-import { loadConfig, saveConfig, CRANK_DIR } from "../hooks/lib/config.ts";
+import { saveConfig } from "../hooks/lib/config.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone. Never
 // touches config.json values (beyond the version stamp), cerebrum, or the
 // index. Recomputes Codex trusted hashes iff the user opted in at init.
 
 export async function run(_args: string[]): Promise<number> {
-  const root = process.cwd();
-  const crankDir = path.join(root, CRANK_DIR);
-  if (!fs.existsSync(path.join(crankDir, "config.json"))) {
-    console.error("crank-mem: not initialized here — run `crank-mem init` first.");
-    return 1;
-  }
-  const config = loadConfig(crankDir);
+  const project = openProject();
+  if (!project) return 1;
+  const { root, crankDir, config } = project;
   const current = cliVersion();
 
   if (config.vendored_version === current) {

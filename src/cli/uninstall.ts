@@ -6,7 +6,7 @@ import {
   removeCrankHooksFromFile, removeIgnoreLines, removeCodexFeatures,
 } from "./settings.ts";
 import { trustEntriesFromFile, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
-import { loadConfig, CRANK_DIR } from "../hooks/lib/config.ts";
+import { openProject } from "./project.ts";
 import { latestBackupDir, restoreBackup } from "./backups.ts";
 
 // Remove all crank-mem wiring. Default is surgical: strip exactly the
@@ -16,14 +16,9 @@ import { latestBackupDir, restoreBackup } from "./backups.ts";
 
 export async function run(args: string[]): Promise<number> {
   const { flags } = parseArgs(args, []);
-  const root = process.cwd();
-  const crankDir = path.join(root, CRANK_DIR);
-
-  if (!fs.existsSync(path.join(crankDir, "config.json"))) {
-    console.error("crank-mem: not initialized here (no crank/config.json).");
-    return 1;
-  }
-  const config = loadConfig(crankDir);
+  const project = openProject();
+  if (!project) return 1;
+  const { root, crankDir, config } = project;
 
   const restore =
     flags.restore === true ||
