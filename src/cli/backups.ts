@@ -58,17 +58,26 @@ export function latestBackupDir(crankDir: string): string | null {
 }
 
 /**
- * True iff the manifest proves `originalPath` did not exist before init.
- * No backup dir or no manifest entry ⇒ false (when in doubt, keep the file).
+ * True iff a manifest proves `originalPath` did not exist before init. The
+ * oldest manifest mentioning the path wins — that's the init-time record;
+ * later (upgrade) backups don't cover it. No mention anywhere ⇒ false (when
+ * in doubt, keep the file).
  */
-export function absentAtInit(backupDir: string | null, originalPath: string): boolean {
-  if (!backupDir) return false;
+export function absentAtInit(crankDir: string, originalPath: string): boolean {
+  const base = path.join(crankDir, "backups");
+  let dirs: string[];
   try {
-    const entry = loadManifest(backupDir).entries.find((e) => e.original === originalPath);
-    return entry !== undefined && entry.backupFile === null;
+    dirs = fs.readdirSync(base).sort();
   } catch {
     return false;
   }
+  for (const d of dirs) {
+    try {
+      const entry = loadManifest(path.join(base, d)).entries.find((e) => e.original === originalPath);
+      if (entry) return entry.backupFile === null;
+    } catch {}
+  }
+  return false;
 }
 
 /** Restore every manifest entry: copy back, or delete files that were absent. */

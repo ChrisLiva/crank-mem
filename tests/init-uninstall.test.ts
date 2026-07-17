@@ -141,6 +141,20 @@ describe("init → uninstall round-trip", () => {
     expect(JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8"))).toEqual({});
   });
 
+  test("upgrade's newer backup does not disable the empty-settings cleanup", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--codex", "skip");
+    // Force a version mismatch so upgrade re-vendors and adds a newer backup dir.
+    const cfgPath = path.join(root, "crank/config.json");
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+    cfg.vendored_version = "0.0.1";
+    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+    expect(cli(root, codexHome, "upgrade").status).toBe(0);
+    cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
+    // Init created settings.local.json, so uninstall must still delete the {} husk.
+    expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
+  });
+
   test("invalid --codex value exits 1 and leaves the project untouched", () => {
     const { root, codexHome } = makeProject();
     const before = snapshot(root);

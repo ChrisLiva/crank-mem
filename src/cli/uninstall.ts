@@ -26,7 +26,6 @@ export async function run(args: string[]): Promise<number> {
       (await choose("Restore modified files from the init-time backup?", ["restore", "surgical"], "surgical")) === "restore");
 
   const codexHooksJson = path.join(root, ".codex", "hooks.json");
-  const backupDir = latestBackupDir(crankDir);
 
   // Trust entries first: keys come from hooks.json as it stands, before we
   // strip our groups out of it.
@@ -37,6 +36,7 @@ export async function run(args: string[]): Promise<number> {
   }
 
   if (restore) {
+    const backupDir = latestBackupDir(crankDir);
     if (!backupDir) {
       console.error("crank-mem: no backups found — falling back to surgical removal.");
     } else {
@@ -54,7 +54,7 @@ export async function run(args: string[]): Promise<number> {
     if (removeCrankHooksFromFile(f)) console.log(`  removed crank hooks from ${path.relative(root, f)}`);
     // Delete a now-empty object only when the manifest proves we created the
     // file — a user's own literal {} must survive.
-    if (!absentAtInit(backupDir, f)) continue;
+    if (!absentAtInit(crankDir, f)) continue;
     try {
       if (fs.existsSync(f) && JSON.stringify(JSON.parse(fs.readFileSync(f, "utf-8"))) === "{}") {
         fs.unlinkSync(f);
