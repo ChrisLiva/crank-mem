@@ -1,9 +1,8 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { readStdin, parsePayload, findProjectRoot, runAdvisoryHook } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { commitIndex } from "./lib/store.ts";
-import { indexFile, isIndexable } from "./lib/scanner.ts";
+import { indexFile } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { parseApplyPatch } from "./lib/apply-patch.ts";
 
@@ -76,17 +75,7 @@ async function main(): Promise<void> {
         }
         continue;
       }
-      const abs = path.join(root, op.relPath);
-      // Cheap size/exclusion gate before slurping the file — a hook must not
-      // read a large or binary write just to reject it.
-      let size: number;
-      try {
-        size = fs.statSync(abs).size;
-      } catch {
-        continue;
-      }
-      if (!isIndexable(op.relPath, size, config)) continue;
-      const entry = indexFile(abs, "hook");
+      const entry = indexFile(root, op.relPath, config, "hook");
       if (!entry) continue;
       index.files[op.relPath] = entry;
       dirty = true;

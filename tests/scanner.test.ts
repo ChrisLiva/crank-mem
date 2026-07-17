@@ -37,10 +37,11 @@ describe("walkProject", () => {
     expect(walkProject(root, config).length).toBe(5);
   });
 
-  test("skips oversized files", () => {
+  test("oversized files survive the stat-free walk but are not indexed", () => {
     const root = makeProject({ "big.ts": "x".repeat(100), "small.ts": "x" });
     const config = { ...defaultConfig(), max_file_size_bytes: 50 };
-    expect(walkProject(root, config)).toEqual(["small.ts"]);
+    expect(walkProject(root, config).sort()).toEqual(["big.ts", "small.ts"]);
+    expect(Object.keys(fullScan(root, config).files)).toEqual(["small.ts"]);
   });
 });
 

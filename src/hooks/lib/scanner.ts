@@ -23,20 +23,30 @@ function toPosix(p: string): string {
   return p.split(path.sep).join("/");
 }
 
-/** True if this path should be indexed at all (not binary/excluded/oversized). */
-export function isIndexable(relPath: string, sizeBytes: number, config: CrankConfig): boolean {
+/** Stat-free name gate: excluded or binary paths are never indexable. */
+export function isIndexableName(relPath: string, config: CrankConfig): boolean {
   if (isExcluded(relPath, config.excludes)) return false;
   if (BINARY_EXTENSIONS.has(path.extname(relPath).toLowerCase())) return false;
-  if (sizeBytes > config.max_file_size_bytes) return false;
   return true;
 }
 
-/** Build a FileEntry for one file. Returns null if unreadable. */
-export function indexFile(absPath: string, source: FileEntry["source"]): FileEntry | null {
+/**
+ * The one gate for turning a path into a FileEntry: name checks, one stat,
+ * size gate, then read + analyze. Null on any rejection or I/O failure.
+ */
+export function indexFile(
+  rootDir: string,
+  relPath: string,
+  config: CrankConfig,
+  source: FileEntry["source"]
+): FileEntry | null {
+  if (!isIndexableName(relPath, config)) return null;
+  const absPath = path.join(rootDir, relPath);
   let stat: fs.Stats;
   let content: string;
   try {
     stat = fs.statSync(absPath);
+    if (stat.size > config.max_file_size_bytes) return null;
     content = fs.readFileSync(absPath, "utf-8");
   } catch {
     return null;
@@ -74,15 +84,9 @@ export function walkProject(rootDir: string, config: CrankConfig): string[] {
       const full = path.join(dir, item.name);
       const rel = toPosix(path.relative(rootDir, full));
       if (item.isDirectory()) {
-        if (!isExcluded(rel + "/", config.excludes) && !isExcluded(rel, config.excludes)) walk(full);
+        if (!isExcluded(rel, config.excludes)) walk(full);
       } else if (item.isFile()) {
-        let size: number;
-        try {
-          size = fs.statSync(full).size;
-        } catch {
-          continue;
-        }
-        if (isIndexable(rel, size, config)) out.push(rel);
+        if (isIndexableName(rel, config)) out.push(rel);
       }
     }
   };
@@ -94,7 +98,7 @@ export function walkProject(rootDir: string, config: CrankConfig): string[] {
 export function fullScan(rootDir: string, config: CrankConfig): AnatomyIndex {
   const index = emptyIndex();
   for (const rel of walkProject(rootDir, config)) {
-    const entry = indexFile(path.join(rootDir, rel), "scan");
+    const entry = indexFile(rootDir, rel, config, "scan");
     if (entry) index.files[rel] = entry;
   }
   index.meta.lastScanned = new Date().toISOString();
@@ -150,13 +154,13 @@ export function refreshIndex(
         continue;
       }
       if (stat.size === existing.size && stat.mtimeMs === existing.mtimeMs) continue;
-      const entry = indexFile(abs, "scan");
+      const entry = indexFile(rootDir, rel, config, "scan");
       if (entry) {
         index.files[rel] = entry;
         changed++;
       }
     } else {
-      const entry = indexFile(abs, "scan");
+      const entry = indexFile(rootDir, rel, config, "scan");
       if (entry) {
         index.files[rel] = entry;
         added++;
