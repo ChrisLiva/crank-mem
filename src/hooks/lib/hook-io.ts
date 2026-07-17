@@ -50,3 +50,16 @@ export function emitAdditionalContext(hookEventName: string, context: string): v
     JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: context } })
   );
 }
+
+/**
+ * Run a hook's entry point under the advisory-only contract: errors are
+ * reported to stderr (human/debug-only) and the process always exits 0.
+ */
+export async function runAdvisoryHook(name: string, main: () => Promise<void>): Promise<void> {
+  try {
+    await main();
+  } catch (err) {
+    console.error(`crank-mem ${name}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  process.exit(0);
+}

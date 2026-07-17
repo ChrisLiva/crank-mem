@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { readStdin, parsePayload, findProjectRoot, emitAdditionalContext } from "./lib/hook-io.ts";
+import {
+  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook,
+} from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex, saveIndex, saveAnatomyMd } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
@@ -66,9 +68,4 @@ async function main(): Promise<void> {
   console.error(`crank-mem: injected file map (${index.meta.fileCount} files)`);
 }
 
-try {
-  await main();
-} catch (err) {
-  console.error(`crank-mem session-start: ${err instanceof Error ? err.message : String(err)}`);
-}
-process.exit(0);
+await runAdvisoryHook("session-start", main);

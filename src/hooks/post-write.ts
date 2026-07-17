@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { readStdin, parsePayload, findProjectRoot } from "./lib/hook-io.ts";
+import { readStdin, parsePayload, findProjectRoot, runAdvisoryHook } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex, saveIndex, saveAnatomyMd } from "./lib/store.ts";
 import { indexFile, isIndexable } from "./lib/scanner.ts";
@@ -99,9 +99,4 @@ async function main(): Promise<void> {
   });
 }
 
-try {
-  await main();
-} catch (err) {
-  console.error(`crank-mem post-write: ${err instanceof Error ? err.message : String(err)}`);
-}
-process.exit(0);
+await runAdvisoryHook("post-write", main);
