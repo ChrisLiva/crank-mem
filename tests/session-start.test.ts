@@ -21,9 +21,9 @@ describe("session-start hook (black-box)", () => {
     expect(ctx).toContain("crank-mem (project memory)");
     expect(ctx).toContain("`app.ts` — App entry.");
     // index + anatomy.md were written
-    const index = JSON.parse(fs.readFileSync(path.join(root, "crank/anatomy-index.json"), "utf-8"));
+    const index = JSON.parse(fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"));
     expect(index.meta.fileCount).toBe(2);
-    expect(fs.existsSync(path.join(root, "crank/anatomy.md"))).toBe(true);
+    expect(fs.existsSync(path.join(root, ".crank/anatomy.md"))).toBe(true);
   });
 
   test("Codex payload: same injection shape", () => {
@@ -37,7 +37,7 @@ describe("session-start hook (black-box)", () => {
   test("cerebrum prefs are injected once present", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     fs.writeFileSync(
-      path.join(root, "crank/cerebrum.md"),
+      path.join(root, ".crank/cerebrum.md"),
       "# Cerebrum\n\n## User Preferences\n\n- Always use tabs\n\n## Key Learnings\n\n## Do-Not-Repeat\n"
     );
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
@@ -52,7 +52,7 @@ describe("session-start hook (black-box)", () => {
     expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("0001-use-tabs.md");
   });
 
-  test("no crank/ dir: exit 0, silent stdout", () => {
+  test("no .crank/ dir: exit 0, silent stdout", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-bare-"));
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(bare)));
     expect(run.status).toBe(0);
@@ -73,7 +73,7 @@ describe("session-start hook (black-box)", () => {
 
   test("corrupt index: exit 0 and rebuilds", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    fs.writeFileSync(path.join(root, "crank/anatomy-index.json"), "corrupt{{");
+    fs.writeFileSync(path.join(root, ".crank/anatomy-index.json"), "corrupt{{");
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
     expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("`a.ts`");
@@ -82,7 +82,7 @@ describe("session-start hook (black-box)", () => {
   test("held lock: exit 0, injects from existing index with staleness note", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     fs.writeFileSync(
-      path.join(root, "crank/anatomy-index.lock"),
+      path.join(root, ".crank/anatomy-index.lock"),
       JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() + 60_000 })
     );
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));

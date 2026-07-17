@@ -30,7 +30,7 @@ describe("scan", () => {
     const run = cli(root, "scan");
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("2 files indexed");
-    const index = JSON.parse(fs.readFileSync(path.join(root, "crank/anatomy-index.json"), "utf-8"));
+    const index = JSON.parse(fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"));
     expect(index.files["b.ts"]).toBeDefined();
   });
   test("errors when not initialized", () => {
@@ -60,7 +60,7 @@ describe("upgrade", () => {
 
   test("stale stamp: re-vendors, updates stamp, preserves config/cerebrum/index", () => {
     const root = initedProject();
-    const crankDir = path.join(root, "crank");
+    const crankDir = path.join(root, ".crank");
     // Simulate an old vendored version + user data.
     const configPath = path.join(crankDir, "config.json");
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
@@ -89,9 +89,9 @@ describe("upgrade", () => {
 });
 
 describe("vendored hooks run standalone", () => {
-  test("vendored session-start works from crank/hooks/", () => {
+  test("vendored session-start works from .crank/hooks/", () => {
     const root = initedProject();
-    const res = spawnSync("bun", [path.join(root, "crank/hooks/session-start.ts")], {
+    const res = spawnSync("bun", [path.join(root, ".crank/hooks/session-start.ts")], {
       input: JSON.stringify({ hook_event_name: "SessionStart", cwd: root, source: "startup" }),
       encoding: "utf-8", timeout: 15_000,
     });

@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { REPO_ROOT } from "./version.ts";
 
 // Vendoring: recursive copy of src/hooks/ (the single implementation,
-// lib/ included) into <project>/crank/hooks/. The CLI imports the same lib
+// lib/ included) into <project>/.crank/hooks/. The CLI imports the same lib
 // from the clone — no duplicated core.
 
 export function vendorHooks(crankDir: string): void {

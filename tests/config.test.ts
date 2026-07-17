@@ -80,8 +80,22 @@ describe("isExcluded", () => {
     expect(isExcluded("node_modules/x/index.js", DEFAULT_EXCLUDES)).toBe(true);
     expect(isExcluded("src/node_modules_helper.ts", DEFAULT_EXCLUDES)).toBe(false);
   });
-  test("crank dir always excluded by defaults", () => {
-    expect(isExcluded("crank/anatomy.md", DEFAULT_EXCLUDES)).toBe(true);
+  test("hidden paths always excluded, even with empty excludes", () => {
+    for (const p of [
+      ".crank/anatomy.md",
+      ".claude/skills/tdd/SKILL.md",
+      ".codex/hooks.json",
+      ".agents/skills/gsap-core/SKILL.md",
+      "web/.playwright-mcp/shot.yml",
+      ".DS_Store",
+      "src/.hidden.ts",
+    ]) {
+      expect(isExcluded(p, [])).toBe(true);
+    }
+  });
+  test("dots inside a name do not exclude", () => {
+    expect(isExcluded("src/app.module.ts", [])).toBe(false);
+    expect(isExcluded("v1.2/notes.md", [])).toBe(false);
   });
   test("glob extension match", () => {
     expect(isExcluded("dist2/app.min.js", DEFAULT_EXCLUDES)).toBe(true);

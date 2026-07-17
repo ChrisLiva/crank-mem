@@ -12,6 +12,6 @@ export async function run(_args: string[]): Promise<number> {
     console.error("crank-mem: could not acquire the index lock (another writer active) — try again.");
     return 1;
   }
-  console.log(`crank-mem: full scan complete — ${index.meta.fileCount} files indexed → crank/anatomy.md`);
+  console.log(`crank-mem: full scan complete — ${index.meta.fileCount} files indexed → .crank/anatomy.md`);
   return 0;
 }

@@ -45,7 +45,7 @@ export function backupFile(backupDir: string, originalPath: string): void {
   saveManifest(backupDir, m);
 }
 
-/** Latest backup dir under crank/backups, or null. */
+/** Latest backup dir under .crank/backups, or null. */
 export function latestBackupDir(crankDir: string): string | null {
   const base = path.join(crankDir, "backups");
   try {

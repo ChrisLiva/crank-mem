@@ -14,16 +14,22 @@ export const DO_NOT_REPEAT_RECENT_COUNT = 10;
 
 const INSTRUCTIONS = `## crank-mem (project memory)
 
-This project keeps a token-annotated file index in \`crank/anatomy.md\` and an
-agent-maintained memory in \`crank/cerebrum.md\`. A file map follows below.
+This project keeps a token-annotated file index in \`.crank/anatomy.md\` and an
+agent-maintained memory in \`.crank/cerebrum.md\`. A file map follows below.
 
-- Before reading a large file, check its entry in \`crank/anatomy.md\`: symbol
+- Before reading a large file, check its entry in \`.crank/anatomy.md\`: symbol
   sub-bullets give line ranges, so slice-read just what you need (Read with
   offset/limit, or \`sed -n 'START,ENDp' file\`).
-- Cerebrum protocol: when the user corrects you or states a preference, record
-  it in \`crank/cerebrum.md\` immediately (low threshold — a one-line bullet in
-  User Preferences, Key Learnings, or Do-Not-Repeat). Respect existing entries.
-  If a section grows bloated or stale, consolidate and prune it.
+- Cerebrum protocol: keep \`.crank/cerebrum.md\` current as you work. The bar is
+  low — a one-line bullet is enough, and a slightly redundant entry beats a
+  lost one. Record it the moment you learn it, not at the end:
+  - the user corrects you or states a preference → User Preferences, or
+    Do-Not-Repeat if it's a mistake not to repeat;
+  - you discover a non-obvious project convention, a framework/dependency
+    quirk, or surprising API behavior → Key Learnings;
+  - something bites you that would trip up a fresh session → Do-Not-Repeat.
+  Respect existing entries; consolidate or prune a section when it grows
+  bloated or stale.
 - ADR protocol: decisions that are hard to reverse, surprising, AND carry a
   real trade-off get an ADR (\`NNNN-slug.md\`, Pocock style) in the ADR
   directory. Existing ADRs are settled — don't relitigate them.`;
@@ -61,7 +67,7 @@ export function cerebrumExcerpt(md: string): string {
   if (prefs.some((l) => l.trim())) parts.push("### User Preferences", ...prefs);
   if (recentDnr.length) parts.push("### Do-Not-Repeat (recent)", ...recentDnr);
   if (!parts.length) return "";
-  let text = ["## Cerebrum (crank/cerebrum.md — full file has more)", ...parts].join("\n");
+  let text = ["## Cerebrum (.crank/cerebrum.md — full file has more)", ...parts].join("\n");
   // Hard cap: trim whole lines from the end until under budget.
   while (estimateProseTokens(text) > CEREBRUM_INJECT_TOKEN_CAP && text.includes("\n")) {
     text = text.slice(0, text.lastIndexOf("\n"));
@@ -119,7 +125,7 @@ export function buildInjection(sources: InjectionSources, budgetTokens: number):
   const allLines = anatomyLines(sources.index);
   if (allLines.length) {
     const kept: string[] = [];
-    let used = estimateProseTokens("## File map (crank/anatomy.md)\n");
+    let used = estimateProseTokens("## File map (.crank/anatomy.md)\n");
     let truncated = false;
     for (const line of allLines) {
       const cost = estimateProseTokens(line + "\n");
@@ -134,11 +140,11 @@ export function buildInjection(sources: InjectionSources, budgetTokens: number):
       const fileCount = sources.index.meta.fileCount;
       const keptFiles = kept.filter((l) => l.startsWith("  ")).length;
       const tail = truncated
-        ? `\n…plus ${fileCount - keptFiles} more files — see crank/anatomy.md`
+        ? `\n…plus ${fileCount - keptFiles} more files — see .crank/anatomy.md`
         : "";
-      parts.push(["## File map (crank/anatomy.md)", ...kept].join("\n") + tail);
+      parts.push(["## File map (.crank/anatomy.md)", ...kept].join("\n") + tail);
     } else {
-      parts.push(`## File map\n${sources.index.meta.fileCount} files indexed — see crank/anatomy.md`);
+      parts.push(`## File map\n${sources.index.meta.fileCount} files indexed — see .crank/anatomy.md`);
     }
   }
 

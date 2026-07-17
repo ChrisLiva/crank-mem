@@ -77,7 +77,7 @@ describe("buildInjection", () => {
 
   test("small budget truncates file map with pointer", () => {
     const out = buildInjection({ ...sources, index: fixtureIndex(200) }, 1600);
-    expect(out).toMatch(/…plus \d+ more files — see crank\/anatomy\.md/);
+    expect(out).toMatch(/…plus \d+ more files — see \.crank\/anatomy\.md/);
     expect(estimateProseTokens(out)).toBeLessThanOrEqual(1700);
   });
 

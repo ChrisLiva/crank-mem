@@ -80,13 +80,13 @@ export async function run(args: string[]): Promise<number> {
   const deleteCrank =
     flags["delete-crank"] === true ||
     (flags["keep-crank"] !== true && !flags.yes && process.stdin.isTTY &&
-      (await choose("Delete the crank/ data directory?", ["delete", "keep"], "keep")) === "delete");
+      (await choose("Delete the .crank/ data directory?", ["delete", "keep"], "keep")) === "delete");
 
   if (deleteCrank) {
     fs.rmSync(crankDir, { recursive: true, force: true });
-    console.log("  deleted crank/");
+    console.log("  deleted .crank/");
   } else {
-    console.log("  kept crank/ (delete it manually when ready)");
+    console.log("  kept .crank/ (delete it manually when ready)");
   }
 
   console.log("crank-mem: uninstalled.");

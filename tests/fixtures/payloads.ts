@@ -25,6 +25,16 @@ export function codexSessionStart(cwd: string): object {
   };
 }
 
+export function claudeStop(cwd: string, stopHookActive = false): object {
+  return {
+    session_id: "a46b6073-1111-2222-3333-444455556666",
+    transcript_path: "/Users/u/.claude/projects/-proj/a46b6073.jsonl",
+    cwd,
+    hook_event_name: "Stop",
+    stop_hook_active: stopHookActive,
+  };
+}
+
 export function claudePostWrite(cwd: string, filePath: string): object {
   return {
     session_id: "a46b6073-1111-2222-3333-444455556666",

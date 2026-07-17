@@ -60,7 +60,7 @@ describe("post-write hook (black-box)", () => {
     const run = runHook(HOOK, JSON.stringify(claudePostWrite(root, newFile)));
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("");
-    const index = loadIndex(path.join(root, "crank"));
+    const index = loadIndex(path.join(root, ".crank"));
     expect(index.files["src/new.ts"]!.description).toBe("Brand new module.");
     expect(index.files["src/new.ts"]!.source).toBe("hook");
   });
@@ -71,13 +71,13 @@ describe("post-write hook (black-box)", () => {
     fs.writeFileSync(path.join(root, "a.ts"), "/** Updated alpha. */\nconst a = 2;\n");
     const run = runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "a.ts"))));
     expect(run.status).toBe(0);
-    expect(loadIndex(path.join(root, "crank")).files["a.ts"]!.description).toBe("Updated alpha.");
+    expect(loadIndex(path.join(root, ".crank")).files["a.ts"]!.description).toBe("Updated alpha.");
   });
 
   test("Codex apply_patch: Add and Update re-indexed, Delete dropped", () => {
     const root = makeCrankProject({ "keep.ts": "const k = 1;", "gone.ts": "const g = 1;" });
     seedIndex(root);
-    expect(loadIndex(path.join(root, "crank")).files["gone.ts"]).toBeDefined();
+    expect(loadIndex(path.join(root, ".crank")).files["gone.ts"]).toBeDefined();
 
     fs.writeFileSync(path.join(root, "added.ts"), "/** Added by codex. */\nexport const x = 1;\n");
     fs.writeFileSync(path.join(root, "keep.ts"), "/** Keep updated. */\nconst k = 2;\n");
@@ -94,7 +94,7 @@ describe("post-write hook (black-box)", () => {
     ].join("\n");
     const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, patch)));
     expect(run.status).toBe(0);
-    const index = loadIndex(path.join(root, "crank"));
+    const index = loadIndex(path.join(root, ".crank"));
     expect(index.files["added.ts"]!.description).toBe("Added by codex.");
     expect(index.files["keep.ts"]!.description).toBe("Keep updated.");
     expect(index.files["gone.ts"]).toBeUndefined();
@@ -105,10 +105,10 @@ describe("post-write hook (black-box)", () => {
     seedIndex(root);
     fs.writeFileSync(path.join(root, ".env"), "SECRET=1");
     runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, ".env"))));
-    runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "crank/cerebrum.md"))));
-    const index = loadIndex(path.join(root, "crank"));
+    runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, ".crank/cerebrum.md"))));
+    const index = loadIndex(path.join(root, ".crank"));
     expect(index.files[".env"]).toBeUndefined();
-    expect(index.files["crank/cerebrum.md"]).toBeUndefined();
+    expect(index.files[".crank/cerebrum.md"]).toBeUndefined();
   });
 
   test("relative apply_patch path resolves against session cwd, not project root", () => {
@@ -121,7 +121,7 @@ describe("post-write hook (black-box)", () => {
     };
     const run = runHook(HOOK, JSON.stringify(payload));
     expect(run.status).toBe(0);
-    expect(loadIndex(path.join(root, "crank")).files["sub/dir/fresh.ts"]!.description).toBe("Fresh in subdir.");
+    expect(loadIndex(path.join(root, ".crank")).files["sub/dir/fresh.ts"]!.description).toBe("Fresh in subdir.");
   });
 
   test("oversized file is skipped", () => {
@@ -129,15 +129,15 @@ describe("post-write hook (black-box)", () => {
     seedIndex(root);
     fs.writeFileSync(path.join(root, "huge.ts"), "x".repeat(1024 * 1024 + 1));
     runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "huge.ts"))));
-    expect(loadIndex(path.join(root, "crank")).files["huge.ts"]).toBeUndefined();
+    expect(loadIndex(path.join(root, ".crank")).files["huge.ts"]).toBeUndefined();
   });
 
   test("path outside project is ignored", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     seedIndex(root);
-    const before = JSON.stringify(loadIndex(path.join(root, "crank")).files);
+    const before = JSON.stringify(loadIndex(path.join(root, ".crank")).files);
     runHook(HOOK, JSON.stringify(claudePostWrite(root, "/etc/hosts")));
-    expect(JSON.stringify(loadIndex(path.join(root, "crank")).files)).toBe(before);
+    expect(JSON.stringify(loadIndex(path.join(root, ".crank")).files)).toBe(before);
   });
 
   test("unrelated tool: exit 0, no change", () => {
@@ -154,5 +154,60 @@ describe("post-write hook (black-box)", () => {
 
   test("empty stdin: exit 0", () => {
     expect(runHook(HOOK, "").status).toBe(0);
+  });
+});
+
+describe("post-write cerebrum nudge (Codex only)", () => {
+  const STALE = 1000; // epoch before the files existed → every file is "changed"
+  const FRESH = Date.now() + 1_000_000_000;
+  const THREE = { "a.ts": "const a = 1;", "b.ts": "const b = 2;", "c.ts": "const c = 3;" };
+  const setMtime = (p: string, ms: number) => fs.utimesSync(p, new Date(ms), new Date(ms));
+  const cerebrum = (root: string) => path.join(root, ".crank/cerebrum.md");
+  const nudge = (stdout: string): string | undefined => {
+    try {
+      return JSON.parse(stdout)?.hookSpecificOutput?.additionalContext;
+    } catch {
+      return undefined;
+    }
+  };
+  const UPDATE_A = "*** Begin Patch\n*** Update File: a.ts\n+x\n*** End Patch";
+
+  test("apply_patch nudges when files changed since cerebrum was updated", () => {
+    const root = makeCrankProject(THREE);
+    seedIndex(root);
+    setMtime(cerebrum(root), STALE);
+    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
+    expect(run.status).toBe(0);
+    const ctx = nudge(run.stdout);
+    expect(ctx).toContain("crank-mem");
+    expect(ctx).toContain("cerebrum");
+  });
+
+  test("Claude Edit never nudges here (Stop hook owns Claude's nudge)", () => {
+    const root = makeCrankProject(THREE);
+    seedIndex(root);
+    setMtime(cerebrum(root), STALE); // stale, but still silent for Claude
+    const run = runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "a.ts"))));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+  });
+
+  test("apply_patch stays silent when cerebrum is fresher than every file", () => {
+    const root = makeCrankProject(THREE);
+    seedIndex(root);
+    setMtime(cerebrum(root), FRESH);
+    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+  });
+
+  test("apply_patch debounces: a second write with no new changes is silent", () => {
+    const root = makeCrankProject(THREE);
+    seedIndex(root);
+    setMtime(cerebrum(root), STALE);
+    expect(nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout)).toContain("crank-mem");
+    const second = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
+    expect(second.status).toBe(0);
+    expect(second.stdout).toBe("");
   });
 });

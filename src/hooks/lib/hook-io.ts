@@ -31,7 +31,7 @@ export function parsePayload(raw: string): HookPayload | null {
 }
 
 /**
- * Locate the project root (the dir containing `crank/`) by walking up from
+ * Locate the project root (the dir containing `.crank/`) by walking up from
  * `cwd`. Returns null when crank-mem isn't installed here.
  */
 export function findProjectRoot(cwd: string): string | null {

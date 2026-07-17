@@ -21,7 +21,9 @@ describe("walkProject", () => {
       "src/a.ts": "export const a = 1;",
       "README.md": "# Hi",
       "node_modules/pkg/index.js": "x",
-      "crank/anatomy.md": "internal",
+      ".crank/anatomy.md": "internal",
+      ".claude/skills/tdd/SKILL.md": "# skill",
+      ".github/workflows/ci.yml": "on: push",
       ".env": "SECRET=1",
       "logo.png": "binary",
     });

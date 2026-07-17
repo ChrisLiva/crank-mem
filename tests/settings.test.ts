@@ -16,17 +16,24 @@ describe("mergeHooksIntoFile", () => {
     const f = tmpFile();
     mergeHooksIntoFile(f, crankHooks("bun", "claude"));
     const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
-    expect(parsed.hooks.SessionStart[0].hooks[0].command).toContain("crank/hooks/session-start.ts");
+    expect(parsed.hooks.SessionStart[0].hooks[0].command).toContain(".crank/hooks/session-start.ts");
     expect(parsed.hooks.PostToolUse[0].matcher).toBe("Write|Edit|MultiEdit");
+    expect(parsed.hooks.Stop[0].hooks[0].command).toContain(".crank/hooks/stop.ts");
+  });
+
+  test("Stop nudge is wired for Claude but not Codex", () => {
+    expect(crankHooks("bun", "claude").Stop![0]!.hooks[0]!.command).toContain(".crank/hooks/stop.ts");
+    expect(crankHooks("node", "codex").Stop).toBeUndefined();
   });
 
   test("preserves pre-existing settings byte-identical apart from appended entries", () => {
     const f = tmpFile();
+    // UserPromptSubmit is an event crank never wires, so it must survive untouched.
     const preexisting = {
       permissions: { allow: ["Bash(ls:*)"] },
       hooks: {
         SessionStart: [{ hooks: [{ type: "command", command: "echo mine" }] }],
-        Stop: [{ hooks: [{ type: "command", command: "echo stop" }] }],
+        UserPromptSubmit: [{ hooks: [{ type: "command", command: "echo prompt" }] }],
       },
     };
     fs.writeFileSync(f, JSON.stringify(preexisting, null, 2) + "\n");
@@ -34,9 +41,9 @@ describe("mergeHooksIntoFile", () => {
     const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
     // user entries intact, ours appended after
     expect(parsed.permissions).toEqual(preexisting.permissions);
-    expect(parsed.hooks.Stop).toEqual(preexisting.hooks.Stop);
+    expect(parsed.hooks.UserPromptSubmit).toEqual(preexisting.hooks.UserPromptSubmit);
     expect(parsed.hooks.SessionStart[0].hooks[0].command).toBe("echo mine");
-    expect(parsed.hooks.SessionStart[1].hooks[0].command).toContain("crank/hooks/");
+    expect(parsed.hooks.SessionStart[1].hooks[0].command).toContain(".crank/hooks/");
     // removal returns exactly the pre-existing bytes
     removeCrankHooksFromFile(f);
     expect(fs.readFileSync(f, "utf-8")).toBe(JSON.stringify(preexisting, null, 2) + "\n");
@@ -54,7 +61,7 @@ describe("mergeHooksIntoFile", () => {
     const hooks = crankHooks("node", "codex");
     expect(hooks.PostToolUse![0]!.matcher).toBe("apply_patch");
     expect(hooks.SessionStart![0]!.hooks[0]!.command).toBe(
-      "node --disable-warning=ExperimentalWarning crank/hooks/session-start.ts"
+      "node --disable-warning=ExperimentalWarning .crank/hooks/session-start.ts"
     );
   });
 });
@@ -76,9 +83,9 @@ describe("ignore lines", () => {
     const f = tmpFile(".gitignore");
     fs.writeFileSync(f, "node_modules/\ndist/\n");
     addIgnoreLines(f);
-    expect(fs.readFileSync(f, "utf-8")).toBe("node_modules/\ndist/\n# crank-mem\ncrank/\n");
+    expect(fs.readFileSync(f, "utf-8")).toBe("node_modules/\ndist/\n# crank-mem\n.crank/\n");
     addIgnoreLines(f); // idempotent
-    expect(fs.readFileSync(f, "utf-8")).toBe("node_modules/\ndist/\n# crank-mem\ncrank/\n");
+    expect(fs.readFileSync(f, "utf-8")).toBe("node_modules/\ndist/\n# crank-mem\n.crank/\n");
     removeIgnoreLines(f);
     expect(fs.readFileSync(f, "utf-8")).toBe("node_modules/\ndist/\n");
   });
@@ -86,13 +93,13 @@ describe("ignore lines", () => {
     const f = tmpFile(".gitignore");
     fs.writeFileSync(f, "dist/");
     addIgnoreLines(f);
-    expect(fs.readFileSync(f, "utf-8")).toBe("dist/\n# crank-mem\ncrank/\n");
+    expect(fs.readFileSync(f, "utf-8")).toBe("dist/\n# crank-mem\n.crank/\n");
   });
-  test("user's own crank/ line survives add + remove untouched", () => {
+  test("user's own .crank/ line survives add + remove untouched", () => {
     const f = tmpFile(".gitignore");
-    const original = "crank/\ndist/";
+    const original = ".crank/\ndist/";
     fs.writeFileSync(f, original);
-    addIgnoreLines(f); // skips: crank/ already covered
+    addIgnoreLines(f); // skips: .crank/ already covered
     removeIgnoreLines(f); // must not strip the user's line
     expect(fs.readFileSync(f, "utf-8")).toBe(original);
   });

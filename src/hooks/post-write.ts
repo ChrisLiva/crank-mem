@@ -1,16 +1,21 @@
 import * as path from "node:path";
-import { readStdin, parsePayload, findProjectRoot, runAdvisoryHook } from "./lib/hook-io.ts";
+import {
+  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook,
+} from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { commitIndex } from "./lib/store.ts";
 import { indexFile } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { parseApplyPatch } from "./lib/apply-patch.ts";
+import { cerebrumNudge } from "./lib/cerebrum-nudge.ts";
 
-// PostToolUse hook: silent re-index of written files. Claude matcher is
+// PostToolUse hook: re-index of written files. Claude matcher is
 // Write|Edit|MultiEdit (file_path in tool_input); Codex matcher is
 // apply_patch (paths parsed from the patch text; Delete drops the entry).
-// Emits no context — the next session-start picks the changes up. Exit 0
-// on every path.
+// For Claude the re-index is silent (the Stop hook carries the cerebrum nudge
+// at turn end); for Codex, which has no usable end-of-turn channel, the nudge
+// rides this hook's additionalContext instead (see docs/adr/0004). Exit 0 on
+// every path.
 
 interface WriteOp {
   relPath: string;
@@ -82,6 +87,15 @@ async function main(): Promise<void> {
     }
     return dirty ? index : null;
   });
+
+  // Codex delivers writes as apply_patch and has no usable end-of-turn hook, so
+  // its cerebrum nudge rides here (PostToolUse additionalContext is model-visible
+  // on Codex — ADR 0001). Claude gets the same nudge at turn end via the Stop
+  // hook, so it is skipped here to avoid double-nudging.
+  if (payload.tool_name === "apply_patch") {
+    const msg = cerebrumNudge(crankDir);
+    if (msg) emitAdditionalContext("PostToolUse", msg);
+  }
 }
 
 await runAdvisoryHook("post-write", main);

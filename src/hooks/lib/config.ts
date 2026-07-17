@@ -1,17 +1,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-// crank/config.json load with defaults, plus the always-on sensitive-file
+// .crank/config.json load with defaults, plus the always-on sensitive-file
 // filter (not configurable — never index secrets).
 
-export const CRANK_DIR = "crank";
+export const CRANK_DIR = ".crank";
 export const CONFIG_FILE = "config.json";
 export const MAX_FILE_SIZE_BYTES = 1024 * 1024;
 
+// Hidden paths (.git, .claude, .codex, .crank itself, …) are excluded by the
+// always-on dot rule in isExcluded, so only non-hidden names belong here.
 export const DEFAULT_EXCLUDES = [
-  "node_modules", ".git", "dist", "build", "crank", ".claude", ".codex", ".next", ".nuxt",
-  "coverage", "__pycache__", ".cache", "target", ".vscode", ".idea",
-  ".turbo", ".vercel", ".netlify", ".output", "*.min.js", "*.min.css",
+  "node_modules", "dist", "build", "coverage", "__pycache__", "target",
+  "*.min.js", "*.min.css",
 ];
 
 export interface CrankConfig {
@@ -109,6 +110,10 @@ export function isExcluded(relPath: string, excludes: string[]): boolean {
   const parts = relPath.split("/");
   const basename = parts[parts.length - 1]!;
   if (isSensitiveFile(basename)) return true;
+  // Hidden paths — any dot-prefixed component (.claude/skills, .codex,
+  // .github, .crank itself, .DS_Store) — are never indexed. Always on, like
+  // the sensitive filter: agent/tool config trees don't belong in the anatomy.
+  if (parts.some((p) => p.startsWith("."))) return true;
   for (const pattern of excludes) {
     if (pattern.startsWith("*.")) {
       if (relPath.endsWith(pattern.slice(1))) return true;

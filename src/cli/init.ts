@@ -62,7 +62,7 @@ export async function run(args: string[]): Promise<number> {
   const gitMode: GitMode = (
     typeof flags.git === "string" ? (flags.git as GitMode)
     : yes ? "exclude"
-    : ((await choose("Track crank/ in git?", ["commit", "ignore", "exclude"], "exclude")) as GitMode)
+    : ((await choose("Track .crank/ in git?", ["commit", "ignore", "exclude"], "exclude")) as GitMode)
   );
 
   const adrPath = typeof flags.adr === "string" ? flags.adr : "docs/adr";
@@ -132,26 +132,29 @@ export async function run(args: string[]): Promise<number> {
     if (gitMode === "ignore") addIgnoreLines(gitignore);
     if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) addIgnoreLines(gitExclude);
     // Even in commit mode, backups and the lockfile never belong in git.
-    fs.writeFileSync(path.join(crankDir, ".gitignore"), "backups/\nanatomy-index.lock\n*.tmp\n");
+    fs.writeFileSync(
+      path.join(crankDir, ".gitignore"),
+      "backups/\nanatomy-index.lock\ncerebrum-nudge.json\n*.tmp\n"
+    );
 
     // ── Seed cerebrum + first scan ─────────────────────────────────────────
     fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, "cerebrum.md"));
     scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
   } catch (err) {
     console.error(`crank-mem: ${err instanceof Error ? err.message : String(err)}`);
-    // uninstall needs crank/config.json; before it exists nothing outside
-    // crank/ has been touched yet, so the honest hint is just to delete it.
+    // uninstall needs .crank/config.json; before it exists nothing outside
+    // .crank/ has been touched yet, so the honest hint is just to delete it.
     if (fs.existsSync(path.join(crankDir, "config.json"))) {
       console.error("init failed partway — run `crank-mem uninstall --restore` to roll back.");
     } else {
-      console.error("init failed before wiring anything — delete crank/ and retry.");
+      console.error("init failed before wiring anything — delete .crank/ and retry.");
     }
     return 1;
   }
 
   // ── Summary ──────────────────────────────────────────────────────────────
   console.log(`crank-mem ${cliVersion()} initialized (runtime: ${runtime}, git: ${gitMode})`);
-  console.log(`  indexed ${scanned?.meta.fileCount ?? "?"} files → crank/anatomy.md`);
+  console.log(`  indexed ${scanned?.meta.fileCount ?? "?"} files → .crank/anatomy.md`);
   console.log(`  Claude Code: hooks wired into ${path.relative(root, claudeSettings)}`);
   if (codexMode === "merge") {
     console.log(`  Codex: hooks wired into .codex/hooks.json`);
