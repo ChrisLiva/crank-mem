@@ -89,9 +89,12 @@ function anatomyLines(index: AnatomyIndex): string[] {
 }
 
 /**
- * Compose the full injection under `budgetTokens`. Instructions, cerebrum and
- * ADR list are budgeted in order; anatomy lines fill whatever remains and are
- * truncated with a pointer to the full anatomy.md.
+ * Compose the injection. The head (instructions, cerebrum excerpt, ADR list)
+ * is bounded by its own fixed caps (CEREBRUM_INJECT_TOKEN_CAP,
+ * ADR_RECENT_COUNT), not by `budgetTokens`; only the anatomy section is
+ * budget-aware — its lines fill whatever `budgetTokens` leaves after the head
+ * and are truncated with a pointer to the full anatomy.md. Consequence: a
+ * budget smaller than the head can be exceeded by the head itself.
  */
 export function buildInjection(sources: InjectionSources, budgetTokens: number): string {
   const parts: string[] = [INSTRUCTIONS];
