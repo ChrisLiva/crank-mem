@@ -1,0 +1,15 @@
+{
+  "name": "crank-mem",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero-runtime-dependency project memory for coding agents: anatomy index, cerebrum, session injection.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/node": "^24.0.0"
+  }
+}

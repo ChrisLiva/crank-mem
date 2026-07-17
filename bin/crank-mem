@@ -1,0 +1,23 @@
+#!/bin/sh
+# crank-mem launcher: prefer bun, else node >= 23.6 (both run .ts directly).
+# Lives in the clone; put it on PATH via symlink:
+#   ln -s "<repo>/bin/crank-mem" ~/.local/bin/crank-mem
+DIR=$(CDPATH= cd -- "$(dirname -- "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)
+CLI="$DIR/../src/cli/main.ts"
+
+if command -v bun >/dev/null 2>&1; then
+  exec bun "$CLI" "$@"
+fi
+
+if command -v node >/dev/null 2>&1; then
+  MAJOR=$(node -v | sed 's/^v\([0-9]*\).*/\1/')
+  MINOR=$(node -v | sed 's/^v[0-9]*\.\([0-9]*\).*/\1/')
+  if [ "$MAJOR" -gt 23 ] || { [ "$MAJOR" -eq 23 ] && [ "$MINOR" -ge 6 ]; }; then
+    exec node --disable-warning=ExperimentalWarning "$CLI" "$@"
+  fi
+  echo "crank-mem: node $(node -v) found but >= 23.6 required (or install bun)" >&2
+  exit 1
+fi
+
+echo "crank-mem: no suitable runtime — install bun or node >= 23.6" >&2
+exit 1
