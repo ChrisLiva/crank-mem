@@ -29,6 +29,13 @@ describe("loadConfig sanitization", () => {
     expect(loadConfig(dir).max_files).toBe(defaultConfig().max_files);
   });
 
+  test("zero and negative numbers rejected", () => {
+    const dir = dirWithConfig(JSON.stringify({ max_files: -1, max_file_size_bytes: 0 }));
+    const config = loadConfig(dir);
+    expect(config.max_files).toBe(defaultConfig().max_files);
+    expect(config.max_file_size_bytes).toBe(defaultConfig().max_file_size_bytes);
+  });
+
   test("enum fields reject unknown values", () => {
     const dir = dirWithConfig(JSON.stringify({ git: "rebase", runtime: "deno" }));
     const config = loadConfig(dir);
@@ -44,6 +51,7 @@ describe("loadConfig sanitization", () => {
   test("non-object config falls back entirely", () => {
     expect(loadConfig(dirWithConfig(`"just a string"`))).toEqual(defaultConfig());
   });
+
 });
 
 describe("isSensitiveFile", () => {

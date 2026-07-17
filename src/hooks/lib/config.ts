@@ -67,7 +67,7 @@ export function loadConfig(crankDir: string): CrankConfig {
       if (RUNTIMES.includes(value as CrankConfig["runtime"])) config.runtime = value as CrankConfig["runtime"];
     } else if (
       typeof value === typeof config[key] &&
-      (typeof value !== "number" || Number.isFinite(value))
+      (typeof value !== "number" || (Number.isFinite(value) && value > 0))
     ) {
       (config as unknown as Record<string, unknown>)[key] = value;
     }
