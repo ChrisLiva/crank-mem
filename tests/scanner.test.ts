@@ -89,6 +89,17 @@ describe("refreshIndex", () => {
     expect(result.index.files["a.ts"]!.updatedAt).toBe(before);
   });
 
+  test("drops the stale entry when a file grows past max_file_size_bytes", () => {
+    const root = makeProject({ "a.ts": "const a = 1;" });
+    const config = { ...defaultConfig(), max_file_size_bytes: 50 };
+    const index = fullScan(root, config);
+    expect(index.files["a.ts"]).toBeDefined();
+    fs.writeFileSync(path.join(root, "a.ts"), "x".repeat(100));
+    const result = refreshIndex(root, config, index, 5000);
+    expect(result.index.files["a.ts"]).toBeUndefined();
+    expect(result.removed).toBe(1);
+  });
+
   test("zero budget marks partial", () => {
     const root = makeProject({ "a.ts": "const a = 1;" });
     const config = defaultConfig();

@@ -158,6 +158,11 @@ export function refreshIndex(
       if (entry) {
         index.files[rel] = entry;
         changed++;
+      } else {
+        // No longer indexable (grew past the size cap, became unreadable) —
+        // drop the stale entry rather than carry it forever.
+        delete index.files[rel];
+        removed++;
       }
     } else {
       const entry = indexFile(rootDir, rel, config, "scan");
