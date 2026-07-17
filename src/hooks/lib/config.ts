@@ -9,7 +9,7 @@ export const CONFIG_FILE = "config.json";
 export const MAX_FILE_SIZE_BYTES = 1024 * 1024;
 
 export const DEFAULT_EXCLUDES = [
-  "node_modules", ".git", "dist", "build", "crank", ".next", ".nuxt",
+  "node_modules", ".git", "dist", "build", "crank", ".claude", ".codex", ".next", ".nuxt",
   "coverage", "__pycache__", ".cache", "target", ".vscode", ".idea",
   ".turbo", ".vercel", ".netlify", ".output", "*.min.js", "*.min.css",
 ];
