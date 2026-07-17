@@ -133,6 +133,14 @@ describe("init → uninstall round-trip", () => {
     expect(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8")).toBe(userSettings);
   });
 
+  test("pre-existing literal {} settings file survives surgical uninstall", () => {
+    const { root, codexHome } = makeProject({ ".claude/settings.local.json": "{}" });
+    cli(root, codexHome, "init", "--yes", "--codex", "skip");
+    cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
+    expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8"))).toEqual({});
+  });
+
   test("double init refuses", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--codex", "skip");
