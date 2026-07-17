@@ -17,7 +17,7 @@ export function openProject(): OpenedProject | null {
   if (!fs.existsSync(path.join(crankDir, "config.json"))) {
     if (fs.existsSync(path.join(root, "crank", "config.json"))) {
       console.error("crank-mem: found a legacy crank/ install — this version uses .crank/.");
-      console.error("Run `crank-mem uninstall` from the old checkout (or delete crank/ and strip its hook entries), then `crank-mem init` again.");
+      console.error("Run `crank-mem uninstall` to remove it, then `crank-mem init` again.");
     } else {
       console.error("crank-mem: not initialized here — run `crank-mem init` first.");
     }

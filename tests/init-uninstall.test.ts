@@ -173,3 +173,80 @@ describe("init → uninstall round-trip", () => {
     expect(second.stderr).toContain("already initialized");
   });
 });
+
+// Uninstall sweeps residue from a pre-rename (non-dotted crank/) install:
+// legacy hook entries, its Codex trust hashes, ignore lines, and the dir — no
+// prompting, and even when the current .crank/ install isn't present.
+describe("uninstall sweeps legacy crank/ installs", () => {
+  /** Plant a full pre-rename install's residue into a fresh project. */
+  function plantLegacy(root: string, codexHome: string): void {
+    fs.mkdirSync(path.join(root, "crank", "hooks"), { recursive: true });
+    fs.writeFileSync(path.join(root, "crank", "config.json"), "{}\n");
+    fs.writeFileSync(path.join(root, "crank", "hooks", "session-start.ts"), "// hook\n");
+
+    // A user's own hook group beside our legacy one — the user's must survive.
+    const claude = {
+      hooks: {
+        SessionStart: [
+          { hooks: [{ type: "command", command: "myOwnTool" }] },
+          { hooks: [{ type: "command", command: '"$CLAUDE_PROJECT_DIR"/crank/hooks/session-start.ts' }] },
+        ],
+      },
+    };
+    fs.mkdirSync(path.join(root, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".claude", "settings.json"), JSON.stringify(claude, null, 2) + "\n");
+
+    fs.writeFileSync(path.join(root, ".gitignore"), "node_modules\n# crank-mem\ncrank/\n");
+
+    const codexHooks = {
+      hooks: { SessionStart: [{ hooks: [{ type: "command", command: "crank/hooks/session-start.ts" }] }] },
+    };
+    fs.mkdirSync(path.join(root, ".codex"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".codex", "hooks.json"), JSON.stringify(codexHooks, null, 2) + "\n");
+    // Trust keys are position-based, hash-independent — a matching key is enough.
+    // The child derives the path from its cwd, which has symlinks resolved.
+    const trustKey = `${path.join(fs.realpathSync(root), ".codex", "hooks.json")}:SessionStart:0:0`;
+    fs.writeFileSync(
+      path.join(codexHome, "config.toml"),
+      `model = "gpt-5.6"\n[hooks.state."${trustKey}"]\ntrusted_hash = "sha256:deadbeef"\n`,
+    );
+  }
+
+  test("pure-legacy leftover (no .crank/) is fully swept", () => {
+    const { root, codexHome } = makeProject();
+    plantLegacy(root, codexHome);
+
+    const un = cli(root, codexHome, "uninstall", "--yes");
+    expect(un.status).toBe(0);
+
+    expect(fs.existsSync(path.join(root, "crank"))).toBe(false);
+    const claude = JSON.parse(fs.readFileSync(path.join(root, ".claude", "settings.json"), "utf-8"));
+    expect(claude.hooks.SessionStart).toHaveLength(1);
+    expect(claude.hooks.SessionStart[0].hooks[0].command).toBe("myOwnTool");
+    expect(fs.readFileSync(path.join(root, ".gitignore"), "utf-8")).toBe("node_modules\n");
+    expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).not.toContain("hooks.state");
+  });
+
+  test("migrated project: legacy residue swept alongside the current install", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--codex", "skip");
+    // Re-init on an old checkout left the pre-rename dir and its hook wiring behind.
+    fs.mkdirSync(path.join(root, "crank", "hooks"), { recursive: true });
+    fs.writeFileSync(path.join(root, "crank", "config.json"), "{}\n");
+    const settingsPath = path.join(root, ".claude", "settings.local.json");
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    settings.hooks.SessionStart.push({
+      hooks: [{ type: "command", command: '"$CLAUDE_PROJECT_DIR"/crank/hooks/session-start.ts' }],
+    });
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+
+    const un = cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
+    expect(un.status).toBe(0);
+
+    expect(fs.existsSync(path.join(root, "crank"))).toBe(false);
+    expect(fs.existsSync(path.join(root, ".crank"))).toBe(true);
+    // No crank hook commands survive — current or legacy.
+    const settingsAfter = fs.existsSync(settingsPath) ? fs.readFileSync(settingsPath, "utf-8") : "";
+    expect(settingsAfter).not.toContain("crank/hooks/");
+  });
+});

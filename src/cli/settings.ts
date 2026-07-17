@@ -7,6 +7,16 @@ import * as path from "node:path";
 
 export const CRANK_HOOK_MARKER = ".crank/hooks/";
 
+/** True for a command from a current (.crank/hooks/) install. */
+export function isCrankHookCommand(command: string | undefined): boolean {
+  return !!command && command.includes(CRANK_HOOK_MARKER);
+}
+
+/** True for a command from a legacy pre-rename (non-dotted crank/hooks/) install. */
+export function isLegacyHookCommand(command: string | undefined): boolean {
+  return !!command && command.includes("crank/hooks/") && !command.includes(CRANK_HOOK_MARKER);
+}
+
 interface HookHandler {
   type: "command";
   command: string;
@@ -82,7 +92,10 @@ export function mergeHooksIntoFile(file: string, add: HooksMap): void {
  * event arrays and an empty hooks object; returns false if the file does not
  * exist or parsing failed (leave it alone).
  */
-export function removeCrankHooksFromFile(file: string): boolean {
+export function removeCrankHooksFromFile(
+  file: string,
+  matches: (command: string | undefined) => boolean = isCrankHookCommand,
+): boolean {
   if (!fs.existsSync(file)) return false;
   let root: Record<string, unknown>;
   try {
@@ -96,7 +109,7 @@ export function removeCrankHooksFromFile(file: string): boolean {
   for (const [event, groups] of Object.entries(hooks)) {
     if (!Array.isArray(groups)) continue;
     const kept = groups.filter(
-      (g) => !(g.hooks ?? []).some((h) => h.command?.includes(CRANK_HOOK_MARKER))
+      (g) => !(g.hooks ?? []).some((h) => matches(h.command))
     );
     if (kept.length !== groups.length) {
       changed = true;
@@ -114,6 +127,8 @@ export function removeCrankHooksFromFile(file: string): boolean {
 export const IGNORE_LINE = ".crank/";
 export const IGNORE_COMMENT = "# crank-mem";
 const IGNORE_BLOCK = `${IGNORE_COMMENT}\n${IGNORE_LINE}\n`;
+/** The block a legacy pre-rename install appended (non-dotted crank/). */
+export const LEGACY_IGNORE_BLOCK = `${IGNORE_COMMENT}\ncrank/\n`;
 
 /** Append our ignore block if .crank/ isn't covered. Creates the file if needed. */
 export function addIgnoreLines(file: string): void {
@@ -129,11 +144,11 @@ export function addIgnoreLines(file: string): void {
  * line (which made addIgnoreLines skip) has no crank-mem comment and is
  * left untouched; no match means no rewrite.
  */
-export function removeIgnoreLines(file: string): void {
+export function removeIgnoreLines(file: string, block: string = IGNORE_BLOCK): void {
   if (!fs.existsSync(file)) return;
   const content = fs.readFileSync(file, "utf-8");
-  if (!content.includes(IGNORE_BLOCK)) return;
-  fs.writeFileSync(file, content.replace(IGNORE_BLOCK, ""));
+  if (!content.includes(block)) return;
+  fs.writeFileSync(file, content.replace(block, ""));
 }
 
 export const CODEX_FEATURES_SNIPPET = "\n# crank-mem\n[features]\nhooks = true\n";
