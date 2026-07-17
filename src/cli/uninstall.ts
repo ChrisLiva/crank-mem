@@ -1,4 +1,96 @@
-export async function run(_args: string[]): Promise<number> {
-  console.error("crank-mem uninstall: not implemented yet");
-  return 1;
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { parseArgs } from "./args.ts";
+import { choose } from "./prompt.ts";
+import {
+  crankHooks, removeCrankHooksFromFile, removeIgnoreLines, removeCodexFeatures,
+} from "./settings.ts";
+import { trustEntries, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
+import { loadConfig, CRANK_DIR } from "../hooks/lib/config.ts";
+import { latestBackupDir, restoreBackup } from "./backups.ts";
+
+// Remove all crank-mem wiring. Default is surgical: strip exactly the
+// entries/lines we added (safe alongside post-init user edits). --restore
+// instead restores the init-time backups byte-identically. Never touches the
+// ADR directory.
+
+export async function run(args: string[]): Promise<number> {
+  const { flags } = parseArgs(args, []);
+  const root = process.cwd();
+  const crankDir = path.join(root, CRANK_DIR);
+
+  if (!fs.existsSync(path.join(crankDir, "config.json"))) {
+    console.error("crank-mem: not initialized here (no crank/config.json).");
+    return 1;
+  }
+  const config = loadConfig(crankDir);
+
+  const restore =
+    flags.restore === true ||
+    (!flags.yes && process.stdin.isTTY &&
+      (await choose("Restore modified files from the init-time backup?", ["restore", "surgical"], "surgical")) === "restore");
+
+  const codexHooksJson = path.join(root, ".codex", "hooks.json");
+
+  // Trust entries first: key computation needs hooks.json paths, nothing else.
+  if (config.codex_trust_written) {
+    const keys = trustEntries(codexHooksJson, crankHooks(config.runtime, "codex")).map((e) => e.key);
+    removeTrustEntries(userCodexConfigPath(), keys);
+    console.log(`  removed trusted_hash entries from ${userCodexConfigPath()}`);
+  }
+
+  if (restore) {
+    const backupDir = latestBackupDir(crankDir);
+    if (!backupDir) {
+      console.error("crank-mem: no backups found — falling back to surgical removal.");
+    } else {
+      for (const restored of restoreBackup(backupDir)) console.log(`  restored ${restored}`);
+    }
+  }
+
+  // Surgical removal is idempotent — run it even after a restore, in case the
+  // backup predates some wiring. It only ever strips crank-mem's own entries.
+  for (const f of [
+    path.join(root, ".claude", "settings.json"),
+    path.join(root, ".claude", "settings.local.json"),
+    codexHooksJson,
+  ]) {
+    if (removeCrankHooksFromFile(f)) console.log(`  removed crank hooks from ${path.relative(root, f)}`);
+    // Delete files that are now just an empty object (we created them).
+    try {
+      if (fs.existsSync(f) && JSON.stringify(JSON.parse(fs.readFileSync(f, "utf-8"))) === "{}") {
+        fs.unlinkSync(f);
+        console.log(`  deleted now-empty ${path.relative(root, f)}`);
+      }
+    } catch {}
+  }
+
+  const gitignore = path.join(root, ".gitignore");
+  removeIgnoreLines(gitignore);
+  try {
+    if (fs.existsSync(gitignore) && fs.readFileSync(gitignore, "utf-8").trim() === "") fs.unlinkSync(gitignore);
+  } catch {}
+  removeIgnoreLines(path.join(root, ".git", "info", "exclude"));
+  removeCodexFeatures(path.join(root, ".codex", "config.toml"));
+  for (const d of [".codex", ".claude"]) {
+    const dir = path.join(root, d);
+    try {
+      if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+    } catch {}
+  }
+
+  const deleteCrank =
+    flags["delete-crank"] === true ||
+    (flags["keep-crank"] !== true && !flags.yes && process.stdin.isTTY &&
+      (await choose("Delete the crank/ data directory?", ["delete", "keep"], "keep")) === "delete");
+
+  if (deleteCrank) {
+    fs.rmSync(crankDir, { recursive: true, force: true });
+    console.log("  deleted crank/");
+  } else {
+    console.log("  kept crank/ (delete it manually when ready)");
+  }
+
+  console.log("crank-mem: uninstalled.");
+  return 0;
 }
