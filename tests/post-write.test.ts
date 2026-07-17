@@ -1,0 +1,125 @@
+import { describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { makeCrankProject, runHook } from "./helpers.ts";
+import { claudePostWrite, claudePostEdit, codexApplyPatch, claudeSessionStart } from "./fixtures/payloads.ts";
+import { parseApplyPatch } from "../src/hooks/lib/apply-patch.ts";
+import { loadIndex } from "../src/hooks/lib/store.ts";
+
+const HOOK = "src/hooks/post-write.ts";
+
+function seedIndex(root: string): void {
+  // Run session-start once to build the initial index.
+  runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root)));
+}
+
+describe("parseApplyPatch", () => {
+  test("parses Add, Update, Delete", () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Add File: /abs/path/greeting.txt",
+      "+hello",
+      "*** Update File: src/main.ts",
+      "@@ -1 +1 @@",
+      "-a",
+      "+b",
+      "*** Delete File: old.ts",
+      "*** End Patch",
+    ].join("\n");
+    expect(parseApplyPatch(patch)).toEqual([
+      { path: "/abs/path/greeting.txt", deleted: false },
+      { path: "src/main.ts", deleted: false },
+      { path: "old.ts", deleted: true },
+    ]);
+  });
+  test("garbage patch yields no ops", () => {
+    expect(parseApplyPatch("not a patch")).toEqual([]);
+  });
+});
+
+describe("post-write hook (black-box)", () => {
+  test("Claude Write: new file gets indexed, stdout silent", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    seedIndex(root);
+    const newFile = path.join(root, "src/new.ts");
+    fs.mkdirSync(path.dirname(newFile), { recursive: true });
+    fs.writeFileSync(newFile, "/** Brand new module. */\nexport const n = 1;\n");
+
+    const run = runHook(HOOK, JSON.stringify(claudePostWrite(root, newFile)));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+    const index = loadIndex(path.join(root, "crank"));
+    expect(index.files["src/new.ts"]!.description).toBe("Brand new module.");
+    expect(index.files["src/new.ts"]!.source).toBe("hook");
+  });
+
+  test("Claude Edit: existing file re-indexed", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, "a.ts"), "/** Updated alpha. */\nconst a = 2;\n");
+    const run = runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "a.ts"))));
+    expect(run.status).toBe(0);
+    expect(loadIndex(path.join(root, "crank")).files["a.ts"]!.description).toBe("Updated alpha.");
+  });
+
+  test("Codex apply_patch: Add and Update re-indexed, Delete dropped", () => {
+    const root = makeCrankProject({ "keep.ts": "const k = 1;", "gone.ts": "const g = 1;" });
+    seedIndex(root);
+    expect(loadIndex(path.join(root, "crank")).files["gone.ts"]).toBeDefined();
+
+    fs.writeFileSync(path.join(root, "added.ts"), "/** Added by codex. */\nexport const x = 1;\n");
+    fs.writeFileSync(path.join(root, "keep.ts"), "/** Keep updated. */\nconst k = 2;\n");
+    fs.unlinkSync(path.join(root, "gone.ts"));
+
+    const patch = [
+      "*** Begin Patch",
+      `*** Add File: ${path.join(root, "added.ts")}`,
+      "+x",
+      "*** Update File: keep.ts",
+      "+k",
+      "*** Delete File: gone.ts",
+      "*** End Patch",
+    ].join("\n");
+    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, patch)));
+    expect(run.status).toBe(0);
+    const index = loadIndex(path.join(root, "crank"));
+    expect(index.files["added.ts"]!.description).toBe("Added by codex.");
+    expect(index.files["keep.ts"]!.description).toBe("Keep updated.");
+    expect(index.files["gone.ts"]).toBeUndefined();
+  });
+
+  test("crank-internal and sensitive files are not indexed", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, ".env"), "SECRET=1");
+    runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, ".env"))));
+    runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "crank/cerebrum.md"))));
+    const index = loadIndex(path.join(root, "crank"));
+    expect(index.files[".env"]).toBeUndefined();
+    expect(index.files["crank/cerebrum.md"]).toBeUndefined();
+  });
+
+  test("path outside project is ignored", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    seedIndex(root);
+    const before = JSON.stringify(loadIndex(path.join(root, "crank")).files);
+    runHook(HOOK, JSON.stringify(claudePostWrite(root, "/etc/hosts")));
+    expect(JSON.stringify(loadIndex(path.join(root, "crank")).files)).toBe(before);
+  });
+
+  test("unrelated tool: exit 0, no change", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    seedIndex(root);
+    const payload = { ...(claudePostWrite(root, path.join(root, "a.ts")) as object), tool_name: "Bash", tool_input: { command: "ls" } };
+    const run = runHook(HOOK, JSON.stringify(payload));
+    expect(run.status).toBe(0);
+  });
+
+  test("garbage stdin: exit 0", () => {
+    expect(runHook(HOOK, "]]garbage").status).toBe(0);
+  });
+
+  test("empty stdin: exit 0", () => {
+    expect(runHook(HOOK, "").status).toBe(0);
+  });
+});
