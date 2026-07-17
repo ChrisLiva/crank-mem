@@ -45,7 +45,11 @@ export function defaultConfig(): CrankConfig {
 const GIT_MODES: readonly CrankConfig["git"][] = ["commit", "ignore", "exclude"];
 const RUNTIMES: readonly CrankConfig["runtime"][] = ["bun", "node"];
 
-/** Load config, accepting each field only when it matches the expected shape. */
+/**
+ * Load config, accepting each known field only when it matches the expected
+ * shape. Unknown keys are carried through verbatim so a user's additions
+ * survive a load → save round-trip.
+ */
 export function loadConfig(crankDir: string): CrankConfig {
   const config = defaultConfig();
   let raw: Record<string, unknown>;
@@ -71,6 +75,9 @@ export function loadConfig(crankDir: string): CrankConfig {
     ) {
       (config as unknown as Record<string, unknown>)[key] = value;
     }
+  }
+  for (const key of Object.keys(raw)) {
+    if (!(key in config)) (config as unknown as Record<string, unknown>)[key] = raw[key];
   }
   return config;
 }

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  isExcluded, isSensitiveFile, loadConfig, defaultConfig, DEFAULT_EXCLUDES, CONFIG_FILE,
+  isExcluded, isSensitiveFile, loadConfig, saveConfig, defaultConfig, DEFAULT_EXCLUDES, CONFIG_FILE,
 } from "../src/hooks/lib/config.ts";
 
 function dirWithConfig(json: string): string {
@@ -52,6 +52,13 @@ describe("loadConfig sanitization", () => {
     expect(loadConfig(dirWithConfig(`"just a string"`))).toEqual(defaultConfig());
   });
 
+  test("unknown user keys survive a load → save round-trip", () => {
+    const dir = dirWithConfig(JSON.stringify({ max_files: 42, my_note: "keep me" }));
+    saveConfig(dir, loadConfig(dir));
+    const written = JSON.parse(fs.readFileSync(path.join(dir, CONFIG_FILE), "utf-8"));
+    expect(written.my_note).toBe("keep me");
+    expect(written.max_files).toBe(42);
+  });
 });
 
 describe("isSensitiveFile", () => {
