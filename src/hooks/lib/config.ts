@@ -42,14 +42,37 @@ export function defaultConfig(): CrankConfig {
   };
 }
 
+const GIT_MODES: readonly CrankConfig["git"][] = ["commit", "ignore", "exclude"];
+const RUNTIMES: readonly CrankConfig["runtime"][] = ["bun", "node"];
+
+/** Load config, accepting each field only when it matches the expected shape. */
 export function loadConfig(crankDir: string): CrankConfig {
-  const defaults = defaultConfig();
+  const config = defaultConfig();
+  let raw: Record<string, unknown>;
   try {
-    const raw = JSON.parse(fs.readFileSync(path.join(crankDir, CONFIG_FILE), "utf-8"));
-    return { ...defaults, ...raw };
+    const parsed = JSON.parse(fs.readFileSync(path.join(crankDir, CONFIG_FILE), "utf-8"));
+    if (typeof parsed !== "object" || parsed === null) return config;
+    raw = parsed as Record<string, unknown>;
   } catch {
-    return defaults;
+    return config;
   }
+  for (const key of Object.keys(config) as (keyof CrankConfig)[]) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    if (key === "excludes") {
+      if (Array.isArray(value) && value.every((v) => typeof v === "string")) config.excludes = value;
+    } else if (key === "git") {
+      if (GIT_MODES.includes(value as CrankConfig["git"])) config.git = value as CrankConfig["git"];
+    } else if (key === "runtime") {
+      if (RUNTIMES.includes(value as CrankConfig["runtime"])) config.runtime = value as CrankConfig["runtime"];
+    } else if (
+      typeof value === typeof config[key] &&
+      (typeof value !== "number" || Number.isFinite(value))
+    ) {
+      (config as unknown as Record<string, unknown>)[key] = value;
+    }
+  }
+  return config;
 }
 
 export function saveConfig(crankDir: string, config: CrankConfig): void {
