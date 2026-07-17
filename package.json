@@ -1,6 +1,6 @@
 {
   "name": "crank-mem",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Zero-runtime-dependency project memory for coding agents: anatomy index, cerebrum, session injection.",
