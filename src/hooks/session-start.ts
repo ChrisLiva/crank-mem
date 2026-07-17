@@ -4,9 +4,9 @@ import {
   readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook,
 } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
-import { loadIndex, saveIndex, saveAnatomyMd } from "./lib/store.ts";
+import { loadIndex, commitIndex } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
-import { withLock, HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
+import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { buildInjection, listAdrFilenames } from "./lib/injection.ts";
 
 // SessionStart hook (Claude Code + Codex; startup|resume|clear|compact all
@@ -27,25 +27,17 @@ async function main(): Promise<void> {
   const config = loadConfig(crankDir);
 
   let stalenessNote: string | undefined;
-  let index = loadIndex(crankDir);
+  let index = commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (current) =>
+    refreshIndex(root, config, current, REFRESH_BUDGET_MS).index
+  );
 
-  const refreshed = withLock(crankDir, HOOK_LOCK_BUDGET_MS, () => {
-    const current = loadIndex(crankDir);
-    const result = refreshIndex(root, config, current, REFRESH_BUDGET_MS);
-    saveIndex(crankDir, result.index);
-    saveAnatomyMd(crankDir, result.index);
-    return result;
-  });
-
-  if (refreshed === null) {
+  if (index === null) {
     stalenessNote =
       "index refresh skipped (another writer holds the lock) — the file map may be slightly stale";
-  } else {
-    index = refreshed.index;
-    if (refreshed.partial) {
-      stalenessNote =
-        "index refresh ran out of time before covering every file — the file map may be slightly stale";
-    }
+    index = loadIndex(crankDir);
+  } else if (index.meta.partial) {
+    stalenessNote =
+      "index refresh ran out of time before covering every file — the file map may be slightly stale";
   }
 
   let cerebrumMd: string | null = null;

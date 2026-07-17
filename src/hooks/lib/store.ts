@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { withLock } from "./lock.ts";
 import type { SymbolEntry } from "./symbols.ts";
 
 // anatomy-index.json load/save. Corrupt or missing index degrades to empty —
@@ -54,7 +55,7 @@ export function loadIndex(crankDir: string): AnatomyIndex {
 }
 
 /** Atomic-ish save: write temp then rename (callers hold the lock). */
-export function saveIndex(crankDir: string, index: AnatomyIndex): void {
+function saveIndex(crankDir: string, index: AnatomyIndex): void {
   index.meta.fileCount = Object.keys(index.files).length;
   const target = path.join(crankDir, INDEX_FILE);
   const tmp = target + ".tmp";
@@ -81,6 +82,26 @@ export function renderAnatomyMd(index: AnatomyIndex): string {
   return lines.join("\n");
 }
 
-export function saveAnatomyMd(crankDir: string, index: AnatomyIndex): void {
+function saveAnatomyMd(crankDir: string, index: AnatomyIndex): void {
   fs.writeFileSync(path.join(crankDir, ANATOMY_FILE), renderAnatomyMd(index));
+}
+
+/**
+ * The single chokepoint for index writes: under the lock, load the current
+ * index, let `build` produce the next one, then persist index + anatomy.md.
+ * `build` returning null skips the save (nothing to write). Returns the saved
+ * index, or null when the lock could not be acquired or the save was skipped.
+ */
+export function commitIndex(
+  crankDir: string,
+  budgetMs: number,
+  build: (current: AnatomyIndex) => AnatomyIndex | null
+): AnatomyIndex | null {
+  return withLock(crankDir, budgetMs, () => {
+    const next = build(loadIndex(crankDir));
+    if (next === null) return null;
+    saveIndex(crankDir, next);
+    saveAnatomyMd(crankDir, next);
+    return next;
+  });
 }

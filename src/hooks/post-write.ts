@@ -2,9 +2,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { readStdin, parsePayload, findProjectRoot, runAdvisoryHook } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
-import { loadIndex, saveIndex, saveAnatomyMd } from "./lib/store.ts";
+import { commitIndex } from "./lib/store.ts";
 import { indexFile, isIndexable } from "./lib/scanner.ts";
-import { withLock, HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
+import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { parseApplyPatch } from "./lib/apply-patch.ts";
 
 // PostToolUse hook: silent re-index of written files. Claude matcher is
@@ -66,8 +66,7 @@ async function main(): Promise<void> {
   const ops = toWriteOps(payload, root, cwd);
   if (ops.length === 0) return;
 
-  withLock(crankDir, HOOK_LOCK_BUDGET_MS, () => {
-    const index = loadIndex(crankDir);
+  commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (index) => {
     let dirty = false;
     for (const op of ops) {
       if (op.deleted) {
@@ -92,10 +91,7 @@ async function main(): Promise<void> {
       index.files[op.relPath] = entry;
       dirty = true;
     }
-    if (dirty) {
-      saveIndex(crankDir, index);
-      saveAnatomyMd(crankDir, index);
-    }
+    return dirty ? index : null;
   });
 }
 

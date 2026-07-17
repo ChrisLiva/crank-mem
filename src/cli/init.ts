@@ -12,8 +12,8 @@ import {
 import { trustEntriesFromFile, writeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
 import { defaultConfig, saveConfig, CRANK_DIR } from "../hooks/lib/config.ts";
 import { fullScan } from "../hooks/lib/scanner.ts";
-import { saveIndex, saveAnatomyMd } from "../hooks/lib/store.ts";
-import { withLock, CLI_LOCK_BUDGET_MS } from "../hooks/lib/lock.ts";
+import { commitIndex } from "../hooks/lib/store.ts";
+import { CLI_LOCK_BUDGET_MS } from "../hooks/lib/lock.ts";
 
 type GitMode = "commit" | "ignore" | "exclude";
 
@@ -122,16 +122,11 @@ export async function run(args: string[]): Promise<number> {
 
   // ── Seed cerebrum + first scan ───────────────────────────────────────────
   fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, "cerebrum.md"));
-  const scanned = withLock(crankDir, CLI_LOCK_BUDGET_MS, () => {
-    const index = fullScan(root, config);
-    saveIndex(crankDir, index);
-    saveAnatomyMd(crankDir, index);
-    return index.meta.fileCount;
-  });
+  const scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
 
   // ── Summary ──────────────────────────────────────────────────────────────
   console.log(`crank-mem ${cliVersion()} initialized (runtime: ${runtime}, git: ${gitMode})`);
-  console.log(`  indexed ${scanned ?? "?"} files → crank/anatomy.md`);
+  console.log(`  indexed ${scanned?.meta.fileCount ?? "?"} files → crank/anatomy.md`);
   console.log(`  Claude Code: hooks wired into ${path.relative(root, claudeSettings)}`);
   if (codexMode === "merge") {
     console.log(`  Codex: hooks wired into .codex/hooks.json`);
