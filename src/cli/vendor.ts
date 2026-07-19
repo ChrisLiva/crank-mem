@@ -10,7 +10,12 @@ export function vendorHooks(crankDir: string): void {
   const src = path.join(REPO_ROOT, "src", "hooks");
   const dest = path.join(crankDir, "hooks");
   fs.rmSync(dest, { recursive: true, force: true });
-  fs.cpSync(src, dest, { recursive: true });
+  // Only the implementation ships. Without this, editor/OS droppings beside the
+  // sources (.DS_Store, .swp) get copied into every target project.
+  fs.cpSync(src, dest, {
+    recursive: true,
+    filter: (from) => !path.basename(from).startsWith("."),
+  });
 }
 
 export function templatePath(name: string): string {

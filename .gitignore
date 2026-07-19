@@ -1,2 +1,3 @@
 node_modules/
-crank/
+.crank/
+.DS_Store
