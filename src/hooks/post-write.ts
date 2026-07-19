@@ -8,6 +8,7 @@ import { indexFile } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { parseApplyPatch } from "./lib/apply-patch.ts";
 import { cerebrumNudge } from "./lib/cerebrum-nudge.ts";
+import { enableDebug, debugEvent, safePath } from "./lib/debug.ts";
 
 // PostToolUse hook: re-index of written files. Claude matcher is
 // Write|Edit|MultiEdit (file_path in tool_input); Codex matcher is
@@ -66,11 +67,17 @@ async function main(): Promise<void> {
 
   const crankDir = path.join(root, CRANK_DIR);
   const config = loadConfig(crankDir);
+  enableDebug(crankDir, config.debug);
 
   const ops = toWriteOps(payload, root, cwd);
-  if (ops.length === 0) return;
+  if (ops.length === 0) {
+    // Also the shape a matcher/payload mismatch takes (ADR 0003) — worth a trace.
+    debugEvent("no-write-ops", { tool: typeof payload.tool_name === "string" ? payload.tool_name : null });
+    return;
+  }
 
-  commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (index) => {
+  const skipped: string[] = [];
+  const committed = commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (index) => {
     let dirty = false;
     for (const op of ops) {
       if (op.deleted) {
@@ -81,11 +88,26 @@ async function main(): Promise<void> {
         continue;
       }
       const entry = indexFile(root, op.relPath, config, "hook");
-      if (!entry) continue;
+      if (!entry) {
+        // Excluded, oversized, or unreadable — indistinguishable here, but the
+        // path alone answers "why didn't my file get indexed?".
+        skipped.push(safePath(op.relPath));
+        continue;
+      }
       index.files[op.relPath] = entry;
       dirty = true;
     }
     return dirty ? index : null;
+  });
+  // commitIndex returns null for BOTH "lock lost" and "nothing to write"; the
+  // lock-timeout event from withLock is what disambiguates the two in the log.
+  debugEvent("reindex", {
+    tool: typeof payload.tool_name === "string" ? payload.tool_name : null,
+    paths: ops.map((o) => safePath(o.relPath)),
+    deletes: ops.filter((o) => o.deleted).length,
+    skipped,
+    committed: committed !== null,
+    fileCount: committed?.meta.fileCount ?? null,
   });
 
   // Codex delivers writes as apply_patch and has no usable end-of-turn hook, so

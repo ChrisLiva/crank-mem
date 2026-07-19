@@ -134,7 +134,7 @@ export async function run(args: string[]): Promise<number> {
     // Even in commit mode, backups and the lockfile never belong in git.
     fs.writeFileSync(
       path.join(crankDir, ".gitignore"),
-      "backups/\nanatomy-index.lock\ncerebrum-nudge.json\n*.tmp\n"
+      "backups/\nanatomy-index.lock\ncerebrum-nudge.json\ndebug.log\n*.tmp\n"
     );
 
     // ── Seed cerebrum + first scan ─────────────────────────────────────────

@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadIndex } from "./store.ts";
+import { debugEvent } from "./debug.ts";
 
 // Shared cerebrum-nudge logic: decide whether to remind the agent to record
 // what it learned, and debounce so the reminder doesn't repeat every turn/write.
@@ -32,7 +33,13 @@ function readMarker(crankDir: string): NudgeMarker | null {
 function writeMarker(crankDir: string, marker: NudgeMarker): void {
   try {
     fs.writeFileSync(path.join(crankDir, MARKER_FILE), JSON.stringify(marker));
-  } catch {}
+  } catch (err) {
+    // Debounce is now broken — every turn will re-nudge. Silent by contract,
+    // but the log should say why the model is being pestered.
+    debugEvent("nudge-marker-write-failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -49,17 +56,25 @@ export function cerebrumNudge(crankDir: string): string | null {
   try {
     cerebrumMtimeMs = fs.statSync(path.join(crankDir, "cerebrum.md")).mtimeMs;
   } catch {
+    debugEvent("nudge-skipped", { reason: "no-cerebrum" });
     return null; // no cerebrum — nothing to nudge about
   }
 
   const index = loadIndex(crankDir);
   const changed = Object.values(index.files).filter((e) => e.mtimeMs > cerebrumMtimeMs).length;
-  if (changed < NUDGE_STEP) return null;
+  if (changed < NUDGE_STEP) {
+    debugEvent("nudge-skipped", { reason: "below-threshold", changed, step: NUDGE_STEP });
+    return null;
+  }
 
   const marker = readMarker(crankDir);
   const baseline = marker && marker.cerebrumMtimeMs === cerebrumMtimeMs ? marker.nudgedAtChanged : 0;
-  if (changed < baseline + NUDGE_STEP) return null;
+  if (changed < baseline + NUDGE_STEP) {
+    debugEvent("nudge-skipped", { reason: "debounced", changed, baseline, step: NUDGE_STEP });
+    return null;
+  }
 
+  debugEvent("nudge-emitted", { changed, baseline });
   writeMarker(crankDir, { cerebrumMtimeMs, nudgedAtChanged: changed });
   return (
     `crank-mem: ${changed} file(s) have changed since .crank/cerebrum.md was last updated. ` +

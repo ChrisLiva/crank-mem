@@ -8,6 +8,8 @@ import { loadIndex, commitIndex } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { buildInjection, listAdrFilenames } from "./lib/injection.ts";
+import { estimateProseTokens } from "./lib/tokens.ts";
+import { enableDebug, debugEvent } from "./lib/debug.ts";
 
 // SessionStart hook (Claude Code + Codex; startup|resume|clear|compact all
 // behave the same, so compaction re-injects). Refreshes the index under lock,
@@ -25,11 +27,22 @@ async function main(): Promise<void> {
 
   const crankDir = path.join(root, CRANK_DIR);
   const config = loadConfig(crankDir);
+  enableDebug(crankDir, config.debug);
 
   let stalenessNote: string | undefined;
-  let index = commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (current) =>
-    refreshIndex(root, config, current, REFRESH_BUDGET_MS).index
-  );
+  let index = commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (current) => {
+    const startedRefresh = Date.now();
+    const result = refreshIndex(root, config, current, REFRESH_BUDGET_MS);
+    debugEvent("refresh", {
+      ms: Date.now() - startedRefresh,
+      changed: result.changed,
+      added: result.added,
+      removed: result.removed,
+      partial: result.partial,
+      fileCount: result.index.meta.fileCount,
+    });
+    return result.index;
+  });
 
   if (index === null) {
     stalenessNote =
@@ -45,10 +58,11 @@ async function main(): Promise<void> {
     cerebrumMd = fs.readFileSync(path.join(crankDir, "cerebrum.md"), "utf-8");
   } catch {}
 
+  const adrFilenames = listAdrFilenames(root, config.adr_path);
   const context = buildInjection(
     {
       cerebrumMd,
-      adrFilenames: listAdrFilenames(root, config.adr_path),
+      adrFilenames,
       index,
       stalenessNote,
       adrPath: config.adr_path,
@@ -57,6 +71,15 @@ async function main(): Promise<void> {
   );
 
   emitAdditionalContext("SessionStart", context);
+  debugEvent("injected", {
+    source: typeof payload.source === "string" ? payload.source : null,
+    fileCount: index.meta.fileCount,
+    injectionTokens: estimateProseTokens(context),
+    budgetTokens: config.injection_budget_tokens,
+    hasCerebrum: cerebrumMd !== null,
+    adrCount: adrFilenames.length,
+    stale: stalenessNote !== undefined,
+  });
   console.error(`crank-mem: injected file map (${index.meta.fileCount} files)`);
 }
 

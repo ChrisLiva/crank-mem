@@ -26,6 +26,8 @@ export interface CrankConfig {
   runtime: "bun" | "node";
   vendored_version: string;
   codex_trust_written: boolean;
+  /** Write a per-run JSONL trace to .crank/debug.log (off by default). */
+  debug: boolean;
 }
 
 export function defaultConfig(): CrankConfig {
@@ -40,6 +42,7 @@ export function defaultConfig(): CrankConfig {
     runtime: "bun",
     vendored_version: "0.0.0",
     codex_trust_written: false,
+    debug: false,
   };
 }
 

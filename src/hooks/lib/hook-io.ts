@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CRANK_DIR } from "./config.ts";
+import { flushDebug } from "./debug.ts";
 
 // Hook I/O helpers. Hooks are advisory-only: they must never fail the tool
 // call, so payload parsing degrades to null and callers exit 0.
@@ -54,12 +55,26 @@ export function emitAdditionalContext(hookEventName: string, context: string): v
 /**
  * Run a hook's entry point under the advisory-only contract: errors are
  * reported to stderr (human/debug-only) and the process always exits 0.
+ *
+ * Also the single timing/outcome seam for every hook: one debug record per run,
+ * carrying the full stack that the stderr line deliberately omits.
  */
 export async function runAdvisoryHook(name: string, main: () => Promise<void>): Promise<void> {
+  const started = Date.now();
+  let error: unknown;
   try {
     await main();
   } catch (err) {
+    error = err;
     console.error(`crank-mem ${name}: ${err instanceof Error ? err.message : String(err)}`);
   }
+  flushDebug({
+    hook: name,
+    ms: Date.now() - started,
+    ok: error === undefined,
+    ...(error !== undefined && {
+      error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    }),
+  });
   process.exit(0);
 }

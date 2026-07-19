@@ -2,8 +2,9 @@ import * as path from "node:path";
 import {
   readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook,
 } from "./lib/hook-io.ts";
-import { CRANK_DIR } from "./lib/config.ts";
+import { CRANK_DIR, loadConfig } from "./lib/config.ts";
 import { cerebrumNudge } from "./lib/cerebrum-nudge.ts";
+import { enableDebug } from "./lib/debug.ts";
 
 // Stop hook (Claude Code only). At turn end, if source files have changed since
 // cerebrum.md was last touched, nudge the model to record what it learned. On
@@ -23,7 +24,10 @@ async function main(): Promise<void> {
   const root = findProjectRoot(typeof payload.cwd === "string" ? payload.cwd : process.cwd());
   if (!root) return;
 
-  const msg = cerebrumNudge(path.join(root, CRANK_DIR));
+  const crankDir = path.join(root, CRANK_DIR);
+  enableDebug(crankDir, loadConfig(crankDir).debug);
+
+  const msg = cerebrumNudge(crankDir);
   if (!msg) return;
   emitAdditionalContext("Stop", msg);
   console.error("crank-mem: cerebrum nudge (stop)");

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
+import { debugEvent } from "./debug.ts";
 
 // Cross-process mutual exclusion for anatomy writers.
 //
@@ -85,14 +86,26 @@ function trySteal(lockPath: string): void {
  */
 export function withLock<T>(crankDir: string, budgetMs: number, fn: () => T): T | null {
   const lockPath = path.join(crankDir, LOCK_FILE);
-  const deadline = Date.now() + budgetMs;
+  const started = Date.now();
+  const deadline = started + budgetMs;
+  let steals = 0;
 
   while (true) {
     if (tryAcquire(lockPath)) break;
-    if (isStale(lockPath)) trySteal(lockPath);
-    if (Date.now() >= deadline) return null;
+    if (isStale(lockPath)) {
+      trySteal(lockPath);
+      steals++;
+    }
+    if (Date.now() >= deadline) {
+      // The one place lock contention is unambiguous: commitIndex collapses
+      // "lock lost" and "nothing to write" into the same null.
+      debugEvent("lock-timeout", { waitedMs: Date.now() - started, budgetMs, steals });
+      return null;
+    }
     sleep(25 + Math.floor(Math.random() * 25));
   }
+  const waitedMs = Date.now() - started;
+  if (waitedMs > 0) debugEvent("lock-waited", { waitedMs, steals });
 
   try {
     return fn();
