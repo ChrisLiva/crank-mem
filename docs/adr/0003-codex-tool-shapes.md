@@ -25,3 +25,16 @@ Date: 2026-07-16. Status: accepted. Codex 0.144.5.
 Codex tier = session-start injection + `apply_patch` re-index only. No
 Bash-command parsing for reads. The post-write hook parses apply_patch text
 for Add/Update/Delete paths; Delete drops the index entry.
+
+## Re-verification 2026-07-19 (codex-rs rust-v0.144.6 source, identical to 0.144.5)
+
+All findings confirmed (`core/src/tools/handlers/`, `hook_names.rs`,
+`hooks/src/schema.rs`, `config/src/hook_config.rs`), with three additions:
+
+- `transcript_path` is nullable in Codex payloads.
+- Codex matchers accept aliases: `Write`/`Edit` match `apply_patch`
+  (`hook_names.rs`), so crank's literal `apply_patch` matcher is one of three
+  spellings that fire.
+- `hooks.json` parsing is `deny_unknown_fields`, and Codex extends Claude's
+  shape with `commandWindows`, `async`, `statusMessage`, and handler types
+  `prompt`/`agent` (both currently skipped as unsupported).

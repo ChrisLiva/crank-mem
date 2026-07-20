@@ -23,11 +23,16 @@ is version- and agent-specific, so we probed (extends ADR 0001 to Stop).
 - **Codex Stop, probed 2026-07-17 (codex-cli 0.144.5, gpt-5.6-sol):**
   - Output containing `hookSpecificOutput` (a Claude-only field) is rejected
     wholesale — Codex logs `hook: Stop Failed` and injects nothing.
-  - `{"systemMessage": "…"}` alone is accepted (`hook: Stop Completed`) but is
-    **inert**: the sentinel appeared nowhere — not in the model's context, not
-    persisted to the session rollout, not printed to the terminal.
-  - The only Codex Stop output that reaches the model is `decision:"block"` +
-    `reason`, which forces a continuation turn — an invariant break. Rejected.
+  - `{"systemMessage": "…"}` alone is accepted (`hook: Stop Completed`) but
+    never reaches the **model**: not injected into context, not persisted to
+    the session rollout. (Amended 2026-07-19: "not printed to the terminal"
+    was too strong — the TUI renders it as a `warning:` line in the hook's
+    history cell, `tui/src/history_cell/hook_cell.rs`. Still useless as a
+    nudge channel.)
+  - The only Codex Stop outputs that reach the model are `decision:"block"` +
+    `reason` — and, equivalently, exit code 2 with non-empty stderr
+    (`hooks/src/events/stop.rs`) — both of which force a continuation turn,
+    an invariant break. Rejected.
 - **Codex PostToolUse `additionalContext`** is model-visible and non-blocking
   (ADR 0001, re-confirmed live 2026-07-17 with crank's exact emit shape: after
   an `apply_patch` write the model read back the injected sentinel verbatim).
@@ -43,6 +48,18 @@ double-nudged). Shared logic in `lib/cerebrum-nudge.ts` debounces via a marker
 per cerebrum version, then again only after `NUDGE_STEP` more indexed files
 change since cerebrum's mtime. Updating cerebrum resets both signals. The
 advisory-only invariant is preserved — no `decision:"block"` anywhere.
+
+## Re-verification 2026-07-19
+
+- Claude Code 2.1.215, live probe: Stop `additionalContext` sentinel read
+  back verbatim, exactly one continuation (`STOP_ACK`), then a normal stop;
+  the continuation's Stop event carried `stop_hook_active: true`. Current
+  hooks docs and the 2.1.212→2.1.215 changelog agree.
+- codex-rs rust-v0.144.6 source (identical to 0.144.5 here): Stop output
+  parsing is `deny_unknown_fields`, so `hookSpecificOutput` fails the parse
+  and the hook is marked Failed with nothing injected (`hooks/src/schema.rs`,
+  `events/stop.rs`); PostToolUse `additional_contexts` are recorded into the
+  conversation as developer-role messages (`core/src/hook_runtime.rs`).
 
 ## Re-probe method (~10 min when agent versions drift)
 

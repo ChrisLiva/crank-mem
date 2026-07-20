@@ -29,6 +29,23 @@ describe("trustEntries", () => {
     const other = trustEntries("/proj/.codex/hooks.json", crankHooks("node", "codex"));
     expect(other[0]!.hash).not.toBe(entries[0]!.hash);
   });
+
+  // Pinned against codex-rs rust-v0.144.6 (ADR 0002): sha256 of the compact,
+  // recursively key-sorted JSON of the normalized identity, using codex's serde
+  // wire names — e.g. for PostToolUse:
+  //   {"event_name":"post_tool_use","hooks":[{"async":false,"command":"echo hi",
+  //    "timeout":10,"type":"command"}],"matcher":"apply_patch"}
+  // A drift here means codex will treat crank's written trusted_hash as stale.
+  test("matches codex's exact hash for a known identity", () => {
+    const vec = trustEntries("/p/hooks.json", {
+      PostToolUse: [{ matcher: "apply_patch", hooks: [{ type: "command", command: "echo hi", timeout: 10 }] }],
+      SessionStart: [{ hooks: [{ type: "command", command: "echo hi" }] }], // no timeout ⇒ default 600
+    }, () => true);
+    expect(vec.find((e) => e.key.includes("PostToolUse"))!.hash)
+      .toBe("sha256:7c55a9ad5e95bcfad72bedc1d3c6a75c42ed13550cba8520b9faf4e63017333a");
+    expect(vec.find((e) => e.key.includes("SessionStart"))!.hash)
+      .toBe("sha256:a245b9b8493f2be82aea06c373ef42709b417c1b701a54e5ab76ab728777f4ad");
+  });
 });
 
 describe("trustEntriesFromFile", () => {

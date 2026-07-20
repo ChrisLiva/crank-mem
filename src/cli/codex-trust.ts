@@ -5,16 +5,15 @@ import * as crypto from "node:crypto";
 import { isCrankHookCommand, type HooksMap } from "./settings.ts";
 
 // Opt-in Codex per-hook trust: compute trusted_hash entries the way codex-rs
-// does (ADR 0002, verified against rust-v0.144.5: hooks/src/engine/
-// discovery.rs command_hook_hash + config/src/fingerprint.rs) and write them
-// to the user's ~/.codex/config.toml so headless sessions skip the
-// interactive hooks review.
+// does (ADR 0002, verified against rust-v0.144.6 source, identical to 0.144.5:
+// hooks/src/engine/discovery.rs command_hook_hash + config/src/fingerprint.rs
+// version_for_toml) and write them to the user's ~/.codex/config.toml so
+// headless sessions skip the interactive hooks review.
 
-const EVENT_SNAKE: Record<string, string> = {
-  SessionStart: "session_start",
-  PreToolUse: "pre_tool_use",
-  PostToolUse: "post_tool_use",
-};
+/** Codex hashes the snake_case event label (hooks/src/lib.rs hook_event_key_label). */
+function eventLabel(event: string): string {
+  return event.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+}
 
 /** Recursively key-sorted JSON — codex's canonical serialization. */
 function canonicalJson(value: unknown): string {
@@ -49,16 +48,19 @@ export function trustEntries(
     groups.forEach((group, groupIdx) => {
       (group.hooks ?? []).forEach((handler, handlerIdx) => {
         if (!matches(handler.command)) return;
+        // Field names are codex's serde WIRE names ("timeout", not the Rust
+        // field timeout_sec); absent optionals (matcher, statusMessage,
+        // commandWindows) are omitted entirely, as codex's TOML round-trip
+        // drops None fields.
         const normalized = {
-          event_name: EVENT_SNAKE[event] ?? event.toLowerCase(),
+          event_name: eventLabel(event),
           matcher: group.matcher,
           hooks: [
             {
               type: "command",
               command: handler.command,
-              timeout_sec: handler.timeout ?? 600,
+              timeout: Math.max(handler.timeout ?? 600, 1),
               async: false,
-              status_message: undefined,
             },
           ],
         };
