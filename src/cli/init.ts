@@ -167,6 +167,6 @@ export async function run(args: string[]): Promise<number> {
   } else {
     console.log(`  Codex: skipped`);
   }
-  console.log(`Next: start a Claude Code session here — the file map injects at session start.`);
+  console.log(`Next: start a Claude Code session here — project memory injects at session start.`);
   return 0;
 }

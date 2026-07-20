@@ -67,7 +67,7 @@ async function main(): Promise<void> {
       stalenessNote,
       adrPath: config.adr_path,
     },
-    config.injection_budget_tokens
+    config.injection_budget_bytes
   );
 
   emitAdditionalContext("SessionStart", context);
@@ -75,12 +75,15 @@ async function main(): Promise<void> {
     source: typeof payload.source === "string" ? payload.source : null,
     fileCount: index.meta.fileCount,
     injectionTokens: estimateProseTokens(context),
-    budgetTokens: config.injection_budget_tokens,
+    // Bytes, not tokens, are what Claude Code caps: past ~10KiB of hook stdout
+    // it swaps the whole injection for a 2KB preview. Watch this, not tokens.
+    injectionBytes: Buffer.byteLength(context, "utf-8"),
+    budgetBytes: config.injection_budget_bytes,
     hasCerebrum: cerebrumMd !== null,
     adrCount: adrFilenames.length,
     stale: stalenessNote !== undefined,
   });
-  console.error(`crank-mem: injected file map (${index.meta.fileCount} files)`);
+  console.error(`crank-mem: injected project memory (${index.meta.fileCount} files indexed)`);
 }
 
 await runAdvisoryHook("session-start", main);

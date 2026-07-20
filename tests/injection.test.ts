@@ -54,47 +54,87 @@ describe("buildInjection", () => {
     adrPath: "docs/adr",
   };
 
-  test("contains all sections in order within budget", () => {
-    const out = buildInjection(sources, 5000);
+  test("contains all sections in order", () => {
+    const out = buildInjection(sources, 8192);
     const iInstr = out.indexOf("crank-mem (project memory)");
     const iCer = out.indexOf("## Cerebrum");
     const iAdr = out.indexOf("## ADRs");
-    const iMap = out.indexOf("## File map");
     expect(iInstr).toBeGreaterThanOrEqual(0);
     expect(iCer).toBeGreaterThan(iInstr);
     expect(iAdr).toBeGreaterThan(iCer);
-    expect(iMap).toBeGreaterThan(iAdr);
-    expect(estimateProseTokens(out)).toBeLessThanOrEqual(5000);
   });
 
   test("caps ADR list at most recent 20", () => {
-    const out = buildInjection(sources, 5000);
+    const out = buildInjection(sources, 8192);
     expect(out).toContain("0025-decision-25.md");
     expect(out).toContain("0006-decision-6.md");
     expect(out).not.toContain("0005-decision-5.md");
     expect((out.match(/^- \d{4}-/gm) ?? []).length).toBe(ADR_RECENT_COUNT);
   });
 
-  test("small budget truncates file map with pointer", () => {
-    const out = buildInjection({ ...sources, index: fixtureIndex(200) }, 1600);
-    expect(out).toMatch(/…plus \d+ more files — see \.crank\/anatomy\.md/);
-    expect(estimateProseTokens(out)).toBeLessThanOrEqual(1700);
+  test("points at anatomy.md with a file count instead of listing files", () => {
+    const out = buildInjection({ ...sources, index: fixtureIndex(200) }, 8192);
+    expect(out).toContain("`.crank/anatomy.md` indexes 200 file(s)");
+    expect(out).toContain("check it before reading any file");
+    // The map itself must not be recited — no indexed filename, no token annotation.
+    expect(out).not.toContain("file7.ts");
+    expect(out).not.toMatch(/~\d+ tok/);
+  });
+
+  // The reason the map is a pointer: Claude Code swaps the whole injection for
+  // a 2KB preview past ~10KiB of hook stdout, so size must not track file count.
+  test("stays small and near-constant as the project grows", () => {
+    const small = buildInjection({ ...sources, index: fixtureIndex(3) }, 8192);
+    const large = buildInjection({ ...sources, index: fixtureIndex(5000) }, 8192);
+    expect(Buffer.byteLength(large, "utf-8")).toBeLessThan(4096);
+    expect(Buffer.byteLength(large) - Buffer.byteLength(small)).toBeLessThan(64);
   });
 
   test("symbols never appear in injection", () => {
-    const out = buildInjection(sources, 5000);
+    const out = buildInjection(sources, 8192);
     expect(out).not.toContain("(fn, L");
   });
 
   test("staleness note is included when set", () => {
-    const out = buildInjection({ ...sources, stalenessNote: "index refresh skipped (lock busy)" }, 5000);
+    const out = buildInjection({ ...sources, stalenessNote: "index refresh skipped (lock busy)" }, 8192);
     expect(out).toContain("index refresh skipped");
   });
 
-  test("no cerebrum / no ADRs still yields instructions + map", () => {
-    const out = buildInjection({ cerebrumMd: null, adrFilenames: [], index: fixtureIndex(3), adrPath: "docs/adr" }, 5000);
+  // Bytes are the budget that binds: Claude Code caps hook stdout, not tokens.
+  describe("byte budget", () => {
+    const big = {
+      ...sources,
+      cerebrumMd: `# Cerebrum\n\n## User Preferences\n\n${Array.from(
+        { length: 400 },
+        (_, i) => `- Preference number ${i} spelled out at some length`
+      ).join("\n")}\n`,
+    };
+
+    test("a fat cerebrum is trimmed to fit rather than blowing the budget", () => {
+      const out = buildInjection(big, 4096);
+      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(4096);
+      // Trimmed from the end, so the top of User Preferences survives.
+      expect(out).toContain("Preference number 0");
+      expect(out).not.toContain("Preference number 399");
+    });
+
+    test("a section that cannot fit is dropped, not truncated mid-way", () => {
+      const out = buildInjection(sources, 1800);
+      expect(out).toContain("crank-mem (project memory)");
+      expect(out).not.toContain("## ADRs"); // dropped whole — no half-list
+    });
+
+    test("instructions survive a budget too small to hold them", () => {
+      const out = buildInjection(sources, 10);
+      expect(out).toContain("check it before reading any file");
+      expect(out).toContain("Cerebrum protocol");
+    });
+  });
+
+  test("no cerebrum / no ADRs still yields instructions and the pointer", () => {
+    const out = buildInjection({ cerebrumMd: null, adrFilenames: [], index: fixtureIndex(3), adrPath: "docs/adr" }, 8192);
     expect(out).toContain("crank-mem (project memory)");
-    expect(out).toContain("## File map");
+    expect(out).toContain("`.crank/anatomy.md` indexes 3 file(s)");
     expect(out).not.toContain("## Cerebrum");
     expect(out).not.toContain("## ADRs");
   });

@@ -3,23 +3,30 @@ import * as path from "node:path";
 import { estimateProseTokens } from "./tokens.ts";
 import type { AnatomyIndex } from "./store.ts";
 
-// Session-start injection: instructions → cerebrum excerpt → ADR filenames →
-// anatomy file lines (dir-grouped) filling the remaining token budget.
-// Symbols are never injected — they live in the index and anatomy.md for
-// slice-reads on demand.
+// Session-start injection: instructions (carrying a one-line pointer to the
+// file map) → cerebrum excerpt → ADR filenames.
+//
+// The map itself is deliberately NOT injected. Measured over 67 sessions in a
+// real project, inlining it cost 74% of the injection — enough to push the hook
+// past Claude Code's stdout limit, which silently replaced the whole injection
+// with a 2KB preview in 9 of 23 sessions — and produced no observed use: zero
+// reads, zero navigational citations. The predecessor tool shipped a one-line
+// pointer instead, for ~40 bytes, and got more consultation than the inlined
+// version did. So: point at anatomy.md, don't recite it.
 
 export const CEREBRUM_INJECT_TOKEN_CAP = 600;
 export const ADR_RECENT_COUNT = 20;
 export const DO_NOT_REPEAT_RECENT_COUNT = 10;
 
-const INSTRUCTIONS = `## crank-mem (project memory)
+const instructions = (fileCount: number): string => `## crank-mem (project memory)
 
 This project keeps a token-annotated file index in \`.crank/anatomy.md\` and an
-agent-maintained memory in \`.crank/cerebrum.md\`. A file map follows below.
+agent-maintained memory in \`.crank/cerebrum.md\`.
 
-- Before reading a large file, check its entry in \`.crank/anatomy.md\`: symbol
-  sub-bullets give line ranges, so slice-read just what you need (Read with
-  offset/limit, or \`sed -n 'START,ENDp' file\`).
+- \`.crank/anatomy.md\` indexes ${fileCount} file(s) with descriptions, token sizes, and
+  per-symbol line ranges — check it before reading any file. Symbol sub-bullets
+  give line ranges, so slice-read just what you need (Read with offset/limit,
+  or \`sed -n 'START,ENDp' file\`).
 - Cerebrum protocol: keep \`.crank/cerebrum.md\` current as you work. The bar is
   low — a one-line bullet is enough, and a slightly redundant entry beats a
   lost one. Record it the moment you learn it, not at the end:
@@ -75,80 +82,53 @@ export function cerebrumExcerpt(md: string): string {
   return text;
 }
 
-/** Anatomy lines, dir-grouped: "dir/: file (desc, ~N tok); file2 …". */
-function anatomyLines(index: AnatomyIndex): string[] {
-  const byDir = new Map<string, string[]>();
-  for (const [rel, entry] of Object.entries(index.files).sort(([a], [b]) => a.localeCompare(b))) {
-    const dir = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) + "/" : "./";
-    const base = rel.slice(rel.lastIndexOf("/") + 1);
-    const desc = entry.description ? ` — ${entry.description}` : "";
-    const list = byDir.get(dir) ?? [];
-    list.push(`  - \`${base}\`${desc} (~${entry.tokens} tok)`);
-    byDir.set(dir, list);
-  }
-  const lines: string[] = [];
-  for (const [dir, files] of byDir) {
-    lines.push(`- ${dir}`);
-    lines.push(...files);
-  }
-  return lines;
-}
+const SEP = "\n\n";
+const bytes = (s: string): number => Buffer.byteLength(s, "utf-8");
 
 /**
- * Compose the injection. The head (instructions, cerebrum excerpt, ADR list)
- * is bounded by its own fixed caps (CEREBRUM_INJECT_TOKEN_CAP,
- * ADR_RECENT_COUNT), not by `budgetTokens`; only the anatomy section is
- * budget-aware — its lines fill whatever `budgetTokens` leaves after the head
- * and are truncated with a pointer to the full anatomy.md. Consequence: a
- * budget smaller than the head can be exceeded by the head itself.
+ * Compose the injection under a hard byte cap.
+ *
+ * Sections are added in priority order and each must fit in what's left, so an
+ * over-budget section is dropped rather than allowed to push the whole
+ * injection past the cliff. The cerebrum excerpt, the only part that grows
+ * without a natural bound, is trimmed line-by-line to fit rather than dropped
+ * whole — its most valuable content (User Preferences) sits at the top.
+ *
+ * The instructions are exempt: they carry the cerebrum and ADR protocols, so a
+ * budget too small to hold them is a misconfiguration, not a reason to inject a
+ * headless fragment. Consequence: the result can exceed `budgetBytes`, but only
+ * by the fixed size of the instructions.
  */
-export function buildInjection(sources: InjectionSources, budgetTokens: number): string {
-  const parts: string[] = [INSTRUCTIONS];
-  if (sources.stalenessNote) parts.push(`_Note: ${sources.stalenessNote}_`);
+export function buildInjection(sources: InjectionSources, budgetBytes: number): string {
+  const parts: string[] = [instructions(sources.index.meta.fileCount)];
+  let used = bytes(parts[0]!);
+
+  const fit = (section: string): boolean => {
+    const cost = bytes(SEP + section);
+    if (used + cost > budgetBytes) return false;
+    parts.push(section);
+    used += cost;
+    return true;
+  };
+
+  if (sources.stalenessNote) fit(`_Note: ${sources.stalenessNote}_`);
 
   if (sources.cerebrumMd) {
-    const excerpt = cerebrumExcerpt(sources.cerebrumMd);
-    if (excerpt) parts.push(excerpt);
+    let excerpt = cerebrumExcerpt(sources.cerebrumMd);
+    // Trim whole lines from the end until it fits — same shape as the token cap
+    // inside cerebrumExcerpt, applied against the budget that actually binds.
+    while (excerpt && used + bytes(SEP + excerpt) > budgetBytes && excerpt.includes("\n")) {
+      excerpt = excerpt.slice(0, excerpt.lastIndexOf("\n"));
+    }
+    if (excerpt) fit(excerpt);
   }
 
   if (sources.adrFilenames.length) {
     const recent = [...sources.adrFilenames].sort().slice(-ADR_RECENT_COUNT);
-    parts.push(
-      [`## ADRs (${sources.adrPath}/ — settled decisions)`, ...recent.map((f) => `- ${f}`)].join("\n")
-    );
+    fit([`## ADRs (${sources.adrPath}/ — settled decisions)`, ...recent.map((f) => `- ${f}`)].join("\n"));
   }
 
-  const head = parts.join("\n\n");
-  const headTokens = estimateProseTokens(head);
-  const remaining = budgetTokens - headTokens;
-
-  const allLines = anatomyLines(sources.index);
-  if (allLines.length) {
-    const kept: string[] = [];
-    let used = estimateProseTokens("## File map (.crank/anatomy.md)\n");
-    let truncated = false;
-    for (const line of allLines) {
-      const cost = estimateProseTokens(line + "\n");
-      if (used + cost > remaining) {
-        truncated = true;
-        break;
-      }
-      kept.push(line);
-      used += cost;
-    }
-    if (kept.length) {
-      const fileCount = sources.index.meta.fileCount;
-      const keptFiles = kept.filter((l) => l.startsWith("  ")).length;
-      const tail = truncated
-        ? `\n…plus ${fileCount - keptFiles} more files — see .crank/anatomy.md`
-        : "";
-      parts.push(["## File map (.crank/anatomy.md)", ...kept].join("\n") + tail);
-    } else {
-      parts.push(`## File map\n${sources.index.meta.fileCount} files indexed — see .crank/anatomy.md`);
-    }
-  }
-
-  return parts.join("\n\n");
+  return parts.join(SEP);
 }
 
 /** Load ADR filenames (NNNN-*.md) from the configured directory. */

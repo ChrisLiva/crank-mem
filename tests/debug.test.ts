@@ -208,7 +208,7 @@ describe("debug logging (black-box)", () => {
 
     const run = runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("`a.ts`");
+    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("`.crank/anatomy.md` indexes 1 file(s)");
   });
 
   test("an oversized log is restarted rather than grown without bound", () => {

@@ -20,7 +20,14 @@ export interface CrankConfig {
   excludes: string[];
   max_files: number;
   max_file_size_bytes: number;
-  injection_budget_tokens: number;
+  /**
+   * Cap on the session-start injection, in bytes. Bytes, not tokens: Claude Code
+   * measures hook stdout and past ~10KiB silently replaces the whole injection
+   * with a 2KB preview, so a token budget cannot see the limit that binds. The
+   * default leaves headroom under that cliff for the JSON envelope and for
+   * newline escaping, which inflates the payload past the raw context length.
+   */
+  injection_budget_bytes: number;
   adr_path: string;
   git: "commit" | "ignore" | "exclude";
   runtime: "bun" | "node";
@@ -36,7 +43,7 @@ export function defaultConfig(): CrankConfig {
     excludes: [...DEFAULT_EXCLUDES],
     max_files: 500,
     max_file_size_bytes: MAX_FILE_SIZE_BYTES,
-    injection_budget_tokens: 5000,
+    injection_budget_bytes: 8192,
     adr_path: "docs/adr",
     git: "exclude",
     runtime: "bun",
@@ -45,6 +52,13 @@ export function defaultConfig(): CrankConfig {
     debug: false,
   };
 }
+
+/**
+ * Retired fields. Unknown keys are normally carried through so a user's own
+ * additions survive a round-trip; these are dropped instead, so a stale knob
+ * that no longer governs anything doesn't linger in every installed config.
+ */
+const LEGACY_KEYS = new Set(["injection_budget_tokens"]);
 
 const GIT_MODES: readonly CrankConfig["git"][] = ["commit", "ignore", "exclude"];
 const RUNTIMES: readonly CrankConfig["runtime"][] = ["bun", "node"];
@@ -81,7 +95,8 @@ export function loadConfig(crankDir: string): CrankConfig {
     }
   }
   for (const key of Object.keys(raw)) {
-    if (!(key in config)) (config as unknown as Record<string, unknown>)[key] = raw[key];
+    if (key in config || LEGACY_KEYS.has(key)) continue;
+    (config as unknown as Record<string, unknown>)[key] = raw[key];
   }
   return config;
 }

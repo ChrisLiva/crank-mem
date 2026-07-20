@@ -65,7 +65,7 @@ describe("upgrade", () => {
     const configPath = path.join(crankDir, "config.json");
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     config.vendored_version = "0.0.1";
-    config.injection_budget_tokens = 1234; // user-tuned value must survive
+    config.injection_budget_bytes = 1234; // user-tuned value must survive
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
     fs.appendFileSync(path.join(crankDir, "cerebrum.md"), "- custom memory\n");
     fs.writeFileSync(path.join(crankDir, "hooks/session-start.ts"), "// stale vendored copy\n");
@@ -76,7 +76,7 @@ describe("upgrade", () => {
     expect(run.stdout).toContain("upgraded vendored hooks 0.0.1");
 
     const after = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    expect(after.injection_budget_tokens).toBe(1234);
+    expect(after.injection_budget_bytes).toBe(1234);
     expect(after.vendored_version).not.toBe("0.0.1");
     expect(fs.readFileSync(path.join(crankDir, "hooks/session-start.ts"), "utf-8")).not.toContain("stale vendored copy");
     expect(fs.readFileSync(path.join(crankDir, "cerebrum.md"), "utf-8")).toContain("custom memory");
@@ -96,6 +96,6 @@ describe("vendored hooks run standalone", () => {
       encoding: "utf-8", timeout: 15_000,
     });
     expect(res.status).toBe(0);
-    expect(JSON.parse(res.stdout).hookSpecificOutput.additionalContext).toContain("`a.ts`");
+    expect(JSON.parse(res.stdout).hookSpecificOutput.additionalContext).toContain("`.crank/anatomy.md` indexes 1 file(s)");
   });
 });

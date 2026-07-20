@@ -19,7 +19,9 @@ describe("session-start hook (black-box)", () => {
     expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
     const ctx: string = out.hookSpecificOutput.additionalContext;
     expect(ctx).toContain("crank-mem (project memory)");
-    expect(ctx).toContain("`app.ts` — App entry.");
+    // The scan's result reaches the model as a count and a pointer, not a listing.
+    expect(ctx).toContain("`.crank/anatomy.md` indexes 2 file(s)");
+    expect(ctx).not.toContain("`app.ts`");
     // index + anatomy.md were written
     const index = JSON.parse(fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"));
     expect(index.meta.fileCount).toBe(2);
@@ -31,7 +33,7 @@ describe("session-start hook (black-box)", () => {
     const run = runHook(HOOK, JSON.stringify(codexSessionStart(root)));
     expect(run.status).toBe(0);
     const ctx = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    expect(ctx).toContain("`main.go`");
+    expect(ctx).toContain("`.crank/anatomy.md` indexes 1 file(s)");
   });
 
   test("cerebrum prefs are injected once present", () => {
@@ -76,7 +78,7 @@ describe("session-start hook (black-box)", () => {
     fs.writeFileSync(path.join(root, ".crank/anatomy-index.json"), "corrupt{{");
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("`a.ts`");
+    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("`.crank/anatomy.md` indexes 1 file(s)");
   });
 
   test("held lock: exit 0, injects from existing index with staleness note", () => {

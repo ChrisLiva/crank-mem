@@ -15,13 +15,21 @@ function dirWithConfig(json: string): string {
 describe("loadConfig sanitization", () => {
   test("wrong-typed fields fall back to defaults, valid fields kept", () => {
     const dir = dirWithConfig(JSON.stringify({
-      excludes: "oops", max_files: "many", injection_budget_tokens: 2000, adr_path: "adr",
+      excludes: "oops", max_files: "many", injection_budget_bytes: 2000, adr_path: "adr",
     }));
     const config = loadConfig(dir);
     expect(config.excludes).toEqual(DEFAULT_EXCLUDES);
     expect(config.max_files).toBe(defaultConfig().max_files);
-    expect(config.injection_budget_tokens).toBe(2000);
+    expect(config.injection_budget_bytes).toBe(2000);
     expect(config.adr_path).toBe("adr");
+  });
+
+  test("the retired token budget is dropped, not carried through", () => {
+    const dir = dirWithConfig(JSON.stringify({ injection_budget_tokens: 5000, my_own_key: "kept" }));
+    const config = loadConfig(dir) as unknown as Record<string, unknown>;
+    expect(config.injection_budget_tokens).toBeUndefined();
+    expect(config.injection_budget_bytes).toBe(defaultConfig().injection_budget_bytes);
+    expect(config.my_own_key).toBe("kept"); // unknown keys still survive
   });
 
   test("non-finite numbers rejected", () => {

@@ -32,6 +32,6 @@ export async function run(_args: string[]): Promise<number> {
   console.log(`  last scan:        ${age(index.meta.lastScanned)}${index.meta.partial ? " (partial)" : ""}`);
   console.log(`  index size:       ${(indexSize / 1024).toFixed(1)} KB`);
   console.log(`  runtime:          ${config.runtime} (vendored ${config.vendored_version})`);
-  console.log(`  injection budget: ${config.injection_budget_tokens} tokens`);
+  console.log(`  injection budget: ${config.injection_budget_bytes} bytes`);
   return 0;
 }
