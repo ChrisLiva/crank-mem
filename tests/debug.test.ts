@@ -123,6 +123,83 @@ describe("debug logging (black-box)", () => {
     expect(skipped.reason).toBe("below-threshold");
   });
 
+  // The one event that catches a matcher or payload mismatch (ADR 0003). It is
+  // only useful if a broken payload looks different from the everyday case of
+  // editing a file the index does not cover.
+  describe("post-write records why a write produced nothing to index", () => {
+    const noOps = (root: string) =>
+      readDebugLog(root)[0]!.events.find((e: any) => e.event === "no-write-ops");
+
+    test("a file outside the project root: outside-root, with the directory", () => {
+      const root = makeCrankProject({ "a.ts": "const a = 1;" });
+      const outside = path.join(os.tmpdir(), "elsewhere", "other.ts");
+      enableDebugConfig(root);
+
+      const run = runHook(POST_WRITE, JSON.stringify(claudePostWrite(root, outside)));
+      expect(run.status).toBe(0);
+      expect(noOps(root)).toMatchObject({
+        reason: "outside-root",
+        dir: path.join(os.tmpdir(), "elsewhere"),
+      });
+    });
+
+    test("a write under .crank/: crank-internal, and the index lock is never taken", () => {
+      const root = makeCrankProject({ "a.ts": "const a = 1;" });
+      enableDebugConfig(root);
+      // A held lock would stall any writer — reaching it at all is the failure.
+      holdLock(root);
+
+      const run = runHook(POST_WRITE, JSON.stringify(claudePostWrite(root, ".crank/cerebrum.md")));
+      expect(run.status).toBe(0);
+
+      const events = readDebugLog(root)[0]!.events;
+      expect(events.find((e: any) => e.event === "no-write-ops")).toMatchObject({
+        reason: "crank-internal",
+      });
+      expect(events.some((e: any) => e.event === "lock-timeout")).toBe(false);
+      expect(events.some((e: any) => e.event === "reindex")).toBe(false);
+    });
+
+    test("a payload with no file_path: no-path, not a benign reason", () => {
+      const root = makeCrankProject({ "a.ts": "const a = 1;" });
+      enableDebugConfig(root);
+      const payload = { ...claudePostWrite(root, "a.ts"), tool_input: { content: "..." } };
+
+      const run = runHook(POST_WRITE, JSON.stringify(payload));
+      expect(run.status).toBe(0);
+      expect(noOps(root)).toMatchObject({ tool: "Write", reason: "no-path" });
+    });
+
+    test("a tool the hook does not handle: unhandled-tool", () => {
+      const root = makeCrankProject({ "a.ts": "const a = 1;" });
+      enableDebugConfig(root);
+      const payload = { ...claudePostWrite(root, "a.ts"), tool_name: "Bash" };
+
+      const run = runHook(POST_WRITE, JSON.stringify(payload));
+      expect(run.status).toBe(0);
+      expect(noOps(root)).toMatchObject({ tool: "Bash", reason: "unhandled-tool" });
+    });
+
+    test("an outside-root directory reaches the log without any filename", () => {
+      const root = makeCrankProject({ "a.ts": "const a = 1;" });
+      const outside = path.join(os.tmpdir(), "elsewhere", ".env");
+      enableDebugConfig(root);
+      runHook(POST_WRITE, JSON.stringify(claudePostWrite(root, outside)));
+
+      expect(fs.readFileSync(path.join(root, ".crank/debug.log"), "utf-8")).not.toContain(".env");
+    });
+  });
+
+  test("a lock taken without contention is not logged as a wait", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    enableDebugConfig(root);
+    runHook(POST_WRITE, JSON.stringify(claudePostWrite(root, "a.ts")));
+
+    const events = readDebugLog(root)[0]!.events;
+    expect(events.find((e: any) => e.event === "reindex").committed).toBe(true);
+    expect(events.some((e: any) => e.event === "lock-waited")).toBe(false);
+  });
+
   test("an unwritable log never breaks the hook", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     enableDebugConfig(root);

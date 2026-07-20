@@ -23,7 +23,20 @@ interface WriteOp {
   deleted: boolean;
 }
 
-function toWriteOps(payload: Record<string, unknown>, root: string, cwd: string): WriteOp[] {
+// Why a write produced nothing to index. Only `no-path` and `unhandled-tool`
+// mean something is wrong (a payload or matcher mismatch — ADR 0003); the other
+// two are the everyday shape of editing outside the index. Collapsing them into
+// one bare "nothing happened" event, as this once did, makes the log useless for
+// the failure it exists to catch.
+type SkipReason = "no-path" | "unhandled-tool" | "outside-root" | "crank-internal";
+
+interface WriteScan {
+  ops: WriteOp[];
+  /** Set only when `ops` is empty: why, plus where when the answer is a place. */
+  skip: { reason: SkipReason; dir?: string } | null;
+}
+
+function toWriteOps(payload: Record<string, unknown>, root: string, cwd: string): WriteScan {
   const toolName = payload.tool_name;
   const toolInput = (payload.tool_input ?? {}) as Record<string, unknown>;
 
@@ -36,25 +49,41 @@ function toWriteOps(payload: Record<string, unknown>, root: string, cwd: string)
     return r.split(path.sep).join("/");
   };
 
+  // Writes under .crank/ (cerebrum.md above all) are never indexable, so
+  // resolving them costs an index lock to learn nothing. Answer here instead.
+  const internal = (r: string): boolean => r === CRANK_DIR || r.startsWith(`${CRANK_DIR}/`);
+
+  // A directory is enough to answer "why wasn't my file indexed?", and no
+  // filename means no sensitive basename can reach the log.
+  const dirOf = (p: string): string =>
+    path.dirname(path.isAbsolute(p) ? p : path.resolve(cwd, p));
+
   if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") {
     const p = toolInput.file_path;
-    if (typeof p !== "string") return [];
+    if (typeof p !== "string") return { ops: [], skip: { reason: "no-path" } };
     const r = rel(p);
-    return r ? [{ relPath: r, deleted: false }] : [];
+    if (!r) return { ops: [], skip: { reason: "outside-root", dir: dirOf(p) } };
+    if (internal(r)) return { ops: [], skip: { reason: "crank-internal", dir: path.dirname(r) } };
+    return { ops: [{ relPath: r, deleted: false }], skip: null };
   }
 
   if (toolName === "apply_patch") {
     const cmd = toolInput.command;
-    if (typeof cmd !== "string") return [];
+    if (typeof cmd !== "string") return { ops: [], skip: { reason: "no-path" } };
     const out: WriteOp[] = [];
+    let skip: WriteScan["skip"] = null;
     for (const op of parseApplyPatch(cmd)) {
       const r = rel(op.path);
-      if (r) out.push({ relPath: r, deleted: op.deleted });
+      // A patch can touch several files; one unindexable path among indexable
+      // ones is not a skip, so only the all-empty case reports a reason.
+      if (!r) skip ??= { reason: "outside-root", dir: dirOf(op.path) };
+      else if (internal(r)) skip ??= { reason: "crank-internal", dir: path.dirname(r) };
+      else out.push({ relPath: r, deleted: op.deleted });
     }
-    return out;
+    return { ops: out, skip: out.length ? null : (skip ?? { reason: "no-path" }) };
   }
 
-  return [];
+  return { ops: [], skip: { reason: "unhandled-tool" } };
 }
 
 async function main(): Promise<void> {
@@ -69,10 +98,14 @@ async function main(): Promise<void> {
   const config = loadConfig(crankDir);
   enableDebug(crankDir, config.debug);
 
-  const ops = toWriteOps(payload, root, cwd);
+  const { ops, skip } = toWriteOps(payload, root, cwd);
   if (ops.length === 0) {
-    // Also the shape a matcher/payload mismatch takes (ADR 0003) — worth a trace.
-    debugEvent("no-write-ops", { tool: typeof payload.tool_name === "string" ? payload.tool_name : null });
+    // `no-path`/`unhandled-tool` here is the shape a matcher or payload
+    // mismatch takes (ADR 0003); the other reasons are benign.
+    debugEvent("no-write-ops", {
+      tool: typeof payload.tool_name === "string" ? payload.tool_name : null,
+      ...skip,
+    });
     return;
   }
 

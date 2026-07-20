@@ -17,6 +17,8 @@ import { debugEvent } from "./debug.ts";
 
 const LOCK_FILE = "anatomy-index.lock";
 const STALE_MS = 10_000; // > hook timeout, so a killed hook's lock is reclaimable
+/** Floor of the acquire poll backoff, and so the shortest wait that means real contention. */
+const POLL_MIN_MS = 25;
 
 export const HOOK_LOCK_BUDGET_MS = 2_000;
 export const CLI_LOCK_BUDGET_MS = 5_000;
@@ -102,10 +104,13 @@ export function withLock<T>(crankDir: string, budgetMs: number, fn: () => T): T 
       debugEvent("lock-timeout", { waitedMs: Date.now() - started, budgetMs, steals });
       return null;
     }
-    sleep(25 + Math.floor(Math.random() * 25));
+    sleep(POLL_MIN_MS + Math.floor(Math.random() * POLL_MIN_MS));
   }
+  // A wait shorter than one poll interval means the lock was free and the clock
+  // merely ticked — logging those buried the real contention in noise. Below
+  // this, only a steal (which is always evidence) is worth a line.
   const waitedMs = Date.now() - started;
-  if (waitedMs > 0) debugEvent("lock-waited", { waitedMs, steals });
+  if (waitedMs >= POLL_MIN_MS || steals > 0) debugEvent("lock-waited", { waitedMs, steals });
 
   try {
     return fn();
