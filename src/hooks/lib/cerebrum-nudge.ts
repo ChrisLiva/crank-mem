@@ -20,8 +20,14 @@ export const NUDGE_STEP = 3;
 // the line count by packing paragraphs into a handful of very long bullets; it
 // measures with the same prose estimate injection.ts uses on this file, and
 // sits well above CEREBRUM_INJECT_TOKEN_CAP (only an excerpt is ever injected).
-export const PRUNE_LINE_LIMIT = 100;
-export const PRUNE_TOKEN_LIMIT = 2000;
+export const PRUNE_LINE_LIMIT = 150;
+export const PRUNE_TOKEN_LIMIT = 3000;
+
+// Prune targets sit well below the limits so a prune buys real headroom: an
+// agent told only "get under 150" trims to 149 and re-triggers a session later.
+// Naming a target under the trigger makes the deficit concrete and checkable.
+export const PRUNE_TARGET_LINES = 105;
+export const PRUNE_TARGET_TOKENS = 2100;
 
 const MARKER_FILE = "cerebrum-nudge.json";
 
@@ -127,19 +133,29 @@ export function cerebrumNudge(crankDir: string): string | null {
   }
   if (pruneDue) {
     // Name only the measure(s) actually over, so the nudge points at the shape
-    // of the bloat: many bullets, a few sprawling ones, or both.
+    // of the bloat: many bullets, a few sprawling ones, or both. Each names its
+    // target and the concrete deficit — "prune it" with no success criterion
+    // invites a two-line trim that leaves the file over the limit.
     const over: string[] = [];
     if (lineCount > PRUNE_LINE_LIMIT) {
-      over.push(`${lineCount} lines (guideline: ${PRUNE_LINE_LIMIT})`);
+      over.push(
+        `${lineCount} lines (limit: ${PRUNE_LINE_LIMIT}) — ` +
+          `cut at least ${lineCount - PRUNE_TARGET_LINES} to get under ~${PRUNE_TARGET_LINES}`,
+      );
     }
     if (tokenCount > PRUNE_TOKEN_LIMIT) {
-      over.push(`~${tokenCount} tokens (guideline: ${PRUNE_TOKEN_LIMIT})`);
+      over.push(
+        `~${tokenCount} tokens (limit: ${PRUNE_TOKEN_LIMIT}) — get under ~${PRUNE_TARGET_TOKENS}`,
+      );
     }
     parts.push(
-      `crank-mem: .crank/cerebrum.md has grown to ${over.join(" and ")}. ` +
-        `Prune it before moving on: delete entries that no longer apply, merge near-duplicates, and ` +
-        `tighten verbose entries into single targeted bullets — keep only what a fresh session would ` +
-        `actually need.`,
+      `crank-mem: .crank/cerebrum.md is at ${over.join(", and ")}. ` +
+        `Prune it now, by deleting whole entries rather than tightening wording: delete anything ` +
+        `that describes code or decisions that have since changed, restates what the codebase or ` +
+        `CLAUDE.md already makes obvious, or records a one-time fix that is finished. When unsure ` +
+        `whether an entry still earns its place, delete it — a fresh session can re-learn a cheap ` +
+        `fact, but every session pays to read a stale one. A small trim is not enough; this ` +
+        `reminder repeats until the file is back under the limit.`,
     );
   }
   return parts.join("\n");

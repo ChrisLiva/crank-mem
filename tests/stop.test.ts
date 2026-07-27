@@ -119,19 +119,21 @@ describe("stop hook (black-box)", () => {
   test("nudges to prune when cerebrum grows past the line guideline", () => {
     const root = makeCrankProject(THREE);
     seedIndex(root);
-    fs.writeFileSync(cerebrum(root), longCerebrum(105));
+    fs.writeFileSync(cerebrum(root), longCerebrum(160));
     setMtime(cerebrum(root), FRESH); // fresher than every file: record nudge not due
 
     const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
-    expect(ctx).toContain("105 lines");
+    expect(ctx).toContain("160 lines");
     expect(ctx).toContain("Prune");
+    // Names the concrete deficit to the target, not just the overage.
+    expect(ctx).toContain("cut at least 55");
     expect(ctx).not.toContain("file(s) have changed");
   });
 
   test("prune nudge fires once, then again only after cerebrum is edited", () => {
     const root = makeCrankProject(THREE);
     seedIndex(root);
-    fs.writeFileSync(cerebrum(root), longCerebrum(105));
+    fs.writeFileSync(cerebrum(root), longCerebrum(160));
     setMtime(cerebrum(root), FRESH);
     expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("Prune");
 
@@ -147,19 +149,20 @@ describe("stop hook (black-box)", () => {
   test("nudges to prune a short but token-heavy cerebrum", () => {
     const root = makeCrankProject(THREE);
     seedIndex(root);
-    fs.writeFileSync(cerebrum(root), fatCerebrum(9000)); // 10 lines, ~2250 tokens
+    fs.writeFileSync(cerebrum(root), fatCerebrum(13000)); // 10 lines, ~3280 tokens
     setMtime(cerebrum(root), FRESH); // fresher than every file: record nudge not due
 
     const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
     expect(ctx).toContain("tokens");
     expect(ctx).toContain("Prune");
+    expect(ctx).toContain("under ~2100"); // token target with headroom
     expect(ctx).not.toContain("lines"); // only the measure that tripped is named
   });
 
   test("stays quiet at the guideline exactly", () => {
     const root = makeCrankProject(THREE);
     seedIndex(root);
-    fs.writeFileSync(cerebrum(root), longCerebrum(100));
+    fs.writeFileSync(cerebrum(root), longCerebrum(150));
     setMtime(cerebrum(root), FRESH);
 
     const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
@@ -169,12 +172,12 @@ describe("stop hook (black-box)", () => {
   test("record and prune nudges combine when both are due", () => {
     const root = makeCrankProject(THREE);
     seedIndex(root);
-    fs.writeFileSync(cerebrum(root), longCerebrum(105));
+    fs.writeFileSync(cerebrum(root), longCerebrum(160));
     setMtime(cerebrum(root), STALE); // older than every file: record nudge also due
 
     const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
     expect(ctx).toContain("3 file");
-    expect(ctx).toContain("105 lines");
+    expect(ctx).toContain("160 lines");
   });
 
   test("stop_hook_active is respected (no stacking)", () => {
