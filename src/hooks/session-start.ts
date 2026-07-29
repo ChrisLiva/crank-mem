@@ -8,6 +8,7 @@ import { loadIndex, commitIndex } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { buildInjection, listAdrFilenames } from "./lib/injection.ts";
+import { trimJournal, recentJournalBullets } from "./lib/journal.ts";
 import { estimateProseTokens } from "./lib/tokens.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
 
@@ -58,10 +59,18 @@ async function main(): Promise<void> {
     cerebrumMd = fs.readFileSync(path.join(crankDir, "cerebrum.md"), "utf-8");
   } catch {}
 
+  // `compact` fires mid-turn, while the agent may be appending an entry, and
+  // the trim is an unlocked read-modify-write — so trim only on the sources
+  // that start a turn. Reading for the injection is always safe.
+  const source = typeof payload.source === "string" ? payload.source : null;
+  if (source !== "compact") trimJournal(crankDir);
+  const journalBullets = recentJournalBullets(crankDir);
+
   const adrFilenames = listAdrFilenames(root, config.adr_path);
   const context = buildInjection(
     {
       cerebrumMd,
+      journalBullets,
       adrFilenames,
       index,
       stalenessNote,
@@ -72,7 +81,7 @@ async function main(): Promise<void> {
 
   emitAdditionalContext("SessionStart", context);
   debugEvent("injected", {
-    source: typeof payload.source === "string" ? payload.source : null,
+    source,
     fileCount: index.meta.fileCount,
     injectionTokens: estimateProseTokens(context),
     // Bytes, not tokens, are what Claude Code caps: past ~10KiB of hook stdout
@@ -80,6 +89,7 @@ async function main(): Promise<void> {
     injectionBytes: Buffer.byteLength(context, "utf-8"),
     budgetBytes: config.injection_budget_bytes,
     hasCerebrum: cerebrumMd !== null,
+    journalBullets: journalBullets.length,
     adrCount: adrFilenames.length,
     stale: stalenessNote !== undefined,
   });

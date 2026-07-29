@@ -114,13 +114,15 @@ describe("debug logging (black-box)", () => {
     expect(record.error).toContain("throwing-hook.ts");
   });
 
-  test("stop records which branch suppressed the nudge", () => {
+  test("stop records which branch suppressed the nudge, per memory file", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     enableDebugConfig(root);
     runHook(STOP, JSON.stringify(claudeStop(root)));
 
     const skipped = readDebugLog(root)[0]!.events.find((e: any) => e.event === "nudge-skipped");
-    expect(skipped.reason).toBe("below-threshold");
+    // One file changed, no journal seeded: the two parts are suppressed for
+    // different reasons and the log has to say which is which.
+    expect(skipped.reason).toBe("cerebrum:below-threshold journal:absent");
   });
 
   // The one event that catches a matcher or payload mismatch (ADR 0003). It is

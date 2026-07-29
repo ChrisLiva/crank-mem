@@ -1,10 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { estimateProseTokens } from "./tokens.ts";
+import { JOURNAL_FILE } from "./journal.ts";
 import type { AnatomyIndex } from "./store.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
-// file map) → cerebrum excerpt → ADR filenames.
+// file map) → recent journal bullets → cerebrum excerpt → ADR filenames.
 //
 // The map itself is deliberately NOT injected. Measured over 67 sessions in a
 // real project, inlining it cost 74% of the injection — enough to push the hook
@@ -20,8 +21,9 @@ export const DO_NOT_REPEAT_RECENT_COUNT = 10;
 
 const instructions = (fileCount: number): string => `## crank-mem (project memory)
 
-This project keeps a token-annotated file index in \`.crank/anatomy.md\` and an
-agent-maintained memory in \`.crank/cerebrum.md\`.
+This project keeps a token-annotated file index in \`.crank/anatomy.md\`, an
+agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in
+\`.crank/${JOURNAL_FILE}\`.
 
 - \`.crank/anatomy.md\` indexes ${fileCount} file(s) with descriptions, token sizes, and
   per-symbol line ranges — check it before reading any file. Symbol sub-bullets
@@ -37,12 +39,20 @@ agent-maintained memory in \`.crank/cerebrum.md\`.
   - something bites you that would trip up a fresh session → Do-Not-Repeat.
   Respect existing entries; consolidate or prune a section when it grows
   bloated or stale.
+- Journal protocol: \`.crank/${JOURNAL_FILE}\` is the episodic counterpart —
+  where you left off, not what is true. Append one dated bullet
+  (\`- YYYY-MM-DD: what you did; where you left off; next step\`) at the end of
+  a chunk of work; newest last, oldest entries trimmed automatically.
+- Write cerebrum entries and journal bullets telegram-style: drop articles and
+  hedges; keep paths, identifiers, and error strings verbatim.
 - ADR protocol: decisions that are hard to reverse, surprising, AND carry a
   real trade-off get an ADR (\`NNNN-slug.md\`, Pocock style) in the ADR
   directory. Existing ADRs are settled — don't relitigate them.`;
 
 export interface InjectionSources {
   cerebrumMd: string | null;
+  /** Most recent journal bullets, oldest first (see lib/journal.ts). */
+  journalBullets?: string[];
   adrFilenames: string[];
   index: AnatomyIndex;
   /** Appended verbatim near the top when a refresh was skipped/partial. */
@@ -112,6 +122,13 @@ export function buildInjection(sources: InjectionSources, budgetBytes: number): 
   };
 
   if (sources.stalenessNote) fit(`_Note: ${sources.stalenessNote}_`);
+
+  // Where the last session left off, before the semantic memory: it orients,
+  // and a fixed count of length-capped bullets (see journal.ts) keeps it from
+  // crowding out the cerebrum excerpt behind it.
+  if (sources.journalBullets?.length) {
+    fit([`## Journal (recent — .crank/${JOURNAL_FILE})`, ...sources.journalBullets].join("\n"));
+  }
 
   if (sources.cerebrumMd) {
     let excerpt = cerebrumExcerpt(sources.cerebrumMd);

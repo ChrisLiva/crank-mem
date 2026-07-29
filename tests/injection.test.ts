@@ -95,6 +95,23 @@ describe("buildInjection", () => {
     expect(out).not.toContain("(fn, L");
   });
 
+  test("instructions carry the journal protocol and the telegraphic style rule", () => {
+    const out = buildInjection(sources, 8192);
+    expect(out).toContain("Journal protocol");
+    expect(out).toContain("- YYYY-MM-DD: what you did; where you left off; next step");
+    expect(out).toContain("telegram-style");
+  });
+
+  test("journal sits between the staleness note and the cerebrum", () => {
+    const out = buildInjection(
+      { ...sources, stalenessNote: "index refresh skipped (lock busy)", journalBullets: ["- 2026-07-29: wired the trim"] },
+      8192
+    );
+    expect(out.indexOf("refresh skipped")).toBeLessThan(out.indexOf("## Journal"));
+    expect(out.indexOf("## Journal")).toBeLessThan(out.indexOf("## Cerebrum"));
+    expect(out).toContain("- 2026-07-29: wired the trim");
+  });
+
   test("staleness note is included when set", () => {
     const out = buildInjection({ ...sources, stalenessNote: "index refresh skipped (lock busy)" }, 8192);
     expect(out).toContain("index refresh skipped");

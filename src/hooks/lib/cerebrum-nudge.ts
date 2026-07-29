@@ -2,10 +2,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadIndex } from "./store.ts";
 import { estimateProseTokens } from "./tokens.ts";
+import { JOURNAL_FILE } from "./journal.ts";
 import { debugEvent } from "./debug.ts";
 
-// Shared cerebrum-nudge logic: decide whether to remind the agent to record
-// what it learned, and debounce so the reminder doesn't repeat every turn/write.
+// Shared memory-nudge logic: decide whether to remind the agent to record what
+// it learned (cerebrum), prune an overgrown cerebrum, or log where it left off
+// (journal), and debounce so the reminder doesn't repeat every turn/write.
 // Delivered at turn end on Claude (stop.ts) and after a write on Codex
 // (post-write.ts), whichever channel reaches that agent's model.
 
@@ -36,6 +38,9 @@ interface NudgeMarker {
   nudgedAtChanged: number;
   /** Cerebrum mtime at the last prune nudge — re-nudge only after it's edited again. */
   pruneNudgedMtimeMs?: number;
+  /** Journal debounce, same shape as the record nudge but keyed on journal.md. */
+  journalMtimeMs?: number;
+  journalNudgedAtChanged?: number;
 }
 
 function readMarker(crankDir: string): NudgeMarker | null {
@@ -60,15 +65,49 @@ function writeMarker(crankDir: string, marker: NudgeMarker): void {
   }
 }
 
+interface CerebrumStats {
+  mtimeMs: number;
+  lineCount: number;
+  tokenCount: number;
+}
+
+function readCerebrum(crankDir: string): CerebrumStats | null {
+  try {
+    const file = path.join(crankDir, "cerebrum.md");
+    const mtimeMs = fs.statSync(file).mtimeMs;
+    const text = fs.readFileSync(file, "utf-8");
+    return { mtimeMs, lineCount: text.split("\n").length, tokenCount: estimateProseTokens(text) };
+  } catch {
+    return null;
+  }
+}
+
+function mtimeOf(file: string): number | null {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * A reminder to record this session's learnings and/or prune an overgrown
- * cerebrum, or null when nothing is due.
+ * A reminder to record this session's learnings, log where it left off, and/or
+ * prune an overgrown cerebrum, or null when nothing is due.
+ *
+ * The three parts are independent: each is skipped when its file is absent
+ * (a pre-journal install has no journal.md), and each has its own staleness
+ * measure, so a session that keeps cerebrum current but never journals is
+ * nudged about the journal alone.
  *
  * Record nudge: fires once per cerebrum version, then again only after
  * NUDGE_STEP more source files change. Updating cerebrum bumps its mtime —
  * resetting both the changed count (its mtime jumps ahead of the files) and the
  * debounce baseline — so a fresh recording quiets the nudge. cerebrum.md lives
  * under .crank/ and is never indexed, so editing it can't inflate the count.
+ *
+ * Journal nudge: the same rule keyed on journal.md's mtime — appending an entry
+ * quiets it. The mechanical trim in journal.ts restores the mtime it found, so
+ * only a real entry counts.
  *
  * Prune nudge: fires when cerebrum exceeds PRUNE_LINE_LIMIT lines or
  * PRUNE_TOKEN_LIMIT estimated tokens, once per cerebrum version — silent until
@@ -78,48 +117,78 @@ function writeMarker(crankDir: string, marker: NudgeMarker): void {
  * Writes the marker as a side effect when it nudges; never throws.
  */
 export function cerebrumNudge(crankDir: string): string | null {
-  let cerebrumMtimeMs: number;
-  let lineCount: number;
-  let tokenCount: number;
-  try {
-    const cerebrumPath = path.join(crankDir, "cerebrum.md");
-    cerebrumMtimeMs = fs.statSync(cerebrumPath).mtimeMs;
-    const text = fs.readFileSync(cerebrumPath, "utf-8");
-    lineCount = text.split("\n").length;
-    tokenCount = estimateProseTokens(text);
-  } catch {
-    debugEvent("nudge-skipped", { reason: "no-cerebrum" });
-    return null; // no cerebrum — nothing to nudge about
+  const cerebrum = readCerebrum(crankDir);
+  const journalMtimeMs = mtimeOf(path.join(crankDir, JOURNAL_FILE));
+  if (!cerebrum && journalMtimeMs === null) {
+    debugEvent("nudge-skipped", { reason: "no-memory-files" });
+    return null; // neither memory file exists — nothing to nudge about
   }
 
   const index = loadIndex(crankDir);
-  const changed = Object.values(index.files).filter((e) => e.mtimeMs > cerebrumMtimeMs).length;
+  const changedSince = (mtimeMs: number): number =>
+    Object.values(index.files).filter((e) => e.mtimeMs > mtimeMs).length;
 
   const marker = readMarker(crankDir);
-  const baseline = marker && marker.cerebrumMtimeMs === cerebrumMtimeMs ? marker.nudgedAtChanged : 0;
-  const recordDue = changed >= NUDGE_STEP && changed >= baseline + NUDGE_STEP;
-  const oversized = lineCount > PRUNE_LINE_LIMIT || tokenCount > PRUNE_TOKEN_LIMIT;
-  const pruneDue = oversized && marker?.pruneNudgedMtimeMs !== cerebrumMtimeMs;
 
-  if (!recordDue && !pruneDue) {
+  const changed = cerebrum ? changedSince(cerebrum.mtimeMs) : 0;
+  const baseline =
+    marker && cerebrum && marker.cerebrumMtimeMs === cerebrum.mtimeMs ? marker.nudgedAtChanged : 0;
+  const recordDue = !!cerebrum && changed >= NUDGE_STEP && changed >= baseline + NUDGE_STEP;
+
+  const oversized =
+    !!cerebrum && (cerebrum.lineCount > PRUNE_LINE_LIMIT || cerebrum.tokenCount > PRUNE_TOKEN_LIMIT);
+  const pruneDue = oversized && marker?.pruneNudgedMtimeMs !== cerebrum?.mtimeMs;
+
+  const journalChanged = journalMtimeMs === null ? 0 : changedSince(journalMtimeMs);
+  const journalBaseline =
+    marker && marker.journalMtimeMs === journalMtimeMs ? (marker.journalNudgedAtChanged ?? 0) : 0;
+  const journalDue =
+    journalMtimeMs !== null &&
+    journalChanged >= NUDGE_STEP &&
+    journalChanged >= journalBaseline + NUDGE_STEP;
+
+  if (!recordDue && !pruneDue && !journalDue) {
     debugEvent("nudge-skipped", {
-      reason: changed < NUDGE_STEP ? "below-threshold" : "debounced",
+      // Per part: with one measure below the threshold and the other merely
+      // debounced, a single verdict says nothing about which is which.
+      reason: [
+        cerebrum ? `cerebrum:${changed < NUDGE_STEP ? "below-threshold" : "debounced"}` : "cerebrum:absent",
+        journalMtimeMs === null
+          ? "journal:absent"
+          : `journal:${journalChanged < NUDGE_STEP ? "below-threshold" : "debounced"}`,
+      ].join(" "),
       changed,
       baseline,
+      journalChanged,
+      journalBaseline,
       step: NUDGE_STEP,
-      lineCount,
-      tokenCount,
+      lineCount: cerebrum?.lineCount ?? null,
+      tokenCount: cerebrum?.tokenCount ?? null,
     });
     return null;
   }
 
-  debugEvent("nudge-emitted", { changed, baseline, lineCount, tokenCount, recordDue, pruneDue });
+  debugEvent("nudge-emitted", {
+    changed,
+    baseline,
+    journalChanged,
+    journalBaseline,
+    lineCount: cerebrum?.lineCount ?? null,
+    tokenCount: cerebrum?.tokenCount ?? null,
+    recordDue,
+    pruneDue,
+    journalDue,
+  });
   writeMarker(crankDir, {
-    cerebrumMtimeMs,
+    // Absent cerebrum: 0 keeps the marker well-formed (readMarker requires a
+    // number) and never equals a real mtime, so nothing is wrongly debounced.
+    cerebrumMtimeMs: cerebrum?.mtimeMs ?? 0,
     nudgedAtChanged: recordDue ? changed : baseline,
     // A stale value (from an older cerebrum version) is inert — the check is
     // equality with the current mtime — so carrying it forward is harmless.
-    pruneNudgedMtimeMs: pruneDue ? cerebrumMtimeMs : marker?.pruneNudgedMtimeMs,
+    pruneNudgedMtimeMs: pruneDue ? cerebrum?.mtimeMs : marker?.pruneNudgedMtimeMs,
+    journalMtimeMs: journalMtimeMs ?? marker?.journalMtimeMs,
+    journalNudgedAtChanged: journalDue ? journalChanged : journalBaseline,
   });
 
   const parts: string[] = [];
@@ -131,21 +200,28 @@ export function cerebrumNudge(crankDir: string): string | null {
         `on — a slightly redundant entry beats a lost one.`,
     );
   }
-  if (pruneDue) {
+  if (journalDue) {
+    parts.push(
+      `crank-mem: ${journalChanged} file(s) changed since the last .crank/journal.md entry. ` +
+        `Append one dated bullet — \`- YYYY-MM-DD: what you did; where you left off; next step\` — ` +
+        `telegram-style, so the next session picks up mid-thread instead of re-deriving where it was.`,
+    );
+  }
+  if (pruneDue && cerebrum) {
     // Name only the measure(s) actually over, so the nudge points at the shape
     // of the bloat: many bullets, a few sprawling ones, or both. Each names its
     // target and the concrete deficit — "prune it" with no success criterion
     // invites a two-line trim that leaves the file over the limit.
     const over: string[] = [];
-    if (lineCount > PRUNE_LINE_LIMIT) {
+    if (cerebrum.lineCount > PRUNE_LINE_LIMIT) {
       over.push(
-        `${lineCount} lines (limit: ${PRUNE_LINE_LIMIT}) — ` +
-          `cut at least ${lineCount - PRUNE_TARGET_LINES} to get under ~${PRUNE_TARGET_LINES}`,
+        `${cerebrum.lineCount} lines (limit: ${PRUNE_LINE_LIMIT}) — ` +
+          `cut at least ${cerebrum.lineCount - PRUNE_TARGET_LINES} to get under ~${PRUNE_TARGET_LINES}`,
       );
     }
-    if (tokenCount > PRUNE_TOKEN_LIMIT) {
+    if (cerebrum.tokenCount > PRUNE_TOKEN_LIMIT) {
       over.push(
-        `~${tokenCount} tokens (limit: ${PRUNE_TOKEN_LIMIT}) — get under ~${PRUNE_TARGET_TOKENS}`,
+        `~${cerebrum.tokenCount} tokens (limit: ${PRUNE_TOKEN_LIMIT}) — get under ~${PRUNE_TARGET_TOKENS}`,
       );
     }
     parts.push(

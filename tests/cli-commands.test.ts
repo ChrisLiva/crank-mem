@@ -55,7 +55,7 @@ describe("upgrade", () => {
     const root = initedProject();
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("nothing to do");
+    expect(run.stdout).toContain("nothing else to do");
   });
 
   test("stale stamp: re-vendors, updates stamp, preserves config/cerebrum/index", () => {
@@ -68,6 +68,7 @@ describe("upgrade", () => {
     config.injection_budget_bytes = 1234; // user-tuned value must survive
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
     fs.appendFileSync(path.join(crankDir, "cerebrum.md"), "- custom memory\n");
+    fs.appendFileSync(path.join(crankDir, "journal.md"), "- 2026-07-29: shipped the thing\n");
     fs.writeFileSync(path.join(crankDir, "hooks/session-start.ts"), "// stale vendored copy\n");
     const indexBefore = fs.readFileSync(path.join(crankDir, "anatomy-index.json"), "utf-8");
 
@@ -80,11 +81,37 @@ describe("upgrade", () => {
     expect(after.vendored_version).not.toBe("0.0.1");
     expect(fs.readFileSync(path.join(crankDir, "hooks/session-start.ts"), "utf-8")).not.toContain("stale vendored copy");
     expect(fs.readFileSync(path.join(crankDir, "cerebrum.md"), "utf-8")).toContain("custom memory");
+    expect(fs.readFileSync(path.join(crankDir, "journal.md"), "utf-8")).toContain("shipped the thing");
     expect(fs.readFileSync(path.join(crankDir, "anatomy-index.json"), "utf-8")).toBe(indexBefore);
     // old hooks were backed up
     const backups = fs.readdirSync(path.join(crankDir, "backups")).sort();
     const latest = backups[backups.length - 1]!;
     expect(fs.readFileSync(path.join(crankDir, "backups", latest, "hooks/session-start.ts"), "utf-8")).toContain("stale vendored copy");
+  });
+
+  // The version stamp gates re-vendoring, not the journal: a deleted journal
+  // at the current version would otherwise never come back.
+  test("reseeds a deleted journal.md even when the version is current", () => {
+    const root = initedProject();
+    fs.rmSync(path.join(root, ".crank/journal.md"));
+
+    const run = cli(root, "upgrade");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("nothing else to do");
+    expect(fs.readFileSync(path.join(root, ".crank/journal.md"), "utf-8")).toContain("# Journal");
+  });
+
+  test("seeds journal.md on an install that predates it", () => {
+    const root = initedProject();
+    const crankDir = path.join(root, ".crank");
+    const configPath = path.join(crankDir, "config.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    config.vendored_version = "0.0.1";
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    fs.rmSync(path.join(crankDir, "journal.md")); // pre-journal install
+
+    expect(cli(root, "upgrade").status).toBe(0);
+    expect(fs.readFileSync(path.join(crankDir, "journal.md"), "utf-8")).toContain("# Journal");
   });
 });
 

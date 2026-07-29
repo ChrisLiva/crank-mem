@@ -137,8 +137,9 @@ export async function run(args: string[]): Promise<number> {
       "backups/\nanatomy-index.lock\ncerebrum-nudge.json\ndebug.log\n*.tmp\n"
     );
 
-    // ── Seed cerebrum + first scan ─────────────────────────────────────────
+    // ── Seed cerebrum + journal + first scan ───────────────────────────────
     fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, "cerebrum.md"));
+    fs.copyFileSync(templatePath("journal.md"), path.join(crankDir, "journal.md"));
     scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
   } catch (err) {
     console.error(`crank-mem: ${err instanceof Error ? err.message : String(err)}`);

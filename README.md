@@ -1,9 +1,9 @@
 # crank-mem
 
 Zero-runtime-dependency project memory for coding agents (Claude Code +
-Codex). Maintains a token-annotated file anatomy index and an agent-written
-cerebrum, injected at session start; re-indexes on writes. Advisory-only —
-hooks always exit 0.
+Codex). Maintains a token-annotated file anatomy index, an agent-written
+cerebrum, and a session journal, injected at session start; re-indexes on
+writes. Advisory-only — hooks always exit 0.
 
 ## Install
 
@@ -29,7 +29,8 @@ Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 ## Layout under `.crank/`
 
 `anatomy-index.json` (data), `anatomy.md` (human/agent view), `cerebrum.md`
-(agent-written memory), `config.json`, `hooks/` (vendored), `backups/`.
+(agent-written semantic memory), `journal.md` (agent-written session log, last
+20 bullets kept), `config.json`, `hooks/` (vendored), `backups/`.
 
 ## Debugging
 
@@ -52,8 +53,8 @@ Either writes `.crank/debug.log` — one record per hook run:
 `ok:false` carries the full stack. Useful events: `refresh` (changed/added/
 removed/partial counts), `injected` (tokens vs. budget), `reindex`
 (`committed:false` means the write did not land), `lock-timeout` (contention —
-the only way to tell it apart from "nothing to write"), `nudge-skipped` (which
-of the four branches suppressed a cerebrum nudge).
+the only way to tell it apart from "nothing to write"), `nudge-skipped` (why no
+cerebrum/journal nudge fired).
 
 `CRANK_DEBUG=0` forces it off. The log is gitignored, capped at 1 MB then
 restarted, never contains sensitive paths, and can never fail a session — a

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { cliVersion } from "./version.ts";
-import { vendorHooks } from "./vendor.ts";
+import { vendorHooks, templatePath } from "./vendor.ts";
 import { openProject } from "./project.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import { trustEntriesFromFile, writeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
@@ -17,8 +17,26 @@ export async function run(_args: string[]): Promise<number> {
   const { root, crankDir, config } = project;
   const current = cliVersion();
 
+  // Ahead of the version check: installs predating the journal have no
+  // journal.md, and neither does one whose journal was deleted at the current
+  // version — both leave the trim, injection, and nudge with nothing to work
+  // with, and only this reseeds them. Never clobbers: an existing journal is
+  // the session log itself.
+  // Seeding runs before the backups below, so a failure here must not abort an
+  // upgrade that would otherwise succeed — an absent journal costs a nudge, not
+  // an install.
+  const journalPath = path.join(crankDir, "journal.md");
+  if (!fs.existsSync(journalPath)) {
+    try {
+      fs.copyFileSync(templatePath("journal.md"), journalPath);
+      console.log(`crank-mem: seeded .crank/journal.md`);
+    } catch (err) {
+      console.error(`crank-mem: could not seed .crank/journal.md (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
+
   if (config.vendored_version === current) {
-    console.log(`crank-mem: already at ${current} — nothing to do.`);
+    console.log(`crank-mem: already at ${current} — nothing else to do.`);
     return 0;
   }
 
