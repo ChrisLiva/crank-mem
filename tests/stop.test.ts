@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeCrankProject, runHook } from "./helpers.ts";
 import { claudeSessionStart, claudeStop } from "./fixtures/payloads.ts";
+import { NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
 
 const HOOK = "src/hooks/stop.ts";
 
@@ -42,7 +43,13 @@ function nudge(stdout: string): string | undefined {
   }
 }
 
-const THREE = { "a.ts": "const a = 1;", "b.ts": "const b = 2;", "c.ts": "const c = 3;" };
+/** N source files named f<offset>.ts onward — sized to the nudge threshold. */
+function fileSet(n: number, offset = 0): Record<string, string> {
+  return Object.fromEntries(
+    Array.from({ length: n }, (_, i) => [`f${offset + i}.ts`, `const x${offset + i} = 1;`])
+  );
+}
+const ENOUGH = fileSet(NUDGE_STEP);
 // Any epoch well before the files were written: every indexed file is "changed".
 const STALE = 1000;
 // Any time after the files were written: cerebrum is fresher than all of them.
@@ -50,7 +57,7 @@ const FRESH = Date.now() + 1_000_000_000;
 
 describe("stop hook (black-box)", () => {
   test("nudges when enough files changed since cerebrum was updated", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), STALE);
 
@@ -59,12 +66,12 @@ describe("stop hook (black-box)", () => {
     const ctx = nudge(run.stdout);
     expect(ctx).toContain("crank-mem");
     expect(ctx).toContain("cerebrum");
-    expect(ctx).toContain("3 file");
+    expect(ctx).toContain(`${NUDGE_STEP} file`);
     expect(fs.existsSync(markerPath(root))).toBe(true);
   });
 
   test("stays quiet when cerebrum is fresher than every file", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), FRESH);
 
@@ -85,7 +92,7 @@ describe("stop hook (black-box)", () => {
   });
 
   test("debounces: a second stop with no new changes is silent", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), STALE);
 
@@ -96,24 +103,24 @@ describe("stop hook (black-box)", () => {
   });
 
   test("re-nudges once NUDGE_STEP more files have changed", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), STALE);
     expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("crank-mem");
 
-    // Three more files change; cerebrum is still untouched.
-    for (const f of ["d.ts", "e.ts", "f.ts"]) {
-      fs.writeFileSync(path.join(root, f), "export const x = 1;");
+    // NUDGE_STEP more files change; cerebrum is still untouched.
+    for (const [f, src] of Object.entries(fileSet(NUDGE_STEP, NUDGE_STEP))) {
+      fs.writeFileSync(path.join(root, f), src);
     }
     seedIndex(root); // re-index picks up the new files
     setMtime(cerebrum(root), STALE); // re-assert: session-start never edits cerebrum, but be explicit
 
     const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
-    expect(ctx).toContain("6 file");
+    expect(ctx).toContain(`${NUDGE_STEP * 2} file`);
   });
 
   test("updating cerebrum resets the nudge", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), STALE);
     expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("crank-mem");
@@ -125,7 +132,7 @@ describe("stop hook (black-box)", () => {
   });
 
   test("nudges to prune when cerebrum grows past the line guideline", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     fs.writeFileSync(cerebrum(root), longCerebrum(160));
     setMtime(cerebrum(root), FRESH); // fresher than every file: record nudge not due
@@ -139,7 +146,7 @@ describe("stop hook (black-box)", () => {
   });
 
   test("prune nudge fires once, then again only after cerebrum is edited", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     fs.writeFileSync(cerebrum(root), longCerebrum(160));
     setMtime(cerebrum(root), FRESH);
@@ -155,7 +162,7 @@ describe("stop hook (black-box)", () => {
   });
 
   test("nudges to prune a short but token-heavy cerebrum", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     fs.writeFileSync(cerebrum(root), fatCerebrum(13000)); // 10 lines, ~3280 tokens
     setMtime(cerebrum(root), FRESH); // fresher than every file: record nudge not due
@@ -168,7 +175,7 @@ describe("stop hook (black-box)", () => {
   });
 
   test("stays quiet at the guideline exactly", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     fs.writeFileSync(cerebrum(root), longCerebrum(150));
     setMtime(cerebrum(root), FRESH);
@@ -178,18 +185,18 @@ describe("stop hook (black-box)", () => {
   });
 
   test("record and prune nudges combine when both are due", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     fs.writeFileSync(cerebrum(root), longCerebrum(160));
     setMtime(cerebrum(root), STALE); // older than every file: record nudge also due
 
     const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
-    expect(ctx).toContain("3 file");
+    expect(ctx).toContain(`${NUDGE_STEP} file`);
     expect(ctx).toContain("160 lines");
   });
 
   test("stop_hook_active is respected (no stacking)", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), STALE);
 
@@ -199,7 +206,7 @@ describe("stop hook (black-box)", () => {
   });
 
   test("no cerebrum.md: exit 0, silent", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     fs.rmSync(cerebrum(root));
 
@@ -213,7 +220,7 @@ describe("stop hook (black-box)", () => {
   });
 
   test("no cerebrum.md but a stale journal: journal part still fires", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     fs.rmSync(cerebrum(root));
     writeJournal(root, STALE);
@@ -230,7 +237,7 @@ describe("stop hook (black-box)", () => {
 
 describe("journal nudge (black-box)", () => {
   test("fires when enough files changed since the last journal entry", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), FRESH); // record/prune not due — journal part alone
     writeJournal(root, STALE);
@@ -238,13 +245,13 @@ describe("journal nudge (black-box)", () => {
     const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
     expect(run.status).toBe(0);
     const ctx = nudge(run.stdout);
-    expect(ctx).toContain("3 file(s) changed since the last .crank/journal.md entry");
+    expect(ctx).toContain(`${NUDGE_STEP} file(s) changed since the last .crank/journal.md entry`);
     expect(ctx).toContain("YYYY-MM-DD");
     expect(ctx).not.toContain("cerebrum");
   });
 
   test("stays quiet when the journal is fresher than every file", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), FRESH);
     writeJournal(root, FRESH);
@@ -253,26 +260,26 @@ describe("journal nudge (black-box)", () => {
   });
 
   test("debounces until NUDGE_STEP more files change", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), FRESH);
     writeJournal(root, STALE);
-    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("3 file(s) changed");
+    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain(`${NUDGE_STEP} file(s) changed`);
 
     // No new changes: silent.
     expect(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout).toBe("");
 
-    // Three more files, journal still untouched: re-nudge with the new count.
-    for (const f of ["d.ts", "e.ts", "f.ts"]) {
-      fs.writeFileSync(path.join(root, f), "export const x = 1;");
+    // NUDGE_STEP more files, journal still untouched: re-nudge with the new count.
+    for (const [f, src] of Object.entries(fileSet(NUDGE_STEP, NUDGE_STEP))) {
+      fs.writeFileSync(path.join(root, f), src);
     }
     seedIndex(root);
     setMtime(cerebrum(root), FRESH);
-    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("6 file(s) changed");
+    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain(`${NUDGE_STEP * 2} file(s) changed`);
   });
 
   test("appending an entry quiets it", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), FRESH);
     writeJournal(root, STALE);
@@ -286,7 +293,7 @@ describe("journal nudge (black-box)", () => {
   // The two measures are deliberately independent: recording a learning is not
   // logging where you left off.
   test("a fresh cerebrum does not quiet a stale journal", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), FRESH);
     writeJournal(root, STALE);
@@ -297,7 +304,7 @@ describe("journal nudge (black-box)", () => {
   });
 
   test("combines with the record and prune parts in one message", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     fs.writeFileSync(cerebrum(root), longCerebrum(160));
     setMtime(cerebrum(root), STALE);
@@ -313,7 +320,7 @@ describe("journal nudge (black-box)", () => {
   // sub-millisecond mtimes, and the debounce compares them for equality — so a
   // lossy restore would re-arm the nudge every time the file is trimmed.
   test("a session-start trim does not re-arm the debounce", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), FRESH);
     fs.writeFileSync(
@@ -332,7 +339,7 @@ describe("journal nudge (black-box)", () => {
   });
 
   test("no journal.md (pre-upgrade install): silent about the journal", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), STALE); // record due, journal absent
 

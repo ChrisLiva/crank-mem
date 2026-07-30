@@ -14,7 +14,7 @@ import { debugEvent } from "./debug.ts";
 // Re-nudge only after this many *more* files change since the last nudge, so a
 // session that keeps working without updating cerebrum is reminded in batches
 // rather than on every turn or write. Also the minimum to nudge at all.
-export const NUDGE_STEP = 3;
+export const NUDGE_STEP = 10;
 
 // Past either of these, cerebrum has likely accumulated stale or bloated
 // entries and the agent is nudged to prune it. Soft guidelines, not caps —

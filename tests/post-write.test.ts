@@ -5,6 +5,7 @@ import { makeCrankProject, runHook } from "./helpers.ts";
 import { claudePostWrite, claudePostEdit, codexApplyPatch, claudeSessionStart } from "./fixtures/payloads.ts";
 import { parseApplyPatch } from "../src/hooks/lib/apply-patch.ts";
 import { loadIndex } from "../src/hooks/lib/store.ts";
+import { NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
 
 const HOOK = "src/hooks/post-write.ts";
 
@@ -160,7 +161,14 @@ describe("post-write hook (black-box)", () => {
 describe("post-write cerebrum nudge (Codex only)", () => {
   const STALE = 1000; // epoch before the files existed → every file is "changed"
   const FRESH = Date.now() + 1_000_000_000;
-  const THREE = { "a.ts": "const a = 1;", "b.ts": "const b = 2;", "c.ts": "const c = 3;" };
+  // NUDGE_STEP files, so a stale cerebrum is over the threshold. a.ts is the
+  // one UPDATE_A patches.
+  const ENOUGH = {
+    "a.ts": "const a = 1;",
+    ...Object.fromEntries(
+      Array.from({ length: NUDGE_STEP - 1 }, (_, i) => [`f${i}.ts`, `const x${i} = 1;`])
+    ),
+  };
   const setMtime = (p: string, ms: number) => fs.utimesSync(p, new Date(ms), new Date(ms));
   const cerebrum = (root: string) => path.join(root, ".crank/cerebrum.md");
   const nudge = (stdout: string): string | undefined => {
@@ -173,7 +181,7 @@ describe("post-write cerebrum nudge (Codex only)", () => {
   const UPDATE_A = "*** Begin Patch\n*** Update File: a.ts\n+x\n*** End Patch";
 
   test("apply_patch nudges when files changed since cerebrum was updated", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), STALE);
     const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
@@ -184,7 +192,7 @@ describe("post-write cerebrum nudge (Codex only)", () => {
   });
 
   test("Claude Edit never nudges here (Stop hook owns Claude's nudge)", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), STALE); // stale, but still silent for Claude
     const run = runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "a.ts"))));
@@ -193,7 +201,7 @@ describe("post-write cerebrum nudge (Codex only)", () => {
   });
 
   test("apply_patch stays silent when cerebrum is fresher than every file", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), FRESH);
     const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
@@ -202,7 +210,7 @@ describe("post-write cerebrum nudge (Codex only)", () => {
   });
 
   test("apply_patch debounces: a second write with no new changes is silent", () => {
-    const root = makeCrankProject(THREE);
+    const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     setMtime(cerebrum(root), STALE);
     expect(nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout)).toContain("crank-mem");
