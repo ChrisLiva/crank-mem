@@ -6,7 +6,9 @@ import {
   removeCrankHooksFromFile, removeIgnoreLines, removeCodexFeatures,
   isLegacyHookCommand, LEGACY_IGNORE_BLOCK,
 } from "./settings.ts";
-import { trustEntriesFromFile, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
+import {
+  trustEntriesFromFile, staleTrustKeysFromFile, removeTrustEntries, userCodexConfigPath,
+} from "./codex-trust.ts";
 import { CRANK_DIR } from "../hooks/lib/config.ts";
 import { openProject } from "./project.ts";
 import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
@@ -40,9 +42,13 @@ export async function run(args: string[]): Promise<number> {
   const codexHooksJson = path.join(root, ".codex", "hooks.json");
 
   // Trust entries first: keys come from hooks.json as it stands, before we
-  // strip our groups out of it.
+  // strip our groups out of it. Both spellings go — older releases keyed on
+  // the raw PascalCase event and left those entries orphaned.
   if (config.codex_trust_written) {
-    const keys = trustEntriesFromFile(codexHooksJson).map((e) => e.key);
+    const keys = [
+      ...trustEntriesFromFile(codexHooksJson).map((e) => e.key),
+      ...staleTrustKeysFromFile(codexHooksJson),
+    ];
     removeTrustEntries(userCodexConfigPath(), keys);
     console.log(`  removed trusted_hash entries from ${userCodexConfigPath()}`);
   }
@@ -124,7 +130,10 @@ function sweepLegacy(root: string): void {
 
   // Trust keys come from the legacy entries' positions in hooks.json, read
   // before we strip them. Removal is a safe no-op if trust was never written.
-  const legacyKeys = trustEntriesFromFile(codexHooksJson, isLegacyHookCommand).map((e) => e.key);
+  const legacyKeys = [
+    ...trustEntriesFromFile(codexHooksJson, isLegacyHookCommand).map((e) => e.key),
+    ...staleTrustKeysFromFile(codexHooksJson, isLegacyHookCommand),
+  ];
   if (legacyKeys.length) {
     removeTrustEntries(userCodexConfigPath(), legacyKeys);
     console.log(`  removed legacy trusted_hash entries from ${userCodexConfigPath()}`);

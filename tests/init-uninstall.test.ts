@@ -112,12 +112,38 @@ describe("init → uninstall round-trip", () => {
 
   test("codex-trust write: entries land in CODEX_HOME config and are removed on uninstall", () => {
     const { root, codexHome } = makeProject();
+    const codexConfig = path.join(codexHome, "config.toml");
+    const hooksJson = path.join(fs.realpathSync(root), ".codex/hooks.json");
+    // An older crank release's PascalCase orphan for THIS project, plus an
+    // entry codex wrote for another project: init sweeps the first, never the
+    // second, and uninstall leaves the second alone too.
+    const codexOwn =
+      '[hooks.state."/other/project/.codex/hooks.json:session_start:0:0"]\ntrusted_hash = "sha256:beef"\n';
+    fs.writeFileSync(
+      codexConfig,
+      `model = "gpt-5.6"\n[hooks.state."${hooksJson}:SessionStart:0:0"]\ntrusted_hash = "sha256:stale"\n${codexOwn}`,
+    );
+
     cli(root, codexHome, "init", "--yes", "--codex", "merge", "--codex-trust", "write");
-    const toml = fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8");
-    expect(toml).toContain('[hooks.state."' + path.join(fs.realpathSync(root), ".codex/hooks.json"));
+    const toml = fs.readFileSync(codexConfig, "utf-8");
+    expect(toml).toContain(`[hooks.state."${hooksJson}:session_start:0:0"]`);
     expect(toml).toMatch(/trusted_hash = "sha256:[0-9a-f]{64}"/);
+    expect(toml).not.toContain("SessionStart");
+    expect(toml).toContain(codexOwn);
+
     cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
-    expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).toBe('model = "gpt-5.6"\n');
+    expect(fs.readFileSync(codexConfig, "utf-8")).toBe('model = "gpt-5.6"\n' + codexOwn);
+  });
+
+  test("uninstall sweeps a PascalCase orphan an older release left behind", () => {
+    const { root, codexHome } = makeProject();
+    const codexConfig = path.join(codexHome, "config.toml");
+    cli(root, codexHome, "init", "--yes", "--codex", "merge", "--codex-trust", "write");
+    // As if this project had been init'd by a release that keyed on the raw event.
+    const hooksJson = path.join(fs.realpathSync(root), ".codex/hooks.json");
+    fs.appendFileSync(codexConfig, `[hooks.state."${hooksJson}:SessionStart:0:0"]\ntrusted_hash = "sha256:stale"\n`);
+    cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
+    expect(fs.readFileSync(codexConfig, "utf-8")).toBe('model = "gpt-5.6"\n');
   });
 
   test("pre-existing user settings survive surgical uninstall byte-identical", () => {
@@ -206,10 +232,14 @@ describe("uninstall sweeps legacy crank/ installs", () => {
     fs.writeFileSync(path.join(root, ".codex", "hooks.json"), JSON.stringify(codexHooks, null, 2) + "\n");
     // Trust keys are position-based, hash-independent — a matching key is enough.
     // The child derives the path from its cwd, which has symlinks resolved.
-    const trustKey = `${path.join(fs.realpathSync(root), ".codex", "hooks.json")}:SessionStart:0:0`;
+    // Both spellings are planted: the snake_case key codex looks up, and the
+    // PascalCase orphan older releases wrote. The sweep takes both.
+    const keyPrefix = path.join(fs.realpathSync(root), ".codex", "hooks.json");
     fs.writeFileSync(
       path.join(codexHome, "config.toml"),
-      `model = "gpt-5.6"\n[hooks.state."${trustKey}"]\ntrusted_hash = "sha256:deadbeef"\n`,
+      `model = "gpt-5.6"\n` +
+        `[hooks.state."${keyPrefix}:session_start:0:0"]\ntrusted_hash = "sha256:deadbeef"\n` +
+        `[hooks.state."${keyPrefix}:SessionStart:0:0"]\ntrusted_hash = "sha256:deadbeef"\n`,
     );
   }
 

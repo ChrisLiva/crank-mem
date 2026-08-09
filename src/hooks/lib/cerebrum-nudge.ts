@@ -14,7 +14,7 @@ import { debugEvent } from "./debug.ts";
 // Re-nudge only after this many *more* files change since the last nudge, so a
 // session that keeps working without updating cerebrum is reminded in batches
 // rather than on every turn or write. Also the minimum to nudge at all.
-export const NUDGE_STEP = 10;
+export const NUDGE_STEP = 20;
 
 // Past either of these, cerebrum has likely accumulated stale or bloated
 // entries and the agent is nudged to prune it. Soft guidelines, not caps —
@@ -36,8 +36,9 @@ const MARKER_FILE = "cerebrum-nudge.json";
 interface NudgeMarker {
   cerebrumMtimeMs: number;
   nudgedAtChanged: number;
-  /** Cerebrum mtime at the last prune nudge — re-nudge only after it's edited again. */
-  pruneNudgedMtimeMs?: number;
+  /** Cerebrum size when this marker was written — the prune nudge is silent only while it falls. */
+  pruneNudgedLines?: number;
+  pruneNudgedTokens?: number;
   /** Journal debounce, same shape as the record nudge but keyed on journal.md. */
   journalMtimeMs?: number;
   journalNudgedAtChanged?: number;
@@ -110,11 +111,21 @@ function mtimeOf(file: string): number | null {
  * only a real entry counts.
  *
  * Prune nudge: fires when cerebrum exceeds PRUNE_LINE_LIMIT lines or
- * PRUNE_TOKEN_LIMIT estimated tokens, once per cerebrum version — silent until
- * the file is edited again, and re-fires on the next version only if it's still
- * over.
+ * PRUNE_TOKEN_LIMIT estimated tokens, and keeps firing until the file shrinks.
+ * It is silent only when either measure has fallen below the size stamped on
+ * the marker, so an agent partway through a prune isn't pestered on every turn,
+ * while one that ignores the nudge hears it again — as the message promises.
+ * Editing cerebrum without shrinking it (the mtime moves, the size doesn't)
+ * does not buy silence.
  *
- * Writes the marker as a side effect when it nudges; never throws.
+ * The stamped size is therefore a floor, not the size that last nudged: every
+ * observation of a smaller-but-still-oversized file lowers it. An agent that
+ * trims 160 -> 155 lines is silenced by the shrink and the floor drops to 155,
+ * so a later stall at 155 re-arms the nudge. Keeping the 160 would silence it
+ * forever — the message promises to repeat until the file is under the limit.
+ *
+ * Writes the marker as a side effect when it nudges, and — the one silent write
+ * — when it observes a prune in progress. Never throws.
  */
 export function cerebrumNudge(crankDir: string): string | null {
   const cerebrum = readCerebrum(crankDir);
@@ -137,7 +148,13 @@ export function cerebrumNudge(crankDir: string): string | null {
 
   const oversized =
     !!cerebrum && (cerebrum.lineCount > PRUNE_LINE_LIMIT || cerebrum.tokenCount > PRUNE_TOKEN_LIMIT);
-  const pruneDue = oversized && marker?.pruneNudgedMtimeMs !== cerebrum?.mtimeMs;
+  // A missing marker field counts as "did not fall", so a first run — or an old
+  // marker written before these fields existed — nudges.
+  const shrank =
+    !!cerebrum &&
+    ((marker?.pruneNudgedLines !== undefined && cerebrum.lineCount < marker.pruneNudgedLines) ||
+      (marker?.pruneNudgedTokens !== undefined && cerebrum.tokenCount < marker.pruneNudgedTokens));
+  const pruneDue = oversized && !shrank;
 
   const journalChanged = journalMtimeMs === null ? 0 : changedSince(journalMtimeMs);
   const journalBaseline =
@@ -165,6 +182,16 @@ export function cerebrumNudge(crankDir: string): string | null {
       lineCount: cerebrum?.lineCount ?? null,
       tokenCount: cerebrum?.tokenCount ?? null,
     });
+    // Silence is not the end of it: a prune in progress must lower the floor,
+    // or the next stall would never be noticed — nothing else rewrites the
+    // marker until some other part happens to fire.
+    if (cerebrum && marker && oversized && shrank) {
+      writeMarker(crankDir, {
+        ...marker,
+        pruneNudgedLines: cerebrum.lineCount,
+        pruneNudgedTokens: cerebrum.tokenCount,
+      });
+    }
     return null;
   }
 
@@ -184,9 +211,10 @@ export function cerebrumNudge(crankDir: string): string | null {
     // number) and never equals a real mtime, so nothing is wrongly debounced.
     cerebrumMtimeMs: cerebrum?.mtimeMs ?? 0,
     nudgedAtChanged: recordDue ? changed : baseline,
-    // A stale value (from an older cerebrum version) is inert — the check is
-    // equality with the current mtime — so carrying it forward is harmless.
-    pruneNudgedMtimeMs: pruneDue ? cerebrum?.mtimeMs : marker?.pruneNudgedMtimeMs,
+    // Always the size observed now, whether or not the prune part fired: that
+    // is what lets a partial prune that then stalls re-arm the nudge.
+    pruneNudgedLines: cerebrum?.lineCount ?? marker?.pruneNudgedLines,
+    pruneNudgedTokens: cerebrum?.tokenCount ?? marker?.pruneNudgedTokens,
     journalMtimeMs: journalMtimeMs ?? marker?.journalMtimeMs,
     journalNudgedAtChanged: journalDue ? journalChanged : journalBaseline,
   });
@@ -203,8 +231,9 @@ export function cerebrumNudge(crankDir: string): string | null {
   if (journalDue) {
     parts.push(
       `crank-mem: ${journalChanged} file(s) changed since the last .crank/journal.md entry. ` +
-        `Append one dated bullet — \`- YYYY-MM-DD: what you did; where you left off; next step\` — ` +
-        `telegram-style, so the next session picks up mid-thread instead of re-deriving where it was.`,
+        `Append one dated bullet — \`- YYYY-MM-DD: what you did; where you left off; NEXT: next step\` ` +
+        `— telegram-style. The \`NEXT:\` clause is what the next session is shown, so put the handoff ` +
+        `there, last: that is how it picks up mid-thread instead of re-deriving where it was.`,
     );
   }
   if (pruneDue && cerebrum) {

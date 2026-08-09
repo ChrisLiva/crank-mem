@@ -1,10 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { cliVersion } from "./version.ts";
+import { cliVersion, REPO_ROOT } from "./version.ts";
 import { vendorHooks, templatePath } from "./vendor.ts";
 import { openProject } from "./project.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
-import { trustEntriesFromFile, writeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
+import {
+  trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath,
+} from "./codex-trust.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone. Never
@@ -35,6 +37,15 @@ export async function run(_args: string[]): Promise<number> {
     }
   }
 
+  // Ahead of the version check too: an install from before clone_root existed,
+  // or one whose clone has moved, is at the current version but cannot report
+  // drift — so a same-version upgrade repairs the field instead of waiting for
+  // the next release to arm the check.
+  if (config.clone_root !== REPO_ROOT) {
+    config.clone_root = REPO_ROOT;
+    saveConfig(crankDir, config);
+  }
+
   if (config.vendored_version === current) {
     console.log(`crank-mem: already at ${current} — nothing else to do.`);
     return 0;
@@ -55,7 +66,11 @@ export async function run(_args: string[]): Promise<number> {
   if (config.codex_trust_written) {
     const codexHooksJson = path.join(root, ".codex", "hooks.json");
     backupFile(backupDir, userCodexConfigPath());
-    writeTrustEntries(userCodexConfigPath(), trustEntriesFromFile(codexHooksJson));
+    writeTrustEntries(
+      userCodexConfigPath(),
+      trustEntriesFromFile(codexHooksJson),
+      staleTrustKeysFromFile(codexHooksJson),
+    );
     console.log(`  recomputed Codex trusted_hash entries`);
   }
 

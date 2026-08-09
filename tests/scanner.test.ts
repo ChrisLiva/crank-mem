@@ -85,10 +85,13 @@ describe("refreshIndex", () => {
     const root = makeProject({ "a.ts": "const a = 1;" });
     const config = defaultConfig();
     const index = fullScan(root, config);
-    const before = index.files["a.ts"]!.updatedAt;
+    // A sentinel no analysis would ever produce: re-extraction overwrites the
+    // whole entry, so its survival is the observation. (mtimeMs cannot serve —
+    // it is copied from the file's stat and is identical either way.)
+    index.files["a.ts"]!.description = "SENTINEL — not re-extracted";
     const result = refreshIndex(root, config, index, 5000);
     expect(result.changed).toBe(0);
-    expect(result.index.files["a.ts"]!.updatedAt).toBe(before);
+    expect(result.index.files["a.ts"]!.description).toBe("SENTINEL — not re-extracted");
   });
 
   test("drops the stale entry when a file grows past max_file_size_bytes", () => {

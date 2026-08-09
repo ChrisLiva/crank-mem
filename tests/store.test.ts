@@ -12,10 +12,7 @@ function tmpDir(): string {
 }
 
 function entry(description: string): FileEntry {
-  return {
-    description, tokens: 100, size: 350, mtimeMs: 123,
-    updatedAt: "2026-07-16T00:00:00Z", source: "scan",
-  };
+  return { description, tokens: 100, size: 350, mtimeMs: 123 };
 }
 
 describe("index store", () => {
@@ -35,6 +32,27 @@ describe("index store", () => {
     const dir = tmpDir();
     fs.writeFileSync(path.join(dir, INDEX_FILE), JSON.stringify({ version: 999 }));
     expect(loadIndex(dir).files).toEqual({});
+  });
+
+  // updatedAt/source were dropped from FileEntry without bumping INDEX_VERSION,
+  // so every already-installed project's index carries them. Extra keys must
+  // load, not reset the index to empty and force a full re-scan.
+  test("an index carrying retired entry fields still loads", () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, INDEX_FILE), JSON.stringify({
+      version: 1,
+      meta: { lastScanned: "2026-07-16T00:00:00Z", fileCount: 1 },
+      files: {
+        "src/a.ts": {
+          description: "Alpha", tokens: 100, size: 350, mtimeMs: 123,
+          updatedAt: "2026-07-16T00:00:00Z", source: "scan",
+        },
+      },
+    }));
+    const loaded = loadIndex(dir);
+    expect(loaded.meta.fileCount).toBe(1);
+    expect(loaded.files["src/a.ts"]!.description).toBe("Alpha");
+    expect(loaded.files["src/a.ts"]!.mtimeMs).toBe(123);
   });
 
   test("commitIndex persists index + anatomy.md, fileCount maintained", () => {
@@ -82,7 +100,6 @@ describe("index store", () => {
     const idx = emptyIndex();
     idx.files["src/b.ts"] = {
       description: "Beta", tokens: 600, size: 2100, mtimeMs: 1,
-      updatedAt: "2026-07-16T00:00:00Z", source: "scan",
       symbols: [{ name: "beta", kind: "fn", startLine: 1, endLine: 20, tokens: 550 }],
     };
     idx.meta.fileCount = 1;

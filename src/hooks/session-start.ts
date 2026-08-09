@@ -8,6 +8,7 @@ import { loadIndex, commitIndex } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { buildInjection, listAdrFilenames } from "./lib/injection.ts";
+import { driftNote } from "./lib/drift.ts";
 import { trimJournal, recentJournalBullets } from "./lib/journal.ts";
 import { estimateProseTokens } from "./lib/tokens.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
@@ -67,6 +68,7 @@ async function main(): Promise<void> {
   const journalBullets = recentJournalBullets(crankDir);
 
   const adrFilenames = listAdrFilenames(root, config.adr_path);
+  const drift = driftNote(config);
   const context = buildInjection(
     {
       cerebrumMd,
@@ -74,6 +76,7 @@ async function main(): Promise<void> {
       adrFilenames,
       index,
       stalenessNote,
+      driftNote: drift ?? undefined,
       adrPath: config.adr_path,
     },
     config.injection_budget_bytes
@@ -84,11 +87,12 @@ async function main(): Promise<void> {
     source,
     fileCount: index.meta.fileCount,
     injectionTokens: estimateProseTokens(context),
-    // Bytes, not tokens, are what Claude Code caps: past ~10KiB of hook stdout
-    // it swaps the whole injection for a 2KB preview. Watch this, not tokens.
+    // Bytes, not tokens, are what Claude Code caps (ADR 0005): past the cliff
+    // it swaps the whole injection for a notice. Watch this, not tokens.
     injectionBytes: Buffer.byteLength(context, "utf-8"),
     budgetBytes: config.injection_budget_bytes,
     hasCerebrum: cerebrumMd !== null,
+    drift: drift !== null,
     journalBullets: journalBullets.length,
     adrCount: adrFilenames.length,
     stale: stalenessNote !== undefined,

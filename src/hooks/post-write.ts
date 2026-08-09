@@ -120,7 +120,7 @@ async function main(): Promise<void> {
         }
         continue;
       }
-      const entry = indexFile(root, op.relPath, config, "hook");
+      const entry = indexFile(root, op.relPath, config);
       if (!entry) {
         // Excluded, oversized, or unreadable — indistinguishable here, but the
         // path alone answers "why didn't my file get indexed?".

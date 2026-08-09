@@ -37,8 +37,7 @@ export function isIndexableName(relPath: string, config: CrankConfig): boolean {
 export function indexFile(
   rootDir: string,
   relPath: string,
-  config: CrankConfig,
-  source: FileEntry["source"]
+  config: CrankConfig
 ): FileEntry | null {
   if (!isIndexableName(relPath, config)) return null;
   const absPath = path.join(rootDir, relPath);
@@ -60,8 +59,6 @@ export function indexFile(
     tokens,
     size: stat.size,
     mtimeMs: stat.mtimeMs,
-    updatedAt: new Date().toISOString(),
-    source,
   };
   if (symbols && symbols.length > 0) entry.symbols = symbols;
   return entry;
@@ -98,7 +95,7 @@ export function walkProject(rootDir: string, config: CrankConfig): string[] {
 export function fullScan(rootDir: string, config: CrankConfig): AnatomyIndex {
   const index = emptyIndex();
   for (const rel of walkProject(rootDir, config)) {
-    const entry = indexFile(rootDir, rel, config, "scan");
+    const entry = indexFile(rootDir, rel, config);
     if (entry) index.files[rel] = entry;
   }
   index.meta.lastScanned = new Date().toISOString();
@@ -154,7 +151,7 @@ export function refreshIndex(
         continue;
       }
       if (stat.size === existing.size && stat.mtimeMs === existing.mtimeMs) continue;
-      const entry = indexFile(rootDir, rel, config, "scan");
+      const entry = indexFile(rootDir, rel, config);
       if (entry) {
         index.files[rel] = entry;
         changed++;
@@ -165,7 +162,7 @@ export function refreshIndex(
         removed++;
       }
     } else {
-      const entry = indexFile(rootDir, rel, config, "scan");
+      const entry = indexFile(rootDir, rel, config);
       if (entry) {
         index.files[rel] = entry;
         added++;

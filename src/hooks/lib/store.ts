@@ -15,8 +15,6 @@ export interface FileEntry {
   tokens: number;
   size: number;
   mtimeMs: number;
-  updatedAt: string;
-  source: "scan" | "hook";
   symbols?: SymbolEntry[];
 }
 

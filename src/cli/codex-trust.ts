@@ -32,11 +32,48 @@ export interface TrustEntry {
   hash: string;
 }
 
+type HookGroup = HooksMap[string][number];
+type HookHandler = HookGroup["hooks"][number];
+
 /**
- * Compute the [hooks.state] entries for the crank handlers in a hooks map,
- * using each group's ACTUAL index — codex keys trust by position in the
- * discovered list, so a crank group merged after pre-existing user groups
- * must be keyed at its real index.
+ * Visit every crank handler in a hooks map at its ACTUAL discovered position —
+ * codex keys trust by position in the discovered list, so a crank group merged
+ * after pre-existing user groups must be keyed at its real index. Both the
+ * live keys and the stale ones walk through here, so they can never drift
+ * apart in position.
+ */
+function eachCrankHandler(
+  hooks: HooksMap,
+  matches: (command: string | undefined) => boolean,
+  visit: (event: string, group: HookGroup, groupIdx: number, handler: HookHandler, handlerIdx: number) => void,
+): void {
+  for (const [event, groups] of Object.entries(hooks)) {
+    groups.forEach((group, groupIdx) => {
+      (group.hooks ?? []).forEach((handler, handlerIdx) => {
+        if (!matches(handler.command)) return;
+        visit(event, group, groupIdx, handler, handlerIdx);
+      });
+    });
+  }
+}
+
+/** Parse the `hooks` map out of a hooks.json on disk; null when unreadable. */
+function readHooksMap(hooksJsonPath: string): HooksMap | null {
+  try {
+    const root = JSON.parse(fs.readFileSync(hooksJsonPath, "utf-8"));
+    const hooks = root?.hooks;
+    if (typeof hooks !== "object" || hooks === null) return null;
+    return hooks as HooksMap;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compute the [hooks.state] entries for the crank handlers in a hooks map.
+ * The key's event segment is the snake_case label — the spelling codex looks
+ * the entry up by (hooks/src/lib.rs hook_event_key_label), same as the one
+ * that goes into the hash.
  */
 export function trustEntries(
   hooksJsonPath: string,
@@ -44,34 +81,49 @@ export function trustEntries(
   matches: (command: string | undefined) => boolean = isCrankHookCommand,
 ): TrustEntry[] {
   const out: TrustEntry[] = [];
-  for (const [event, groups] of Object.entries(hooks)) {
-    groups.forEach((group, groupIdx) => {
-      (group.hooks ?? []).forEach((handler, handlerIdx) => {
-        if (!matches(handler.command)) return;
-        // Field names are codex's serde WIRE names ("timeout", not the Rust
-        // field timeout_sec); absent optionals (matcher, statusMessage,
-        // commandWindows) are omitted entirely, as codex's TOML round-trip
-        // drops None fields.
-        const normalized = {
-          event_name: eventLabel(event),
-          matcher: group.matcher,
-          hooks: [
-            {
-              type: "command",
-              command: handler.command,
-              timeout: Math.max(handler.timeout ?? 600, 1),
-              async: false,
-            },
-          ],
-        };
-        const hash = crypto.createHash("sha256").update(canonicalJson(normalized)).digest("hex");
-        out.push({
-          key: `${hooksJsonPath}:${event}:${groupIdx}:${handlerIdx}`,
-          hash: `sha256:${hash}`,
-        });
-      });
+  eachCrankHandler(hooks, matches, (event, group, groupIdx, handler, handlerIdx) => {
+    // Field names are codex's serde WIRE names ("timeout", not the Rust
+    // field timeout_sec); absent optionals (matcher, statusMessage,
+    // commandWindows) are omitted entirely, as codex's TOML round-trip
+    // drops None fields.
+    const normalized = {
+      event_name: eventLabel(event),
+      matcher: group.matcher,
+      hooks: [
+        {
+          type: "command",
+          command: handler.command,
+          timeout: Math.max(handler.timeout ?? 600, 1),
+          async: false,
+        },
+      ],
+    };
+    const hash = crypto.createHash("sha256").update(canonicalJson(normalized)).digest("hex");
+    out.push({
+      key: `${hooksJsonPath}:${eventLabel(event)}:${groupIdx}:${handlerIdx}`,
+      hash: `sha256:${hash}`,
     });
-  }
+  });
+  return out;
+}
+
+/**
+ * Keys crank wrote before the label fix, when the state key carried the raw
+ * PascalCase event (`SessionStart`) that codex never looks up — orphans to be
+ * swept whenever we write or remove trust. An event whose raw spelling already
+ * equals its label yields NO key: such an entry is indistinguishable from one
+ * codex wrote for itself, and must never be stripped.
+ */
+export function staleTrustKeys(
+  hooksJsonPath: string,
+  hooks: HooksMap,
+  matches: (command: string | undefined) => boolean = isCrankHookCommand,
+): string[] {
+  const out: string[] = [];
+  eachCrankHandler(hooks, matches, (event, _group, groupIdx, _handler, handlerIdx) => {
+    if (event === eventLabel(event)) return;
+    out.push(`${hooksJsonPath}:${event}:${groupIdx}:${handlerIdx}`);
+  });
   return out;
 }
 
@@ -80,14 +132,17 @@ export function trustEntriesFromFile(
   hooksJsonPath: string,
   matches?: (command: string | undefined) => boolean,
 ): TrustEntry[] {
-  try {
-    const root = JSON.parse(fs.readFileSync(hooksJsonPath, "utf-8"));
-    const hooks = root?.hooks;
-    if (typeof hooks !== "object" || hooks === null) return [];
-    return trustEntries(hooksJsonPath, hooks as HooksMap, matches);
-  } catch {
-    return [];
-  }
+  const hooks = readHooksMap(hooksJsonPath);
+  return hooks ? trustEntries(hooksJsonPath, hooks, matches) : [];
+}
+
+/** Stale (raw-event) keys derived from the hooks.json actually on disk. */
+export function staleTrustKeysFromFile(
+  hooksJsonPath: string,
+  matches?: (command: string | undefined) => boolean,
+): string[] {
+  const hooks = readHooksMap(hooksJsonPath);
+  return hooks ? staleTrustKeys(hooksJsonPath, hooks, matches) : [];
 }
 
 export function userCodexConfigPath(): string {
@@ -98,10 +153,13 @@ function entryBlock(e: TrustEntry): string {
   return `[hooks.state."${e.key}"]\ntrusted_hash = "${e.hash}"\n`;
 }
 
-/** Append trust entries to the user config.toml (replacing stale ones for the same keys). */
-export function writeTrustEntries(configPath: string, entries: TrustEntry[]): void {
+/**
+ * Append trust entries to the user config.toml, replacing any blocks for the
+ * same keys — plus `staleKeys`, the orphans older crank releases left behind.
+ */
+export function writeTrustEntries(configPath: string, entries: TrustEntry[], staleKeys: string[] = []): void {
   let content = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : "";
-  content = stripTrustEntries(content, entries.map((e) => e.key));
+  content = stripTrustEntries(content, [...entries.map((e) => e.key), ...staleKeys]);
   const sep = content === "" || content.endsWith("\n") ? "" : "\n";
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, content + sep + entries.map(entryBlock).join(""));

@@ -94,6 +94,98 @@ describe("session-start hook (black-box)", () => {
   });
 });
 
+describe("memory reaches the model whole (black-box)", () => {
+  test("a wrapped cerebrum bullet and a NEXT: handoff both survive the trip", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    fs.writeFileSync(
+      path.join(root, ".crank/cerebrum.md"),
+      "# Cerebrum\n\n## User Preferences\n\n- Always use tabs\n\n## Memory\n\n" +
+        "- The blur dies when the container gets `position: fixed` or above a\n" +
+        "  z-index of 10 — it becomes a backdrop root, killing the overlay blur.\n"
+    );
+    fs.writeFileSync(
+      path.join(root, ".crank/journal.md"),
+      "# Journal\n\n- 2026-07-30: swept the board, tree clean; NEXT: probe both live\n  installs after the bump.\n"
+    );
+
+    const ctx = inject(root);
+    // The payload of a wrapped bullet used to be cut off at "or above a".
+    expect(ctx).toContain(
+      "- The blur dies when the container gets `position: fixed` or above a\n" +
+        "  z-index of 10 — it becomes a backdrop root, killing the overlay blur."
+    );
+    // The handoff wraps across physical lines and had never once been delivered.
+    expect(ctx).toContain("- 2026-07-30 — NEXT: probe both live installs after the bump.");
+    expect(ctx).toContain("Always use tabs");
+  });
+
+  test("an unmigrated cerebrum still injects its Key Learnings", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    fs.writeFileSync(
+      path.join(root, ".crank/cerebrum.md"),
+      "# Cerebrum\n\n## User Preferences\n\n- Always use tabs\n\n" +
+        "## Key Learnings\n\n- The API rate-limits at 100 rps\n\n" +
+        "## Do-Not-Repeat\n\n- Never force-push main\n"
+    );
+    const ctx = inject(root);
+    expect(ctx).toContain("The API rate-limits at 100 rps");
+    expect(ctx).toContain("Never force-push main");
+  });
+});
+
+describe("vendored-hook drift (black-box)", () => {
+  /** A stand-in clone: just the package.json the drift check reads. */
+  function fakeClone(version: unknown): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "crank-clone-"));
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "crank-mem", version }));
+    return dir;
+  }
+  function configure(root: string, patch: Record<string, unknown>): void {
+    const file = path.join(root, ".crank/config.json");
+    const config = JSON.parse(fs.readFileSync(file, "utf-8"));
+    fs.writeFileSync(file, JSON.stringify({ ...config, ...patch }));
+  }
+  function injectWith(patch: Record<string, unknown>): string {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    configure(root, patch);
+    return inject(root);
+  }
+
+  test("a lagging install gets exactly one line naming both versions and the fix", () => {
+    const ctx = injectWith({ vendored_version: "0.3.2", clone_root: fakeClone("0.5.0") });
+    expect(ctx).toContain("_Note: crank-mem hooks are at 0.3.2, clone is at 0.5.0 — run `crank-mem upgrade`._");
+    expect((ctx.match(/run `crank-mem upgrade`/g) ?? []).length).toBe(1);
+  });
+
+  test("matching versions produce no line", () => {
+    expect(injectWith({ vendored_version: "0.5.0", clone_root: fakeClone("0.5.0") }))
+      .not.toContain("crank-mem upgrade");
+  });
+
+  test("a missing, moved, or unreadable clone produces no line and no error", () => {
+    const gone = fakeClone("0.5.0");
+    fs.rmSync(gone, { recursive: true, force: true });
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "crank-clone-")); // no package.json
+    const malformed = fs.mkdtempSync(path.join(os.tmpdir(), "crank-clone-"));
+    fs.writeFileSync(path.join(malformed, "package.json"), "{not json");
+
+    for (const clone_root of [gone, empty, malformed, ""]) {
+      const root = makeCrankProject({ "a.ts": "const a = 1;" });
+      configure(root, { vendored_version: "0.3.2", clone_root });
+      const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
+      expect(run.status).toBe(0);
+      const ctx = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+      expect(ctx).toContain("crank-mem (project memory)");
+      expect(ctx).not.toContain("crank-mem upgrade");
+    }
+  });
+
+  test("a package.json with no version string produces no line", () => {
+    expect(injectWith({ vendored_version: "0.3.2", clone_root: fakeClone(5) }))
+      .not.toContain("crank-mem upgrade");
+  });
+});
+
 const JOURNAL_HEADER = "# Journal\n\nSession log, newest last.\n\n";
 
 function writeJournal(root: string, bullets: string[]): string {
@@ -165,14 +257,14 @@ describe("journal (black-box)", () => {
     );
     fs.mkdirSync(path.join(root, "docs/adr"), { recursive: true });
     fs.writeFileSync(path.join(root, "docs/adr/0001-use-tabs.md"), "# x");
-    writeJournal(root, ["day 1: one", "day 2: two", `day 3: ${"x".repeat(4000)}`]);
+    writeJournal(root, ["day 1: one", "day 2: two", `day 3: ${"x".repeat(4000)}; NEXT: ${"y".repeat(4000)}`]);
 
     const ctx = inject(root);
     expect(ctx).toContain("## Journal");
     expect(ctx).toContain("Always use tabs");
     expect(ctx).toContain("0001-use-tabs.md");
     // The long entry survives as a capped headline, not verbatim.
-    expect(ctx).toContain("day 3: xxx");
+    expect(ctx).toContain("NEXT: yyy");
     expect(ctx).toContain("…");
     expect(ctx.split("\n").every((l) => l.length < 300)).toBe(true);
   });
@@ -181,17 +273,17 @@ describe("journal (black-box)", () => {
   // journal cannot cost 3× an ASCII one.
   test("the headline cap is bytes, and never splits a character", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    writeJournal(root, [`day 1: ${"中".repeat(2000)}`, `day 2: ${"🚀".repeat(2000)}`]);
+    writeJournal(root, [`2026-07-29: ${"中".repeat(2000)}`, `2026-07-30: x; NEXT: ${"🚀".repeat(2000)}`]);
 
     const bullets = inject(root)
       .split("\n")
-      .filter((l) => l.startsWith("- day "));
+      .filter((l) => l.startsWith("- 2026-07-"));
     expect(bullets.length).toBe(2);
     for (const b of bullets) {
-      expect(Buffer.byteLength(b, "utf-8")).toBeLessThanOrEqual(242); // "- " + cap
+      expect(Buffer.byteLength(b, "utf-8")).toBeLessThanOrEqual(257); // "- <date> — " (17B) + cap
       expect(b).not.toContain("�"); // no lone surrogate half
     }
-    expect(bullets[1]).toContain("🚀…");
+    expect(bullets[1]).toContain("🚀…"); // the capped NEXT: clause ends mid-stream
   });
 
   test("a budget too tight for the journal drops it whole, keeping the instructions", () => {
@@ -218,11 +310,11 @@ describe("journal (black-box)", () => {
     fs.writeFileSync(file, JOURNAL_HEADER + entries);
 
     const ctx = inject(root);
-    // Only top-level bullets count as entries — the last three headlines.
-    expect(ctx).toContain("- day 24: headline");
+    // Only top-level bullets count as entries — the last three, each folded
+    // into one headline that carries its continuation.
+    expect(ctx).toContain("- day 24: headline - sub detail 24 wrapped prose 24");
     expect(ctx).toContain("- day 22: headline");
-    expect(ctx).not.toContain("sub detail"); // continuation is not an entry
-    expect(ctx).not.toContain("- day 21: headline");
+    expect(ctx).not.toContain("day 21"); // the fourth-newest entry is not injected
 
     const after = fs.readFileSync(file, "utf-8");
     expect((after.match(/^- day /gm) ?? []).length).toBe(20);

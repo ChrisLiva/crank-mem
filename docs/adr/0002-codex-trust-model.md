@@ -26,6 +26,19 @@ or repo root, not only the exact dir). Hooks additionally require:
    trusted_hash = "sha256:<hex>"` — granted interactively via Codex's startup
    hooks review, or bypassed with `--dangerously-bypass-hook-trust`.
 
+   `<event_key>` is the **snake_case** label — `session_start`,
+   `post_tool_use` — the same `hook_event_key_label` spelling the hash uses,
+   not the PascalCase event name from hooks.json. Amended 2026-08-09: this was
+   recorded as `<event_key>` and read as PascalCase for two releases, so
+   crank wrote keys Codex never looked up and the feature never once skipped
+   the interactive review. Live evidence in `~/.codex/config.toml`: brew-pg
+   carries both `.../hooks.json:session_start:0:0` (written by Codex's own
+   review) and `.../hooks.json:SessionStart:0:0` (written by crank) with an
+   **identical** `trusted_hash`, and the same pair for `post_tool_use` /
+   `PostToolUse`. Fixed in `codex-trust.ts`, which now keys on
+   `eventLabel(event)` and strips the stale PascalCase orphans it left behind
+   — never a snake_case key, which may be Codex's own.
+
 ### Hash formula
 
 (sources: `hooks/src/engine/discovery.rs` `command_hook_hash`,

@@ -145,20 +145,67 @@ describe("stop hook (black-box)", () => {
     expect(ctx).not.toContain("file(s) have changed");
   });
 
-  test("prune nudge fires once, then again only after cerebrum is edited", () => {
+  test("prune nudge goes quiet once cerebrum shrinks, even if still oversized", () => {
     const root = makeCrankProject(ENOUGH);
     seedIndex(root);
     fs.writeFileSync(cerebrum(root), longCerebrum(160));
     setMtime(cerebrum(root), FRESH);
     expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("Prune");
 
-    // Same cerebrum version: silent.
-    const second = runHook(HOOK, JSON.stringify(claudeStop(root)));
-    expect(second.stdout).toBe("");
-
-    // Edited but still over the guideline: one fresh nudge on the new version.
+    // Agent is mid-prune: smaller than at the last nudge, still over the limit.
+    fs.writeFileSync(cerebrum(root), longCerebrum(155));
     setMtime(cerebrum(root), FRESH + 5000);
+    const second = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(second.status).toBe(0);
+    expect(second.stdout).toBe("");
+  });
+
+  test("prune nudge repeats while an oversized cerebrum does not shrink", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    fs.writeFileSync(cerebrum(root), longCerebrum(160));
+    setMtime(cerebrum(root), FRESH);
     expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("Prune");
+
+    // Nudge ignored: same size, so it fires again, as the message promises.
+    const second = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(second.status).toBe(0);
+    expect(nudge(second.stdout)).toContain("Prune");
+
+    // Edited but not shrunk (a rewrite that grew it): still nudges.
+    fs.writeFileSync(cerebrum(root), longCerebrum(170));
+    setMtime(cerebrum(root), FRESH + 5000);
+    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("170 lines");
+  });
+
+  // The stamped size is a floor that every observation lowers, so a prune that
+  // stalls partway re-arms the nudge on its own — with no other part firing to
+  // rewrite the marker, which is the case that used to silence it forever.
+  test("a partial prune that then stalls re-arms the prune nudge", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    fs.writeFileSync(cerebrum(root), longCerebrum(160));
+    setMtime(cerebrum(root), FRESH); // record part never due: prune part alone
+    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("Prune");
+
+    // Partial prune (160 -> 155, still over the limit): silent, and the floor
+    // drops to 155 on a marker write nothing else would have triggered.
+    fs.writeFileSync(cerebrum(root), longCerebrum(155));
+    setMtime(cerebrum(root), FRESH + 5000);
+    const during = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(during.status).toBe(0);
+    expect(during.stdout).toBe("");
+
+    // Now stalled at 155: no further shrink, so the nudge comes back.
+    const stalled = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(stalled.status).toBe(0);
+    expect(nudge(stalled.stdout)).toContain("155 lines");
+
+    // And keeps coming back until the file is actually under the limit.
+    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("155 lines");
+    fs.writeFileSync(cerebrum(root), longCerebrum(100));
+    setMtime(cerebrum(root), FRESH + 10_000);
+    expect(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout).toBe("");
   });
 
   test("nudges to prune a short but token-heavy cerebrum", () => {

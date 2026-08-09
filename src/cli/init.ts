@@ -3,13 +3,15 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "./args.ts";
 import { choose } from "./prompt.ts";
-import { cliVersion } from "./version.ts";
+import { cliVersion, REPO_ROOT } from "./version.ts";
 import { vendorHooks, templatePath } from "./vendor.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
   crankHooks, mergeHooksIntoFile, addIgnoreLines, ensureCodexFeatures,
 } from "./settings.ts";
-import { trustEntriesFromFile, writeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
+import {
+  trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath,
+} from "./codex-trust.ts";
 import { defaultConfig, saveConfig, CRANK_DIR } from "../hooks/lib/config.ts";
 import { fullScan } from "../hooks/lib/scanner.ts";
 import { commitIndex } from "../hooks/lib/store.ts";
@@ -114,6 +116,7 @@ export async function run(args: string[]): Promise<number> {
       git: gitMode,
       runtime,
       vendored_version: cliVersion(),
+      clone_root: REPO_ROOT,
       codex_trust_written: codexTrust === "write" && codexMode === "merge",
     };
     saveConfig(crankDir, config);
@@ -124,7 +127,11 @@ export async function run(args: string[]): Promise<number> {
       mergeHooksIntoFile(codexHooksJson, crankHooks(runtime, "codex"));
       ensureCodexFeatures(codexConfigToml);
       if (codexTrust === "write") {
-        writeTrustEntries(userCodexConfigPath(), trustEntriesFromFile(codexHooksJson));
+        writeTrustEntries(
+          userCodexConfigPath(),
+          trustEntriesFromFile(codexHooksJson),
+          staleTrustKeysFromFile(codexHooksJson),
+        );
       }
     }
 

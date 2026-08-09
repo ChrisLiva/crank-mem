@@ -21,10 +21,10 @@ export interface CrankConfig {
   max_files: number;
   max_file_size_bytes: number;
   /**
-   * Cap on the session-start injection, in bytes. Bytes, not tokens: Claude Code
-   * measures hook stdout and past ~10KiB silently replaces the whole injection
-   * with a 2KB preview, so a token budget cannot see the limit that binds. The
-   * default leaves headroom under that cliff for the JSON envelope and for
+   * Cap on the session-start injection, in bytes. Bytes, not tokens: Claude
+   * Code measures hook stdout and silently swaps an oversized injection for a
+   * ~2KB notice (ADR 0005), so a token budget cannot see the limit that binds.
+   * The default leaves headroom under that cliff for the JSON envelope and for
    * newline escaping, which inflates the payload past the raw context length.
    */
   injection_budget_bytes: number;
@@ -32,6 +32,12 @@ export interface CrankConfig {
   git: "commit" | "ignore" | "exclude";
   runtime: "bun" | "node";
   vendored_version: string;
+  /**
+   * Absolute path to the crank-mem clone these hooks were vendored from, so a
+   * session start can compare versions and report drift (lib/drift.ts). Empty
+   * on installs predating the field; `upgrade` stamps it.
+   */
+  clone_root: string;
   codex_trust_written: boolean;
   /** Write a per-run JSONL trace to .crank/debug.log (off by default). */
   debug: boolean;
@@ -48,6 +54,7 @@ export function defaultConfig(): CrankConfig {
     git: "exclude",
     runtime: "bun",
     vendored_version: "0.0.0",
+    clone_root: "",
     codex_trust_written: false,
     debug: false,
   };

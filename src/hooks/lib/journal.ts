@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { parseBlocks, parseBullets } from "./bullets.ts";
 
 // Episodic memory: `.crank/journal.md`, one dated bullet per entry, newest
 // last. Where cerebrum holds what's true about the project, the journal holds
@@ -22,33 +23,14 @@ export const JOURNAL_INJECT_COUNT = 3;
  */
 export const JOURNAL_INJECT_MAX_BYTES = 240;
 
-export const JOURNAL_FILE = "journal.md";
-
 /**
- * An entry is a top-level `- ` line plus everything up to the next one, so
- * sub-bullets, wrapped prose, and blank separators ride along with the entry
- * they belong to and survive a trim verbatim. Indented `- ` lines are
- * continuation, not new entries.
+ * The handoff marker. Matched literal-uppercase: the protocol asks for `NEXT:`
+ * in exactly this form, and a case-insensitive match would fire on any prose
+ * mentioning "next:".
  */
-const isEntryStart = (line: string): boolean => line.startsWith("- ");
+const NEXT_MARKER = "NEXT:";
 
-interface ParsedJournal {
-  /** Everything before the first entry — heading and format note. */
-  preamble: string[];
-  /** One string[] of raw lines per entry, oldest first. */
-  entries: string[][];
-}
-
-function parseJournal(text: string): ParsedJournal {
-  const preamble: string[] = [];
-  const entries: string[][] = [];
-  for (const line of text.split("\n")) {
-    if (isEntryStart(line)) entries.push([line]);
-    else if (entries.length) entries[entries.length - 1]!.push(line);
-    else preamble.push(line);
-  }
-  return { preamble, entries };
-}
+export const JOURNAL_FILE = "journal.md";
 
 function readJournal(crankDir: string): string | null {
   try {
@@ -58,22 +40,72 @@ function readJournal(crankDir: string): string | null {
   }
 }
 
-/** Headline of an entry, capped for injection. */
-function headline(entry: string[]): string {
-  const line = entry[0]!.trimEnd();
-  if (Buffer.byteLength(line, "utf-8") <= JOURNAL_INJECT_MAX_BYTES) return line;
-  // Walk code points, not UTF-16 units: slicing mid-surrogate would emit a
-  // lone half. The ellipsis costs 3 bytes, so leave room for it.
-  const room = JOURNAL_INJECT_MAX_BYTES - 3;
+const byteLength = (s: string): number => Buffer.byteLength(s, "utf-8");
+
+/**
+ * Longest prefix fitting maxBytes, plus a trailing `…` when anything was cut.
+ * Walks code points, not UTF-16 units: slicing mid-surrogate would emit a lone
+ * half. The ellipsis costs 3 bytes, so leave room for it.
+ */
+function capHead(text: string, maxBytes: number): string {
+  if (byteLength(text) <= maxBytes) return text;
+  const room = maxBytes - 3;
   let kept = "";
   let used = 0;
-  for (const ch of line) {
-    const cost = Buffer.byteLength(ch, "utf-8");
+  for (const ch of text) {
+    const cost = byteLength(ch);
     if (used + cost > room) break;
     kept += ch;
     used += cost;
   }
   return kept.trimEnd() + "…";
+}
+
+/** Longest suffix fitting maxBytes, with a leading `…` when anything was cut. */
+function capTail(text: string, maxBytes: number): string {
+  if (byteLength(text) <= maxBytes) return text;
+  const room = maxBytes - 3;
+  const chars = Array.from(text);
+  let kept = "";
+  let used = 0;
+  for (let i = chars.length - 1; i >= 0; i--) {
+    const cost = byteLength(chars[i]!);
+    if (used + cost > room) break;
+    kept = chars[i]! + kept;
+    used += cost;
+  }
+  return "…" + kept.trimStart();
+}
+
+/** Entry lead-in: `- `, an optional ISO date, and whatever separates it from the body. */
+const ENTRY_PREFIX = /^- (?:(\d{4}-\d{2}-\d{2})[\s:—–-]*)?/;
+
+/**
+ * The injected form of one entry: its date, then the part that carries the
+ * handoff.
+ *
+ * An entry is squashed to a single line first — a bullet wraps across physical
+ * lines, and `NEXT:` routinely straddles the wrap, so matching per-line finds
+ * nothing and injecting per-line breaks the bullet.
+ *
+ * What survives is the `NEXT:` clause when there is one (it runs to the end of
+ * the entry — the protocol puts the handoff last) and otherwise the entry's
+ * tail, which is where an entry without the marker still says where it stopped.
+ * `…` marks the side material was lost on: trailing for a capped clause,
+ * leading for a tail. Nothing else in the injection cuts mid-stream, so the
+ * ellipsis is unambiguous.
+ */
+function headline(entry: string): string {
+  const flat = entry.replace(/\s+/g, " ").trim();
+  const match = ENTRY_PREFIX.exec(flat);
+  const date = match?.[1];
+  const body = flat.slice(match?.[0].length ?? 0);
+  const next = body.indexOf(NEXT_MARKER);
+  const injected =
+    next >= 0
+      ? capHead(body.slice(next), JOURNAL_INJECT_MAX_BYTES)
+      : capTail(body, JOURNAL_INJECT_MAX_BYTES);
+  return `- ${date ? `${date} — ` : ""}${injected}`;
 }
 
 /**
@@ -83,7 +115,7 @@ function headline(entry: string[]): string {
 export function recentJournalBullets(crankDir: string): string[] {
   const text = readJournal(crankDir);
   if (text === null) return [];
-  return parseJournal(text).entries.slice(-JOURNAL_INJECT_COUNT).map(headline);
+  return parseBullets(text.split("\n")).slice(-JOURNAL_INJECT_COUNT).map(headline);
 }
 
 /**
@@ -109,13 +141,16 @@ export function trimJournal(crankDir: string): void {
     return;
   }
 
-  const { preamble, entries } = parseJournal(text);
-  if (entries.length <= JOURNAL_KEEP) return;
+  const blocks = parseBlocks(text.split("\n"));
+  let excess = blocks.filter((b) => b.kind === "bullet").length - JOURNAL_KEEP;
+  if (excess <= 0) return;
 
   try {
-    const kept = entries.slice(-JOURNAL_KEEP).flat();
+    // Drop the oldest entries and keep everything else in place, so the header,
+    // the format note, and any stray heading between entries survive verbatim.
+    const kept = blocks.filter((b) => !(b.kind === "bullet" && excess-- > 0));
     const tmp = file + ".tmp";
-    fs.writeFileSync(tmp, [...preamble, ...kept].join("\n"));
+    fs.writeFileSync(tmp, kept.flatMap((b) => b.lines).join("\n"));
     fs.renameSync(tmp, file);
     fs.utimesSync(file, stat.atimeMs / 1000, stat.mtimeMs / 1000);
   } catch {

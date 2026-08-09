@@ -63,7 +63,6 @@ describe("post-write hook (black-box)", () => {
     expect(run.stdout).toBe("");
     const index = loadIndex(path.join(root, ".crank"));
     expect(index.files["src/new.ts"]!.description).toBe("Brand new module.");
-    expect(index.files["src/new.ts"]!.source).toBe("hook");
   });
 
   test("Claude Edit: existing file re-indexed", () => {
