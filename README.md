@@ -35,9 +35,9 @@ Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 ## Audit skill
 
 A bundled agent skill, `crank-mem-audit`, reconciles memory with reality: it
-mines the last 10 days of Claude Code and Codex sessions, verifies every
-cerebrum bullet against the current code, then backs up and rewrites
-`cerebrum.md` and `journal.md`. Install it into a project with the
+mines recent Claude Code and Codex sessions (it asks how many days back to
+check; default 5), verifies every cerebrum bullet against the current code,
+then backs up and rewrites `cerebrum.md` and `journal.md`. Install it into a project with the
 [skills CLI](https://github.com/vercel-labs/skills):
 
 ```sh

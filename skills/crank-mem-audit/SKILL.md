@@ -23,7 +23,10 @@ user to run `crank-mem init` first, and stop — write nothing.
 
 ## 2. Collect sessions
 
-Gather this project's transcripts from the last 10 days:
+Pick the window: if the invocation already gave a number of days (e.g.
+`/crank-mem-audit 14`), use it; otherwise ask the user one question — "How
+many days back should I audit? (default: 5)" — and take their answer or the
+default. Then gather this project's transcripts from that window:
 
 - **Claude Code**: `~/.claude/projects/<slug>/*.jsonl`, where `<slug>` is the
   project's absolute path with every non-alphanumeric character replaced by
