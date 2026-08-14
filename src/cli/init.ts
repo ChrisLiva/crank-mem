@@ -176,5 +176,6 @@ export async function run(args: string[]): Promise<number> {
     console.log(`  Codex: skipped`);
   }
   console.log(`Next: start a Claude Code session here — project memory injects at session start.`);
+  console.log(`Optional: install the audit skill — npx skills add ChrisLiva/crank-mem`);
   return 0;
 }

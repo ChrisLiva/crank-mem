@@ -32,6 +32,27 @@ Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 (agent-written semantic memory), `journal.md` (agent-written session log, last
 20 bullets kept), `config.json`, `hooks/` (vendored), `backups/`.
 
+## Audit skill
+
+A bundled agent skill, `crank-mem-audit`, reconciles memory with reality: it
+mines the last 10 days of Claude Code and Codex sessions, verifies every
+cerebrum bullet against the current code, then backs up and rewrites
+`cerebrum.md` and `journal.md`. Install it into a project with the
+[skills CLI](https://github.com/vercel-labs/skills):
+
+```sh
+cd <your project> && npx skills add ChrisLiva/crank-mem
+```
+
+Install at the **project level** — `.claude/skills/` for Claude Code and the
+shared `.agents/skills/` for Codex (user-level Codex paths are inconsistent
+between the docs and the installer). The installer writes a `skills-lock.json`
+at the project root recording the source and content hash; update installed
+copies with `npx skills update` (`crank-mem upgrade` never touches them).
+
+Invocation is user-only: `/crank-mem-audit` in Claude Code, `$crank-mem-audit`
+in Codex.
+
 ## Debugging
 
 Hooks are advisory-only and silent by design — stderr never reaches the model

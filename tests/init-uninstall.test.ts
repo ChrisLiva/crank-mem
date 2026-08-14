@@ -65,6 +65,10 @@ describe("init → uninstall round-trip", () => {
 
     const init = cli(root, codexHome, "init", "--yes", "--codex", "merge");
     expect(init.status).toBe(0);
+    // The audit-skill pointer sits on the closing guidance block, after "Next:".
+    const pointer = "Optional: install the audit skill — npx skills add ChrisLiva/crank-mem";
+    expect(init.stdout).toContain(pointer);
+    expect(init.stdout.indexOf(pointer)).toBeGreaterThan(init.stdout.indexOf("Next: start a Claude Code session"));
 
     // wiring
     const settings = JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8"));
