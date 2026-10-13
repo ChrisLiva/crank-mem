@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { describeFile } from "./describe.ts";
+import { describeFile, isGenerated } from "./describe.ts";
 import { estimateTokens } from "./tokens.ts";
 import { extractSymbols, symbolsSupported, SYMBOL_MIN_TOKENS } from "./symbols.ts";
 import { isExcluded, type CrankConfig } from "./config.ts";
@@ -26,6 +26,9 @@ const LOCKFILE = /(^|\/)(package-lock\.json|[^/]*-lock\.yaml)$/;
 
 // git's binary heuristic: a NUL byte within the first 8,000 bytes.
 const BINARY_SNIFF_BYTES = 8000;
+
+// Test and spec files get no symbols: their names list cases, not an API.
+const TEST_PATH = /(^|\/)(__tests__|tests?|specs?)\/|(^|\/)test_[^/]*$|[._-](test|spec)\.[^/]+$/;
 
 function toPosix(p: string): string {
   return p.split(path.sep).join("/");
@@ -64,7 +67,9 @@ export function indexFile(
   const ext = path.extname(absPath).toLowerCase();
   const tokens = estimateTokens(content, absPath);
   const symbols =
-    tokens >= SYMBOL_MIN_TOKENS && symbolsSupported(ext) ? extractSymbols(content, ext) : undefined;
+    tokens >= SYMBOL_MIN_TOKENS && symbolsSupported(ext) && !TEST_PATH.test(relPath) && !isGenerated(content)
+      ? extractSymbols(content, ext)
+      : undefined;
   const entry: FileEntry = {
     description: describeFile(absPath),
     tokens,
