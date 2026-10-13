@@ -118,6 +118,16 @@ describe("session-start hook (black-box)", () => {
     expect(events.find((e) => e.event === "walk-fallback")?.reason).toMatch(/^exit \d+$/);
   });
 
+  test("a git repo with no commits skips churn and logs why", () => {
+    const root = makeCrankProject({ "a.ts": "x" });
+    git(root, "init", "-q");
+    enableDebugConfig(root);
+    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
+    expect(run.status).toBe(0);
+    const events = readDebugLog(root).flatMap((r) => r.events);
+    expect(events.find((e) => e.event === "churn-skipped")?.reason).toMatch(/^exit \d+$/);
+  });
+
   test("Codex payload: same injection shape", () => {
     const root = makeCrankProject({ "main.go": "package main\nfunc main() {}\n" });
     const run = runHook(HOOK, JSON.stringify(codexSessionStart(root)));
