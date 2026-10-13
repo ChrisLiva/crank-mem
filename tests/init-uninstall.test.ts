@@ -347,6 +347,22 @@ describe("init → uninstall round-trip", () => {
     expect(second.status).toBe(1);
     expect(second.stderr).toContain("already initialized");
   });
+
+  test("codex-trust init then --restore returns the project and CODEX_HOME config byte-identical", () => {
+    const { root, codexHome } = makeProject();
+    const codexConfig = path.join(codexHome, "config.toml");
+    const before = snapshot(root);
+    const beforeCodexConfig = fs.readFileSync(codexConfig);
+
+    const init = cli(root, codexHome, "init", "--yes", "--codex", "merge", "--codex-trust", "write");
+    expect(init.status).toBe(0);
+    const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
+    expect(un.status).toBe(0);
+
+    expect(snapshot(root)).toEqual(before);
+    expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
+    expect(fs.readFileSync(codexConfig)).toEqual(beforeCodexConfig);
+  });
 });
 
 // Uninstall sweeps residue from a pre-rename (non-dotted crank/) install:
