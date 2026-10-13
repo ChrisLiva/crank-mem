@@ -31,9 +31,14 @@ export function parsePayload(raw: string): HookPayload | null {
   }
 }
 
-/** Codex payloads carry a turn_id (tests/fixtures/payloads.ts); Claude's carry none. */
+/**
+ * Codex tool payloads carry a turn_id, but its SessionStart does not (ADR 0007),
+ * so also match the Codex transcript name, `rollout-<ts>-<uuid>.jsonl` (ADR 0006).
+ * Claude carries neither.
+ */
 export function isCodexPayload(payload: HookPayload): boolean {
-  return typeof payload.turn_id === "string";
+  if (typeof payload.turn_id === "string") return true;
+  return typeof payload.transcript_path === "string" && path.basename(payload.transcript_path).startsWith("rollout-");
 }
 
 /**

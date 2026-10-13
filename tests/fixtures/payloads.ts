@@ -12,11 +12,11 @@ export function claudeSessionStart(cwd: string): object {
   };
 }
 
+// Codex SessionStart carries no turn_id (ADR 0007, verbatim payload).
 export function codexSessionStart(cwd: string): object {
   return {
     session_id: "019f6e07-aaaa-bbbb-cccc-ddddeeeeffff",
-    turn_id: "019f6e07-1111-2222-3333-444455556666",
-    transcript_path: "/Users/u/.codex/sessions/019f6e07.jsonl",
+    transcript_path: "/Users/u/.codex/sessions/2026/10/13/rollout-2026-10-13T11-14-58-019f6e07-aaaa-bbbb-cccc-ddddeeeeffff.jsonl",
     cwd,
     hook_event_name: "SessionStart",
     model: "gpt-5.6-sol",
