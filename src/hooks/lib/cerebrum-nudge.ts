@@ -52,9 +52,8 @@ const COMMIT_SHA = /\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/;
 
 export const MARKER_FILE = "cerebrum-nudge.json";
 
-// The audit skill is user-invoked only (disable-model-invocation), so an
-// unaudited project stays unaudited unless the user is told. OrcaSlicer never
-// ran it, and 3 of 7 paths its cerebrum cites no longer exist.
+// The audit skill sets disable-model-invocation, so only the user can start
+// it, and an unaudited project stays unaudited unless the user is told.
 export const AUDIT_SKILL = "crank-mem-audit";
 export const AUDIT_INTERVAL_MS = 7 * 86_400_000;
 
@@ -468,8 +467,8 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
 // A file of its own, so it never disturbs the nudge marker's debounce.
 export const DEDUP_FILE = "cerebrum-dedup.json";
 // A new bullet sharing this many identifiers with an older one is flagged.
-// Word overlap misses real duplicates (0.31 Jaccard on an OrcaSlicer pair that
-// re-describes the same build failure); shared identifiers catch them.
+// Two bullets on one failure can share few words yet name the same
+// identifiers, so identifiers catch duplicates that word overlap misses.
 export const OVERLAP_MIN_SHARED = 2;
 const OVERLAP_MAX_PAIRS = 2;
 const SHARED_NAMED = 3;
@@ -537,9 +536,9 @@ export function overlapPairCount(text: string): number {
  * file is never reparsed. The first run records the bullet hashes and stays
  * silent. "New" means a bullet whose hash was not there last time; older
  * bullets are those still present, so an edited bullet is never paired with
- * the version it replaced. The audit's run of this rule found 5 pairs in 63
- * bullets, 2 of them true duplicates, so the message keeps "keep both" a no-op
- * answer. Never throws.
+ * the version it replaced. The rule also flags pairs that say different
+ * things, so the message offers keeping both as an answer that needs no edit.
+ * Never throws.
  */
 export function cerebrumOverlaps(crankDir: string): string | null {
   try {

@@ -63,8 +63,8 @@ function commandForms(script: string): Set<string> {
 }
 
 /**
- * The subagent types that get the SubagentStart excerpt: every type OrcaSlicer
- * spawned, and nothing else, such as a custom or plugin agent (ADR 0007).
+ * The subagent types that get the SubagentStart excerpt. The anchored list
+ * leaves out custom and plugin agents; ADR 0007 records the census behind it.
  */
 export const SUBAGENT_MATCHER = "^(general-purpose|Explore|Plan|workflow-subagent)$";
 

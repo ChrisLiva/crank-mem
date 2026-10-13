@@ -15,12 +15,8 @@ import type { AnatomyIndex } from "./store.ts";
 // file map) → staleness/drift notes → recent journal bullets → cerebrum
 // excerpt → ADR filenames.
 //
-// The map itself is deliberately NOT injected. Measured over 67 sessions in a
-// real project, inlining it cost 74% of the injection — enough to trip Claude
-// Code's silent stdout cliff (ADR 0005) in 9 of 23 sessions — and produced no
-// observed use: zero reads, zero navigational citations. The predecessor tool
-// shipped a one-line pointer instead, for ~40 bytes, and got more consultation
-// than the inlined version did. So: point at anatomy.md, don't recite it.
+// The map is not injected, only a one-line pointer to it. Inlining the map
+// cost 74% of the injection; ADR 0005 records the measurement.
 
 /**
  * Ceiling on the whole excerpt. Whole bullets cost roughly double what the
@@ -38,8 +34,8 @@ export const MEMORY_RECENT_COUNT = 7;
 export const INDEX_ENTRY_CHARS = 48;
 /**
  * Bytes of memory index, about 11 entries, kept ahead of the oldest recent
- * bullet under budget pressure. Without it OrcaSlicer's 300 to 870-byte
- * bullets used the whole excerpt and 16 hidden memory bullets went unnamed.
+ * bullet under budget pressure, so a few long recent bullets cannot push every
+ * hidden bullet's name out of the excerpt.
  */
 export const MEMORY_INDEX_ALLOWANCE_BYTES = 600;
 /** First line of every injection; `crank-mem stats` finds it in Codex rollouts. */
@@ -59,10 +55,9 @@ const CEREBRUM_HEADER = "## Cerebrum (.crank/cerebrum.md)";
 const SYMBOL_GAPS_NAMED = 3;
 
 /**
- * The anatomy.md pointer, stating what the index covers. A pointer that said
- * "check it before reading any file" over a capped index sent OrcaSlicer agents
- * to a map holding none of src/; the cap and the languages without symbols are
- * what an agent needs to know to fall back to search.
+ * The anatomy.md pointer, stating what the index covers. A capped index can
+ * omit whole directories, so the pointer names the cap and the languages
+ * without symbol ranges, which tell an agent when to fall back to search.
  */
 function anatomyPointer(index: AnatomyIndex, codex: boolean): string {
   const { fileCount, truncated, candidateCount } = index.meta;
@@ -197,9 +192,8 @@ export interface Excerpt {
  * cut mid-bullet.
  *
  * `balanced` drops both index lists first, then the oldest bullet of whichever
- * kind takes more bytes, so a small budget still carries memory: at 2,048 bytes
- * the default order left OrcaSlicer's and takeoff-poc's subagents preferences
- * and no gotcha (ADR 0007).
+ * kind takes more bytes, so a 2,048-byte budget still carries a memory bullet
+ * when preferences alone would fill it. ADR 0007 records the measurements.
  */
 export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles, balanced = false): Excerpt {
   const prefsLines: string[] = [];

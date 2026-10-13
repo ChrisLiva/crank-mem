@@ -4,8 +4,7 @@ import type { CrankConfig } from "./config.ts";
 
 // Vendored-hook drift: the hooks under .crank/hooks/ are a copy of the clone's
 // src/hooks/, so a clone that has moved on leaves the project running old code
-// with nothing to say so. One real install ran 15 sessions on a truncating
-// injection after the fix had already landed in the clone.
+// with nothing to say so.
 //
 // Warn only — never re-vendor. A hook that swapped its own files mid-session
 // would be mutating the project from inside an advisory-only path.

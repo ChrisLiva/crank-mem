@@ -103,7 +103,7 @@ function rank(relPath: string): number {
   return demoted + (SOURCE_EXTENSIONS.has(path.extname(relPath).toLowerCase()) ? 0 : 1);
 }
 
-// OrcaSlicer's listing is 1.37 MB, past spawnSync's 1 MiB default buffer.
+// A large repo's ls-files listing can pass the 1 MiB default maxBuffer.
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 // walkProject runs before the refresh deadline is checked, so git gets its own.
 const GIT_TIMEOUT_MS = 500;
@@ -149,9 +149,8 @@ function gitListing(rootDir: string): string[] | null {
 }
 
 const CHURN_COMMITS = 300;
-// Bulk commits (vendor syncs, mass renames) say nothing about where work
-// happens: on OrcaSlicer 16 of the last 300 commits made 12,525 of its 13,932
-// file touches.
+// Bulk commits such as vendor syncs and mass renames say nothing about where
+// work happens, and a few of them can make most of a repo's file touches.
 const CHURN_BULK_FILES = 50;
 const CHURN_KEEP = 100;
 
@@ -213,7 +212,7 @@ function keepPin(entry: FileEntry, prior: FileEntry | undefined): FileEntry {
 
 // lstat, as the tree walk's Dirent does: symlinks, submodules and
 // deleted-but-tracked paths are not files to index. An oversized file would
-// take a max_files slot that indexFile then leaves empty: 15 of OrcaSlicer's 500.
+// take a max_files slot that indexFile then leaves empty.
 function isWalkableFile(rootDir: string, rel: string, config: CrankConfig): boolean {
   try {
     const stat = fs.lstatSync(path.join(rootDir, rel));
