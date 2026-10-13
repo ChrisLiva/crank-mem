@@ -2,8 +2,8 @@
 
 Zero-runtime-dependency project memory for coding agents (Claude Code +
 Codex). Maintains a token-annotated file anatomy index, an agent-written
-cerebrum, and a session journal, injected at session start; re-indexes on
-writes. Advisory-only — hooks always exit 0.
+cerebrum, and a session journal, injected at session start; Claude Code
+subagents get a 2 KB cerebrum excerpt; re-indexes on writes. Advisory-only — hooks always exit 0.
 
 ## Install
 

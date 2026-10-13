@@ -74,3 +74,17 @@ export function codexApplyPatch(cwd: string, patchText: string): object {
     tool_use_id: "exec-01",
   };
 }
+
+// Live-probed 2026-10-13, Claude Code 2.1.296 (ADR 0007). session_id and
+// transcript_path name the parent session.
+export function claudeSubagentStart(cwd: string, agentType = "general-purpose"): object {
+  return {
+    session_id: "5195319c-1111-2222-3333-444455556666",
+    transcript_path: "/Users/u/.claude/projects/-proj/5195319c.jsonl",
+    cwd,
+    prompt_id: "1e84aeb8-1111-2222-3333-444455556666",
+    agent_id: "aad3ad910b75b309e",
+    agent_type: agentType,
+    hook_event_name: "SubagentStart",
+  };
+}

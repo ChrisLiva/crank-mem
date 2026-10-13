@@ -62,6 +62,12 @@ function commandForms(script: string): Set<string> {
   return forms;
 }
 
+/**
+ * The subagent types that get the SubagentStart excerpt: every type OrcaSlicer
+ * spawned, and nothing else, such as a custom or plugin agent (ADR 0007).
+ */
+export const SUBAGENT_MATCHER = "^(general-purpose|Explore|Plan|workflow-subagent)$";
+
 /** The hook entries crank-mem wires, per agent. */
 export function crankHooks(runtime: Runtime, agent: Agent): HooksMap {
   const matcher = agent === "claude" ? "Write|Edit|MultiEdit" : "apply_patch";
@@ -79,6 +85,12 @@ export function crankHooks(runtime: Runtime, agent: Agent): HooksMap {
   if (agent === "claude") {
     map.Stop = [
       { hooks: [{ type: "command", command: hookCommand(runtime, "stop.ts", agent), timeout: 10 }] },
+    ];
+    map.SubagentStart = [
+      {
+        matcher: SUBAGENT_MATCHER,
+        hooks: [{ type: "command", command: hookCommand(runtime, "subagent-start.ts", agent), timeout: 10 }],
+      },
     ];
   }
   return map;

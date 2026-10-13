@@ -30,6 +30,15 @@ describe("mergeHooksIntoFile", () => {
     expect(crankHooks("node", "codex").Stop).toBeUndefined();
   });
 
+  test("SubagentStart is wired for Claude's four probed agent types only", () => {
+    const [group] = crankHooks("bun", "claude").SubagentStart!;
+    expect(group!.hooks[0]!.command).toContain(".crank/hooks/subagent-start.ts");
+    const matcher = new RegExp(group!.matcher!);
+    for (const type of ["general-purpose", "Explore", "Plan", "workflow-subagent"]) expect(matcher.test(type)).toBe(true);
+    for (const type of ["my-reviewer", "Explorer", "general-purpose-2"]) expect(matcher.test(type)).toBe(false);
+    expect(crankHooks("bun", "codex").SubagentStart).toBeUndefined();
+  });
+
   test("preserves pre-existing settings byte-identical apart from appended entries", () => {
     const f = tmpFile();
     // UserPromptSubmit is an event crank never wires, so it must survive untouched.

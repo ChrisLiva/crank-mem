@@ -305,6 +305,22 @@ describe("upgrade", () => {
     expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(backups);
   });
 
+  test("adds SubagentStart to an install wired before it existed and keeps the user's edits", () => {
+    const root = initedProject();
+    const local = path.join(root, ".claude/settings.local.json");
+    const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
+    delete settings.hooks.SubagentStart;
+    settings.hooks.Stop[0].hooks[0].command = 'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts # mine';
+    fs.writeFileSync(local, JSON.stringify(settings));
+
+    const run = cli(root, "upgrade");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("re-wired Claude Code hooks in .claude/settings.local.json");
+    const after = JSON.parse(fs.readFileSync(local, "utf-8")).hooks;
+    expect(after.SubagentStart).toEqual(crankHooks("bun", "claude").SubagentStart);
+    expect(after.Stop[0].hooks[0].command).toContain("# mine");
+  });
+
   test("leaves a hooks.json without crank entries alone", () => {
     const root = initedProject();
     fs.mkdirSync(path.join(root, ".codex"));
