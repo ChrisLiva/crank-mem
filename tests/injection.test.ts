@@ -181,19 +181,19 @@ describe("cerebrumExcerpt", () => {
     expect(index[2]).toStartWith("- Preference 0:");
   });
 
-  // Recent bullets outrank the index, and a preference outranks both.
-  test("over budget, the index sheds its oldest memory entries before any bullet", () => {
+  // Past its allowance the index outranks no bullet, and a preference outranks both.
+  test("over budget, an index past its allowance sheds its oldest memory entries before any bullet", () => {
     const md =
       "# Cerebrum\n\n## User Preferences\n\n" +
       Array.from({ length: 12 }, (_, i) => `- Preference ${i}: ${"spelled out at length ".repeat(8)}`).join("\n") +
       "\n\n## Memory\n\n" +
-      Array.from({ length: 12 }, (_, i) => `- Learning ${i}: ${"detail ".repeat(10)}`).join("\n") +
+      Array.from({ length: 30 }, (_, i) => `- Learning ${i}: ${"detail ".repeat(10)}`).join("\n") +
       "\n";
     const full = excerpt(md);
     const ex = cerebrumExcerpt(md, Buffer.byteLength(full, "utf-8") - 60);
     const index = section(ex, "Not shown").join("\n");
     expect(index).not.toContain("Learning 0:");
-    expect(index).toContain("Learning 4:");
+    expect(index).toContain("Learning 22:");
     expect(index).toContain("- Preference 0:");
     expect(section(ex, "Memory")).toHaveLength(1 + MEMORY_RECENT_COUNT);
     // Every recent memory bullet and every index entry gone, preferences stay.
@@ -201,20 +201,27 @@ describe("cerebrumExcerpt", () => {
     expect(starved).not.toContain("### Memory");
     expect(starved).not.toContain("- Preference 0:");
     expect(starved).toContain("Preference 11:");
-    expect(section(starved, "Not shown")[0]).toMatch(/^### Not shown \(\d+ of 24; grep \.crank\/cerebrum\.md\)$/);
+    expect(section(starved, "Not shown")[0]).toMatch(/^### Not shown \(\d+ of 42; grep \.crank\/cerebrum\.md\)$/);
   });
 
-  test("over budget, the oldest memory bullets go first", () => {
+  // OrcaSlicer's 300 to 870-byte bullets used to push out every index entry,
+  // so 16 hidden memory bullets went unnamed.
+  test("over budget, the oldest memory bullets go first and are listed in the index", () => {
     const md =
       "# Cerebrum\n\n## Memory\n\n" +
-      Array.from({ length: 10 }, (_, i) => `- Learning ${i}: ${"detail ".repeat(30)}`).join("\n") +
+      Array.from({ length: 10 }, (_, i) => `- Learning ${i}: ${"detail ".repeat(30).trim()}`).join("\n") +
       "\n";
     const ex = cerebrumExcerpt(md, 900);
     expect(Buffer.byteLength(ex, "utf-8")).toBeLessThanOrEqual(900);
-    expect(ex).toContain("Learning 9:");
-    expect(ex).not.toContain("Learning 0:");
+    const memory = section(ex, "Memory").slice(1);
+    expect(memory.at(-1)).toStartWith("- Learning 9:");
+    expect(memory.join("\n")).not.toContain("Learning 0:");
     // Whole bullets only — a trim never cuts one mid-sentence.
-    expect(ex.endsWith("…")).toBe(false);
+    for (const line of memory) expect(line).toEndWith("detail");
+    const index = section(ex, "Not shown");
+    expect(index[0]).toBe(`### Not shown (${10 - memory.length} of 10; grep .crank/cerebrum.md)`);
+    expect(index.slice(1)).toHaveLength(10 - memory.length);
+    expect(index[1]).toStartWith("- Learning 0:");
   });
 
   test("a budget too small for even one bullet yields nothing rather than a fragment", () => {

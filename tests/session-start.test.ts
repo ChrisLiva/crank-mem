@@ -323,6 +323,29 @@ describe("cerebrum index (black-box)", () => {
     expect(ctx).toContain("- **Pref 0**: `Support.cpp` caps pillar reach at…");
     expect(ctx).toMatch(/^- \*\*Gotcha 13\*\*: .*…$/m); // the newest hidden one
   });
+
+  // OrcaSlicer's Oct 13 cerebrum: memory bullets of 300 to 870 bytes filled the
+  // excerpt, and none of the 16 hidden memory bullets was named.
+  test("memory bullets long enough to fill the excerpt still leave the hidden ones named", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
+    const bullet = (subject: string, i: number, clauses: number): string =>
+      `- **${subject} ${i}**: ${clause.repeat(clauses).trim()} (2026-09-${10 + i}).`;
+    fs.writeFileSync(
+      path.join(root, ".crank/cerebrum.md"),
+      "# Cerebrum\n\n## User Preferences\n" +
+        Array.from({ length: 7 }, (_, i) => bullet("Pref", i, 4)).join("\n") +
+        "\n\n## Memory\n" +
+        Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i, 9)).join("\n") +
+        "\n"
+    );
+
+    const ctx = inject(root);
+    expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(8192);
+    expect(ctx).toContain("- **Gotcha 20**:");
+    expect(ctx).toMatch(/^- \*\*Gotcha 16\*\*: .*…$/m); // the newest hidden one
+    expect(ctx.match(/^- \*\*Gotcha \d+\*\*: .*…$/gm)?.length).toBeGreaterThanOrEqual(10);
+  });
 });
 
 describe("vendored-hook drift (black-box)", () => {

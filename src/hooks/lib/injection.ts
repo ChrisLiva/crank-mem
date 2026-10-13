@@ -33,6 +33,12 @@ export const ADR_RECENT_COUNT = 20;
 export const MEMORY_RECENT_COUNT = 7;
 /** Width of one index entry: a bullet's opening words, enough to grep for. */
 export const INDEX_ENTRY_CHARS = 48;
+/**
+ * Bytes of memory index, about 11 entries, kept ahead of the oldest recent
+ * bullet under budget pressure. Without it OrcaSlicer's 300 to 870-byte
+ * bullets used the whole excerpt and 16 hidden memory bullets went unnamed.
+ */
+export const MEMORY_INDEX_ALLOWANCE_BYTES = 600;
 /** First line of every injection; `crank-mem stats` finds it in Codex rollouts. */
 export const INJECTION_HEADING = "## crank-mem (project memory)";
 
@@ -169,10 +175,12 @@ const bytes = (s: string): number => Buffer.byteLength(s, "utf-8");
  * recency slice was gone from every later session while still in the file.
  *
  * Over either the token cap or `budgetBytes`, the oldest memory index entry
- * goes first, then the oldest recent memory bullet, then the preference index
- * entries, then the oldest preference: what an agent just recorded is what the
- * next session most needs, and a user-stated preference outranks anything the
- * agent inferred. Nothing is ever cut mid-bullet.
+ * goes first while the memory index is over MEMORY_INDEX_ALLOWANCE_BYTES, then
+ * the oldest recent memory bullet, which joins the index, then the rest of the
+ * memory index, then the preference index entries, then the oldest preference:
+ * what an agent just recorded is what the next session most needs, and a
+ * user-stated preference outranks anything the agent inferred. Nothing is ever
+ * cut mid-bullet.
  *
  * `balanced` drops both index lists first, then the oldest bullet of whichever
  * kind takes more bytes, so a small budget still carries memory: at 2,048 bytes
@@ -248,10 +256,13 @@ export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles, b
   const size = (list: string[]): number => bytes(list.join("\n"));
   let text = render();
   while (text && (estimateProseTokens(text) > CEREBRUM_INJECT_TOKEN_CAP || bytes(text) > budgetBytes)) {
-    if (memoryIndex.length) memoryIndex.shift();
+    const indexOver = balanced || !memory.length || size(memoryIndex) > MEMORY_INDEX_ALLOWANCE_BYTES;
+    if (memoryIndex.length && indexOver) memoryIndex.shift();
     else if (balanced && prefsIndex.length) prefsIndex.shift();
-    else if (memory.length && !(balanced && size(prefs) > size(memory))) memory.shift();
-    else if (prefsIndex.length) prefsIndex.shift();
+    else if (memory.length && !(balanced && size(prefs) > size(memory))) {
+      const dropped = memory.shift()!;
+      if (!balanced) memoryIndex.push(indexEntry(dropped));
+    } else if (prefsIndex.length) prefsIndex.shift();
     else prefs.shift();
     text = render();
   }
