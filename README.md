@@ -69,20 +69,24 @@ parent session does not see it. See ADR 0007.
 
 ## What gets indexed
 
-In a git repo the file list comes from `git ls-files -co --exclude-standard`,
-so gitignored files stay out. Two groups of files go first: files an agent
-wrote (up to 100, most recent first) and the 100 files changed most often in
-the last 300 commits, not counting commits that touch more than 50 files.
-crank-mem recomputes that churn list only when HEAD moves. Source code comes
-next, and anything under `deps_src`, `third_party`, `vendor`, `external`,
-`node_modules`, `resources`, `assets`, `static` or `public` ranks last; the
-first `max_files` (default 500) are indexed. A written file stays pinned until
-it shows up in the churn list. `anatomy.md` opens with the 25 most active of
-these files. Submodule contents are not indexed. A write to a gitignored file
-is indexed by the write hook and dropped again at the next session start.
-Outside git, or if git fails, a sorted directory walk is used instead.
-When the cap cuts files, the session-start injection says so and, in git,
-gives the indexed count against the total; `crank-mem stats` counts every
+When the project root holds `.git`, the file list comes from
+`git ls-files -co --exclude-standard`, so gitignored files stay out. Two
+groups of files go first: files an agent wrote (up to 100, most recent first)
+and the 100 files changed most often in the last 300 commits, not counting
+commits that touch more than 50 files. crank-mem recomputes that churn list
+only when HEAD moves. Source code comes next, and anything under `deps_src`,
+`third_party`, `vendor`, `external`, `node_modules`, `resources`, `assets`,
+`static` or `public` ranks last; the first `max_files` (default 500) are
+indexed. A written file stays pinned until it shows up in the churn list.
+`anatomy.md` opens with the 25 most active of these files. Submodule contents
+are not indexed. A write to a gitignored file is indexed by the write hook and
+dropped again at the next session start. When the root has no `.git`, or git
+fails, a sorted directory walk is used instead, and it does not read
+`.gitignore`. That includes a project initialized in a subdirectory of a repo,
+such as `packages/web` in a monorepo: it also gets no churn ranking, and its
+nudges count changed files from the index, which misses files written through
+Bash. When the cap cuts files, the session-start injection says so and, in
+git, gives the indexed count against the total; `crank-mem stats` counts every
 indexable file without the cap.
 
 ## Audit skill
