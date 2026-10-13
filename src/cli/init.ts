@@ -7,7 +7,7 @@ import { cliVersion, REPO_ROOT } from "./version.ts";
 import { vendorHooks, templatePath } from "./vendor.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
-  crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles,
+  crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, isCrankHookCommand,
   addIgnoreLines, ensureCodexFeatures, unignoreCerebrum, ensureCrankGitignore,
 } from "./settings.ts";
 import {
@@ -86,9 +86,10 @@ export async function run(args: string[]): Promise<number> {
     : yes ? "skip"
     : await choose("Write Codex trusted_hash entries to ~/.codex/config.toml?", ["write", "skip"], "skip");
 
-  // ── Backups of every file we might modify ────────────────────────────────
+  // ── Backup dir and the paths init writes ─────────────────────────────────
   fs.mkdirSync(crankDir, { recursive: true });
   const backupDir = newBackupDir(crankDir);
+  const backup = (f: string) => backupFile(backupDir, f);
   const { wired: claudeSettings, other: otherClaudeSettings } = claudeSettingsFiles(root, gitMode);
   // Crank hooks in both Claude settings files run every event twice.
   const duplicateWiring = hasCrankHooks(otherClaudeSettings);
@@ -96,18 +97,8 @@ export async function run(args: string[]): Promise<number> {
   const gitignore = path.join(root, ".gitignore");
   const gitExclude = path.join(root, ".git", "info", "exclude");
 
-  backupFile(backupDir, claudeSettings);
-  if (duplicateWiring) backupFile(backupDir, otherClaudeSettings);
-  if (codexMode === "merge") {
-    backupFile(backupDir, codexHooksJson);
-    backupFile(backupDir, codexConfigToml);
-  }
-  if (gitMode === "ignore") backupFile(backupDir, gitignore);
-  if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) backupFile(backupDir, gitExclude);
-  if (codexTrust === "write") backupFile(backupDir, userCodexConfigPath());
-
-  // Backups are secured — from here on, a partial failure is recoverable via
-  // `uninstall --restore`, so surface that instead of auto-rolling back.
+  // Each writer backs up its file just before writing it, so a partial failure
+  // is recoverable through `uninstall --restore`; init prints that hint instead of rolling back.
   let scanned: ReturnType<typeof commitIndex>;
   let ignoredBy: string | null = null;
   const unignored: string[] = [];
@@ -126,26 +117,23 @@ export async function run(args: string[]): Promise<number> {
     saveConfig(crankDir, config);
 
     // ── Agent wiring ───────────────────────────────────────────────────────
-    mergeHooksIntoFile(claudeSettings, crankHooks(runtime, "claude"));
-    if (duplicateWiring) removeCrankHooksFromFile(otherClaudeSettings);
+    mergeHooksIntoFile(claudeSettings, crankHooks(runtime, "claude"), backup);
+    if (duplicateWiring) removeCrankHooksFromFile(otherClaudeSettings, isCrankHookCommand, backup);
     if (codexMode === "merge") {
-      mergeHooksIntoFile(codexHooksJson, crankHooks(runtime, "codex"));
-      ensureCodexFeatures(codexConfigToml);
+      mergeHooksIntoFile(codexHooksJson, crankHooks(runtime, "codex"), backup);
+      ensureCodexFeatures(codexConfigToml, backup);
       if (codexTrust === "write") {
         const t = crankTrust(codexHooksJson);
-        writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys);
+        writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys, backup);
       }
     }
 
     // ── Git mode ───────────────────────────────────────────────────────────
-    if (gitMode === "ignore") addIgnoreLines(gitignore);
-    if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) addIgnoreLines(gitExclude);
+    if (gitMode === "ignore") addIgnoreLines(gitignore, backup);
+    if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) addIgnoreLines(gitExclude, backup);
     // Another tool sharing .crank/ may have written its own .gitignore first.
-    ensureCrankGitignore(crankDir, (f) => backupFile(backupDir, f));
-    if (gitMode === "commit") ignoredBy = unignoreCerebrum(root, (f) => {
-      backupFile(backupDir, f);
-      unignored.push(f);
-    });
+    ensureCrankGitignore(crankDir, backup);
+    if (gitMode === "commit") ignoredBy = unignoreCerebrum(root, (f) => { backup(f); unignored.push(f); });
 
     // ── Seed cerebrum + journal + first scan ───────────────────────────────
     fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, CEREBRUM_FILE));

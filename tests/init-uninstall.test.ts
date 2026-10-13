@@ -62,6 +62,15 @@ function snapshot(root: string): Record<string, string> {
   return out;
 }
 
+/** The original paths the manifest in the one backup dir under `<root>/.crank/backups/` lists. */
+function manifestOriginals(root: string): string[] {
+  const backups = path.join(root, ".crank", "backups");
+  const dirs = fs.readdirSync(backups);
+  expect(dirs).toHaveLength(1);
+  const manifest = JSON.parse(fs.readFileSync(path.join(backups, dirs[0]!, "manifest.json"), "utf-8"));
+  return manifest.entries.map((e: { original: string }) => e.original);
+}
+
 describe("init → uninstall round-trip", () => {
   test("default (exclude mode): wiring present, restore byte-identical, zero residue", () => {
     const { root, codexHome } = makeProject();
@@ -356,12 +365,25 @@ describe("init → uninstall round-trip", () => {
 
     const init = cli(root, codexHome, "init", "--yes", "--codex", "merge", "--codex-trust", "write");
     expect(init.status).toBe(0);
+    expect(manifestOriginals(root)).toContain(codexConfig);
     const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
     expect(un.status).toBe(0);
 
     expect(snapshot(root)).toEqual(before);
     expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
     expect(fs.readFileSync(codexConfig)).toEqual(beforeCodexConfig);
+  });
+
+  test("a backup manifest lists only the files init wrote", () => {
+    const { root, codexHome } = makeProject({ ".gitignore": ".crank/\n" });
+    const init = cli(root, codexHome, "init", "--yes", "--git", "ignore", "--codex", "skip", "--codex-trust", "write");
+    expect(init.status).toBe(0);
+
+    const originals = manifestOriginals(root);
+    const realRoot = fs.realpathSync(root);
+    expect(originals).toContain(path.join(realRoot, ".claude/settings.local.json"));
+    expect(originals).not.toContain(path.join(realRoot, ".gitignore"));
+    expect(originals).not.toContain(path.join(codexHome, "config.toml"));
   });
 });
 

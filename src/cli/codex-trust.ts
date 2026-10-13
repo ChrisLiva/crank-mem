@@ -166,11 +166,18 @@ function entryBlock(e: TrustEntry): string {
 /**
  * Append trust entries to the user config.toml, replacing any blocks for the
  * same keys — plus `staleKeys`, the orphans older crank releases left behind.
+ * Calls `beforeWrite` just before the write.
  */
-export function writeTrustEntries(configPath: string, entries: TrustEntry[], staleKeys: string[] = []): void {
+export function writeTrustEntries(
+  configPath: string,
+  entries: TrustEntry[],
+  staleKeys: string[] = [],
+  beforeWrite?: (file: string) => void,
+): void {
   let content = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : "";
   content = stripTrustEntries(content, [...entries.map((e) => e.key), ...staleKeys]);
   const sep = content === "" || content.endsWith("\n") ? "" : "\n";
+  beforeWrite?.(configPath);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, content + sep + entries.map(entryBlock).join(""));
 }

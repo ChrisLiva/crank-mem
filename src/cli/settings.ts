@@ -122,7 +122,7 @@ function hookScript(command: string | undefined): string | undefined {
  * when something changed, calling `beforeWrite` first; returns whether it
  * wrote.
  */
-export function mergeHooksIntoFile(file: string, add: HooksMap, beforeWrite?: () => void): boolean {
+export function mergeHooksIntoFile(file: string, add: HooksMap, beforeWrite?: (file: string) => void): boolean {
   const root: Record<string, unknown> = fs.existsSync(file) ? readJson(file) : {};
   const before = JSON.stringify(root);
   const hooks = (root.hooks ?? {}) as Record<string, unknown>;
@@ -147,7 +147,7 @@ export function mergeHooksIntoFile(file: string, add: HooksMap, beforeWrite?: ()
   }
   root.hooks = hooks;
   if (JSON.stringify(root) === before) return false;
-  beforeWrite?.();
+  beforeWrite?.(file);
   writeJson(file, root);
   return true;
 }
@@ -173,12 +173,14 @@ export function claudeSettingsFiles(root: string, git: CrankConfig["git"]): { wi
 
 /**
  * Remove every hook group whose command references .crank/hooks/. Drops empty
- * event arrays and an empty hooks object; returns false if the file does not
- * exist or parsing failed (leave it alone).
+ * event arrays and an empty hooks object, calling `beforeWrite` before it
+ * writes; returns false if nothing matched, the file does not exist or parsing
+ * failed (leave it alone).
  */
 export function removeCrankHooksFromFile(
   file: string,
   matches: (command: string | undefined) => boolean = isCrankHookCommand,
+  beforeWrite?: (file: string) => void,
 ): boolean {
   if (!fs.existsSync(file)) return false;
   let root: Record<string, unknown>;
@@ -202,8 +204,10 @@ export function removeCrankHooksFromFile(
     }
   }
   if (Object.keys(hooks).length === 0) delete root.hooks;
-  if (changed) writeJson(file, root);
-  return changed;
+  if (!changed) return false;
+  beforeWrite?.(file);
+  writeJson(file, root);
+  return true;
 }
 
 // ── Line-based files (.gitignore, .git/info/exclude, codex config.toml) ─────
@@ -214,11 +218,12 @@ const IGNORE_BLOCK = `${IGNORE_COMMENT}\n${IGNORE_LINE}\n`;
 /** The block a legacy pre-rename install appended (non-dotted crank/). */
 export const LEGACY_IGNORE_BLOCK = `${IGNORE_COMMENT}\ncrank/\n`;
 
-/** Append our ignore block if .crank/ isn't covered. Creates the file if needed. */
-export function addIgnoreLines(file: string): void {
+/** Append our ignore block if .crank/ isn't covered, calling `beforeWrite` first. Creates the file if needed. */
+export function addIgnoreLines(file: string, beforeWrite?: (file: string) => void): void {
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
   if (existing.split("\n").some((l) => l.trim() === IGNORE_LINE)) return;
   const sep = existing === "" || existing.endsWith("\n") ? "" : "\n";
+  beforeWrite?.(file);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, existing + sep + IGNORE_BLOCK);
 }
@@ -282,10 +287,11 @@ export function unignoreCerebrum(root: string, beforeStrip: (file: string) => vo
 
 export const CODEX_FEATURES_SNIPPET = "\n# crank-mem\n[features]\nhooks = true\n";
 
-/** Ensure [features] hooks = true in a codex config.toml, non-destructively. */
-export function ensureCodexFeatures(file: string): void {
+/** Ensure [features] hooks = true in a codex config.toml, non-destructively, calling `beforeWrite` before it writes. */
+export function ensureCodexFeatures(file: string, beforeWrite?: (file: string) => void): void {
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
   if (/^\s*hooks\s*=\s*true\s*$/m.test(existing)) return;
+  beforeWrite?.(file);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, existing + CODEX_FEATURES_SNIPPET);
 }

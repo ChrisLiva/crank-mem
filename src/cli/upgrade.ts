@@ -9,7 +9,7 @@ import {
 } from "./codex-trust.ts";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, unignoreCerebrum,
-  ensureCrankGitignore,
+  ensureCrankGitignore, isCrankHookCommand,
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
 import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
@@ -67,16 +67,15 @@ export async function run(_args: string[]): Promise<number> {
   try {
     const { wired, other } = claudeSettingsFiles(root, config.git);
     if (hasCrankHooks(other)) {
-      backup(other);
-      removeCrankHooksFromFile(other);
+      removeCrankHooksFromFile(other, isCrankHookCommand, backup);
       console.log(`  removed duplicate crank hooks from ${path.relative(root, other)}`);
     }
-    if (mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), () => backup(wired))) {
+    if (mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), backup)) {
       console.log(`  re-wired Claude Code hooks in ${path.relative(root, wired)}`);
     }
     // Codex wiring was opt-in at init: leave a hooks.json without crank entries alone.
     if (hasCrankHooks(codexHooksJson)) {
-      codexRewired = mergeHooksIntoFile(codexHooksJson, crankHooks(config.runtime, "codex"), () => backup(codexHooksJson));
+      codexRewired = mergeHooksIntoFile(codexHooksJson, crankHooks(config.runtime, "codex"), backup);
       if (codexRewired) {
         console.log(`  re-wired Codex hooks in .codex/hooks.json`);
         if (!config.codex_trust_written) for (const line of CODEX_REVIEW_HINT) console.log(line);
@@ -111,9 +110,8 @@ export async function run(_args: string[]): Promise<number> {
 
   const versionChanged = config.vendored_version !== current;
   if (config.codex_trust_written && (versionChanged || codexRewired)) {
-    backup(userCodexConfigPath());
     const t = crankTrust(codexHooksJson);
-    writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys);
+    writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys, backup);
     console.log(`  recomputed Codex trusted_hash entries`);
   }
 
