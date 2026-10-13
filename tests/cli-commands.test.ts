@@ -112,6 +112,16 @@ describe("stats: memory health", () => {
     expect(run.stdout).toContain("journal no NEXT:  1 of 3 entries\n");
   });
 
+  test("a hidden bullet whose only date does not parse counts as undated", () => {
+    const root = memoryProject();
+    const file = path.join(root, ".crank/cerebrum.md");
+    fs.writeFileSync(file, CEREBRUM.replace("- undated note", "- MySQL zero date `0000-00-00` breaks the importer"));
+    const run = cli(root, "stats");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toMatch(/oldest hidden: {4}2026-09-10 \(\d+d ago\), 1 undated\n/);
+    expect(run.stdout).toContain("nudges:");
+  });
+
   test("dates the last audit by its manifest-less backup dir and says when the skill is missing", () => {
     const root = memoryProject();
     const fresh = cli(root, "stats").stdout;

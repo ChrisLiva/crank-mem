@@ -73,7 +73,10 @@ function memoryLines(root: string, crankDir: string, config: CrankConfig, index:
     lines.push(row("prefs dropped", `${e.prefsTotal - e.prefsShown} of ${e.prefsTotal}`));
 
     // A bullet's date is the latest one it carries: a (supersedes …) date is older.
-    const dates = e.hidden.map((b) => b.match(/\b\d{4}-\d{2}-\d{2}\b/g)?.sort().at(-1) ?? null);
+    // A string Date.parse rejects, such as MySQL's 0000-00-00, is not a date.
+    const dates = e.hidden.map(
+      (b) => b.match(/\b\d{4}-\d{2}-\d{2}\b/g)?.filter((d) => !Number.isNaN(Date.parse(d))).sort().at(-1) ?? null,
+    );
     const dated = dates.filter((d): d is string => d !== null).sort();
     const undated = dates.length - dated.length;
     lines.push(
