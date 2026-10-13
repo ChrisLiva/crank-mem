@@ -2,10 +2,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { estimateProseTokens } from "./tokens.ts";
 import { parseBullets } from "./bullets.ts";
-import { JOURNAL_FILE } from "./journal.ts";
+import { JOURNAL_FILE, recentJournalBullets } from "./journal.ts";
 import { instructionFiles } from "./hook-io.ts";
 import { SOURCE_EXTENSIONS } from "./scanner.ts";
 import { symbolsSupported } from "./symbols.ts";
+import { countChangedSince } from "./changes.ts";
+import { CEREBRUM_FILE } from "./cerebrum-nudge.ts";
+import type { CrankConfig } from "./config.ts";
 import type { AnatomyIndex } from "./store.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
@@ -429,4 +432,41 @@ export function listAdrFilenames(projectRoot: string, adrPath: string): string[]
   } catch {
     return [];
   }
+}
+
+/**
+ * The on-disk sources of a session-start injection, shared by the hook and
+ * `crank-mem stats`. The caller adds the staleness note, drift note and codex
+ * flag. Never throws.
+ */
+export function injectionSources(
+  root: string,
+  crankDir: string,
+  config: CrankConfig,
+  index: AnatomyIndex,
+): InjectionSources & { journalBullets: string[] } {
+  let cerebrumMd: string | null = null;
+  try {
+    cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
+  } catch {}
+
+  const journalBullets = recentJournalBullets(crankDir);
+  // How stale the handoff is: files changed since the last entry, from git
+  // (which sees Bash writes), else from the index the refresh just wrote.
+  let journalChanged: number | undefined;
+  if (journalBullets.length) {
+    try {
+      journalChanged = countChangedSince(root, config, index, fs.statSync(path.join(crankDir, JOURNAL_FILE)).mtimeMs);
+    } catch {}
+  }
+
+  return {
+    cerebrumMd,
+    journalBullets,
+    adrFilenames: listAdrFilenames(root, config.adr_path),
+    index,
+    adrPath: config.adr_path,
+    projectRoot: root,
+    journalChanged,
+  };
 }

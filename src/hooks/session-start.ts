@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload,
@@ -7,13 +6,11 @@ import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex, commitIndex } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
-import { composeInjection, listAdrFilenames } from "./lib/injection.ts";
+import { composeInjection, injectionSources } from "./lib/injection.ts";
 import { driftNote } from "./lib/drift.ts";
-import { trimJournal, recentJournalBullets, JOURNAL_FILE } from "./lib/journal.ts";
-import { countChangedSince } from "./lib/changes.ts";
+import { trimJournal } from "./lib/journal.ts";
 import { estimateProseTokens } from "./lib/tokens.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
-import { CEREBRUM_FILE } from "./lib/cerebrum-nudge.ts";
 
 // SessionStart hook (Claude Code + Codex; startup|resume|clear|compact all
 // behave the same, so compaction re-injects). Refreshes the index under lock,
@@ -57,40 +54,19 @@ async function main(): Promise<void> {
       "index refresh ran out of time before covering every file — the file map may be slightly stale";
   }
 
-  let cerebrumMd: string | null = null;
-  try {
-    cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
-  } catch {}
-
   // `compact` fires mid-turn, while the agent may be appending an entry, and
   // the trim is an unlocked read-modify-write — so trim only on the sources
   // that start a turn. Reading for the injection is always safe.
   const source = typeof payload.source === "string" ? payload.source : null;
   if (source !== "compact") trimJournal(crankDir);
-  const journalBullets = recentJournalBullets(crankDir);
-  // How stale the handoff is: files changed since the last entry, from git
-  // (which sees Bash writes), else from the index the refresh just wrote.
-  let journalChanged: number | undefined;
-  if (journalBullets.length) {
-    try {
-      journalChanged = countChangedSince(root, config, index, fs.statSync(path.join(crankDir, JOURNAL_FILE)).mtimeMs);
-    } catch {}
-  }
-
-  const adrFilenames = listAdrFilenames(root, config.adr_path);
+  const sources = injectionSources(root, crankDir, config, index);
   const drift = driftNote(config);
   const context = composeInjection(
     {
-      cerebrumMd,
-      journalBullets,
-      adrFilenames,
-      index,
+      ...sources,
       stalenessNote,
       driftNote: drift ?? undefined,
-      adrPath: config.adr_path,
       codex: isCodexPayload(payload),
-      projectRoot: root,
-      journalChanged,
     },
     config.injection_budget_bytes
   ).text;
@@ -105,11 +81,11 @@ async function main(): Promise<void> {
     // notice. Watch this, not tokens.
     injectionBytes: Buffer.byteLength(context, "utf-8"),
     budgetBytes: config.injection_budget_bytes,
-    hasCerebrum: cerebrumMd !== null,
+    hasCerebrum: sources.cerebrumMd !== null,
     drift: drift !== null,
-    journalBullets: journalBullets.length,
-    journalChanged: journalChanged ?? null,
-    adrCount: adrFilenames.length,
+    journalBullets: sources.journalBullets.length,
+    journalChanged: sources.journalChanged ?? null,
+    adrCount: sources.adrFilenames.length,
     stale: stalenessNote !== undefined,
   });
   console.error(`crank-mem: injected project memory (${index.meta.fileCount} files indexed)`);

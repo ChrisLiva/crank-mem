@@ -4,13 +4,12 @@ import { openProject } from "./project.ts";
 import { loadIndex, INDEX_FILE, type AnatomyIndex } from "../hooks/lib/store.ts";
 import { walkProject } from "../hooks/lib/scanner.ts";
 import type { CrankConfig } from "../hooks/lib/config.ts";
-import { composeInjection, fileCitations, listAdrFilenames } from "../hooks/lib/injection.ts";
-import { recentJournalBullets, JOURNAL_FILE, NEXT_MARKER } from "../hooks/lib/journal.ts";
+import { composeInjection, fileCitations, injectionSources } from "../hooks/lib/injection.ts";
+import { JOURNAL_FILE, NEXT_MARKER } from "../hooks/lib/journal.ts";
 import { parseBullets } from "../hooks/lib/bullets.ts";
-import { countChangedSince } from "../hooks/lib/changes.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
 import {
-  auditSkillInstalled, installedAtMs, lastAuditMs, overlapPairCount, OVERLAP_MIN_SHARED, CEREBRUM_FILE,
+  auditSkillInstalled, installedAtMs, lastAuditMs, overlapPairCount, OVERLAP_MIN_SHARED,
 } from "../hooks/lib/cerebrum-nudge.ts";
 import { hasCrankHooks } from "./settings.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
@@ -44,31 +43,14 @@ function readText(file: string): string | null {
  */
 function memoryLines(root: string, crankDir: string, config: CrankConfig, index: AnatomyIndex): string[] {
   const lines: string[] = [];
-  const cerebrumMd = readText(path.join(crankDir, CEREBRUM_FILE));
+  const sources = injectionSources(root, crankDir, config, index);
+  const { cerebrumMd } = sources;
   const journalMd = readText(path.join(crankDir, JOURNAL_FILE));
 
   if (!cerebrumMd) {
     lines.push(row("cerebrum", cerebrumMd === null ? "missing" : "empty"));
   } else {
-    const journalBullets = recentJournalBullets(crankDir);
-    let journalChanged: number | undefined;
-    try {
-      if (journalBullets.length) {
-        journalChanged = countChangedSince(root, config, index, fs.statSync(path.join(crankDir, JOURNAL_FILE)).mtimeMs);
-      }
-    } catch {}
-    const { excerpt } = composeInjection(
-      {
-        cerebrumMd,
-        journalBullets,
-        adrFilenames: listAdrFilenames(root, config.adr_path),
-        index,
-        adrPath: config.adr_path,
-        projectRoot: root,
-        journalChanged,
-      },
-      config.injection_budget_bytes,
-    );
+    const { excerpt } = composeInjection(sources, config.injection_budget_bytes);
     const e = excerpt!;
     lines.push(row("cerebrum bullets", `${e.shown} of ${e.total} injected`));
     lines.push(row("prefs dropped", `${e.prefsTotal - e.prefsShown} of ${e.prefsTotal}`));
