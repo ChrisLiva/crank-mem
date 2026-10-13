@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { makeCrankProject, runHook } from "./helpers.ts";
+import { git, gitCommit, makeCrankProject, runHook } from "./helpers.ts";
 import { claudePostWrite, claudePostEdit, codexApplyPatch, claudeSessionStart } from "./fixtures/payloads.ts";
 import { parseApplyPatch } from "../src/hooks/lib/apply-patch.ts";
 import { loadIndex } from "../src/hooks/lib/store.ts";
+import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
 
 const HOOK = "src/hooks/post-write.ts";
@@ -63,6 +64,37 @@ describe("post-write hook (black-box)", () => {
     expect(run.stdout).toBe("");
     const index = loadIndex(path.join(root, ".crank"));
     expect(index.files["src/new.ts"]!.description).toBe("Brand new module.");
+  });
+
+  test("a written file past max_files stays indexed at the next session start", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;", "b.ts": "const b = 1;" });
+    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), max_files: 2 });
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, "z.ts"), "/** Zed. */\n");
+    expect(runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "z.ts")))).status).toBe(0);
+    runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "z.ts"))));
+    expect(loadIndex(path.join(root, ".crank")).files["z.ts"]!.writeCount).toBe(2);
+    seedIndex(root);
+    const index = loadIndex(path.join(root, ".crank"));
+    expect(Object.keys(index.files).sort()).toEqual(["a.ts", "z.ts"]);
+    expect(fs.readFileSync(path.join(root, ".crank/anatomy.md"), "utf-8")).toContain("## Most active files\n\n- `z.ts` — Zed.");
+  });
+
+  test("a write pin clears once the file is in the churn list", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    git(root, "init", "-q");
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, "z.ts"), "export const z = 1;\n");
+    runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "z.ts"))));
+    expect(loadIndex(path.join(root, ".crank")).files["z.ts"]!.writeCount).toBe(1);
+    gitCommit(root, "z");
+    seedIndex(root);
+    const index = loadIndex(path.join(root, ".crank"));
+    expect(index.meta.churn!.paths).toContain("z.ts");
+    expect(index.files["z.ts"]!.writeCount).toBeUndefined();
+    // Later writes to a churned file add no pin either.
+    runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "z.ts"))));
+    expect(loadIndex(path.join(root, ".crank")).files["z.ts"]!.writeCount).toBeUndefined();
   });
 
   test("Claude Edit: existing file re-indexed", () => {
@@ -130,6 +162,30 @@ describe("post-write hook (black-box)", () => {
     fs.writeFileSync(path.join(root, "huge.ts"), "x".repeat(1024 * 1024 + 1));
     runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "huge.ts"))));
     expect(loadIndex(path.join(root, ".crank")).files["huge.ts"]).toBeUndefined();
+  });
+
+  test("overwriting an indexed file past the size cap drops its entry", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;", "grows.ts": "const g = 1;" });
+    seedIndex(root);
+    const crankDir = path.join(root, ".crank");
+    const before = loadIndex(crankDir);
+    expect(before.files["grows.ts"]).toBeDefined();
+
+    fs.writeFileSync(path.join(root, "grows.ts"), "x".repeat(1024 * 1024 + 1));
+    const run = runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "grows.ts"))));
+    expect(run.status).toBe(0);
+    const after = loadIndex(crankDir);
+    expect(after.files["grows.ts"]).toBeUndefined();
+    expect(after.meta.fileCount).toBe(before.meta.fileCount - 1);
+  });
+
+  test("binary content under an unlisted extension is skipped", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, "model.weights"), Buffer.from([0x93, 0x4e, 0x55, 0x00, 0x01]));
+    const run = runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "model.weights"))));
+    expect(run.status).toBe(0);
+    expect(loadIndex(path.join(root, ".crank")).files["model.weights"]).toBeUndefined();
   });
 
   test("path outside project is ignored", () => {

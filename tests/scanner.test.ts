@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fullScan, refreshIndex, walkProject } from "../src/hooks/lib/scanner.ts";
 import { defaultConfig } from "../src/hooks/lib/config.ts";
+import { SYMBOL_MIN_TOKENS } from "../src/hooks/lib/symbols.ts";
+import { git, gitCommit } from "./helpers.ts";
 
 function makeProject(files: Record<string, string>): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-scan-"));
@@ -26,24 +29,88 @@ describe("walkProject", () => {
       ".github/workflows/ci.yml": "on: push",
       ".env": "SECRET=1",
       "logo.png": "binary",
+      "img/layer1.webp": "binary",
+      "deps/libgmp-10.lib": "binary",
+      "pnpm-lock.yaml": "lockfileVersion: 9",
+      "web/package-lock.json": "{}",
     });
-    const files = walkProject(root, defaultConfig());
+    const files = walkProject(root, defaultConfig()).files;
     expect(files.sort()).toEqual(["README.md", "src/a.ts"]);
   });
 
-  test("caps at max_files", () => {
+  test("outside git, caps at max_files and records truncation without a count", () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 20; i++) files[`f${String(i).padStart(2, "0")}.ts`] = "x";
     const root = makeProject(files);
-    const config = { ...defaultConfig(), max_files: 5 };
-    expect(walkProject(root, config).length).toBe(5);
+    expect(walkProject(root, { ...defaultConfig(), max_files: 5 })).toEqual({
+      files: ["f00.ts", "f01.ts", "f02.ts", "f03.ts", "f04.ts"],
+      truncated: true,
+      candidateCount: null,
+    });
+    const all = walkProject(root, { ...defaultConfig(), max_files: 20 });
+    expect(all.truncated).toBe(false);
+    expect(all.candidateCount).toBe(20);
   });
 
   test("oversized files survive the stat-free walk but are not indexed", () => {
     const root = makeProject({ "big.ts": "x".repeat(100), "small.ts": "x" });
     const config = { ...defaultConfig(), max_file_size_bytes: 50 };
-    expect(walkProject(root, config).sort()).toEqual(["big.ts", "small.ts"]);
+    expect(walkProject(root, config).files.sort()).toEqual(["big.ts", "small.ts"]);
     expect(Object.keys(fullScan(root, config).files)).toEqual(["small.ts"]);
+  });
+});
+
+describe("walkProject in a git repo", () => {
+  function makeRepo(files: Record<string, string>): string {
+    const root = makeProject(files);
+    git(root, "init", "-q");
+    return root;
+  }
+
+  test("lists git's files, ranks first-party code ahead of vendored code, and cuts at max_files", () => {
+    const root = makeRepo({
+      ".gitignore": "ignored/\n",
+      "ignored/x.ts": "x",
+      "deps_src/a.ts": "x",
+      "deps_src/b.ts": "x",
+      "src/a.ts": "x",
+      "src/b.ts": "x",
+      "src/c.ts": "x",
+      "README.md": "# Hi",
+      "notes.md": "untracked",
+    });
+    git(root, "add", ".gitignore", "deps_src", "src", "README.md");
+    expect(walkProject(root, { ...defaultConfig(), max_files: 5 })).toEqual({
+      files: ["src/a.ts", "src/b.ts", "src/c.ts", "README.md", "notes.md"],
+      truncated: true,
+      candidateCount: 7,
+    });
+  });
+
+  test("a listing past 1 MiB still comes from git", () => {
+    const root = makeRepo({ ".gitignore": "ignored/\n", "ignored/x.ts": "x", "src/a.ts": "x" });
+    // 12,000 index entries with no file on disk: ~1.2 MB of output, which
+    // throws ENOBUFS at execFileSync's default buffer and would fall back to
+    // the tree walk, where ignored/x.ts reappears.
+    const entries = Array.from(
+      { length: 12_000 },
+      (_, i) => `100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\tzz/${"p".repeat(90)}${i}.txt\n`
+    ).join("");
+    const r = spawnSync("git", ["update-index", "--add", "--index-info"], { cwd: root, input: entries });
+    expect(r.status).toBe(0);
+    expect(walkProject(root, defaultConfig())).toEqual({
+      files: ["src/a.ts"],
+      truncated: false,
+      candidateCount: 12_001,
+    });
+  });
+
+  test("a tracked symlink is not a file to index", () => {
+    const root = makeRepo({ "src/a.ts": "x" });
+    const outside = makeProject({ "secret.txt": "outside the project" });
+    fs.symlinkSync(path.join(outside, "secret.txt"), path.join(root, "link.txt"));
+    git(root, "add", ".");
+    expect(walkProject(root, defaultConfig()).files).toEqual(["src/a.ts"]);
   });
 });
 
@@ -59,6 +126,54 @@ describe("fullScan", () => {
     expect(big.tokens).toBeGreaterThan(300);
     expect(big.symbols!.length).toBeGreaterThan(0);
     expect(index.files["notes.md"]!.description).toBe("Notes");
+  });
+
+  test("omits symbols for test, spec and generated files but keeps their descriptions", () => {
+    const body = Array.from({ length: 100 }, (_, i) => `export function w${i}() { return ${i}; }`).join("\n");
+    const goBody = "package api\n" + Array.from({ length: 100 }, (_, i) => `func W${i}() int { return ${i} }`).join("\n");
+    const pyBody = Array.from({ length: 100 }, (_, i) => `def test_w${i}():\n    assert ${i}`).join("\n");
+    const root = makeProject({
+      "src/widget.ts": body,
+      "src/api.py": pyBody,
+      "api/auth.go": goBody,
+      "src/widget.test.ts": body,
+      "src/widget.spec.ts": body,
+      "src/__tests__/widget.ts": body,
+      "tests/test_api.py": pyBody,
+      "api/auth_test.go": goBody,
+      "api/gen/models.go": "// Code generated by sqlc. DO NOT EDIT.\n\n" + goBody,
+    });
+    const files = fullScan(root, defaultConfig()).files;
+    for (const rel of ["src/widget.ts", "src/api.py", "api/auth.go"]) expect(files[rel]!.symbols!.length).toBeGreaterThan(0);
+    for (const rel of ["src/widget.test.ts", "src/widget.spec.ts", "src/__tests__/widget.ts", "tests/test_api.py", "api/auth_test.go", "api/gen/models.go"]) {
+      expect(files[rel]!.tokens).toBeGreaterThanOrEqual(SYMBOL_MIN_TOKENS);
+      expect(files[rel]!.symbols).toBeUndefined();
+    }
+    expect(files["api/gen/models.go"]!.description).toBe("Code generated by sqlc. DO NOT EDIT.");
+  });
+
+  test("skips files with a NUL byte in the first 8,000 bytes", () => {
+    const root = makeProject({
+      "blob.dat": "RIFF\0\0WEBP",
+      "late-nul.txt": "x".repeat(8000) + "\0",
+      "plain.txt": "hello",
+    });
+    expect(Object.keys(fullScan(root, defaultConfig()).files).sort()).toEqual(["late-nul.txt", "plain.txt"]);
+  });
+});
+
+describe("walk metadata", () => {
+  test("fullScan records truncation and the candidate count; refreshIndex clears truncation once it no longer applies", () => {
+    const root = makeProject({ "a.ts": "x", "b.ts": "x", "c.ts": "x" });
+    git(root, "init", "-q");
+    const config = { ...defaultConfig(), max_files: 2 };
+    const index = fullScan(root, config);
+    expect(index.meta.truncated).toBe(true);
+    expect(index.meta.candidateCount).toBe(3);
+    fs.unlinkSync(path.join(root, "c.ts"));
+    const result = refreshIndex(root, config, index, 5000);
+    expect(result.index.meta.truncated).toBeUndefined();
+    expect(result.index.meta.candidateCount).toBe(2);
   });
 });
 
@@ -111,5 +226,44 @@ describe("refreshIndex", () => {
     const result = refreshIndex(root, config, { version: 1, meta: { lastScanned: null, fileCount: 0 }, files: {} }, -1);
     expect(result.partial).toBe(true);
     expect(result.index.meta.partial).toBe(true);
+  });
+});
+
+describe("churn and write pins", () => {
+  test("ranks by commits, skips commits touching more than 50 files, and reuses the list while HEAD stays put", () => {
+    const bulk: Record<string, string> = {};
+    for (let i = 0; i < 51; i++) bulk[`vendor/v${i}.ts`] = "x";
+    const root = makeProject({ "src/a.ts": "x", "src/b.ts": "x", ...bulk });
+    git(root, "init", "-q");
+    gitCommit(root, "bulk");
+    fs.writeFileSync(path.join(root, "src/b.ts"), "y");
+    gitCommit(root, "b");
+    fs.writeFileSync(path.join(root, "src/b.ts"), "z");
+    fs.writeFileSync(path.join(root, "src/a.ts"), "z");
+    gitCommit(root, "a and b");
+    const config = defaultConfig();
+    const index = fullScan(root, config);
+    const head = git(root, "rev-parse", "HEAD").trim();
+    expect(index.meta.churn).toEqual({ head, paths: ["src/b.ts", "src/a.ts"] });
+
+    // A cached list for the current HEAD is trusted as is; a new commit replaces it.
+    index.meta.churn = { head, paths: ["src/a.ts"] };
+    expect(refreshIndex(root, config, index, 5000).index.meta.churn!.paths).toEqual(["src/a.ts"]);
+    fs.writeFileSync(path.join(root, "src/a.ts"), "w");
+    gitCommit(root, "a");
+    expect(refreshIndex(root, config, index, 5000).index.meta.churn!.paths).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  test("a refresh keeps at most 100 pins, dropping the least recently written", () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 101; i++) files[`f${String(i).padStart(3, "0")}.ts`] = "x";
+    const root = makeProject(files);
+    fs.utimesSync(path.join(root, "f050.ts"), new Date(2020, 0, 1), new Date(2020, 0, 1));
+    const config = defaultConfig();
+    const index = fullScan(root, config);
+    for (const entry of Object.values(index.files)) entry.writeCount = 1;
+    const after = refreshIndex(root, config, index, 5000).index;
+    expect(after.files["f050.ts"]!.writeCount).toBeUndefined();
+    expect(Object.values(after.files).filter((e) => e.writeCount === 1).length).toBe(100);
   });
 });

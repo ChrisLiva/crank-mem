@@ -122,10 +122,20 @@ async function main(): Promise<void> {
       }
       const entry = indexFile(root, op.relPath, config);
       if (!entry) {
-        // Excluded, oversized, or unreadable — indistinguishable here, but the
-        // path alone answers "why didn't my file get indexed?".
+        // Excluded, binary, oversized, or unreadable — indistinguishable here,
+        // but the path alone answers "why didn't my file get indexed?". An
+        // entry from before the write is stale; drop it as refreshIndex does.
+        if (index.files[op.relPath]) {
+          delete index.files[op.relPath];
+          dirty = true;
+        }
         skipped.push(safePath(op.relPath));
         continue;
+      }
+      // Pin the write so the next refresh keeps the file past max_files, until
+      // the churn list carries it.
+      if (!index.meta.churn?.paths.includes(op.relPath)) {
+        entry.writeCount = (index.files[op.relPath]?.writeCount ?? 0) + 1;
       }
       index.files[op.relPath] = entry;
       dirty = true;

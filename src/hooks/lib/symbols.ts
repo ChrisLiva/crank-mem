@@ -27,7 +27,7 @@ interface Pattern {
 const TS_JS: Pattern[] = [
   { re: /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/, kind: "fn" },
   { re: /^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/, kind: "class" },
-  { re: /^(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/, kind: "fn" },
+  { re: /^(?:export\s+)?(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:<[^>]*>\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=>/, kind: "fn" },
   { re: /^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/, kind: "section" },
 ];
 
@@ -65,7 +65,8 @@ export function extractSymbols(content: string, ext: string): SymbolEntry[] {
   const lines = content.split(/\r?\n/);
   const found: Array<{ name: string; kind: SymbolEntry["kind"]; startLine: number }> = [];
 
-  for (let i = 0; i < lines.length && found.length < SYMBOL_MAX_COUNT; i++) {
+  // One past the cap: the extra start line bounds the last kept symbol.
+  for (let i = 0; i < lines.length && found.length <= SYMBOL_MAX_COUNT; i++) {
     for (const { re, kind } of patterns) {
       const m = lines[i]!.match(re);
       if (m) {
@@ -77,7 +78,7 @@ export function extractSymbols(content: string, ext: string): SymbolEntry[] {
   if (found.length === 0) return [];
 
   const symbols: SymbolEntry[] = [];
-  for (let i = 0; i < found.length; i++) {
+  for (let i = 0; i < Math.min(found.length, SYMBOL_MAX_COUNT); i++) {
     const cur = found[i]!;
     const startLine = cur.startLine;
     const endLine = i + 1 < found.length ? found[i + 1]!.startLine - 1 : lines.length;

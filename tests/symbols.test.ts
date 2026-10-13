@@ -40,6 +40,18 @@ describe("extractSymbols — TypeScript", () => {
     expect(syms[0]!.endLine).toBe(6);
     expect(syms[3]!.endLine).toBe(15);
   });
+
+  test("finds return-typed, annotated and generic arrows, not parenthesized math", () => {
+    const src = [
+      "const bytes = (s: string): number => Buffer.byteLength(s);",
+      "export const load = async (p: string): Promise<Map<string, number>> => new Map();",
+      "export const handler: Handler = async (req) => req;",
+      "let pick = <T>(xs: T[]): T => xs[0]!;",
+      "const x = (1 + 2) * 3;",
+      "const cfg: Record<string, number> = {};",
+    ].join("\n");
+    expect(extractSymbols(src, ".ts").map((s) => s.name)).toEqual(["bytes", "load", "handler", "pick"]);
+  });
 });
 
 describe("extractSymbols — Python", () => {
@@ -73,6 +85,11 @@ describe("extractSymbols — limits", () => {
   test("caps at SYMBOL_MAX_COUNT", () => {
     const src = Array.from({ length: 50 }, (_, i) => `function f${i}() {}`).join("\n");
     expect(extractSymbols(src, ".ts").length).toBe(SYMBOL_MAX_COUNT);
+  });
+  test("last capped symbol ends before the next symbol, not at end of file", () => {
+    const src = Array.from({ length: 50 }, (_, i) => `function f${i}() {}`).join("\n");
+    const last = extractSymbols(src, ".ts").at(-1)!;
+    expect([last.name, last.startLine, last.endLine]).toEqual(["f29", 30, 30]);
   });
   test("unsupported language returns empty", () => {
     expect(extractSymbols("def foo", ".rb")).toEqual([]);

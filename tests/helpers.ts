@@ -23,6 +23,19 @@ export function makeCrankProject(files: Record<string, string> = {}): string {
   return root;
 }
 
+/** Run git in `root`, throwing on failure; `git(root, "init", "-q")` makes it a repo. */
+export function git(root: string, ...args: string[]): string {
+  const result = spawnSync("git", args, { cwd: root, encoding: "utf-8" });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  return result.stdout;
+}
+
+/** Stage everything in `root` and commit it as a fixed test identity, unsigned. */
+export function gitCommit(root: string, message: string): void {
+  git(root, "add", "-A");
+  git(root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", message);
+}
+
 export interface HookRun {
   status: number;
   stdout: string;
