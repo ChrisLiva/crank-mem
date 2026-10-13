@@ -16,9 +16,9 @@ import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
 // the hook wiring, the .crank/.gitignore allowlist and, in commit mode, a stale
-// crank-mem ignore block. Never touches config.json values (beyond the version
-// stamp), cerebrum, or the index. Recomputes Codex trusted hashes iff the user
-// opted in at init.
+// crank-mem ignore block. Of config.json it updates only vendored_version and
+// clone_root; it never touches cerebrum or the index. Recomputes Codex trusted
+// hashes iff the user opted in at init.
 
 export async function run(_args: string[]): Promise<number> {
   const project = openProject();

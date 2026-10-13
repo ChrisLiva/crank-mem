@@ -556,7 +556,7 @@ export function cerebrumOverlaps(crankDir: string): string | null {
       const next: DedupState = { cerebrumMtimeMs: mtimeMs, bulletHashes: bullets.map((b) => b.hash) };
       fs.writeFileSync(path.join(crankDir, DEDUP_FILE), JSON.stringify(next));
     } catch (err) {
-      // Every later Stop reparses and may repeat a flag. Silent by contract.
+      // Every later Stop or Codex apply_patch reparses and may repeat a flag. Silent by contract.
       debugEvent("dedup-state-write-failed", {
         error: err instanceof Error ? err.message : String(err),
       });

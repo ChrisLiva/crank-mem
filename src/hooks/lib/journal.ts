@@ -89,8 +89,7 @@ const ENTRY_PREFIX = /^- (?:(\d{4}-\d{2}-\d{2})[\s:—–-]*)?/;
  * did. Within the newest entry's cap, the handoff takes all but the
  * done-clause's share (its size, counted up to JOURNAL_OLDER_MAX_BYTES), and
  * the done-clause takes whatever the handoff leaves. A trailing `…` marks a
- * cut; nothing else in the injection cuts mid-stream, so the ellipsis is
- * unambiguous.
+ * cut.
  */
 function headline(entry: string, newest: boolean): string {
   const flat = entry.replace(/\s+/g, " ").trim();

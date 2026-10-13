@@ -108,11 +108,11 @@ export function trustEntries(
 }
 
 /**
- * Keys crank wrote before the label fix, when the state key carried the raw
- * PascalCase event (`SessionStart`) that codex never looks up — orphans to be
- * swept whenever we write or remove trust. An event whose raw spelling already
- * equals its label yields NO key: such an entry is indistinguishable from one
- * codex wrote for itself, and must never be stripped.
+ * Keys older crank releases wrote with the raw PascalCase event
+ * (`SessionStart`) that codex never looks up, orphans to be swept whenever we
+ * write or remove trust. An event whose raw spelling already equals its label
+ * yields NO key: such an entry is indistinguishable from one codex wrote for
+ * itself, and must never be stripped.
  */
 export function staleTrustKeys(
   hooksJsonPath: string,

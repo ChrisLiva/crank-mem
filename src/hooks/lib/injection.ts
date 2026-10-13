@@ -131,7 +131,7 @@ export interface InjectionSources {
   journalBullets?: string[];
   adrFilenames: string[];
   index: AnatomyIndex;
-  /** Appended verbatim near the top when a refresh was skipped/partial. */
+  /** Shown as an italic note near the top when a refresh was skipped or partial. */
   stalenessNote?: string;
   /** Appended below the staleness note when the vendored hooks lag the clone. */
   driftNote?: string;

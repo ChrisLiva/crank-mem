@@ -50,7 +50,7 @@ export function instructionFiles(codex: boolean): string {
 }
 
 /**
- * Locate the project root (the dir containing `.crank/`) by walking up from
+ * Locate the project root, the dir holding `.crank/config.json`, by walking up from
  * `cwd`. Returns null when crank-mem isn't installed here.
  */
 export function findProjectRoot(cwd: string): string | null {

@@ -79,7 +79,7 @@ describe("crankTrust", () => {
 });
 
 describe("staleTrustKeys", () => {
-  test("names the pre-fix raw-event key for each handler", () => {
+  test("names the PascalCase raw-event key for each handler", () => {
     expect(staleTrustKeys("/proj/.codex/hooks.json", crankHooks("bun", "codex")).sort()).toEqual([
       "/proj/.codex/hooks.json:PostToolUse:0:0",
       "/proj/.codex/hooks.json:SessionStart:0:0",

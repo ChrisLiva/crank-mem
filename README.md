@@ -113,8 +113,8 @@ in Codex. When the skill is installed, a cerebrum or journal nudge that is
 already due also asks the agent to suggest an audit to you, at most once every
 7 days and not within 7 days of the last audit, or of install when the project
 was never audited. An audit is dated by its backup directory under
-`.crank/backups/`, the one that holds only copies of `cerebrum.md` and
-`journal.md`.
+`.crank/backups/`, the one that holds only copies of the memory files:
+`cerebrum.md`, `journal.md` and `cerebrum-archive.md`.
 
 ## Debugging
 

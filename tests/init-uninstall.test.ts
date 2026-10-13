@@ -5,8 +5,8 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { REPO_ROOT } from "./helpers.ts";
 
-// Non-negotiable smoke (plan task 7): init into a temp project → verify
-// wiring → uninstall → byte-identical restore, zero crank residue.
+// Smoke: init into a temp project, check the wiring, uninstall, then expect a
+// byte-identical restore and no crank residue.
 
 const MAIN = path.join(REPO_ROOT, "src/cli/main.ts");
 
@@ -41,12 +41,12 @@ function makeProject(extra: Record<string, string> = {}): { root: string; codexH
   return { root, codexHome };
 }
 
-/** Recursive listing + contents of everything except .git and crank. */
 /** True when git ignores `rel` in `root`. */
 function ignored(root: string, rel: string): boolean {
   return spawnSync("git", ["check-ignore", "-q", "--", rel], { cwd: root }).status === 0;
 }
 
+/** Recursive listing and contents of everything except .git and .crank. */
 function snapshot(root: string): Record<string, string> {
   const out: Record<string, string> = {};
   const walk = (dir: string): void => {

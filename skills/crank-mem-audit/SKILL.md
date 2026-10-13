@@ -40,10 +40,11 @@ No transcripts in the window → report "nothing to audit" and stop.
 ## 3. Fan out miners
 
 Split the transcript files into batches — one subagent per batch, at most ~8
-subagents. Batch per file, never splitting one file across batches: a single
-Codex rollout file may hold several forked or sub-agent `session_meta`
-threads. Each subagent reads its batch and returns structured findings, not
-transcript excerpts:
+subagents. Batch per file, never splitting one file across batches: a
+sub-agent's Codex rollout file can embed its parent's `session_meta` after its
+own, so only a file's first `session_meta` names its thread (ADR 0006). Each
+subagent reads its batch and returns structured findings, not transcript
+excerpts:
 
 - corrections the user made,
 - gotchas discovered about the codebase or tooling,
@@ -75,11 +76,10 @@ of init's). Do this before writing anything.
 - **cerebrum.md** — rewrite densely: telegram-style bullets under the file's
   existing headings, deduplicated, verified facts only.
 - **journal.md** — trim dead entries while keeping the format the vendored
-  `.crank/hooks/lib/journal.ts` enforces: one dated bullet per entry
-  (`- YYYY-MM-DD — …`), newest last, at most 20 entries, and the newest
-  entry kept intact — the next session is shown what the last three entries
-  did, plus the newest one's `NEXT:` handoff. On any doubt, that file is the
-  authority.
+  `.crank/hooks/lib/journal.ts` parses: one dated bullet per entry
+  (`- YYYY-MM-DD: …`), newest last, at most 20 entries, and the newest entry
+  kept intact — the next session is shown what the last three entries did, plus
+  the newest one's `NEXT:` handoff. On any doubt, that file is the authority.
 - **anatomy.md and the index belong to the scanner.** If the index looks
   stale, suggest `crank-mem scan`; anatomy.md is rendered from the machine
   index and overwritten on the next scan, so hand-edits are lost.

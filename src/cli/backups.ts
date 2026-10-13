@@ -9,7 +9,7 @@ import { manifestDirs } from "../hooks/lib/cerebrum-nudge.ts";
 
 interface ManifestEntry {
   original: string;
-  backupFile: string | null; // null ⇒ file did not exist before init
+  backupFile: string | null; // Null means the file did not exist at backup time.
 }
 
 interface Manifest {

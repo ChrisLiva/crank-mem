@@ -12,9 +12,9 @@ import { trimJournal } from "./lib/journal.ts";
 import { estimateProseTokens } from "./lib/tokens.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
 
-// SessionStart hook (Claude Code + Codex; startup|resume|clear|compact all
-// behave the same, so compaction re-injects). Refreshes the index under lock,
-// then emits the injection via hookSpecificOutput.additionalContext.
+// SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
+// included; compact only skips the journal trim. Refreshes the index under
+// lock, then emits the injection via hookSpecificOutput.additionalContext.
 // Advisory-only: every path exits 0.
 
 const REFRESH_BUDGET_MS = 2_000;
@@ -76,9 +76,7 @@ async function main(): Promise<void> {
     source,
     fileCount: index.meta.fileCount,
     injectionTokens: estimateProseTokens(context),
-    // Claude Code caps characters, not tokens (ADR 0005), and bytes never
-    // undercount characters: past the cap it swaps the whole injection for a
-    // notice. Watch this, not tokens.
+    // Bytes bind, not tokens: see injection_budget_bytes in config.ts.
     injectionBytes: Buffer.byteLength(context, "utf-8"),
     budgetBytes: config.injection_budget_bytes,
     hasCerebrum: sources.cerebrumMd !== null,

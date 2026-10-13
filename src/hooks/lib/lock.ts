@@ -16,7 +16,7 @@ import { debugEvent } from "./debug.ts";
 // and the caller skips its update (the next writer converges the state).
 
 export const LOCK_FILE = "anatomy-index.lock";
-const STALE_MS = 10_000; // > hook timeout, so a killed hook's lock is reclaimable
+const STALE_MS = 10_000; // Matches the 10-second hook timeout that settings.ts sets.
 /** Floor of the acquire poll backoff, and so the shortest wait that means real contention. */
 const POLL_MIN_MS = 25;
 

@@ -22,6 +22,11 @@ v1 injects only at SessionStart via `additionalContext`. PostToolUse is used
 for silent re-indexing (no context emitted). stderr carries one-line FYIs for
 humans only.
 
+Amended 2026-10-13: ADR 0004 adds Claude's Stop hook as a model-visible
+channel and has Codex's PostToolUse hook, model-visible per the Findings above,
+emit the cerebrum nudge; both carry it as additionalContext. ADR 0007 adds
+SubagentStart, which carries a cerebrum excerpt to Claude subagents.
+
 ## Re-verification 2026-07-19
 
 - Claude Code 2.1.215, live probe: SessionStart/PreToolUse/PostToolUse

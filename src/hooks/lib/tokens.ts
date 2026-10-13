@@ -18,7 +18,7 @@ export function estimateTokens(text: string, filePath: string): number {
   return Math.ceil(text.length / ratio);
 }
 
-/** Estimate tokens for injected prose (instructions, cerebrum, anatomy lines). */
+/** Estimate tokens for injected prose. */
 export function estimateProseTokens(text: string): number {
   return Math.ceil(text.length / 4.0);
 }

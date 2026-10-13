@@ -263,9 +263,9 @@ describe("composeInjection", () => {
     expect(out).not.toMatch(/~\d+ tok/);
   });
 
-  // The reason the map is a pointer: Claude Code swaps the whole injection for
-  // a 2KB preview past ~10KiB of hook stdout (ADR 0005), so size must not
-  // track file count.
+  // The reason the map is a pointer: Claude Code swaps an injection past 10,000
+  // characters of additionalContext for a 2,000-character preview (ADR 0005),
+  // so size must not track file count.
   test("stays small and near-constant as the project grows", () => {
     const small = composeInjection({ ...sources, index: fixtureIndex(3) }, 8192).text;
     const large = composeInjection({ ...sources, index: fixtureIndex(5000) }, 8192).text;
@@ -328,7 +328,7 @@ describe("composeInjection", () => {
     expect(out.indexOf("hooks are at 0.3.2")).toBeLessThan(out.indexOf("## Cerebrum"));
   });
 
-  // Bytes are the budget that binds: Claude Code caps hook stdout, not tokens.
+  // Bytes are the budget that binds: Claude Code caps additionalContext characters, not tokens.
   describe("byte budget", () => {
     // This 9,264-byte cerebrum of wrapped bullets, 5 preferences and 11 memory
     // bullets, is big enough that the byte budget binds before the token cap.
