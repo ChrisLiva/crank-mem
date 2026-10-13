@@ -156,12 +156,28 @@ function longestBullets(text: string): string[] {
     .map((b) => `line ${b.line} (${b.body.length} chars${COMMIT_SHA.test(b.body) ? ", cites a commit" : ""})`);
 }
 
+// What the audit skill's backup step copies (skills/crank-mem-audit/SKILL.md).
+const AUDIT_BACKUP_FILES = new Set(["cerebrum.md", JOURNAL_FILE, ARCHIVE_FILE]);
+
 /**
- * When the audit skill last ran: the mtime of the newest .crank/backups/ dir
- * without a manifest.json, which is what the skill's backup step writes. Its
- * timestamp format varies by run, so the name is not parsed. Init and upgrade
- * backups carry a manifest, and the prune nudge's backups/cerebrum/ is not an
- * audit. Null when no audit backup exists. Never throws.
+ * True for a .crank/backups/ dir the audit skill wrote: it holds only copies of
+ * the memory files, so no manifest.json (init and upgrade backups), no
+ * timestamped copies (the prune nudge's backups/cerebrum/), and nothing another
+ * tool sharing .crank/ wrote. Never throws.
+ */
+export function isAuditBackup(dir: string): boolean {
+  try {
+    const names = fs.readdirSync(dir);
+    return names.length > 0 && names.every((name) => AUDIT_BACKUP_FILES.has(name));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * When the audit skill last ran: the mtime of the newest audit backup dir. Its
+ * timestamp format varies by run, so the name is not parsed. Null when no
+ * audit backup exists. Never throws.
  */
 export function lastAuditMs(crankDir: string): number | null {
   const base = path.join(crankDir, "backups");
@@ -169,8 +185,7 @@ export function lastAuditMs(crankDir: string): number | null {
   try {
     for (const d of fs.readdirSync(base, { withFileTypes: true })) {
       const dir = path.join(base, d.name);
-      if (!d.isDirectory() || dir === path.join(crankDir, BACKUP_DIR)) continue;
-      if (fs.existsSync(path.join(dir, "manifest.json"))) continue;
+      if (!d.isDirectory() || !isAuditBackup(dir)) continue;
       const ms = fs.statSync(dir).mtimeMs;
       if (newest === null || ms > newest) newest = ms;
     }

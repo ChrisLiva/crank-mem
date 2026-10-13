@@ -178,13 +178,31 @@ describe("init → uninstall round-trip", () => {
     fs.mkdirSync(path.join(crank, "efforts/e1"), { recursive: true });
     fs.writeFileSync(path.join(crank, "efforts/e1/plan.md"), "plan\n");
     fs.writeFileSync(path.join(crank, "backups/plugin-note.md"), "note\n");
+    // The audit skill's backup: plain copies, no manifest.
+    fs.mkdirSync(path.join(crank, "backups/20260814-165019"));
+    for (const name of ["cerebrum.md", "journal.md"]) fs.writeFileSync(path.join(crank, "backups/20260814-165019", name), "x");
+    // Another tool's dir under backups/ without a manifest.
+    fs.mkdirSync(path.join(crank, "backups/plugin-run"));
+    fs.writeFileSync(path.join(crank, "backups/plugin-run/state.json"), "{}");
 
     const un = cli(root, codexHome, "uninstall", "--yes", "--delete-crank");
     expect(un.status).toBe(0);
     expect(un.stdout).toContain("kept what other tools wrote: backups, efforts");
     expect(fs.readdirSync(crank).sort()).toEqual([".gitignore", "backups", "efforts"]);
-    expect(fs.readdirSync(path.join(crank, "backups"))).toEqual(["plugin-note.md"]);
+    expect(fs.readdirSync(path.join(crank, "backups")).sort()).toEqual(["plugin-note.md", "plugin-run"]);
     expect(fs.readFileSync(path.join(crank, "efforts/e1/plan.md"), "utf-8")).toBe("plan\n");
+  });
+
+  test("--delete-crank removes .crank/ when only crank-mem's audit backup is left", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--codex", "skip");
+    const audit = path.join(root, ".crank/backups/2026-10-01T12-00-00");
+    fs.mkdirSync(audit);
+    fs.writeFileSync(path.join(audit, "cerebrum.md"), "# Cerebrum\n");
+    const un = cli(root, codexHome, "uninstall", "--yes", "--delete-crank");
+    expect(un.status).toBe(0);
+    expect(un.stdout).toContain("  deleted .crank/\n");
+    expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
   });
 
   test("commit-mode init moves crank hooks out of a pre-seeded settings.local.json", () => {
