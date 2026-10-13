@@ -18,7 +18,9 @@ It re-vendors the hooks copied into `.crank/hooks/`, adds hook wiring the
 install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
 wrote to the current form, and removes crank hooks from the Claude settings
 file the git mode does not use, since wiring in both runs every hook twice.
-A hook command you edited stays as written. In commit mode it also removes
+A hook command you edited stays as written. It replaces a `.crank/.gitignore`
+that is not the current allowlist, which admits only crank-mem's tracked files
+to git. In commit mode it also removes
 crank-mem's own `.crank/` ignore block, left by an earlier ignore or exclude
 mode init, so `cerebrum.md` can be tracked. An upgrade that changes nothing
 writes no backup.

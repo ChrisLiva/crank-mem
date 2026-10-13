@@ -9,13 +9,15 @@ import {
 } from "./codex-trust.ts";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, unignoreCerebrum,
+  ensureCrankGitignore,
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
-// the hook wiring and, in commit mode, a stale crank-mem ignore block. Never
-// touches config.json values (beyond the version stamp), cerebrum, or the
-// index. Recomputes Codex trusted hashes iff the user opted in at init.
+// the hook wiring, the .crank/.gitignore allowlist and, in commit mode, a stale
+// crank-mem ignore block. Never touches config.json values (beyond the version
+// stamp), cerebrum, or the index. Recomputes Codex trusted hashes iff the user
+// opted in at init.
 
 export async function run(_args: string[]): Promise<number> {
   const project = openProject();
@@ -81,6 +83,15 @@ export async function run(_args: string[]): Promise<number> {
     }
   } catch (err) {
     console.error(`crank-mem: could not re-wire hooks (${err instanceof Error ? err.message : String(err)})`);
+  }
+
+  // Ahead of the version check too: an install from before the allowlist keeps
+  // a denylist that misses state files added since, such as cerebrum-dedup.json,
+  // and every file another tool sharing .crank/ writes.
+  try {
+    if (ensureCrankGitignore(crankDir, backup)) console.log(`  wrote the allowlist .crank/.gitignore`);
+  } catch (err) {
+    console.error(`crank-mem: could not write .crank/.gitignore (${err instanceof Error ? err.message : String(err)})`);
   }
 
   // An install switched to commit mode can still carry the ignore block its

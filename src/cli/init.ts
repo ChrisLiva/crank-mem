@@ -8,7 +8,7 @@ import { vendorHooks, templatePath } from "./vendor.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles,
-  addIgnoreLines, ensureCodexFeatures, unignoreCerebrum,
+  addIgnoreLines, ensureCodexFeatures, unignoreCerebrum, ensureCrankGitignore,
 } from "./settings.ts";
 import {
   trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
@@ -95,7 +95,6 @@ export async function run(args: string[]): Promise<number> {
   const codexConfigToml = path.join(root, ".codex", "config.toml");
   const gitignore = path.join(root, ".gitignore");
   const gitExclude = path.join(root, ".git", "info", "exclude");
-  const crankGitignore = path.join(crankDir, ".gitignore");
 
   backupFile(backupDir, claudeSettings);
   if (duplicateWiring) backupFile(backupDir, otherClaudeSettings);
@@ -106,8 +105,6 @@ export async function run(args: string[]): Promise<number> {
   if (gitMode === "ignore") backupFile(backupDir, gitignore);
   if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) backupFile(backupDir, gitExclude);
   if (codexTrust === "write") backupFile(backupDir, userCodexConfigPath());
-  // Another tool sharing .crank/ may have written its own .gitignore first.
-  backupFile(backupDir, crankGitignore);
 
   // Backups are secured — from here on, a partial failure is recoverable via
   // `uninstall --restore`, so surface that instead of auto-rolling back.
@@ -146,12 +143,8 @@ export async function run(args: string[]): Promise<number> {
     // ── Git mode ───────────────────────────────────────────────────────────
     if (gitMode === "ignore") addIgnoreLines(gitignore);
     if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) addIgnoreLines(gitExclude);
-    // An allowlist: in commit mode only crank-mem's tracked files enter git,
-    // never backups, the lockfile, the debug log, or another tool's files.
-    fs.writeFileSync(
-      crankGitignore,
-      "/*\n!/.gitignore\n!/config.json\n!/cerebrum.md\n!/cerebrum-archive.md\n!/journal.md\n!/anatomy.md\n!/anatomy-index.json\n!/hooks/\n"
-    );
+    // Another tool sharing .crank/ may have written its own .gitignore first.
+    ensureCrankGitignore(crankDir, (f) => backupFile(backupDir, f));
     if (gitMode === "commit") ignoredBy = unignoreCerebrum(root, (f) => {
       backupFile(backupDir, f);
       unignored.push(f);

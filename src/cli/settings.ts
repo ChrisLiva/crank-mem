@@ -235,6 +235,27 @@ export function removeIgnoreLines(file: string, block: string = IGNORE_BLOCK): v
   fs.writeFileSync(file, content.replace(block, ""));
 }
 
+// An allowlist: in commit mode only crank-mem's tracked files enter git, never
+// backups, the lockfile, the debug log, the nudge state, or another tool's files.
+export const CRANK_GITIGNORE =
+  "/*\n!/.gitignore\n!/config.json\n!/cerebrum.md\n!/cerebrum-archive.md\n!/journal.md\n!/anatomy.md\n!/anatomy-index.json\n!/hooks/\n";
+
+/**
+ * Write CRANK_GITIGNORE to .crank/.gitignore unless it is already there. An
+ * existing file, which another tool sharing .crank/ or an older crank-mem may
+ * have written, goes to `beforeWrite` first. A missing one is not reported, so
+ * a restore never deletes the allowlist and exposes a kept .crank/ to git.
+ * Returns whether it wrote.
+ */
+export function ensureCrankGitignore(crankDir: string, beforeWrite: (file: string) => void): boolean {
+  const file = path.join(crankDir, ".gitignore");
+  const exists = fs.existsSync(file);
+  if (exists && fs.readFileSync(file, "utf-8") === CRANK_GITIGNORE) return false;
+  if (exists) beforeWrite(file);
+  fs.writeFileSync(file, CRANK_GITIGNORE);
+  return true;
+}
+
 /**
  * Commit mode needs .crank/cerebrum.md in git. Strip crank-mem's own ignore
  * block from each file that makes git ignore it (left by an earlier ignore or

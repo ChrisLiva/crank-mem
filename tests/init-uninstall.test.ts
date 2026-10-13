@@ -166,6 +166,34 @@ describe("init → uninstall round-trip", () => {
     expect(ignored(root, ".crank/cerebrum.md")).toBe(false);
   });
 
+  test("upgrade replaces a pre-allowlist .crank/.gitignore, and restore brings the old one back", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
+    const crankGitignore = path.join(root, ".crank/.gitignore");
+    // What 0.6.0 init wrote: a denylist that misses later state files and other tools' files.
+    const denylist = "backups/\nanatomy-index.lock\ncerebrum-nudge.json\ndebug.log\n*.tmp\n";
+    fs.writeFileSync(crankGitignore, denylist);
+    expect(ignored(root, ".crank/cerebrum-dedup.json")).toBe(false);
+    const up = cli(root, codexHome, "upgrade");
+    expect(up.status).toBe(0);
+    expect(up.stdout).toContain("wrote the allowlist .crank/.gitignore");
+    for (const rel of [".crank/cerebrum-dedup.json", ".crank/efforts/run1/data.bin"]) expect(ignored(root, rel)).toBe(true);
+    expect(ignored(root, ".crank/cerebrum.md")).toBe(false);
+    expect(cli(root, codexHome, "upgrade").stdout).not.toContain(".crank/.gitignore");
+    cli(root, codexHome, "uninstall", "--yes", "--restore", "--keep-crank");
+    expect(fs.readFileSync(crankGitignore, "utf-8")).toBe(denylist);
+  });
+
+  test("restore keeps the allowlist init wrote where no .crank/.gitignore was", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
+    fs.writeFileSync(path.join(root, ".crank/debug.log"), "x");
+    const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--keep-crank");
+    expect(un.status).toBe(0);
+    expect(un.stdout).not.toContain(".gitignore");
+    for (const rel of [".crank/debug.log", ".crank/cerebrum-nudge.json"]) expect(ignored(root, rel)).toBe(true);
+  });
+
   test("--delete-crank deletes only crank-mem's files and keeps another tool's", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--codex", "skip");
