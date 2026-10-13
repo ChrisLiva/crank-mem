@@ -1,13 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { describeFile, isGenerated } from "./describe.ts";
 import { estimateTokens } from "./tokens.ts";
 import { extractSymbols, symbolsSupported, SYMBOL_MIN_TOKENS } from "./symbols.ts";
 import { isExcluded, type CrankConfig } from "./config.ts";
 import { emptyIndex, type AnatomyIndex, type FileEntry } from "./store.ts";
+import { debugEvent } from "./debug.ts";
 
-// Project walk + full scan + incremental refresh. Pure over the filesystem;
-// locking and persistence are the caller's job.
+// Project walk + full scan + incremental refresh. Reads the filesystem and,
+// in a git repo, `git ls-files`; locking and persistence are the caller's job.
 
 // Fast path ahead of the NUL sniff in indexFile, which catches the rest.
 const BINARY_EXTENSIONS = new Set([
@@ -80,11 +82,100 @@ export function indexFile(
   return entry;
 }
 
-/** Walk the project, listing indexable files (posix relpaths, sorted, capped). */
-export function walkProject(rootDir: string, config: CrankConfig): string[] {
+// Ranked last, never excluded: vendored code and asset trees. Config excludes
+// cannot carry this, because each install keeps its own copy of them.
+const DEMOTED_DIRS = new Set([
+  "deps_src", "third_party", "vendor", "external", "node_modules",
+  "resources", "assets", "static", "public",
+]);
+
+const SOURCE_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java",
+  ".kt", ".scala", ".swift", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp",
+  ".m", ".mm", ".cs", ".rb", ".php", ".lua", ".dart", ".zig", ".sh", ".sql",
+  ".css", ".scss", ".vue", ".svelte",
+]);
+
+/** 0 first-party code, 1 other first-party, 2 and 3 the same under a demoted dir. */
+function rank(relPath: string): number {
+  const dirs = relPath.split("/").slice(0, -1);
+  const demoted = dirs.some((d) => DEMOTED_DIRS.has(d)) ? 2 : 0;
+  return demoted + (SOURCE_EXTENSIONS.has(path.extname(relPath).toLowerCase()) ? 0 : 1);
+}
+
+// OrcaSlicer's listing is 1.37 MB, past execFileSync's 1 MiB default buffer.
+const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+// walkProject runs before the refresh deadline is checked, so git gets its own.
+const GIT_TIMEOUT_MS = 500;
+
+export interface Walk {
+  /** Indexable posix relpaths, at most config.max_files. */
+  files: string[];
+  /** True when at least one more indexable file lay past the cap. */
+  truncated: boolean;
+  /** Indexable-named candidates before the cap; null when the walk stopped uncounted. */
+  candidateCount: number | null;
+}
+
+/**
+ * Tracked plus untracked-but-not-ignored paths, or null when root is not a
+ * git work tree root or git fails. Submodules list as one path (a directory,
+ * dropped by the isFile check), so their contents are never indexed.
+ */
+function gitListing(rootDir: string): string[] | null {
+  if (!fs.existsSync(path.join(rootDir, ".git"))) return null;
+  try {
+    const out = execFileSync("git", ["ls-files", "-co", "--exclude-standard", "-z"], {
+      cwd: rootDir,
+      maxBuffer: GIT_MAX_BUFFER,
+      timeout: GIT_TIMEOUT_MS,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return out.toString("utf-8").split("\0").filter(Boolean);
+  } catch (err) {
+    const e = err as { code?: string; status?: number };
+    debugEvent("walk-fallback", { reason: e.code ?? `exit ${e.status ?? "?"}` });
+    return null;
+  }
+}
+
+/**
+ * List indexable files: in a git repo, git's listing ranked first-party code
+ * first; elsewhere a sorted directory walk. Both stop at config.max_files and
+ * report whether they had to. Writes that post-write indexes under a
+ * gitignored path drop out again at the next refresh.
+ */
+export function walkProject(rootDir: string, config: CrankConfig): Walk {
+  const listed = gitListing(rootDir);
+  return listed ? walkListing(rootDir, listed, config) : walkTree(rootDir, config);
+}
+
+function walkListing(rootDir: string, listed: string[], config: CrankConfig): Walk {
+  const candidates = listed
+    .filter((rel) => isIndexableName(rel, config))
+    .map((rel) => ({ rel, rank: rank(rel) }))
+    .sort((a, b) => a.rank - b.rank || (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+  const files: string[] = [];
+  for (const { rel } of candidates) {
+    // lstat, as the tree walk's Dirent does: symlinks, submodules and
+    // deleted-but-tracked paths are not files to index.
+    try {
+      if (!fs.lstatSync(path.join(rootDir, rel)).isFile()) continue;
+    } catch {
+      continue;
+    }
+    if (files.length === config.max_files) return { files, truncated: true, candidateCount: candidates.length };
+    files.push(rel);
+  }
+  return { files, truncated: false, candidateCount: candidates.length };
+}
+
+function walkTree(rootDir: string, config: CrankConfig): Walk {
+  // Collects one past the cap, the cheapest proof that the cap cut something.
+  const limit = config.max_files + 1;
   const out: string[] = [];
   const walk = (dir: string): void => {
-    if (out.length >= config.max_files) return;
+    if (out.length >= limit) return;
     let items: fs.Dirent[];
     try {
       items = fs.readdirSync(dir, { withFileTypes: true });
@@ -93,7 +184,7 @@ export function walkProject(rootDir: string, config: CrankConfig): string[] {
     }
     items.sort((a, b) => a.name.localeCompare(b.name));
     for (const item of items) {
-      if (out.length >= config.max_files) return;
+      if (out.length >= limit) return;
       const full = path.join(dir, item.name);
       const rel = toPosix(path.relative(rootDir, full));
       if (item.isDirectory()) {
@@ -104,18 +195,28 @@ export function walkProject(rootDir: string, config: CrankConfig): string[] {
     }
   };
   walk(rootDir);
-  return out;
+  if (out.length < limit) return { files: out, truncated: false, candidateCount: out.length };
+  return { files: out.slice(0, config.max_files), truncated: true, candidateCount: null };
+}
+
+function recordWalk(index: AnatomyIndex, walk: Walk): void {
+  if (walk.truncated) index.meta.truncated = true;
+  else delete index.meta.truncated;
+  if (walk.candidateCount !== null) index.meta.candidateCount = walk.candidateCount;
+  else delete index.meta.candidateCount;
 }
 
 /** Full scan: fresh index from a walk. */
 export function fullScan(rootDir: string, config: CrankConfig): AnatomyIndex {
   const index = emptyIndex();
-  for (const rel of walkProject(rootDir, config)) {
+  const walk = walkProject(rootDir, config);
+  for (const rel of walk.files) {
     const entry = indexFile(rootDir, rel, config);
     if (entry) index.files[rel] = entry;
   }
   index.meta.lastScanned = new Date().toISOString();
   index.meta.fileCount = Object.keys(index.files).length;
+  recordWalk(index, walk);
   return index;
 }
 
@@ -140,7 +241,8 @@ export function refreshIndex(
   budgetMs: number
 ): RefreshResult {
   const deadline = Date.now() + budgetMs;
-  const walked = walkProject(rootDir, config);
+  const walk = walkProject(rootDir, config);
+  const walked = walk.files;
   const walkedSet = new Set(walked);
   let changed = 0, added = 0, removed = 0, partial = false;
 
@@ -190,5 +292,6 @@ export function refreshIndex(
   index.meta.fileCount = Object.keys(index.files).length;
   if (partial) index.meta.partial = true;
   else delete index.meta.partial;
+  recordWalk(index, walk);
   return { index, changed, added, removed, partial };
 }

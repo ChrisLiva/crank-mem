@@ -23,6 +23,10 @@ export interface IndexMeta {
   fileCount: number;
   /** Set when a refresh ran out of time budget and skipped entries. */
   partial?: boolean;
+  /** Set when the walk found more indexable files than config.max_files. */
+  truncated?: boolean;
+  /** Indexable-named files the walk saw before the cap; absent when it stopped uncounted. */
+  candidateCount?: number;
 }
 
 export interface AnatomyIndex {

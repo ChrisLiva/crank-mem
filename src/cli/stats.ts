@@ -18,7 +18,7 @@ export async function run(_args: string[]): Promise<number> {
   if (!project) return 1;
   const { root, crankDir, config } = project;
   const index = loadIndex(crankDir);
-  const walked = walkProject(root, config);
+  const walked = walkProject(root, config).files;
   const indexed = Object.keys(index.files).length;
   const coverage = walked.length === 0 ? 100 : Math.round((100 * indexed) / walked.length);
   let indexSize = 0;

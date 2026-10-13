@@ -23,6 +23,13 @@ export function makeCrankProject(files: Record<string, string> = {}): string {
   return root;
 }
 
+/** Run git in `root`, throwing on failure; `git(root, "init", "-q")` makes it a repo. */
+export function git(root: string, ...args: string[]): string {
+  const result = spawnSync("git", args, { cwd: root, encoding: "utf-8" });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  return result.stdout;
+}
+
 export interface HookRun {
   status: number;
   stdout: string;

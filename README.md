@@ -32,6 +32,17 @@ Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 (agent-written semantic memory), `journal.md` (agent-written session log, last
 20 bullets kept), `config.json`, `hooks/` (vendored), `backups/`.
 
+## What gets indexed
+
+In a git repo the file list comes from `git ls-files -co --exclude-standard`,
+so gitignored files stay out. Source code ranks ahead of other files, and
+anything under `deps_src`, `third_party`, `vendor`, `external`,
+`node_modules`, `resources`, `assets`, `static` or `public` ranks last; the
+first `max_files` (default 500) are indexed. Submodule contents are not
+indexed. A write to a gitignored file is indexed by the write hook and dropped
+again at the next session start. Outside git, or if git fails, a sorted
+directory walk is used instead.
+
 ## Audit skill
 
 A bundled agent skill, `crank-mem-audit`, reconciles memory with reality: it
@@ -75,7 +86,8 @@ Either writes `.crank/debug.log` — one record per hook run:
 removed/partial counts), `injected` (tokens vs. budget), `reindex`
 (`committed:false` means the write did not land), `lock-timeout` (contention —
 the only way to tell it apart from "nothing to write"), `nudge-skipped` (why no
-cerebrum/journal nudge fired).
+cerebrum/journal nudge fired), `walk-fallback` (git listing failed, so the
+directory walk ran).
 
 `CRANK_DEBUG=0` forces it off. The log is gitignored, capped at 1 MB then
 restarted, never contains sensitive paths, and can never fail a session — a
