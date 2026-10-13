@@ -106,9 +106,10 @@ copies with `npx skills update` (`crank-mem upgrade` never touches them).
 Invocation is user-only: `/crank-mem-audit` in Claude Code, `$crank-mem-audit`
 in Codex. When the skill is installed, a cerebrum or journal nudge that is
 already due also asks the agent to suggest an audit to you, at most once every
-7 days and not within 7 days of the last audit. An audit is dated by its
-backup directory under `.crank/backups/`, the one that holds only copies of
-`cerebrum.md` and `journal.md`.
+7 days and not within 7 days of the last audit, or of install when the project
+was never audited. An audit is dated by its backup directory under
+`.crank/backups/`, the one that holds only copies of `cerebrum.md` and
+`journal.md`.
 
 ## Debugging
 

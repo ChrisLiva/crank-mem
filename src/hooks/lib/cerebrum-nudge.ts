@@ -193,6 +193,18 @@ export function lastAuditMs(crankDir: string): number | null {
   return newest;
 }
 
+/** Install time in ms: the stamp of the oldest backup dir with a manifest (init writes it), or null. Never throws. */
+export function installedAtMs(crankDir: string): number | null {
+  const base = path.join(crankDir, "backups");
+  try {
+    const first = fs.readdirSync(base).filter((d) => fs.existsSync(path.join(base, d, "manifest.json"))).sort()[0];
+    const ms = first ? Date.parse(first.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d+)Z$/, "T$1:$2:$3.$4Z")) : NaN;
+    return Number.isNaN(ms) ? null : ms;
+  } catch {
+    return null;
+  }
+}
+
 /** Whether the audit skill is installed in the project for this agent: `.agents/skills/` on Codex, `.claude/skills/` on Claude. */
 export function auditSkillInstalled(projectRoot: string, codex: boolean): boolean {
   return fs.existsSync(path.join(projectRoot, codex ? ".agents" : ".claude", "skills", AUDIT_SKILL, "SKILL.md"));
@@ -256,7 +268,8 @@ function mtimeOf(file: string): number | null {
  * Audit suggestion: rides along only when another part is due, so it never
  * adds a turn-end message of its own, and only when the audit skill is
  * installed for this agent. Silent for AUDIT_INTERVAL_MS after the last
- * suggestion or the last audit, whichever is later.
+ * suggestion or the last audit, whichever is later; a project never audited
+ * counts from install, so a minutes-old cerebrum is not sent to an audit.
  */
 export function cerebrumNudge(crankDir: string, codex = false): string | null {
   const cerebrum = readCerebrum(crankDir);
@@ -346,7 +359,7 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
   const now = Date.now();
   const lastAudit = lastAuditMs(crankDir);
   const auditDue =
-    now - Math.max(marker?.auditSuggestedAtMs ?? 0, lastAudit ?? 0) >= AUDIT_INTERVAL_MS &&
+    now - Math.max(marker?.auditSuggestedAtMs ?? 0, lastAudit ?? installedAtMs(crankDir) ?? 0) >= AUDIT_INTERVAL_MS &&
     auditSkillInstalled(path.dirname(crankDir), codex);
 
   debugEvent("nudge-emitted", {

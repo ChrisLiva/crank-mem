@@ -57,18 +57,6 @@ export function latestBackupDir(crankDir: string): string | null {
   }
 }
 
-/** Install time in ms: the stamp of the oldest backup dir with a manifest (init writes it), or null. */
-export function installedAtMs(crankDir: string): number | null {
-  const base = path.join(crankDir, "backups");
-  try {
-    const first = fs.readdirSync(base).filter((d) => fs.existsSync(path.join(base, d, "manifest.json"))).sort()[0];
-    const ms = first ? Date.parse(first.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d+)Z$/, "T$1:$2:$3.$4Z")) : NaN;
-    return Number.isNaN(ms) ? null : ms;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * True iff a manifest proves `originalPath` did not exist before init. The
  * oldest manifest mentioning the path wins — that's the init-time record;

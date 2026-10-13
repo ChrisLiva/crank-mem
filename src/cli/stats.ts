@@ -9,9 +9,10 @@ import { recentJournalBullets, JOURNAL_FILE, NEXT_MARKER } from "../hooks/lib/jo
 import { parseBullets } from "../hooks/lib/bullets.ts";
 import { countChangedSince } from "../hooks/lib/changes.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
-import { auditSkillInstalled, lastAuditMs, overlapPairCount, OVERLAP_MIN_SHARED } from "../hooks/lib/cerebrum-nudge.ts";
+import {
+  auditSkillInstalled, installedAtMs, lastAuditMs, overlapPairCount, OVERLAP_MIN_SHARED,
+} from "../hooks/lib/cerebrum-nudge.ts";
 import { hasCrankHooks } from "./settings.ts";
-import { installedAtMs } from "./backups.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
 import { codexHome, codexTrustStatus, userCodexConfigPath, CODEX_REVIEW_HINT } from "./codex-trust.ts";
 

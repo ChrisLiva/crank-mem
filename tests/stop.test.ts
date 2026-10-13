@@ -751,6 +751,24 @@ describe("audit suggestion (black-box)", () => {
   }
   const stop = (root: string) => nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
 
+  test("a project never audited counts from install, not from time zero", () => {
+    const root = pruneDueProject();
+    installSkill(root);
+    /** An init backup dir: a manifest, named by newBackupDir's stamp. */
+    const initBackup = (ms: number): void => {
+      const dir = path.join(root, ".crank/backups", new Date(ms).toISOString().replace(/[:.]/g, "-"));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({ createdAt: "", entries: [] }));
+    };
+    initBackup(Date.now());
+    const fresh = stop(root);
+    expect(fresh).toContain("160 lines");
+    expect(fresh).not.toContain("crank-mem-audit");
+
+    initBackup(Date.now() - AUDIT_INTERVAL_MS - DAY);
+    expect(stop(root)).toContain("this project's memory has never been audited");
+  });
+
   test("rides along on a due nudge once per interval, only with the skill installed", () => {
     const root = pruneDueProject();
     const without = stop(root);
