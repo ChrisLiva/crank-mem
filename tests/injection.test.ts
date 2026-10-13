@@ -221,6 +221,7 @@ describe("buildInjection", () => {
     expect(out).toContain("shown what the last three entries did, plus the newest one's");
     expect(out).toContain("put the handoff there, last");
     expect(out).toContain("telegram-style");
+    expect(out).toContain("Keep each\n  cerebrum bullet to about 200 characters at most");
   });
 
   test("journal sits between the staleness note and the cerebrum", () => {
@@ -320,11 +321,11 @@ describe("buildInjection", () => {
     // too long to fit is dropped anyway, and reserving for it would take the
     // cerebrum down with it.
     test("a budget too tight for the ADRs still spends it on the cerebrum", () => {
-      const out = buildInjection(sources, 2400);
+      const out = buildInjection(sources, 2500);
       expect(out).not.toContain("## ADRs");
       expect(out).toContain("## Cerebrum");
       expect(out).toContain("Mistake number 14");
-      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2400);
+      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2500);
     });
 
     test("instructions survive a budget too small to hold them", () => {

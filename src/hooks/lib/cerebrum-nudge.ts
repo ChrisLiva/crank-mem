@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { loadIndex } from "./store.ts";
 import { estimateProseTokens } from "./tokens.ts";
 import { JOURNAL_FILE } from "./journal.ts";
+import { parseBlocks } from "./bullets.ts";
 import { debugEvent } from "./debug.ts";
 
 // Shared memory-nudge logic: decide whether to remind the agent to record what
@@ -30,6 +31,16 @@ export const PRUNE_TOKEN_LIMIT = 3000;
 // Naming a target under the trigger makes the deficit concrete and checkable.
 export const PRUNE_TARGET_LINES = 105;
 export const PRUNE_TARGET_TOKENS = 2100;
+
+// Before a prune nudge, cerebrum.md is copied here so a prune that cuts a
+// load-bearing entry can be undone. No manifest.json, so `uninstall --restore`
+// never mistakes this dir for an init/upgrade backup (lib/backups.ts).
+const BACKUP_DIR = path.join("backups", "cerebrum");
+export const BACKUP_KEEP = 5;
+// Bullets the prune nudge names by line, longest first.
+const LONGEST_NAMED = 3;
+// A hex run with at least one digit: a commit sha, the mark of a one-off fix.
+const COMMIT_SHA = /\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/;
 
 const MARKER_FILE = "cerebrum-nudge.json";
 
@@ -67,6 +78,7 @@ function writeMarker(crankDir: string, marker: NudgeMarker): void {
 }
 
 interface CerebrumStats {
+  text: string;
   mtimeMs: number;
   lineCount: number;
   tokenCount: number;
@@ -77,10 +89,51 @@ function readCerebrum(crankDir: string): CerebrumStats | null {
     const file = path.join(crankDir, "cerebrum.md");
     const mtimeMs = fs.statSync(file).mtimeMs;
     const text = fs.readFileSync(file, "utf-8");
-    return { mtimeMs, lineCount: text.split("\n").length, tokenCount: estimateProseTokens(text) };
+    return { text, mtimeMs, lineCount: text.split("\n").length, tokenCount: estimateProseTokens(text) };
   } catch {
     return null;
   }
+}
+
+/**
+ * Copy cerebrum.md to backups/cerebrum/<timestamp>.md unless the newest copy
+ * already matches, keeping the last BACKUP_KEEP. Returns the project-relative
+ * path of the copy that matches the file now, or null when the copy failed.
+ */
+function backupCerebrum(crankDir: string, text: string): string | null {
+  try {
+    const dir = path.join(crankDir, BACKUP_DIR);
+    fs.mkdirSync(dir, { recursive: true });
+    // ISO stamps sort chronologically, so the last name is the newest copy.
+    const copies = fs.readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+    let name = copies[copies.length - 1];
+    if (!name || fs.readFileSync(path.join(dir, name), "utf-8") !== text) {
+      name = new Date().toISOString().replace(/[:.]/g, "-") + ".md";
+      fs.writeFileSync(path.join(dir, name), text);
+      copies.push(name);
+    }
+    for (const old of copies.slice(0, -BACKUP_KEEP)) fs.rmSync(path.join(dir, old), { force: true });
+    return path.join(".crank", BACKUP_DIR, name);
+  } catch (err) {
+    debugEvent("cerebrum-backup-failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/** The LONGEST_NAMED longest whole bullets, as "line N (C chars)", longest first. */
+function longestBullets(text: string): string[] {
+  const bullets: Array<{ line: number; body: string }> = [];
+  let line = 1;
+  for (const block of parseBlocks(text.split("\n"))) {
+    if (block.kind === "bullet") bullets.push({ line, body: block.lines.join("\n").trimEnd() });
+    line += block.lines.length;
+  }
+  return bullets
+    .sort((a, b) => b.body.length - a.body.length)
+    .slice(0, LONGEST_NAMED)
+    .map((b) => `line ${b.line} (${b.body.length} chars${COMMIT_SHA.test(b.body) ? ", cites a commit" : ""})`);
 }
 
 function mtimeOf(file: string): number | null {
@@ -130,7 +183,8 @@ function mtimeOf(file: string): number | null {
  * nudge) as a prune in progress.
  *
  * Writes the marker as a side effect when it nudges, and silently in two cases:
- * when it observes a prune in progress, and when it clears the floor. Never
+ * when it observes a prune in progress, and when it clears the floor. A prune
+ * nudge also copies cerebrum.md to .crank/backups/cerebrum/ first. Never
  * throws.
  */
 export function cerebrumNudge(crankDir: string): string | null {
@@ -268,14 +322,19 @@ export function cerebrumNudge(crankDir: string): string | null {
         `~${cerebrum.tokenCount} tokens (limit: ${PRUNE_TOKEN_LIMIT}) — get under ~${PRUNE_TARGET_TOKENS}`,
       );
     }
+    // Pruning by deletion lost a gotcha that a later session re-learned the
+    // hard way, so the nudge backs the file up and asks to archive, not delete.
+    const backup = backupCerebrum(crankDir, cerebrum.text);
+    const longest = longestBullets(cerebrum.text);
     parts.push(
       `crank-mem: .crank/cerebrum.md is at ${over.join(", and ")}. ` +
-        `Prune it now, by deleting whole entries rather than tightening wording: delete anything ` +
-        `that describes code or decisions that have since changed, restates what the codebase or ` +
-        `CLAUDE.md already makes obvious, or records a one-time fix that is finished. When unsure ` +
-        `whether an entry still earns its place, delete it — a fresh session can re-learn a cheap ` +
-        `fact, but every session pays to read a stale one. A small trim is not enough; this ` +
-        `reminder repeats until the file is back under the limit.`,
+        (backup ? `A copy of the current file is at ${backup}. ` : "") +
+        (longest.length ? `Longest bullets: ${longest.join(", ")}. ` : "") +
+        `Prune it now: shorten long bullets to one line of at most ~200 characters; move ` +
+        `superseded or one-off entries (finished fixes, entries that cite a commit) to ` +
+        `.crank/cerebrum-archive.md, which is not injected but stays greppable; delete only what ` +
+        `CLAUDE.md or the code already states; keep gotchas and do-not-repeat entries. A small ` +
+        `trim is not enough; this reminder repeats until the file is back under the limit.`,
     );
   }
   return parts.join("\n");

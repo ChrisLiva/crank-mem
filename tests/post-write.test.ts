@@ -238,4 +238,30 @@ describe("post-write cerebrum nudge (Codex only)", () => {
     expect(regrown.status).toBe(0);
     expect(nudge(regrown.stdout)).toContain("157 lines");
   });
+
+  test("apply_patch prune nudge backs cerebrum up and names the copy", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    const body = Array.from({ length: 160 }, (_, i) => `- entry ${i}`).join("\n");
+    fs.writeFileSync(cerebrum(root), body);
+    setMtime(cerebrum(root), FRESH);
+    const ctx = nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout);
+    const dir = path.join(root, ".crank/backups/cerebrum");
+    const [copy] = fs.readdirSync(dir);
+    expect(fs.readFileSync(path.join(dir, copy!), "utf-8")).toBe(body);
+    expect(ctx).toContain(`.crank/backups/cerebrum/${copy}`);
+    expect(ctx).toContain(".crank/cerebrum-archive.md");
+  });
+
+  test("apply_patch prune nudge exits 0 when backups cannot be written", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, ".crank/backups"), "not a directory");
+    fs.writeFileSync(cerebrum(root), Array.from({ length: 160 }, (_, i) => `- entry ${i}`).join("\n"));
+    setMtime(cerebrum(root), FRESH);
+    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
+    expect(run.status).toBe(0);
+    expect(nudge(run.stdout)).toContain("160 lines");
+    expect(nudge(run.stdout)).not.toContain("A copy of the current file");
+  });
 });

@@ -29,8 +29,11 @@ Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 ## Layout under `.crank/`
 
 `anatomy-index.json` (data), `anatomy.md` (human/agent view), `cerebrum.md`
-(agent-written semantic memory), `journal.md` (agent-written session log, last
-20 bullets kept), `config.json`, `hooks/` (vendored), `backups/`.
+(agent-written semantic memory), `cerebrum-archive.md` (entries a prune moved
+out; never injected), `journal.md` (agent-written session log, last 20 bullets
+kept), `config.json`, `hooks/` (vendored), `backups/` (init/upgrade snapshots,
+plus `backups/cerebrum/`: the last 5 copies of cerebrum.md, taken before each
+prune nudge).
 
 ## Audit skill
 

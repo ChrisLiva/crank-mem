@@ -67,7 +67,8 @@ agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in
   next session is shown what the last three entries did, plus the newest one's
   \`NEXT:\` clause — put the handoff there, last.
 - Write cerebrum entries and journal bullets telegram-style: drop articles and
-  hedges; keep paths, identifiers, and error strings verbatim.
+  hedges; keep paths, identifiers, and error strings verbatim. Keep each
+  cerebrum bullet to about 200 characters at most.
 - ADR protocol: decisions that are hard to reverse, surprising, AND carry a
   real trade-off get an ADR (\`NNNN-slug.md\`, Pocock style) in the ADR
   directory. Existing ADRs are settled — don't relitigate them.`;

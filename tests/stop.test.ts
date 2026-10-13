@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeCrankProject, runHook } from "./helpers.ts";
 import { claudeSessionStart, claudeStop } from "./fixtures/payloads.ts";
-import { NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
+import { BACKUP_KEEP, NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
 
 const HOOK = "src/hooks/stop.ts";
 
@@ -26,6 +26,12 @@ function longCerebrum(lines: number): string {
 /** Few lines, lots of prose: under the line guideline, over the token one. */
 function fatCerebrum(chars: number): string {
   return Array.from({ length: 10 }, (_, i) => `- entry ${i} ${"x".repeat(chars / 10)}`).join("\n");
+}
+function backupDir(root: string): string {
+  return path.join(root, ".crank/backups/cerebrum");
+}
+function backups(root: string): string[] {
+  return fs.readdirSync(backupDir(root)).sort();
 }
 function journal(root: string): string {
   return path.join(root, ".crank/journal.md");
@@ -248,6 +254,85 @@ describe("stop hook (black-box)", () => {
     expect(ctx).not.toContain("lines"); // only the measure that tripped is named
   });
 
+  test("prune nudge backs cerebrum up first and names the copy", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    fs.writeFileSync(cerebrum(root), longCerebrum(160));
+    setMtime(cerebrum(root), FRESH);
+
+    const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
+    const [copy] = backups(root);
+    expect(backups(root)).toHaveLength(1);
+    expect(fs.readFileSync(path.join(backupDir(root), copy!), "utf-8")).toBe(longCerebrum(160));
+    expect(ctx).toContain(`A copy of the current file is at .crank/backups/cerebrum/${copy}`);
+
+    // Nudge repeats on an unchanged file: no second copy, same path named.
+    const again = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
+    expect(backups(root)).toEqual([copy!]);
+    expect(again).toContain(`.crank/backups/cerebrum/${copy}`);
+  });
+
+  test("prune backups keep only the newest copies", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    // Each run grows the file, so the nudge fires and the content differs.
+    for (let n = 160; n < 160 + BACKUP_KEEP + 2; n++) {
+      fs.writeFileSync(cerebrum(root), longCerebrum(n));
+      setMtime(cerebrum(root), FRESH + n);
+      expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain(`${n} lines`);
+    }
+    const kept = backups(root);
+    expect(kept).toHaveLength(BACKUP_KEEP);
+    expect(fs.readFileSync(path.join(backupDir(root), kept[0]!), "utf-8")).toBe(longCerebrum(162));
+    expect(fs.readFileSync(path.join(backupDir(root), kept.at(-1)!), "utf-8")).toBe(
+      longCerebrum(160 + BACKUP_KEEP + 1),
+    );
+  });
+
+  test("prune nudge names the longest whole bullets and asks to archive, not delete", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    const shaBullet = `- gamma fixed in a18c44f ${"x".repeat(4000)}`;
+    fs.writeFileSync(
+      cerebrum(root),
+      [
+        "# Cerebrum",
+        "",
+        "## Memory",
+        `- alpha ${"x".repeat(6000)}`, // line 4
+        "- beta", // line 5: short first line, long wrapped body
+        `  ${"x".repeat(5000)}`,
+        shaBullet, // line 7
+        "- delta short", // line 8
+      ].join("\n"),
+    );
+    setMtime(cerebrum(root), FRESH);
+
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    const ctx = nudge(run.stdout)!;
+    expect(ctx).toContain(
+      `Longest bullets: line 4 (6008 chars), line 5 (5009 chars), line 7 (${shaBullet.length} chars, cites a commit).`,
+    );
+    expect(ctx).not.toContain("line 8");
+    expect(ctx).toContain(".crank/cerebrum-archive.md");
+    expect(ctx).toContain("keep gotchas and do-not-repeat entries");
+    expect(ctx).not.toContain("delete it");
+  });
+
+  test("prune nudge still fires, exit 0, when backups cannot be written", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, ".crank/backups"), "not a directory");
+    fs.writeFileSync(cerebrum(root), longCerebrum(160));
+    setMtime(cerebrum(root), FRESH);
+
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    expect(nudge(run.stdout)).toContain("Prune");
+    expect(nudge(run.stdout)).not.toContain("A copy of the current file");
+  });
+
   test("stays quiet at the guideline exactly", () => {
     const root = makeCrankProject(ENOUGH);
     seedIndex(root);
@@ -256,6 +341,7 @@ describe("stop hook (black-box)", () => {
 
     const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
     expect(run.stdout).toBe("");
+    expect(fs.existsSync(backupDir(root))).toBe(false); // no prune nudge, no backup
   });
 
   test("record and prune nudges combine when both are due", () => {
