@@ -105,6 +105,21 @@ describe("walkProject in a git repo", () => {
     });
   });
 
+  test("a conflicted path git lists once per stage counts once", () => {
+    const root = makeRepo({ "a.ts": "x", "b.ts": "x", "c.ts": "x" });
+    git(root, "add", "b.ts", "c.ts");
+    const blob = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+    const stages = [1, 2, 3].map((stage) => `100644 ${blob} ${stage}\ta.ts\n`).join("");
+    const r = spawnSync("git", ["update-index", "--index-info"], { cwd: root, input: stages });
+    expect(r.status).toBe(0);
+    expect(git(root, "ls-files", "-co").split("\n").filter((l) => l === "a.ts")).toHaveLength(3);
+    expect(walkProject(root, { ...defaultConfig(), max_files: 3 })).toEqual({
+      files: ["a.ts", "b.ts", "c.ts"],
+      truncated: false,
+      candidateCount: 3,
+    });
+  });
+
   test("a tracked symlink is not a file to index", () => {
     const root = makeRepo({ "src/a.ts": "x" });
     const outside = makeProject({ "secret.txt": "outside the project" });

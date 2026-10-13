@@ -134,12 +134,13 @@ function gitFailure(err: unknown): string {
 /**
  * Tracked plus untracked-but-not-ignored paths, or null when root is not a
  * git work tree root or git fails. Submodules list as one path (a directory,
- * dropped by the isFile check), so their contents are never indexed.
+ * dropped by the isFile check), so their contents are never indexed. An
+ * unmerged path lists once per conflict stage, so the listing is deduplicated.
  */
 function gitListing(rootDir: string): string[] | null {
   if (!fs.existsSync(path.join(rootDir, ".git"))) return null;
   try {
-    return runGit(rootDir, ["ls-files", "-co", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
+    return [...new Set(runGit(rootDir, ["ls-files", "-co", "--exclude-standard", "-z"]).split("\0").filter(Boolean))];
   } catch (err) {
     debugEvent("walk-fallback", { reason: gitFailure(err) });
     return null;
