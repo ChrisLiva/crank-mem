@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { manifestDirs } from "../hooks/lib/cerebrum-nudge.ts";
 
 // Backups of every file init/upgrade is about to modify, with a manifest
 // mapping backup names to original absolute paths so uninstall can restore
@@ -47,14 +48,8 @@ export function backupFile(backupDir: string, originalPath: string): void {
 
 /** Latest backup dir under .crank/backups, or null. */
 export function latestBackupDir(crankDir: string): string | null {
-  const base = path.join(crankDir, "backups");
-  try {
-    const dirs = fs.readdirSync(base).filter((d) => fs.existsSync(path.join(base, d, "manifest.json"))).sort();
-    const last = dirs[dirs.length - 1];
-    return last ? path.join(base, last) : null;
-  } catch {
-    return null;
-  }
+  const last = manifestDirs(crankDir).at(-1);
+  return last ? path.join(crankDir, "backups", last) : null;
 }
 
 /**
@@ -65,13 +60,7 @@ export function latestBackupDir(crankDir: string): string | null {
  */
 export function absentAtInit(crankDir: string, originalPath: string): boolean {
   const base = path.join(crankDir, "backups");
-  let dirs: string[];
-  try {
-    dirs = fs.readdirSync(base).sort();
-  } catch {
-    return false;
-  }
-  for (const d of dirs) {
+  for (const d of manifestDirs(crankDir)) {
     try {
       const entry = loadManifest(path.join(base, d)).entries.find((e) => e.original === originalPath);
       if (entry) return entry.backupFile === null;

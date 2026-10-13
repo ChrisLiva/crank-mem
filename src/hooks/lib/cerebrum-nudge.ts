@@ -166,13 +166,18 @@ const AUDIT_BACKUP_FILES = new Set([CEREBRUM_FILE, JOURNAL_FILE, ARCHIVE_FILE]);
  * timestamped copies (the prune nudge's backups/cerebrum/), and nothing another
  * tool sharing .crank/ wrote. Never throws.
  */
-export function isAuditBackup(dir: string): boolean {
+function isAuditBackup(dir: string): boolean {
   try {
     const names = fs.readdirSync(dir);
     return names.length > 0 && names.every((name) => AUDIT_BACKUP_FILES.has(name));
   } catch {
     return false;
   }
+}
+
+/** A backup dir is crank-mem's when it holds the manifest newBackupDir writes or is the audit skill's copy of the memory files. Never throws. */
+export function isCrankBackup(dir: string): boolean {
+  return fs.existsSync(path.join(dir, "manifest.json")) || isAuditBackup(dir);
 }
 
 /**
@@ -194,16 +199,21 @@ export function lastAuditMs(crankDir: string): number | null {
   return newest;
 }
 
-/** Install time in ms: the stamp of the oldest backup dir with a manifest (init writes it), or null. Never throws. */
-export function installedAtMs(crankDir: string): number | null {
+/** Names of the .crank/backups/ dirs that hold the manifest init and upgrade write, oldest first. Empty on any error. Never throws. */
+export function manifestDirs(crankDir: string): string[] {
   const base = path.join(crankDir, "backups");
   try {
-    const first = fs.readdirSync(base).filter((d) => fs.existsSync(path.join(base, d, "manifest.json"))).sort()[0];
-    const ms = first ? Date.parse(first.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d+)Z$/, "T$1:$2:$3.$4Z")) : NaN;
-    return Number.isNaN(ms) ? null : ms;
+    return fs.readdirSync(base).filter((d) => fs.existsSync(path.join(base, d, "manifest.json"))).sort();
   } catch {
-    return null;
+    return [];
   }
+}
+
+/** Install time in ms: the stamp of the oldest backup dir with a manifest (init writes it), or null. Never throws. */
+export function installedAtMs(crankDir: string): number | null {
+  const first = manifestDirs(crankDir)[0];
+  const ms = first ? Date.parse(first.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d+)Z$/, "T$1:$2:$3.$4Z")) : NaN;
+  return Number.isNaN(ms) ? null : ms;
 }
 
 /** Whether the audit skill is installed in the project for this agent: `.agents/skills/` on Codex, `.claude/skills/` on Claude. */

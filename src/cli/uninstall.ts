@@ -12,7 +12,7 @@ import {
 import { CRANK_DIR, CONFIG_FILE } from "../hooks/lib/config.ts";
 import { INDEX_FILE, ANATOMY_FILE } from "../hooks/lib/store.ts";
 import { LOCK_FILE } from "../hooks/lib/lock.ts";
-import { MARKER_FILE, DEDUP_FILE, CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, isAuditBackup } from "../hooks/lib/cerebrum-nudge.ts";
+import { MARKER_FILE, DEDUP_FILE, CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, isCrankBackup } from "../hooks/lib/cerebrum-nudge.ts";
 import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
 import { openProject } from "./project.ts";
@@ -178,12 +178,10 @@ function deleteOwnedFiles(crankDir: string): string[] {
   for (const name of readdirOrEmpty(crankDir)) {
     if (name.endsWith(".tmp")) fs.rmSync(path.join(crankDir, name), { force: true });
   }
-  // A backup dir is crank-mem's only when it holds the manifest newBackupDir
-  // writes or is the audit skill's copy of the memory files.
   const backups = path.join(crankDir, "backups");
   for (const name of readdirOrEmpty(backups)) {
     const dir = path.join(backups, name);
-    if (fs.existsSync(path.join(dir, "manifest.json")) || isAuditBackup(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    if (isCrankBackup(dir)) fs.rmSync(dir, { recursive: true, force: true });
   }
   removeEmptyDirs(crankDir, ["backups"]);
   const left = readdirOrEmpty(crankDir).filter((name) => name !== ".gitignore");
