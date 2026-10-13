@@ -109,9 +109,6 @@ describe("injected headlines", () => {
     ]);
   });
 
-  // The cap is spent in the same unit as the injection budget, so a non-ASCII
-  // journal cannot cost 3× an ASCII one — and a cut must never land inside a
-  // character.
   test("the caps are bytes and never split a character", () => {
     const [older, newest] = inject(
       HEADER + `- 2026-07-29: ${"中".repeat(400)}\n- 2026-07-30: ${"中".repeat(400)}; NEXT: ${"🚀".repeat(400)}\n`

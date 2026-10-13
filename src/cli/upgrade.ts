@@ -26,14 +26,15 @@ export async function run(_args: string[]): Promise<number> {
   const { root, crankDir, config } = project;
   const current = cliVersion();
 
-  // Ahead of the version check: installs predating the journal have no
-  // journal.md, and neither does one whose journal was deleted at the current
-  // version — both leave the trim, injection, and nudge with nothing to work
-  // with, and only this reseeds them. Never clobbers: an existing journal is
-  // the session log itself.
-  // Seeding runs before the backups below, so a failure here must not abort an
-  // upgrade that would otherwise succeed — an absent journal costs a nudge, not
-  // an install.
+  // Every repair from here to the version check runs at any version, so an
+  // install already at the current version still converges.
+
+  // Installs predating the journal have no journal.md, and neither does one
+  // whose journal was deleted at the current version — both leave the trim,
+  // injection, and nudge with nothing to work with, and only this reseeds them.
+  // Never clobbers: an existing journal is the session log itself. Seeding runs
+  // before the backups below, so a failure here must not abort an upgrade that
+  // would otherwise succeed — an absent journal costs a nudge, not an install.
   const journalPath = path.join(crankDir, JOURNAL_FILE);
   if (!fs.existsSync(journalPath)) {
     try {
@@ -44,10 +45,9 @@ export async function run(_args: string[]): Promise<number> {
     }
   }
 
-  // Ahead of the version check too: an install from before clone_root existed,
-  // or one whose clone has moved, is at the current version but cannot report
-  // drift — so a same-version upgrade repairs the field instead of waiting for
-  // the next release to arm the check.
+  // An install from before clone_root existed, or one whose clone has moved, is
+  // at the current version but cannot report drift — so a same-version upgrade
+  // repairs the field instead of waiting for the next release to arm the check.
   if (config.clone_root !== REPO_ROOT) {
     config.clone_root = REPO_ROOT;
     saveConfig(crankDir, config);
@@ -57,11 +57,10 @@ export async function run(_args: string[]): Promise<number> {
   let backupDir: string | null = null;
   const backup = (file: string) => backupFile((backupDir ??= newBackupDir(crankDir)), file);
 
-  // Ahead of the version check too: a wiring change (a new event, a new
-  // command form) must reach installs already at the current version, and
-  // crank hooks left in the Claude settings file the git mode does not use
-  // run every event twice. A corrupt settings file costs the re-wire, not the
-  // upgrade.
+  // A wiring change (a new event, a new command form) must reach installs
+  // already at the current version, and crank hooks left in the Claude settings
+  // file the git mode does not use run every event twice. A corrupt settings
+  // file costs the re-wire, not the upgrade.
   const codexHooksJson = path.join(root, ".codex", "hooks.json");
   let codexRewired = false;
   try {
@@ -85,9 +84,9 @@ export async function run(_args: string[]): Promise<number> {
     console.error(`crank-mem: could not re-wire hooks (${err instanceof Error ? err.message : String(err)})`);
   }
 
-  // Ahead of the version check too: an install from before the allowlist keeps
-  // a denylist that misses state files added since, such as cerebrum-dedup.json,
-  // and every file another tool sharing .crank/ writes.
+  // An install from before the allowlist keeps a denylist that misses state
+  // files added since, such as cerebrum-dedup.json, and every file another tool
+  // sharing .crank/ writes.
   try {
     if (ensureCrankGitignore(crankDir, backup)) console.log(`  wrote the allowlist .crank/.gitignore`);
   } catch (err) {
@@ -120,7 +119,6 @@ export async function run(_args: string[]): Promise<number> {
     return 0;
   }
 
-  // Backup the vendored hooks (as files under a timestamped backup dir).
   const hooksDir = path.join(crankDir, "hooks");
   if (fs.existsSync(hooksDir)) {
     fs.cpSync(hooksDir, path.join((backupDir ??= newBackupDir(crankDir)), "hooks"), { recursive: true });

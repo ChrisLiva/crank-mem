@@ -19,16 +19,14 @@ import type { AnatomyIndex } from "./store.ts";
 // cost 74% of the injection; ADR 0005 records the measurement.
 
 /**
- * Ceiling on the whole excerpt. Whole bullets cost roughly double what the
- * first-physical-line-only excerpt did, and the real bound on the file is
- * PRUNE_LINE_LIMIT — a nudge agents comply with — so this cap exists to catch
- * a runaway file, not to bind in normal use.
+ * Ceiling on the whole excerpt, set to catch a runaway file. The prune nudge at
+ * PRUNE_LINE_LIMIT bounds the file in normal use.
  */
 export const CEREBRUM_INJECT_TOKEN_CAP = 1500;
 /** Sub-cap on User Preferences, so prefs can't crowd memory out of the excerpt. */
 export const PREFS_TOKEN_CAP = 400;
 export const ADR_RECENT_COUNT = 20;
-/** Recent memory bullets shown whole; 7 rather than 10 leaves room for the index. */
+/** Recent memory bullets shown whole; older memory bullets go to the index. */
 export const MEMORY_RECENT_COUNT = 7;
 /** Width of one index entry: a bullet's opening words, enough to grep for. */
 export const INDEX_ENTRY_CHARS = 48;

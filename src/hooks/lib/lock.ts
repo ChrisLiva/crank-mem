@@ -70,7 +70,7 @@ function isStale(lockPath: string): boolean {
   }
 }
 
-/** Steal a stale lock. Rename is atomic: exactly one competing stealer wins. */
+/** Steal a stale lock. */
 function trySteal(lockPath: string): void {
   const graveyard = lockPath + "." + crypto.randomBytes(4).toString("hex") + ".stale";
   try {
@@ -106,9 +106,8 @@ export function withLock<T>(crankDir: string, budgetMs: number, fn: () => T): T 
     }
     sleep(POLL_MIN_MS + Math.floor(Math.random() * POLL_MIN_MS));
   }
-  // A wait shorter than one poll interval means the lock was free and the clock
-  // merely ticked — logging those buried the real contention in noise. Below
-  // this, only a steal (which is always evidence) is worth a line.
+  // A wait shorter than one poll interval means the lock was free; below it,
+  // only a steal is worth logging.
   const waitedMs = Date.now() - started;
   if (waitedMs >= POLL_MIN_MS || steals > 0) debugEvent("lock-waited", { waitedMs, steals });
 

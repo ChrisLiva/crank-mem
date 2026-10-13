@@ -79,10 +79,7 @@ export function crankHooks(runtime: CrankConfig["runtime"], agent: Agent): Hooks
       { matcher, hooks: [{ type: "command", command: hookCommand(runtime, "post-write.ts", agent), timeout: 10 }] },
     ],
   };
-  // Stop nudge is Claude-only: it emits advisory additionalContext, which Codex
-  // Stop hooks don't support (their only lever forces a continuation, which the
-  // advisory-only invariant forbids). Codex gets the nudge from post-write
-  // after an apply_patch instead (ADR 0004).
+  // Stop is Claude-only; Codex gets the nudge from post-write (ADR 0004).
   if (agent === "claude") {
     map.Stop = [
       { hooks: [{ type: "command", command: hookCommand(runtime, "stop.ts", agent), timeout: 10 }] },

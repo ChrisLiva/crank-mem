@@ -4,9 +4,9 @@ import { isSensitiveFile } from "./config.ts";
 
 // Opt-in observability for the hook paths.
 //
-// Hooks are advisory-only and silent by design: stderr is never model-visible
-// (ADR 0001) and in practice nobody reads it, so a hook that has been throwing
-// since install leaves no evidence anywhere. This writes one JSONL record per
+// Hooks are advisory-only and silent by design: stderr reaches only the
+// terminal, never the model (ADR 0001), so a hook that has been throwing since
+// install leaves no record in the project. This writes one JSONL record per
 // hook run to .crank/debug.log so that failure has a trace.
 //
 // Three rules this module must never break:

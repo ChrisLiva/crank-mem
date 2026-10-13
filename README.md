@@ -118,9 +118,9 @@ was never audited. An audit is dated by its backup directory under
 
 ## Debugging
 
-Hooks are advisory-only and silent by design — stderr never reaches the model
-and in practice nobody reads it, so a failing hook leaves no trace. Turn on a
-per-run JSONL trace when something looks wrong:
+Hooks are advisory-only and silent by design. Their stderr reaches only the
+terminal, never the model, so a failing hook leaves no record in the project.
+Turn on a per-run JSONL trace when something looks wrong:
 
 ```sh
 CRANK_DEBUG=1                      # one session, no config edit

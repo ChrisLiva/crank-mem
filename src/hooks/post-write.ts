@@ -13,10 +13,7 @@ import { enableDebug, debugEvent, safePath } from "./lib/debug.ts";
 // PostToolUse hook: re-index of written files. Claude matcher is
 // Write|Edit|MultiEdit (file_path in tool_input); Codex matcher is
 // apply_patch (paths parsed from the patch text; Delete drops the entry).
-// For Claude the re-index is silent (the Stop hook carries the cerebrum nudge
-// at turn end); for Codex, which has no usable end-of-turn channel, the nudge
-// rides this hook's additionalContext instead (see docs/adr/0004). Exit 0 on
-// every path.
+// Exit 0 on every path.
 
 interface WriteOp {
   relPath: string;
@@ -25,9 +22,7 @@ interface WriteOp {
 
 // Why a write produced nothing to index. Only `no-path` and `unhandled-tool`
 // mean something is wrong (a payload or matcher mismatch — ADR 0003); the other
-// two are the everyday shape of editing outside the index. Collapsing them into
-// one bare "nothing happened" event, as this once did, makes the log useless for
-// the failure it exists to catch.
+// two are the everyday shape of editing outside the index.
 type SkipReason = "no-path" | "unhandled-tool" | "outside-root" | "crank-internal";
 
 interface WriteScan {
@@ -103,8 +98,6 @@ async function main(): Promise<void> {
   // return: a patch that touches only .crank/cerebrum.md is the write it checks.
   const overlaps = payload.tool_name === "apply_patch" ? cerebrumOverlaps(crankDir) : null;
   if (ops.length === 0) {
-    // `no-path`/`unhandled-tool` here is the shape a matcher or payload
-    // mismatch takes (ADR 0003); the other reasons are benign.
     debugEvent("no-write-ops", {
       tool: typeof payload.tool_name === "string" ? payload.tool_name : null,
       ...skip,
@@ -146,8 +139,6 @@ async function main(): Promise<void> {
     }
     return dirty ? index : null;
   });
-  // commitIndex returns null for BOTH "lock lost" and "nothing to write"; the
-  // lock-timeout event from withLock is what disambiguates the two in the log.
   debugEvent("reindex", {
     tool: typeof payload.tool_name === "string" ? payload.tool_name : null,
     paths: ops.map((o) => safePath(o.relPath)),

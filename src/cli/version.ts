@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 /** Absolute path to the crank-mem clone (repo root). */
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/** Version of the clone, from package.json — single source of truth. */
+/** Version of the clone, from package.json. */
 export function cliVersion(): string {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf-8"));

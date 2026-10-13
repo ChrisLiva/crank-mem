@@ -209,12 +209,10 @@ describe("memory reaches the model whole (black-box)", () => {
     );
 
     const ctx = inject(root);
-    // The payload of a wrapped bullet used to be cut off at "or above a".
     expect(ctx).toContain(
       "- The blur dies when the container gets `position: fixed` or above a\n" +
         "  z-index of 10 — it becomes a backdrop root, killing the overlay blur."
     );
-    // The handoff wraps across physical lines and had never once been delivered.
     expect(ctx).toContain("- 2026-07-30 — swept the board, tree clean; NEXT: probe both live installs after the bump.");
     expect(ctx).toContain("Always use tabs");
   });
@@ -244,8 +242,8 @@ describe("memory reaches the model whole (black-box)", () => {
     expect(ctx).toContain("append new bullets at the end of the section, newest last");
   });
 
-  // 5 of 8 file:line citations in audited cerebrums had drifted, and few
-  // bullets carried a date to judge them by.
+  // Line numbers drift and an undated bullet cannot be judged, so the protocol
+  // asks for a date and a path citation.
   test("the protocol asks for a date and path citations, and says memory is not proof", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
@@ -525,8 +523,6 @@ describe("journal (black-box)", () => {
     expect(ctx.split("\n").every((l) => Buffer.byteLength(l, "utf-8") <= 362)).toBe(true);
   });
 
-  // The cap is spent in the same unit as the injection budget, so a non-ASCII
-  // journal cannot cost 3× an ASCII one.
   test("the headline cap is bytes, and never splits a character", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     writeJournal(root, [`2026-07-29: ${"中".repeat(2000)}`, `2026-07-30: x; NEXT: ${"🚀".repeat(2000)}`]);

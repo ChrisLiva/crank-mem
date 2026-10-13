@@ -12,7 +12,7 @@ import { parseBlocks, parseBullets } from "./bullets.ts";
 
 /** Entries kept on disk. Older ones are dropped at the next session start. */
 export const JOURNAL_KEEP = 20;
-/** Entries injected at session start — enough to orient, small enough to be free. */
+/** Entries injected at session start. */
 export const JOURNAL_INJECT_COUNT = 3;
 /**
  * Per-entry caps on the injected headline, in bytes — the unit the injection

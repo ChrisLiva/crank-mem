@@ -6,15 +6,11 @@ import { CRANK_DIR, loadConfig } from "./lib/config.ts";
 import { cerebrumNudge, cerebrumOverlaps } from "./lib/cerebrum-nudge.ts";
 import { enableDebug } from "./lib/debug.ts";
 
-// Stop hook (Claude Code only). At turn end, if source files have changed since
-// cerebrum.md was last touched, nudge the model to record what it learned, and
-// flag a new cerebrum bullet that repeats an older one's identifiers. On
-// Claude, additionalContext is wrapped in a system reminder at end of turn and
-// the conversation continues WITHOUT forcing the agent to keep running — so the
-// nudge stays advisory. Codex Stop has no such channel (probed 2026-07-17:
-// systemMessage is inert; the only lever that reaches the model is a forced
-// continuation, which the advisory-only invariant forbids), so Codex gets this
-// nudge via post-write instead. See docs/adr/0004. Every path exits 0.
+// Stop hook, Claude Code only. At turn end it emits cerebrumNudge and
+// cerebrumOverlaps as additionalContext, which Claude wraps in a system
+// reminder without forcing the agent to keep running, so the nudge stays
+// advisory. Codex gets the nudge from post-write instead (ADR 0004). Every path
+// exits 0.
 
 async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());

@@ -182,8 +182,7 @@ describe("stop hook (black-box)", () => {
   });
 
   // The stamped size is a floor that every observation lowers, so a prune that
-  // stalls partway re-arms the nudge on its own — with no other part firing to
-  // rewrite the marker, which is the case that used to silence it forever.
+  // stalls partway re-arms the nudge even when no other part fires.
   test("a partial prune that then stalls re-arms the prune nudge", () => {
     const root = makeCrankProject(ENOUGH);
     seedIndex(root);

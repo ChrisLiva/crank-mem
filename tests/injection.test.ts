@@ -52,8 +52,6 @@ describe("excerptOf", () => {
     expect(memory).not.toContain(`- Mistake number ${15 - MEMORY_RECENT_COUNT - 1}`);
   });
 
-  // A warning that rotated out of the recency slice used to vanish from every
-  // later session while still in the file; now it is listed by its first words.
   test("every bullet the excerpt leaves out is listed after it", () => {
     const ex = excerpt(CEREBRUM);
     const hidden = 15 - MEMORY_RECENT_COUNT;
@@ -90,9 +88,8 @@ describe("excerptOf", () => {
     expect(excerpt("# Cerebrum\n\n## User Preferences\n\n## Memory\n")).toBe("");
   });
 
-  // The defect this whole change exists to fix: `injection.ts` asks agents for
-  // prose bullets, and every well-formed one wraps — so keeping only the first
-  // physical line delivered a fragment and dropped the payload.
+  // The protocol asks for prose bullets, which wrap, so the excerpt keeps every
+  // physical line of a bullet.
   test("a bullet spanning several physical lines arrives whole", () => {
     const ex = excerpt(
       "# Cerebrum\n\n## Memory\n\n" +
@@ -124,8 +121,8 @@ describe("excerptOf", () => {
     expect(ex.split("\n").filter((l) => l.startsWith("-"))).toHaveLength(2);
   });
 
-  // No cerebrum is rewritten by this change: the excerpt reads the union
-  // instead, so an install that predates `## Memory` keeps working.
+  // The excerpt reads `## Key Learnings`, `## Do-Not-Repeat` and `## Memory` as
+  // one section, so an install that predates `## Memory` needs no rewrite.
   test("an unmigrated three-section file injects all three under one Memory label", () => {
     const ex = excerpt(
       "# Cerebrum\n\n## User Preferences\n\n- Prefers pnpm\n\n" +
@@ -145,8 +142,6 @@ describe("excerptOf", () => {
     expect(ex.indexOf("rate-limits")).toBeLessThan(ex.indexOf("Appended after the rename"));
   });
 
-  // Agents anchor edits on the label: a label naming a heading the file lacks
-  // sent 9 audited edits to a missing anchor, and one learning was lost.
   test("labels name the file's literal headings, not the canonical ones", () => {
     const ex = excerpt(
       "# Cerebrum\n\n## user preferences\n\n- Prefers pnpm\n\n" +

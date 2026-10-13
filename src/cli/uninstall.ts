@@ -190,7 +190,6 @@ function readdirOrEmpty(dir: string): string[] {
   }
 }
 
-/** Remove each of the named project subdirectories if it is now empty. */
 function removeEmptyDirs(root: string, names: string[]): void {
   for (const d of names) {
     const dir = path.join(root, d);
