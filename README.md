@@ -63,8 +63,9 @@ before replacing it.
 
 Claude Code fires `SessionStart` only in the main session, so crank-mem wires
 `SubagentStart` too. Each `general-purpose`, `Explore`, `Plan` and
-`workflow-subagent` subagent gets a 2,048-byte cerebrum excerpt and a pointer
-to `cerebrum.md` and `journal.md`; custom and plugin agents get nothing. The
+`workflow-subagent` subagent gets a 2,048-byte cerebrum excerpt, split between
+preferences and the newest memory bullets, and a pointer to `cerebrum.md` and
+`journal.md`; custom and plugin agents get nothing. The
 parent session does not see it. See ADR 0007.
 
 ## What gets indexed

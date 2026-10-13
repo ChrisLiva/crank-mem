@@ -295,9 +295,13 @@ trust_level = "trusted"
   (`SUBAGENT_MATCHER` in `src/cli/settings.ts`). The hook injects `cerebrumExcerpt` at a
   2,048-byte budget plus a pointer to `cerebrum.md` and `journal.md`. It does not refresh
   the index, because the parent's SessionStart already did.
-- The excerpt keeps its own priority, user preferences ahead of memory. At 2,048 bytes the
-  2026-10-13 cerebrums of OrcaSlicer and takeoff-poc yield preferences only, 4 of 7 and 5
-  of 5, and no memory bullets; brew-pg yields 10 preferences and 2 memory bullets.
+- The session-start priority, user preferences ahead of memory, left subagents no gotcha:
+  at 2,048 bytes the 2026-10-13 cerebrums of OrcaSlicer and takeoff-poc yielded preferences
+  only, 4 of 7 and 5 of 5, and brew-pg 10 preferences and 2 memory bullets. The subagent
+  excerpt therefore trims balanced: both index lists go first, then the oldest bullet of
+  whichever kind takes more bytes. On the same files it yields 3 preferences and 1 memory
+  bullet for OrcaSlicer, 3 and 1 for takeoff-poc, and 7 and 4 for brew-pg. Session start
+  keeps the preference-first order.
 - Codex: no change.
 
 ## Re-probe method (~15 min)

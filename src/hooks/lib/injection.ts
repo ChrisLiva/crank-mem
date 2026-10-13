@@ -173,9 +173,14 @@ const bytes = (s: string): number => Buffer.byteLength(s, "utf-8");
  * entries, then the oldest preference: what an agent just recorded is what the
  * next session most needs, and a user-stated preference outranks anything the
  * agent inferred. Nothing is ever cut mid-bullet.
+ *
+ * `balanced` drops both index lists first, then the oldest bullet of whichever
+ * kind takes more bytes, so a small budget still carries memory: at 2,048 bytes
+ * the default order left OrcaSlicer's and takeoff-poc's subagents preferences
+ * and no gotcha (ADR 0007).
  */
-export function cerebrumExcerpt(md: string, budgetBytes: number, cited?: CitedFiles): string {
-  return excerptOf(md, budgetBytes, cited).text;
+export function cerebrumExcerpt(md: string, budgetBytes: number, cited?: CitedFiles, balanced = false): string {
+  return excerptOf(md, budgetBytes, cited, balanced).text;
 }
 
 /** The excerpt and the counts `crank-mem stats` reports from it. */
@@ -190,7 +195,7 @@ export interface Excerpt {
 }
 
 /** cerebrumExcerpt, with what it kept and left out. */
-export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles): Excerpt {
+export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles, balanced = false): Excerpt {
   const prefsLines: string[] = [];
   const memoryLines: string[] = [];
   let prefsHeading = "## User Preferences";
@@ -240,10 +245,12 @@ export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles): 
     return parts.join("\n");
   };
 
+  const size = (list: string[]): number => bytes(list.join("\n"));
   let text = render();
   while (text && (estimateProseTokens(text) > CEREBRUM_INJECT_TOKEN_CAP || bytes(text) > budgetBytes)) {
     if (memoryIndex.length) memoryIndex.shift();
-    else if (memory.length) memory.shift();
+    else if (balanced && prefsIndex.length) prefsIndex.shift();
+    else if (memory.length && !(balanced && size(prefs) > size(memory))) memory.shift();
     else if (prefsIndex.length) prefsIndex.shift();
     else prefs.shift();
     text = render();

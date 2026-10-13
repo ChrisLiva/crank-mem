@@ -40,9 +40,9 @@ describe("subagent-start hook (black-box)", () => {
     expect(fs.existsSync(path.join(root, ".crank/anatomy-index.json"))).toBe(false);
   });
 
-  // At 2 KB the excerpt's own priority holds: user preferences outrank memory,
-  // so a preference-heavy file can leave no memory bullets, only the grep line.
-  test("an OrcaSlicer-sized cerebrum is cut to a 2 KB excerpt that says what it hides", () => {
+  // At 2 KB the session-start priority, preferences before memory, left
+  // OrcaSlicer's subagents no gotcha at all; the subagent excerpt splits the room.
+  test("an OrcaSlicer-sized cerebrum is cut to a 2 KB excerpt that keeps a gotcha and says what it hides", () => {
     const root = makeCrankProject();
     const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
     const bullet = (subject: string, i: number): string =>
@@ -56,6 +56,7 @@ describe("subagent-start hook (black-box)", () => {
     const excerpt = ctx.slice(ctx.indexOf("## Cerebrum"));
     expect(Buffer.byteLength(excerpt, "utf-8")).toBeLessThanOrEqual(2048);
     expect(ctx).toContain("- **Pref 6**:"); // the newest preference, whole
+    expect(ctx).toContain("- **Gotcha 20**:"); // the newest memory bullet, whole
     expect(ctx).toMatch(/^### Not shown \(\d+ of 28; grep \.crank\/cerebrum\.md\)$/m);
   });
 

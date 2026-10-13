@@ -33,7 +33,8 @@ async function main(): Promise<void> {
   } catch {
     return;
   }
-  const excerpt = cerebrumExcerpt(md, SUBAGENT_EXCERPT_BYTES, { index: loadIndex(crankDir), root });
+  // Balanced: at this budget the session-start order leaves no room for memory.
+  const excerpt = cerebrumExcerpt(md, SUBAGENT_EXCERPT_BYTES, { index: loadIndex(crankDir), root }, true);
   if (!excerpt) return;
 
   emitAdditionalContext(
