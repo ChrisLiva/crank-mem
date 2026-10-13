@@ -10,7 +10,7 @@ import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { buildInjection, listAdrFilenames } from "./lib/injection.ts";
 import { driftNote } from "./lib/drift.ts";
 import { trimJournal, recentJournalBullets, JOURNAL_FILE } from "./lib/journal.ts";
-import { gitChangedFiles } from "./lib/changes.ts";
+import { countChangedSince } from "./lib/changes.ts";
 import { estimateProseTokens } from "./lib/tokens.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
 
@@ -72,10 +72,7 @@ async function main(): Promise<void> {
   let journalChanged: number | undefined;
   if (journalBullets.length) {
     try {
-      const sinceMs = fs.statSync(path.join(crankDir, JOURNAL_FILE)).mtimeMs;
-      journalChanged =
-        gitChangedFiles(root, config, sinceMs)?.length ??
-        Object.values(index.files).filter((e) => e.mtimeMs > sinceMs).length;
+      journalChanged = countChangedSince(root, config, index, fs.statSync(path.join(crankDir, JOURNAL_FILE)).mtimeMs);
     } catch {}
   }
 

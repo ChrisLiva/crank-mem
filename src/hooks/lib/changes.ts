@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { isIndexableName } from "./scanner.ts";
 import type { CrankConfig } from "./config.ts";
+import type { AnatomyIndex } from "./store.ts";
 import { debugEvent } from "./debug.ts";
 
 // Changed-file detection from git. The index alone undercounts: agents change
@@ -93,4 +94,12 @@ export function gitChangedFiles(
     if (changedMs !== null && changedMs > sinceMs) out.push({ relPath, changedMs });
   }
   return out;
+}
+
+/** Files changed after sinceMs, from git, else from the index's mtimes. Never throws. */
+export function countChangedSince(rootDir: string, config: CrankConfig, index: AnatomyIndex, sinceMs: number): number {
+  return (
+    gitChangedFiles(rootDir, config, sinceMs)?.length ??
+    Object.values(index.files).filter((e) => e.mtimeMs > sinceMs).length
+  );
 }

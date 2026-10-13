@@ -51,6 +51,12 @@ const COMMIT_SHA = /\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/;
 
 export const MARKER_FILE = "cerebrum-nudge.json";
 
+// The audit skill is user-invoked only (disable-model-invocation), so an
+// unaudited project stays unaudited unless the user is told. OrcaSlicer never
+// ran it, and 3 of 7 paths its cerebrum cites no longer exist.
+export const AUDIT_SKILL = "crank-mem-audit";
+export const AUDIT_INTERVAL_MS = 7 * 86_400_000;
+
 interface NudgeMarker {
   cerebrumMtimeMs: number;
   nudgedAtChanged: number;
@@ -60,6 +66,8 @@ interface NudgeMarker {
   /** Journal debounce, same shape as the record nudge but keyed on journal.md. */
   journalMtimeMs?: number;
   journalNudgedAtChanged?: number;
+  /** When the audit suggestion last rode along on a nudge. */
+  auditSuggestedAtMs?: number;
 }
 
 function readMarker(crankDir: string): NudgeMarker | null {
@@ -148,6 +156,33 @@ function longestBullets(text: string): string[] {
     .map((b) => `line ${b.line} (${b.body.length} chars${COMMIT_SHA.test(b.body) ? ", cites a commit" : ""})`);
 }
 
+/**
+ * When the audit skill last ran: the mtime of the newest .crank/backups/ dir
+ * without a manifest.json, which is what the skill's backup step writes. Its
+ * timestamp format varies by run, so the name is not parsed. Init and upgrade
+ * backups carry a manifest, and the prune nudge's backups/cerebrum/ is not an
+ * audit. Null when no audit backup exists. Never throws.
+ */
+export function lastAuditMs(crankDir: string): number | null {
+  const base = path.join(crankDir, "backups");
+  let newest: number | null = null;
+  try {
+    for (const d of fs.readdirSync(base, { withFileTypes: true })) {
+      const dir = path.join(base, d.name);
+      if (!d.isDirectory() || dir === path.join(crankDir, BACKUP_DIR)) continue;
+      if (fs.existsSync(path.join(dir, "manifest.json"))) continue;
+      const ms = fs.statSync(dir).mtimeMs;
+      if (newest === null || ms > newest) newest = ms;
+    }
+  } catch {}
+  return newest;
+}
+
+/** Whether the audit skill is installed in the project for this agent: `.agents/skills/` on Codex, `.claude/skills/` on Claude. */
+export function auditSkillInstalled(projectRoot: string, codex: boolean): boolean {
+  return fs.existsSync(path.join(projectRoot, codex ? ".agents" : ".claude", "skills", AUDIT_SKILL, "SKILL.md"));
+}
+
 function mtimeOf(file: string): number | null {
   try {
     return fs.statSync(file).mtimeMs;
@@ -202,6 +237,11 @@ function mtimeOf(file: string): number | null {
  * when it observes a prune in progress, and when it clears the floor. A prune
  * nudge also copies cerebrum.md to .crank/backups/cerebrum/ first. `codex`
  * names AGENTS.md alone in the prune message. Never throws.
+ *
+ * Audit suggestion: rides along only when another part is due, so it never
+ * adds a turn-end message of its own, and only when the audit skill is
+ * installed for this agent. Silent for AUDIT_INTERVAL_MS after the last
+ * suggestion or the last audit, whichever is later.
  */
 export function cerebrumNudge(crankDir: string, codex = false): string | null {
   const cerebrum = readCerebrum(crankDir);
@@ -288,6 +328,12 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
     return null;
   }
 
+  const now = Date.now();
+  const lastAudit = lastAuditMs(crankDir);
+  const auditDue =
+    now - Math.max(marker?.auditSuggestedAtMs ?? 0, lastAudit ?? 0) >= AUDIT_INTERVAL_MS &&
+    auditSkillInstalled(path.dirname(crankDir), codex);
+
   debugEvent("nudge-emitted", {
     source,
     changed,
@@ -299,6 +345,7 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
     recordDue,
     pruneDue,
     journalDue,
+    auditDue,
   });
   writeMarker(crankDir, {
     // Absent cerebrum: 0 keeps the marker well-formed (readMarker requires a
@@ -312,6 +359,7 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
     pruneNudgedTokens: !cerebrum ? marker?.pruneNudgedTokens : oversized ? cerebrum.tokenCount : undefined,
     journalMtimeMs: journalMtimeMs ?? marker?.journalMtimeMs,
     journalNudgedAtChanged: journalDue ? journalChanged : journalBaseline,
+    auditSuggestedAtMs: auditDue ? now : marker?.auditSuggestedAtMs,
   });
 
   const parts: string[] = [];
@@ -364,6 +412,17 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
         `trim is not enough; this reminder repeats until the file is back under the limit.`,
     );
   }
+  if (auditDue) {
+    const when =
+      lastAudit === null
+        ? "has never been audited"
+        : `was last audited ${Math.floor((now - lastAudit) / 86_400_000)} day(s) ago`;
+    parts.push(
+      `crank-mem: this project's memory ${when}. Suggest the user run the ${AUDIT_SKILL} skill ` +
+        `(\`${codex ? "$" : "/"}${AUDIT_SKILL}\`), which checks each cerebrum bullet against the code ` +
+        `and prunes what no longer holds; only the user can start it.`,
+    );
+  }
   return parts.join("\n");
 }
 
@@ -373,7 +432,7 @@ export const DEDUP_FILE = "cerebrum-dedup.json";
 // A new bullet sharing this many identifiers with an older one is flagged.
 // Word overlap misses real duplicates (0.31 Jaccard on an OrcaSlicer pair that
 // re-describes the same build failure); shared identifiers catch them.
-const OVERLAP_MIN_SHARED = 2;
+export const OVERLAP_MIN_SHARED = 2;
 const OVERLAP_MAX_PAIRS = 2;
 const SHARED_NAMED = 3;
 
@@ -418,6 +477,18 @@ function identifiers(body: string): Set<string> {
   rest = take(rest, FLAG, () => true);
   take(rest, CAMEL_OR_SNAKE, (id) => id.length >= MIN_WORD);
   return ids;
+}
+
+/** Bullet pairs anywhere in `text` that share OVERLAP_MIN_SHARED or more identifiers. */
+export function overlapPairCount(text: string): number {
+  const ids = bulletsWithLines(text).map((b) => identifiers(b.body));
+  let pairs = 0;
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = 0; j < i; j++) {
+      if ([...ids[i]!].filter((id) => ids[j]!.has(id)).length >= OVERLAP_MIN_SHARED) pairs++;
+    }
+  }
+  return pairs;
 }
 
 /**

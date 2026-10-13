@@ -324,6 +324,22 @@ describe("post-write cerebrum nudge (Codex only)", () => {
     expect(nudge(run.stdout)).not.toContain("A copy of the current file");
   });
 
+  // Codex reads skills from .agents/skills/ and invokes them with `$`.
+  test("apply_patch nudge suggests the audit when the skill is in .agents/skills", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    setMtime(cerebrum(root), STALE);
+    fs.mkdirSync(path.join(root, ".claude/skills/crank-mem-audit"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".claude/skills/crank-mem-audit/SKILL.md"), "");
+    expect(nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout)).not.toContain("crank-mem-audit");
+
+    fs.mkdirSync(path.join(root, ".agents/skills/crank-mem-audit"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".agents/skills/crank-mem-audit/SKILL.md"), "");
+    setMtime(cerebrum(root), STALE - 1); // a new cerebrum version re-arms the record part
+    const ctx = nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout);
+    expect(ctx).toContain("Suggest the user run the crank-mem-audit skill (`$crank-mem-audit`)");
+  });
+
   // Codex appends to cerebrum with a patch that touches nothing else, and that
   // patch takes the early return for .crank/-only writes.
   const CEREBRUM_PATCH = "*** Begin Patch\n*** Update File: .crank/cerebrum.md\n+x\n*** End Patch";

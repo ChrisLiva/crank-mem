@@ -23,7 +23,7 @@ Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 
 - `crank-mem init` — wire hooks into `.claude`/`.codex`, seed `.crank/`, first scan
 - `crank-mem scan` — full index rebuild
-- `crank-mem stats` — index report, plus whether Codex threads got the injection and whether its hook trust is current
+- `crank-mem stats` — index report; memory health (cerebrum bullets injected against total, the oldest one left out, cited paths that still exist, overlapping bullet pairs, journal entries without `NEXT:`, days since the last audit, nudge counts from `debug.log`); whether Codex threads got the injection and whether its hook trust is current
 - `crank-mem upgrade` — re-vendor hooks and repair their wiring after a `git pull`
 - `crank-mem uninstall` — remove all wiring, offer backup restore
 
@@ -73,7 +73,10 @@ at the project root recording the source and content hash; update installed
 copies with `npx skills update` (`crank-mem upgrade` never touches them).
 
 Invocation is user-only: `/crank-mem-audit` in Claude Code, `$crank-mem-audit`
-in Codex.
+in Codex. When the skill is installed, a cerebrum or journal nudge that is
+already due also asks the agent to suggest an audit to you, at most once every
+7 days and not within 7 days of the last audit. An audit is dated by its
+backup directory under `.crank/backups/`, the one without a `manifest.json`.
 
 ## Debugging
 

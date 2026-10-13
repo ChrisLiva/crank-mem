@@ -68,6 +68,86 @@ describe("stats", () => {
   });
 });
 
+// brew-pg's excerpt showed 20 of 35 bullets, 3 of 7 paths OrcaSlicer's
+// cerebrum cites are gone, and OrcaSlicer was never audited; stats said none of it.
+describe("stats: memory health", () => {
+  const DAY = 86_400_000;
+  const memory = Array.from({ length: 10 }, (_, i) => `- **m${i}**: note ${i} (2026-09-${String(10 + i)})`);
+  const CEREBRUM = [
+    "# Cerebrum",
+    "",
+    "## User Preferences",
+    "- prefers tabs (2026-08-01)",
+    "",
+    "## Memory",
+    "- undated note",
+    ...memory,
+    "- `src/gone.ts` and `docs/kept.md` and `a.ts` and `-Werror=x` (2026-09-30)",
+    "- `foo_bar_baz` breaks under `--strict-mode` (2026-10-01)",
+    "- again `foo_bar_baz` with `--strict-mode` (2026-10-02)",
+  ].join("\n");
+
+  function memoryProject(): string {
+    const root = initedProject();
+    const crankDir = path.join(root, ".crank");
+    fs.mkdirSync(path.join(root, "docs"));
+    fs.writeFileSync(path.join(root, "docs/kept.md"), "# kept\n");
+    fs.writeFileSync(path.join(crankDir, "cerebrum.md"), CEREBRUM);
+    fs.writeFileSync(
+      path.join(crankDir, "journal.md"),
+      "# Journal\n\n- 2026-10-01: did a; NEXT: do b\n- 2026-10-02: did b\n- 2026-10-03: did c;\n  NEXT: do d\n",
+    );
+    return root;
+  }
+
+  test("reports what the excerpt leaves out, cited paths, overlaps and unhanded journal entries", () => {
+    const run = cli(memoryProject(), "stats");
+    expect(run.status).toBe(0);
+    // 15 bullets: the 1 preference and the 7 newest memory bullets shown, 7 left to the index.
+    expect(run.stdout).toContain("cerebrum bullets: 8 of 15 injected\n");
+    expect(run.stdout).toContain("prefs dropped:    0 of 1\n");
+    expect(run.stdout).toMatch(/oldest hidden: {4}2026-09-10 \(\d+d ago\), 1 undated\n/);
+    expect(run.stdout).toContain("cited paths:      1 of 2 exist\n");
+    expect(run.stdout).toContain("overlaps:         1 bullet pair(s) share 2+ identifiers\n");
+    expect(run.stdout).toContain("journal no NEXT:  1 of 3 entries\n");
+  });
+
+  test("dates the last audit by its manifest-less backup dir and says when the skill is missing", () => {
+    const root = memoryProject();
+    const fresh = cli(root, "stats").stdout;
+    expect(fresh).toMatch(/last audit: {7}never \(installed \d+s ago\); audit skill not installed\n/);
+
+    const audit = path.join(root, ".crank/backups/20260814-165019");
+    fs.mkdirSync(audit);
+    fs.writeFileSync(path.join(audit, "cerebrum.md"), CEREBRUM);
+    fs.utimesSync(audit, new Date(Date.now() - 3 * DAY), new Date(Date.now() - 3 * DAY));
+    // Newer, but not audits: the prune nudge's copies.
+    fs.mkdirSync(path.join(root, ".crank/backups/cerebrum"));
+    fs.mkdirSync(path.join(root, ".claude/skills/crank-mem-audit"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".claude/skills/crank-mem-audit/SKILL.md"), "");
+    expect(cli(root, "stats").stdout).toContain("last audit:       3d ago\n");
+  });
+
+  test("counts nudge parts from debug.log, and says n/a with debug off", () => {
+    const root = memoryProject();
+    expect(cli(root, "stats").stdout).toContain("nudges:           n/a (debug off)\n");
+
+    const record = (events: object[]) => JSON.stringify({ ts: "2026-09-01T10:00:00.000Z", hook: "stop", events });
+    fs.writeFileSync(
+      path.join(root, ".crank/debug.log"),
+      [
+        record([{ event: "nudge-emitted", recordDue: true, journalDue: true, pruneDue: false, auditDue: true }]),
+        record([{ event: "nudge-skipped" }, { event: "overlap-checked", added: 1, pairs: 1 }]),
+        record([{ event: "nudge-emitted", recordDue: false, journalDue: false, pruneDue: true }]),
+        "not json",
+      ].join("\n"),
+    );
+    expect(cli(root, "stats").stdout).toContain(
+      "nudges:           record 1, journal 1, prune 1, audit 1, overlap 1 since 2026-09-01\n",
+    );
+  });
+});
+
 describe("stats: codex wiring", () => {
   // A rollout file as Codex writes it: session_meta first, then the thread's records (ADR 0006).
   function rollout(codexHome: string, name: string, meta: Record<string, unknown>, records: object[]): void {

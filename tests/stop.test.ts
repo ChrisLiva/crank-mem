@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { enableDebugConfig, makeCrankProject, readDebugLog, runHook } from "./helpers.ts";
 import { claudeSessionStart, claudeStop } from "./fixtures/payloads.ts";
-import { BACKUP_KEEP, NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
+import { AUDIT_INTERVAL_MS, BACKUP_KEEP, NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
 
 const HOOK = "src/hooks/stop.ts";
 
@@ -722,5 +722,77 @@ describe("cerebrum overlap check (black-box)", () => {
     const run = stopAfter(root, memory(OPENGL_NEW), FRESH);
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("");
+  });
+});
+
+// The audit skill is user-invoked only, so OrcaSlicer was never audited; the
+// suggestion tells the agent to ask the user, on a turn that already nudges.
+describe("audit suggestion (black-box)", () => {
+  const DAY = 86_400_000;
+  function installSkill(root: string, agentDir = ".claude"): void {
+    const dir = path.join(root, agentDir, "skills/crank-mem-audit");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "SKILL.md"), "---\nname: crank-mem-audit\n---\n");
+  }
+  /** An audit's backup dir as the skill writes it: plain copies, no manifest. */
+  function auditBackup(root: string, ageMs: number): void {
+    const dir = path.join(root, ".crank/backups/20260814-165019");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "cerebrum.md"), "# Cerebrum\n");
+    setMtime(dir, Date.now() - ageMs);
+  }
+  /** A cerebrum over the line limit, so the prune part fires on every Stop. */
+  function pruneDueProject(): string {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    fs.writeFileSync(cerebrum(root), longCerebrum(160));
+    setMtime(cerebrum(root), FRESH);
+    return root;
+  }
+  const stop = (root: string) => nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
+
+  test("rides along on a due nudge once per interval, only with the skill installed", () => {
+    const root = pruneDueProject();
+    const without = stop(root);
+    expect(without).toContain("160 lines");
+    expect(without).not.toContain("crank-mem-audit");
+
+    installSkill(root);
+    // The prune nudge's own backups/cerebrum/ copy is not an audit.
+    const first = stop(root);
+    expect(first).toContain("160 lines");
+    expect(first).toContain(
+      "this project's memory has never been audited. Suggest the user run the crank-mem-audit skill (`/crank-mem-audit`)",
+    );
+
+    const second = stop(root);
+    expect(second).toContain("160 lines");
+    expect(second).not.toContain("crank-mem-audit");
+
+    const marker = JSON.parse(fs.readFileSync(markerPath(root), "utf-8"));
+    fs.writeFileSync(markerPath(root), JSON.stringify({ ...marker, auditSuggestedAtMs: Date.now() - AUDIT_INTERVAL_MS - DAY }));
+    expect(stop(root)).toContain("crank-mem-audit");
+  });
+
+  test("never fires on a turn with nothing else due", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    setMtime(cerebrum(root), FRESH);
+    installSkill(root);
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+  });
+
+  test("a recent audit silences it, and an older one is named by its age", () => {
+    const root = pruneDueProject();
+    installSkill(root);
+    auditBackup(root, DAY);
+    const recent = stop(root);
+    expect(recent).toContain("160 lines");
+    expect(recent).not.toContain("crank-mem-audit");
+
+    auditBackup(root, 10 * DAY);
+    expect(stop(root)).toContain("this project's memory was last audited 10 day(s) ago");
   });
 });

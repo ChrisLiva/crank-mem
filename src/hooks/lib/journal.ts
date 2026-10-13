@@ -33,7 +33,7 @@ const SNAP_MAX_BYTES = 24;
  * in exactly this form, and a case-insensitive match would fire on any prose
  * mentioning "next:".
  */
-const NEXT_MARKER = "NEXT:";
+export const NEXT_MARKER = "NEXT:";
 
 export const JOURNAL_FILE = "journal.md";
 

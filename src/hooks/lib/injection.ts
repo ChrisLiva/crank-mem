@@ -175,6 +175,22 @@ const bytes = (s: string): number => Buffer.byteLength(s, "utf-8");
  * agent inferred. Nothing is ever cut mid-bullet.
  */
 export function cerebrumExcerpt(md: string, budgetBytes: number, cited?: CitedFiles): string {
+  return excerptOf(md, budgetBytes, cited).text;
+}
+
+/** The excerpt and the counts `crank-mem stats` reports from it. */
+export interface Excerpt {
+  text: string;
+  total: number;
+  shown: number;
+  prefsTotal: number;
+  prefsShown: number;
+  /** Bullets left out of the excerpt, as written in the file, oldest first. */
+  hidden: string[];
+}
+
+/** cerebrumExcerpt, with what it kept and left out. */
+export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles): Excerpt {
   const prefsLines: string[] = [];
   const memoryLines: string[] = [];
   let prefsHeading = "## User Preferences";
@@ -191,8 +207,10 @@ export function cerebrumExcerpt(md: string, budgetBytes: number, cited?: CitedFi
     bucket?.push(line);
   }
 
-  const prefs = parseBullets(prefsLines);
-  const memory = parseBullets(memoryLines);
+  const allPrefs = parseBullets(prefsLines);
+  const allMemory = parseBullets(memoryLines);
+  const prefs = [...allPrefs];
+  const memory = [...allMemory];
   const total = prefs.length + memory.length;
   const prefsTotal = prefs.length;
   const prefsIndex: string[] = [];
@@ -230,7 +248,15 @@ export function cerebrumExcerpt(md: string, budgetBytes: number, cited?: CitedFi
     else prefs.shift();
     text = render();
   }
-  return text;
+  // Every cut above takes from the front, so the hidden bullets are the oldest.
+  return {
+    text,
+    total,
+    shown: prefs.length + memory.length,
+    prefsTotal,
+    prefsShown: prefs.length,
+    hidden: [...allPrefs.slice(0, prefsTotal - prefs.length), ...allMemory.slice(0, allMemory.length - memory.length)],
+  };
 }
 
 /** What the excerpt checks a bullet's citations against. */
@@ -253,9 +279,7 @@ const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
  * agents cite `geometry.py` far more often than its full path. An unresolved
  * basename is never called missing: the index omits files past max_files and
  * unindexable ones, and a dotted symbol such as `fs.statSync` reads the same.
- * Spans starting with `-`, `/` or `~` are flags, routes and home paths, and
- * `*` or `=` marks a glob or an assignment, so none of them count. An undated
- * bullet gets no modified tag; a checkout resets mtimes, hence "check".
+ * An undated bullet gets no modified tag; a checkout resets mtimes, hence "check".
  */
 function citationTags(bullet: string, cited: CitedFiles, byName: Map<string, string[]>): string {
   let noteEndMs: number | null = null;
@@ -265,10 +289,7 @@ function citationTags(bullet: string, cited: CitedFiles, byName: Map<string, str
   }
   const missing = new Set<string>();
   const modified = new Set<string>();
-  for (const [, span] of bullet.matchAll(/`([^`\n]+)`/g)) {
-    const match = /^[-/~]/.test(span!) ? null : FILE_CITATION.exec(span!);
-    if (!match) continue;
-    const rel = match[1]!.replace(/^\.\//, "");
+  for (const rel of fileCitations(bullet)) {
     const hits = cited.index.files[rel]
       ? [rel]
       : (byName.get(path.posix.basename(rel)) ?? []).filter((c) => c.endsWith("/" + rel));
@@ -282,6 +303,20 @@ function citationTags(bullet: string, cited: CitedFiles, byName: Map<string, str
     (missing.size ? ` [cited file missing: ${[...missing].join(", ")}]` : "") +
     (modified.size ? ` [cited file modified after this note; check: ${[...modified].join(", ")}]` : "")
   );
+}
+
+/**
+ * The files a text cites in backticks, as written minus a leading `./` and a
+ * `:line` suffix. Spans starting with `-`, `/` or `~` are flags, routes and
+ * home paths, and `*` or `=` marks a glob or an assignment, so none of them count.
+ */
+export function fileCitations(text: string): string[] {
+  const cited: string[] = [];
+  for (const [, span] of text.matchAll(/`([^`\n]+)`/g)) {
+    const match = /^[-/~]/.test(span!) ? null : FILE_CITATION.exec(span!);
+    if (match) cited.push(match[1]!.replace(/^\.\//, ""));
+  }
+  return cited;
 }
 
 /**
@@ -313,6 +348,14 @@ function indexEntry(bullet: string): string {
  * by the fixed size of the instructions.
  */
 export function buildInjection(sources: InjectionSources, budgetBytes: number): string {
+  return composeInjection(sources, budgetBytes).text;
+}
+
+/** buildInjection, with the cerebrum excerpt it carries (null without a cerebrum). */
+export function composeInjection(
+  sources: InjectionSources,
+  budgetBytes: number,
+): { text: string; excerpt: Excerpt | null } {
   const parts: string[] = [instructions(sources.index, sources.codex ?? false)];
   let used = bytes(parts[0]!);
 
@@ -350,18 +393,19 @@ export function buildInjection(sources: InjectionSources, budgetBytes: number): 
   const adrCost = adrSection ? bytes(SEP + adrSection) : 0;
   const adrReserve = used + adrCost <= budgetBytes ? adrCost : 0;
 
+  let excerpt: Excerpt | null = null;
   if (sources.cerebrumMd) {
-    const excerpt = cerebrumExcerpt(
+    excerpt = excerptOf(
       sources.cerebrumMd,
       budgetBytes - used - adrReserve - bytes(SEP),
       sources.projectRoot ? { index: sources.index, root: sources.projectRoot } : undefined,
     );
-    if (excerpt) fit(excerpt);
+    if (excerpt.text) fit(excerpt.text);
   }
 
   if (adrSection) fit(adrSection);
 
-  return parts.join(SEP);
+  return { text: parts.join(SEP), excerpt };
 }
 
 /** Load ADR filenames (NNNN-*.md) from the configured directory. */
