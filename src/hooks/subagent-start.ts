@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex } from "./lib/store.ts";
-import { cerebrumExcerpt, INJECTION_HEADING } from "./lib/injection.ts";
+import { excerptOf, INJECTION_HEADING } from "./lib/injection.ts";
 import { JOURNAL_FILE } from "./lib/journal.ts";
 import { CEREBRUM_FILE } from "./lib/cerebrum-nudge.ts";
 import { enableDebug } from "./lib/debug.ts";
@@ -35,7 +35,7 @@ async function main(): Promise<void> {
     return;
   }
   // Balanced: at this budget the session-start order leaves no room for memory.
-  const excerpt = cerebrumExcerpt(md, SUBAGENT_EXCERPT_BYTES, { index: loadIndex(crankDir), root }, true);
+  const excerpt = excerptOf(md, SUBAGENT_EXCERPT_BYTES, { index: loadIndex(crankDir), root }, true).text;
   if (!excerpt) return;
 
   emitAdditionalContext(

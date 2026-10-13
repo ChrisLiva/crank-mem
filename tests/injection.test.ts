@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildInjection, cerebrumExcerpt, ADR_RECENT_COUNT, INDEX_ENTRY_CHARS, MEMORY_RECENT_COUNT, PREFS_TOKEN_CAP,
+  composeInjection, excerptOf, ADR_RECENT_COUNT, INDEX_ENTRY_CHARS, MEMORY_RECENT_COUNT, PREFS_TOKEN_CAP,
 } from "../src/hooks/lib/injection.ts";
 import { emptyIndex, type AnatomyIndex } from "../src/hooks/lib/store.ts";
 import { estimateProseTokens } from "../src/hooks/lib/tokens.ts";
@@ -31,7 +31,7 @@ ${Array.from({ length: 15 }, (_, i) => `- Mistake number ${i}`).join("\n")}
 `;
 
 /** No budget pressure — isolates the excerpt's own rules from the byte cap. */
-const excerpt = (md: string): string => cerebrumExcerpt(md, 1_000_000);
+const excerpt = (md: string): string => excerptOf(md, 1_000_000).text;
 
 /** The excerpt's lines from the `### <name>` heading up to the next heading. */
 const section = (ex: string, name: string): string[] => {
@@ -42,7 +42,7 @@ const section = (ex: string, name: string): string[] => {
   return lines.slice(start, end < 0 ? undefined : end);
 };
 
-describe("cerebrumExcerpt", () => {
+describe("excerptOf", () => {
   test("prefs in full, plus the most recent memory bullets", () => {
     const ex = excerpt(CEREBRUM);
     expect(ex).toContain("Prefers pnpm over npm");
@@ -190,14 +190,14 @@ describe("cerebrumExcerpt", () => {
       Array.from({ length: 30 }, (_, i) => `- Learning ${i}: ${"detail ".repeat(10)}`).join("\n") +
       "\n";
     const full = excerpt(md);
-    const ex = cerebrumExcerpt(md, Buffer.byteLength(full, "utf-8") - 60);
+    const ex = excerptOf(md, Buffer.byteLength(full, "utf-8") - 60).text;
     const index = section(ex, "Not shown").join("\n");
     expect(index).not.toContain("Learning 0:");
     expect(index).toContain("Learning 22:");
     expect(index).toContain("- Preference 0:");
     expect(section(ex, "Memory")).toHaveLength(1 + MEMORY_RECENT_COUNT);
     // Every recent memory bullet and every index entry gone, preferences stay.
-    const starved = cerebrumExcerpt(md, Buffer.byteLength(section(full, "User Preferences").join("\n")) + 200);
+    const starved = excerptOf(md, Buffer.byteLength(section(full, "User Preferences").join("\n")) + 200).text;
     expect(starved).not.toContain("### Memory");
     expect(starved).not.toContain("- Preference 0:");
     expect(starved).toContain("Preference 11:");
@@ -211,7 +211,7 @@ describe("cerebrumExcerpt", () => {
       "# Cerebrum\n\n## Memory\n\n" +
       Array.from({ length: 10 }, (_, i) => `- Learning ${i}: ${"detail ".repeat(30).trim()}`).join("\n") +
       "\n";
-    const ex = cerebrumExcerpt(md, 900);
+    const ex = excerptOf(md, 900).text;
     expect(Buffer.byteLength(ex, "utf-8")).toBeLessThanOrEqual(900);
     const memory = section(ex, "Memory").slice(1);
     expect(memory.at(-1)).toStartWith("- Learning 9:");
@@ -225,11 +225,11 @@ describe("cerebrumExcerpt", () => {
   });
 
   test("a budget too small for even one bullet yields nothing rather than a fragment", () => {
-    expect(cerebrumExcerpt(CEREBRUM, 10)).toBe("");
+    expect(excerptOf(CEREBRUM, 10).text).toBe("");
   });
 });
 
-describe("buildInjection", () => {
+describe("composeInjection", () => {
   const sources = {
     cerebrumMd: CEREBRUM,
     adrFilenames: Array.from({ length: 25 }, (_, i) => `${String(i + 1).padStart(4, "0")}-decision-${i + 1}.md`),
@@ -238,7 +238,7 @@ describe("buildInjection", () => {
   };
 
   test("contains all sections in order", () => {
-    const out = buildInjection(sources, 8192);
+    const out = composeInjection(sources, 8192).text;
     const iInstr = out.indexOf("crank-mem (project memory)");
     const iCer = out.indexOf("## Cerebrum");
     const iAdr = out.indexOf("## ADRs");
@@ -248,7 +248,7 @@ describe("buildInjection", () => {
   });
 
   test("caps ADR list at most recent 20", () => {
-    const out = buildInjection(sources, 8192);
+    const out = composeInjection(sources, 8192).text;
     expect(out).toContain("0025-decision-25.md");
     expect(out).toContain("0006-decision-6.md");
     expect(out).not.toContain("0005-decision-5.md");
@@ -256,7 +256,7 @@ describe("buildInjection", () => {
   });
 
   test("points at anatomy.md with a file count instead of listing files", () => {
-    const out = buildInjection({ ...sources, index: fixtureIndex(200) }, 8192);
+    const out = composeInjection({ ...sources, index: fixtureIndex(200) }, 8192).text;
     expect(out).toContain("`.crank/anatomy.md` indexes 200 file(s)");
     expect(out).toContain("That is every indexable file in the project.");
     expect(out).toContain("symbol line ranges before slice-reading a large");
@@ -269,19 +269,19 @@ describe("buildInjection", () => {
   // a 2KB preview past ~10KiB of hook stdout (ADR 0005), so size must not
   // track file count.
   test("stays small and near-constant as the project grows", () => {
-    const small = buildInjection({ ...sources, index: fixtureIndex(3) }, 8192);
-    const large = buildInjection({ ...sources, index: fixtureIndex(5000) }, 8192);
+    const small = composeInjection({ ...sources, index: fixtureIndex(3) }, 8192).text;
+    const large = composeInjection({ ...sources, index: fixtureIndex(5000) }, 8192).text;
     expect(Buffer.byteLength(large, "utf-8")).toBeLessThan(4096);
     expect(Buffer.byteLength(large) - Buffer.byteLength(small)).toBeLessThan(64);
   });
 
   test("symbols never appear in injection", () => {
-    const out = buildInjection(sources, 8192);
+    const out = composeInjection(sources, 8192).text;
     expect(out).not.toContain("(fn, L");
   });
 
   test("instructions route memory writes to the two canonical sections", () => {
-    const out = buildInjection(sources, 8192);
+    const out = composeInjection(sources, 8192).text;
     expect(out).toContain("Cerebrum protocol");
     expect(out).toContain("`## User Preferences`");
     expect(out).toContain("`## Memory`");
@@ -291,7 +291,7 @@ describe("buildInjection", () => {
   });
 
   test("instructions carry the journal protocol and the telegraphic style rule", () => {
-    const out = buildInjection(sources, 8192);
+    const out = composeInjection(sources, 8192).text;
     expect(out).toContain("Journal protocol");
     expect(out).toContain("- YYYY-MM-DD: what you did; where you left off; NEXT: next step");
     expect(out).toContain("shown what the last three entries did, plus the newest one's");
@@ -302,29 +302,29 @@ describe("buildInjection", () => {
   });
 
   test("journal sits between the staleness note and the cerebrum", () => {
-    const out = buildInjection(
+    const out = composeInjection(
       { ...sources, stalenessNote: "index refresh skipped (lock busy)", journalBullets: ["- 2026-07-29 — NEXT: wire the trim"] },
       8192
-    );
+    ).text;
     expect(out.indexOf("refresh skipped")).toBeLessThan(out.indexOf("## Journal"));
     expect(out.indexOf("## Journal")).toBeLessThan(out.indexOf("## Cerebrum"));
     expect(out).toContain("- 2026-07-29 — NEXT: wire the trim");
   });
 
   test("staleness note is included when set", () => {
-    const out = buildInjection({ ...sources, stalenessNote: "index refresh skipped (lock busy)" }, 8192);
+    const out = composeInjection({ ...sources, stalenessNote: "index refresh skipped (lock busy)" }, 8192).text;
     expect(out).toContain("index refresh skipped");
   });
 
   test("the drift note sits directly below the staleness note", () => {
-    const out = buildInjection(
+    const out = composeInjection(
       {
         ...sources,
         stalenessNote: "index refresh skipped (lock busy)",
         driftNote: "crank-mem hooks are at 0.3.2, clone is at 0.5.0 — run `crank-mem upgrade`.",
       },
       8192
-    );
+    ).text;
     expect(out).toContain("_Note: crank-mem hooks are at 0.3.2, clone is at 0.5.0 — run `crank-mem upgrade`._");
     expect(out.indexOf("refresh skipped")).toBeLessThan(out.indexOf("hooks are at 0.3.2"));
     expect(out.indexOf("hooks are at 0.3.2")).toBeLessThan(out.indexOf("## Cerebrum"));
@@ -360,17 +360,17 @@ describe("buildInjection", () => {
       expect(size).toBeLessThan(10_000);
       // Big enough that bytes, not the token cap, are what bind — otherwise the
       // ceiling below would pass without the byte trim ever running.
-      const free = 8192 - Buffer.byteLength(buildInjection({ ...fat, cerebrumMd: null }, 8192), "utf-8");
-      expect(estimateProseTokens(cerebrumExcerpt(fat.cerebrumMd, free))).toBeLessThan(1500);
+      const free = 8192 - Buffer.byteLength(composeInjection({ ...fat, cerebrumMd: null }, 8192).text, "utf-8");
+      expect(estimateProseTokens(excerptOf(fat.cerebrumMd, free).text)).toBeLessThan(1500);
     });
 
     test("a full cerebrum stays inside the byte budget", () => {
-      const out = buildInjection(fat, 8192);
+      const out = composeInjection(fat, 8192).text;
       expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(8192);
     });
 
     test("the ADR section survives a full cerebrum", () => {
-      const out = buildInjection(fat, 8192);
+      const out = composeInjection(fat, 8192).text;
       expect(out).toContain("## ADRs");
       expect(out).toContain("0025-decision-25.md");
       expect(out).toContain("## Cerebrum");
@@ -381,7 +381,7 @@ describe("buildInjection", () => {
     // memory first, and only once memory is gone does the oldest preference
     // go. A user-stated preference outranks anything the agent inferred.
     test("a starved budget sheds memory before preferences, oldest first", () => {
-      const out = buildInjection(fat, 4096);
+      const out = composeInjection(fat, 4096).text;
       expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(4096);
       expect(out).toContain("Preference 4:"); // newest preference survives
       expect(out).not.toContain("Preference 0:"); // oldest goes first
@@ -389,7 +389,7 @@ describe("buildInjection", () => {
     });
 
     test("a section that cannot fit is dropped, not truncated mid-way", () => {
-      const out = buildInjection(sources, 2200);
+      const out = composeInjection(sources, 2200).text;
       expect(out).toContain("crank-mem (project memory)");
       expect(out).not.toContain("## ADRs"); // dropped whole — no half-list
     });
@@ -398,7 +398,7 @@ describe("buildInjection", () => {
     // too long to fit is dropped anyway, and reserving for it would take the
     // cerebrum down with it.
     test("a budget too tight for the ADRs still spends it on the cerebrum", () => {
-      const out = buildInjection(sources, 2970);
+      const out = composeInjection(sources, 2970).text;
       expect(out).not.toContain("## ADRs");
       expect(out).toContain("## Cerebrum");
       expect(out).toContain("Mistake number 14");
@@ -406,14 +406,14 @@ describe("buildInjection", () => {
     });
 
     test("instructions survive a budget too small to hold them", () => {
-      const out = buildInjection(sources, 10);
+      const out = composeInjection(sources, 10).text;
       expect(out).toContain("symbol line ranges before slice-reading a large");
       expect(out).toContain("Cerebrum protocol");
     });
   });
 
   test("no cerebrum / no ADRs still yields instructions and the pointer", () => {
-    const out = buildInjection({ cerebrumMd: null, adrFilenames: [], index: fixtureIndex(3), adrPath: "docs/adr" }, 8192);
+    const out = composeInjection({ cerebrumMd: null, adrFilenames: [], index: fixtureIndex(3), adrPath: "docs/adr" }, 8192).text;
     expect(out).toContain("crank-mem (project memory)");
     expect(out).toContain("`.crank/anatomy.md` indexes 3 file(s)");
     expect(out).not.toContain("## Cerebrum");

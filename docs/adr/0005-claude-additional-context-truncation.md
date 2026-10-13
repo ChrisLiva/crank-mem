@@ -72,7 +72,7 @@ still move.
 ## Decision
 
 Treat `injection_budget_bytes` as a hard ceiling enforced by
-`buildInjection`, and keep it well under the cliff. Concretely:
+`composeInjection`, and keep it well under the cliff. Concretely:
 
 - The anatomy map is never inlined, only pointed at — inlining it was 74% of
   the injection and the direct cause of the truncated sessions above.

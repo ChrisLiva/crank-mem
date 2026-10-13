@@ -149,6 +149,17 @@ export interface InjectionSources {
 const SEP = "\n\n";
 const bytes = (s: string): number => Buffer.byteLength(s, "utf-8");
 
+/** The excerpt and the counts `crank-mem stats` reports from it. */
+export interface Excerpt {
+  text: string;
+  total: number;
+  shown: number;
+  prefsTotal: number;
+  prefsShown: number;
+  /** Bullets left out of the excerpt, as written in the file, oldest first. */
+  hidden: string[];
+}
+
 /**
  * The injected slice of cerebrum.md: User Preferences, then the most recent
  * memory bullets, whole.
@@ -187,22 +198,6 @@ const bytes = (s: string): number => Buffer.byteLength(s, "utf-8");
  * the default order left OrcaSlicer's and takeoff-poc's subagents preferences
  * and no gotcha (ADR 0007).
  */
-export function cerebrumExcerpt(md: string, budgetBytes: number, cited?: CitedFiles, balanced = false): string {
-  return excerptOf(md, budgetBytes, cited, balanced).text;
-}
-
-/** The excerpt and the counts `crank-mem stats` reports from it. */
-export interface Excerpt {
-  text: string;
-  total: number;
-  shown: number;
-  prefsTotal: number;
-  prefsShown: number;
-  /** Bullets left out of the excerpt, as written in the file, oldest first. */
-  hidden: string[];
-}
-
-/** cerebrumExcerpt, with what it kept and left out. */
 export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles, balanced = false): Excerpt {
   const prefsLines: string[] = [];
   const memoryLines: string[] = [];
@@ -364,12 +359,10 @@ function indexEntry(bullet: string): string {
  * budget too small to hold them is a misconfiguration, not a reason to inject a
  * headless fragment. Consequence: the result can exceed `budgetBytes`, but only
  * by the fixed size of the instructions.
+ *
+ * Returns the text and the excerpt counts that crank-mem stats reports, or a
+ * null excerpt without a cerebrum.
  */
-export function buildInjection(sources: InjectionSources, budgetBytes: number): string {
-  return composeInjection(sources, budgetBytes).text;
-}
-
-/** buildInjection, with the cerebrum excerpt it carries (null without a cerebrum). */
 export function composeInjection(
   sources: InjectionSources,
   budgetBytes: number,

@@ -292,7 +292,7 @@ trust_level = "trusted"
 
 - Claude: `crank-mem init` and `upgrade` wire `SubagentStart` to `.crank/hooks/subagent-start.ts`
   with the matcher `^(general-purpose|Explore|Plan|workflow-subagent)$`
-  (`SUBAGENT_MATCHER` in `src/cli/settings.ts`). The hook injects `cerebrumExcerpt` at a
+  (`SUBAGENT_MATCHER` in `src/cli/settings.ts`). The hook injects `excerptOf` at a
   2,048-byte budget plus a pointer to `cerebrum.md` and `journal.md`. It does not refresh
   the index, because the parent's SessionStart already did.
 - The session-start priority, user preferences ahead of memory, left subagents no gotcha:

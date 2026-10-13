@@ -7,7 +7,7 @@ import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex, commitIndex } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
-import { buildInjection, listAdrFilenames } from "./lib/injection.ts";
+import { composeInjection, listAdrFilenames } from "./lib/injection.ts";
 import { driftNote } from "./lib/drift.ts";
 import { trimJournal, recentJournalBullets, JOURNAL_FILE } from "./lib/journal.ts";
 import { countChangedSince } from "./lib/changes.ts";
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
 
   const adrFilenames = listAdrFilenames(root, config.adr_path);
   const drift = driftNote(config);
-  const context = buildInjection(
+  const context = composeInjection(
     {
       cerebrumMd,
       journalBullets,
@@ -93,7 +93,7 @@ async function main(): Promise<void> {
       journalChanged,
     },
     config.injection_budget_bytes
-  );
+  ).text;
 
   emitAdditionalContext("SessionStart", context);
   debugEvent("injected", {
