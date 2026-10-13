@@ -218,6 +218,7 @@ describe("buildInjection", () => {
     const out = buildInjection(sources, 8192);
     expect(out).toContain("Journal protocol");
     expect(out).toContain("- YYYY-MM-DD: what you did; where you left off; NEXT: next step");
+    expect(out).toContain("shown what the last three entries did, plus the newest one's");
     expect(out).toContain("put the handoff there, last");
     expect(out).toContain("telegram-style");
   });

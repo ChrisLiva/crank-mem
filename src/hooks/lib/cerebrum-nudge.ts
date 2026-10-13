@@ -232,8 +232,8 @@ export function cerebrumNudge(crankDir: string): string | null {
     parts.push(
       `crank-mem: ${journalChanged} file(s) changed since the last .crank/journal.md entry. ` +
         `Append one dated bullet — \`- YYYY-MM-DD: what you did; where you left off; NEXT: next step\` ` +
-        `— telegram-style. The \`NEXT:\` clause is what the next session is shown, so put the handoff ` +
-        `there, last: that is how it picks up mid-thread instead of re-deriving where it was.`,
+        `— telegram-style. The next session is shown what you did and the \`NEXT:\` clause, so put ` +
+        `the handoff there, last: that is how it picks up mid-thread instead of re-deriving where it was.`,
     );
   }
   if (pruneDue && cerebrum) {

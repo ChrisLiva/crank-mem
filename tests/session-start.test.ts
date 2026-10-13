@@ -115,7 +115,7 @@ describe("memory reaches the model whole (black-box)", () => {
         "  z-index of 10 — it becomes a backdrop root, killing the overlay blur."
     );
     // The handoff wraps across physical lines and had never once been delivered.
-    expect(ctx).toContain("- 2026-07-30 — NEXT: probe both live installs after the bump.");
+    expect(ctx).toContain("- 2026-07-30 — swept the board, tree clean; NEXT: probe both live installs after the bump.");
     expect(ctx).toContain("Always use tabs");
   });
 
@@ -228,6 +228,24 @@ describe("journal (black-box)", () => {
     expect(ctx.indexOf("day 4: four")).toBeLessThan(ctx.indexOf("## Cerebrum"));
   });
 
+  // brew-pg 2026-09-23: with only the handoff injected, the agent told the
+  // user that the critique recorded in the same entry had never been run.
+  test("each entry's done-clause reaches the model; only the newest NEXT: does", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    writeJournal(root, [
+      "2026-09-21: wired the rails; NEXT: run impeccable critique.",
+      "2026-09-22: impeccable critique (30/40); NEXT: fix the contrast findings.",
+      "2026-09-23: fixed contrast; NEXT: Chris smoke-checks rails.",
+    ]);
+
+    const ctx = inject(root);
+    expect(ctx).toContain("- 2026-09-21 — wired the rails\n");
+    expect(ctx).toContain("- 2026-09-22 — impeccable critique (30/40)\n");
+    expect(ctx).toContain("- 2026-09-23 — fixed contrast; NEXT: Chris smoke-checks rails.");
+    expect(ctx).not.toContain("run impeccable critique");
+    expect(ctx).not.toContain("fix the contrast findings");
+  });
+
   test("no journal file: section omitted, everything else injects", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     const ctx = inject(root);
@@ -275,10 +293,10 @@ describe("journal (black-box)", () => {
     expect(ctx).toContain("## Journal");
     expect(ctx).toContain("Always use tabs");
     expect(ctx).toContain("0001-use-tabs.md");
-    // The long entry survives as a capped headline, not verbatim.
-    expect(ctx).toContain("NEXT: yyy");
-    expect(ctx).toContain("…");
-    expect(ctx.split("\n").every((l) => l.length < 300)).toBe(true);
+    // The long entry survives as a capped headline, not verbatim: what it did
+    // and its handoff, each cut short. "- " plus the 360-byte newest-entry cap.
+    expect(ctx).toContain("…; NEXT: yyy");
+    expect(ctx.split("\n").every((l) => Buffer.byteLength(l, "utf-8") <= 362)).toBe(true);
   });
 
   // The cap is spent in the same unit as the injection budget, so a non-ASCII
@@ -291,10 +309,11 @@ describe("journal (black-box)", () => {
       .split("\n")
       .filter((l) => l.startsWith("- 2026-07-"));
     expect(bullets.length).toBe(2);
-    for (const b of bullets) {
-      expect(Buffer.byteLength(b, "utf-8")).toBeLessThanOrEqual(257); // "- <date> — " (17B) + cap
-      expect(b).not.toContain("�"); // no lone surrogate half
-    }
+    // "- <date> — " (17B) plus the older (160B) and newest (360B) entry caps.
+    expect(Buffer.byteLength(bullets[0]!, "utf-8")).toBeLessThanOrEqual(177);
+    expect(Buffer.byteLength(bullets[1]!, "utf-8")).toBeLessThanOrEqual(377);
+    for (const b of bullets) expect(b).not.toContain("�"); // no lone surrogate half
+    expect(bullets[1]).toContain("x; NEXT: 🚀"); // what the entry did rides along
     expect(bullets[1]).toContain("🚀…"); // the capped NEXT: clause ends mid-stream
   });
 

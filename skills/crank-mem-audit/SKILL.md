@@ -77,8 +77,9 @@ of init's). Do this before writing anything.
 - **journal.md** — trim dead entries while keeping the format the vendored
   `.crank/hooks/lib/journal.ts` enforces: one dated bullet per entry
   (`- YYYY-MM-DD — …`), newest last, at most 20 entries, and the newest
-  `NEXT:` handoff kept intact — it is what the next session is shown. On any
-  doubt, that file is the authority.
+  entry kept intact — the next session is shown what the last three entries
+  did, plus the newest one's `NEXT:` handoff. On any doubt, that file is the
+  authority.
 - **anatomy.md and the index belong to the scanner.** If the index looks
   stale, suggest `crank-mem scan`; anatomy.md is rendered from the machine
   index and overwritten on the next scan, so hand-edits are lost.

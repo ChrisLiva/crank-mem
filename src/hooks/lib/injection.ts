@@ -64,7 +64,8 @@ agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in
   left off, not what is true. Append one dated bullet
   (\`- YYYY-MM-DD: what you did; where you left off; NEXT: next step\`) at the end
   of a chunk of work; newest last, oldest entries trimmed automatically. The
-  \`NEXT:\` clause is what the next session is shown — put the handoff there, last.
+  next session is shown what the last three entries did, plus the newest one's
+  \`NEXT:\` clause — put the handoff there, last.
 - Write cerebrum entries and journal bullets telegram-style: drop articles and
   hedges; keep paths, identifiers, and error strings verbatim.
 - ADR protocol: decisions that are hard to reverse, surprising, AND carry a
