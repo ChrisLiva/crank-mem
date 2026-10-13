@@ -5,7 +5,7 @@ import { describeFile, isGenerated } from "./describe.ts";
 import { estimateTokens } from "./tokens.ts";
 import { extractSymbols, symbolsSupported, SYMBOL_MIN_TOKENS } from "./symbols.ts";
 import { isExcluded, type CrankConfig } from "./config.ts";
-import { emptyIndex, type AnatomyIndex, type FileEntry } from "./store.ts";
+import { activePaths, emptyIndex, type AnatomyIndex, type Churn, type FileEntry } from "./store.ts";
 import { debugEvent } from "./debug.ts";
 
 // Project walk + full scan + incremental refresh. Reads the filesystem and,
@@ -117,6 +117,20 @@ export interface Walk {
   candidateCount: number | null;
 }
 
+function runGit(rootDir: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd: rootDir,
+    maxBuffer: GIT_MAX_BUFFER,
+    timeout: GIT_TIMEOUT_MS,
+    stdio: ["ignore", "pipe", "ignore"],
+  }).toString("utf-8");
+}
+
+function gitFailure(err: unknown): string {
+  const e = err as { code?: string; status?: number };
+  return e.code ?? `exit ${e.status ?? "?"}`;
+}
+
 /**
  * Tracked plus untracked-but-not-ignored paths, or null when root is not a
  * git work tree root or git fails. Submodules list as one path (a directory,
@@ -125,55 +139,118 @@ export interface Walk {
 function gitListing(rootDir: string): string[] | null {
   if (!fs.existsSync(path.join(rootDir, ".git"))) return null;
   try {
-    const out = execFileSync("git", ["ls-files", "-co", "--exclude-standard", "-z"], {
-      cwd: rootDir,
-      maxBuffer: GIT_MAX_BUFFER,
-      timeout: GIT_TIMEOUT_MS,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return out.toString("utf-8").split("\0").filter(Boolean);
+    return runGit(rootDir, ["ls-files", "-co", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
   } catch (err) {
-    const e = err as { code?: string; status?: number };
-    debugEvent("walk-fallback", { reason: e.code ?? `exit ${e.status ?? "?"}` });
+    debugEvent("walk-fallback", { reason: gitFailure(err) });
     return null;
   }
 }
 
+const CHURN_COMMITS = 300;
+// Bulk commits (vendor syncs, mass renames) say nothing about where work
+// happens: on OrcaSlicer 16 of the last 300 commits made 12,525 of its 13,932
+// file touches.
+const CHURN_BULK_FILES = 50;
+const CHURN_KEEP = 100;
+
 /**
- * List indexable files: in a git repo, git's listing ranked first-party code
- * first; elsewhere a sorted directory walk. Both stop at config.max_files and
- * report whether they had to. Writes that post-write indexes under a
- * gitignored path drop out again at the next refresh.
+ * The indexable paths changed most often in the last CHURN_COMMITS commits,
+ * skipping bulk commits. Reuses `cached` while HEAD has not moved; undefined
+ * outside git, before the first commit, or when git fails.
  */
-export function walkProject(rootDir: string, config: CrankConfig): Walk {
-  const listed = gitListing(rootDir);
-  return listed ? walkListing(rootDir, listed, config) : walkTree(rootDir, config);
+function churnFor(rootDir: string, config: CrankConfig, cached: Churn | undefined): Churn | undefined {
+  if (!fs.existsSync(path.join(rootDir, ".git"))) return undefined;
+  try {
+    const head = runGit(rootDir, ["rev-parse", "HEAD"]).trim();
+    if (cached?.head === head) return cached;
+    const counts = new Map<string, number>();
+    // One \x1e record per commit, then "\0\n" and NUL-separated paths.
+    const log = runGit(rootDir, ["log", `-n${CHURN_COMMITS}`, "-z", "--name-only", "--format=%x1e"]);
+    for (const record of log.split("\x1e")) {
+      const paths = record.split("\0").map((p) => p.replace(/^\n/, "")).filter(Boolean);
+      if (paths.length > CHURN_BULK_FILES) continue;
+      for (const p of paths) counts.set(p, (counts.get(p) ?? 0) + 1);
+    }
+    const paths = [...counts]
+      .filter(([rel]) => isIndexableName(rel, config))
+      .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
+      .slice(0, CHURN_KEEP)
+      .map(([rel]) => rel);
+    return { head, paths };
+  } catch (err) {
+    debugEvent("churn-skipped", { reason: gitFailure(err) });
+    return undefined;
+  }
 }
 
-function walkListing(rootDir: string, listed: string[], config: CrankConfig): Walk {
-  const candidates = listed
-    .filter((rel) => isIndexableName(rel, config))
+/**
+ * Refresh the churn cache, unpin files the churn list now carries or that fall
+ * past MAX_PINS, and return the paths the walk takes first.
+ */
+function updateActivity(rootDir: string, config: CrankConfig, index: AnatomyIndex): string[] {
+  const churn = churnFor(rootDir, config, index.meta.churn);
+  if (churn) index.meta.churn = churn;
+  else delete index.meta.churn;
+  const inChurn = new Set(churn?.paths);
+  for (const [rel, entry] of Object.entries(index.files)) if (inChurn.has(rel)) delete entry.writeCount;
+  const active = activePaths(index);
+  const kept = new Set(active);
+  for (const [rel, entry] of Object.entries(index.files)) if (!kept.has(rel)) delete entry.writeCount;
+  return active;
+}
+
+/** A fresh entry keeps the write pin of the entry it replaces. */
+function keepPin(entry: FileEntry, prior: FileEntry | undefined): FileEntry {
+  if (prior?.writeCount) entry.writeCount = prior.writeCount;
+  return entry;
+}
+
+// lstat, as the tree walk's Dirent does: symlinks, submodules and
+// deleted-but-tracked paths are not files to index.
+function isRegularFile(rootDir: string, rel: string): boolean {
+  try {
+    return fs.lstatSync(path.join(rootDir, rel)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * List indexable files: `seeds` first, then in a git repo git's listing ranked
+ * first-party code first, elsewhere a sorted directory walk. Both stop at
+ * config.max_files and report whether they had to. In a git repo a seed must
+ * be in git's listing, so writes that post-write indexes under a gitignored
+ * path drop out again at the next refresh.
+ */
+export function walkProject(rootDir: string, config: CrankConfig, seeds: string[] = []): Walk {
+  const listed = gitListing(rootDir);
+  return listed ? walkListing(rootDir, listed, config, seeds) : walkTree(rootDir, config, seeds);
+}
+
+function walkListing(rootDir: string, listed: string[], config: CrankConfig, seeds: string[]): Walk {
+  const candidates = listed.filter((rel) => isIndexableName(rel, config));
+  const candidateSet = new Set(candidates);
+  const first = seeds.filter((rel) => candidateSet.has(rel));
+  const firstSet = new Set(first);
+  const ranked = candidates
+    .filter((rel) => !firstSet.has(rel))
     .map((rel) => ({ rel, rank: rank(rel) }))
-    .sort((a, b) => a.rank - b.rank || (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+    .sort((a, b) => a.rank - b.rank || (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
+    .map(({ rel }) => rel);
   const files: string[] = [];
-  for (const { rel } of candidates) {
-    // lstat, as the tree walk's Dirent does: symlinks, submodules and
-    // deleted-but-tracked paths are not files to index.
-    try {
-      if (!fs.lstatSync(path.join(rootDir, rel)).isFile()) continue;
-    } catch {
-      continue;
-    }
+  for (const rel of [...first, ...ranked]) {
+    if (!isRegularFile(rootDir, rel)) continue;
     if (files.length === config.max_files) return { files, truncated: true, candidateCount: candidates.length };
     files.push(rel);
   }
   return { files, truncated: false, candidateCount: candidates.length };
 }
 
-function walkTree(rootDir: string, config: CrankConfig): Walk {
+function walkTree(rootDir: string, config: CrankConfig, seeds: string[]): Walk {
   // Collects one past the cap, the cheapest proof that the cap cut something.
   const limit = config.max_files + 1;
-  const out: string[] = [];
+  const out = seeds.filter((rel) => isIndexableName(rel, config) && isRegularFile(rootDir, rel)).slice(0, limit);
+  const seeded = new Set(out);
   const walk = (dir: string): void => {
     if (out.length >= limit) return;
     let items: fs.Dirent[];
@@ -190,7 +267,7 @@ function walkTree(rootDir: string, config: CrankConfig): Walk {
       if (item.isDirectory()) {
         if (!isExcluded(rel, config.excludes)) walk(full);
       } else if (item.isFile()) {
-        if (isIndexableName(rel, config)) out.push(rel);
+        if (!seeded.has(rel) && isIndexableName(rel, config)) out.push(rel);
       }
     }
   };
@@ -206,14 +283,16 @@ function recordWalk(index: AnatomyIndex, walk: Walk): void {
   else delete index.meta.candidateCount;
 }
 
-/** Full scan: fresh index from a walk. */
-export function fullScan(rootDir: string, config: CrankConfig): AnatomyIndex {
+/** Full scan: fresh index from a walk, keeping `previous`'s pins and churn cache. */
+export function fullScan(rootDir: string, config: CrankConfig, previous: AnatomyIndex = emptyIndex()): AnatomyIndex {
+  const seeds = updateActivity(rootDir, config, previous);
   const index = emptyIndex();
-  const walk = walkProject(rootDir, config);
+  const walk = walkProject(rootDir, config, seeds);
   for (const rel of walk.files) {
     const entry = indexFile(rootDir, rel, config);
-    if (entry) index.files[rel] = entry;
+    if (entry) index.files[rel] = keepPin(entry, previous.files[rel]);
   }
+  if (previous.meta.churn) index.meta.churn = previous.meta.churn;
   index.meta.lastScanned = new Date().toISOString();
   index.meta.fileCount = Object.keys(index.files).length;
   recordWalk(index, walk);
@@ -241,7 +320,7 @@ export function refreshIndex(
   budgetMs: number
 ): RefreshResult {
   const deadline = Date.now() + budgetMs;
-  const walk = walkProject(rootDir, config);
+  const walk = walkProject(rootDir, config, updateActivity(rootDir, config, index));
   const walked = walk.files;
   const walkedSet = new Set(walked);
   let changed = 0, added = 0, removed = 0, partial = false;
@@ -271,7 +350,7 @@ export function refreshIndex(
       if (stat.size === existing.size && stat.mtimeMs === existing.mtimeMs) continue;
       const entry = indexFile(rootDir, rel, config);
       if (entry) {
-        index.files[rel] = entry;
+        index.files[rel] = keepPin(entry, existing);
         changed++;
       } else {
         // No longer indexable (grew past the size cap, became unreadable) —

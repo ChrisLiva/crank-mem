@@ -132,6 +132,11 @@ async function main(): Promise<void> {
         skipped.push(safePath(op.relPath));
         continue;
       }
+      // Pin the write so the next refresh keeps the file past max_files, until
+      // the churn list carries it.
+      if (!index.meta.churn?.paths.includes(op.relPath)) {
+        entry.writeCount = (index.files[op.relPath]?.writeCount ?? 0) + 1;
+      }
       index.files[op.relPath] = entry;
       dirty = true;
     }

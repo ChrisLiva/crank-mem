@@ -30,6 +30,12 @@ export function git(root: string, ...args: string[]): string {
   return result.stdout;
 }
 
+/** Stage everything in `root` and commit it as a fixed test identity, unsigned. */
+export function gitCommit(root: string, message: string): void {
+  git(root, "add", "-A");
+  git(root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", message);
+}
+
 export interface HookRun {
   status: number;
   stdout: string;

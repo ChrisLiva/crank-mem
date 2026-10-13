@@ -35,13 +35,17 @@ Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 ## What gets indexed
 
 In a git repo the file list comes from `git ls-files -co --exclude-standard`,
-so gitignored files stay out. Source code ranks ahead of other files, and
-anything under `deps_src`, `third_party`, `vendor`, `external`,
+so gitignored files stay out. Two groups of files go first: files an agent
+wrote (up to 100, most recent first) and the 100 files changed most often in
+the last 300 commits, not counting commits that touch more than 50 files.
+crank-mem recomputes that churn list only when HEAD moves. Source code comes
+next, and anything under `deps_src`, `third_party`, `vendor`, `external`,
 `node_modules`, `resources`, `assets`, `static` or `public` ranks last; the
-first `max_files` (default 500) are indexed. Submodule contents are not
-indexed. A write to a gitignored file is indexed by the write hook and dropped
-again at the next session start. Outside git, or if git fails, a sorted
-directory walk is used instead.
+first `max_files` (default 500) are indexed. A written file stays pinned until
+it shows up in the churn list. `anatomy.md` opens with the 25 most active of
+these files. Submodule contents are not indexed. A write to a gitignored file
+is indexed by the write hook and dropped again at the next session start.
+Outside git, or if git fails, a sorted directory walk is used instead.
 
 ## Audit skill
 
@@ -87,7 +91,8 @@ removed/partial counts), `injected` (tokens vs. budget), `reindex`
 (`committed:false` means the write did not land), `lock-timeout` (contention —
 the only way to tell it apart from "nothing to write"), `nudge-skipped` (why no
 cerebrum/journal nudge fired), `walk-fallback` (git listing failed, so the
-directory walk ran).
+directory walk ran), `churn-skipped` (no churn list, for example before the
+first commit).
 
 `CRANK_DEBUG=0` forces it off. The log is gitignored, capped at 1 MB then
 restarted, never contains sensitive paths, and can never fail a session — a

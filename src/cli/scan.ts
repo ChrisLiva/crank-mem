@@ -7,7 +7,7 @@ export async function run(_args: string[]): Promise<number> {
   const project = openProject();
   if (!project) return 1;
   const { root, crankDir, config } = project;
-  const index = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
+  const index = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, (current) => fullScan(root, config, current));
   if (index === null) {
     console.error("crank-mem: could not acquire the index lock (another writer active) — try again.");
     return 1;

@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { enableDebugConfig, git, makeCrankProject, readDebugLog, runHook } from "./helpers.ts";
+import { spawnSync } from "node:child_process";
+import { REPO_ROOT, enableDebugConfig, git, gitCommit, makeCrankProject, readDebugLog, runHook } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { claudeSessionStart, codexSessionStart } from "./fixtures/payloads.ts";
 
@@ -45,6 +46,28 @@ describe("session-start hook (black-box)", () => {
     expect(Object.keys(index.files).sort()).toEqual(["a.ts", "b.ts"]);
     expect(index.meta.truncated).toBe(true);
     expect(index.meta.candidateCount).toBe(3);
+  });
+
+  test("the most committed file stays indexed past max_files across session starts and a scan", () => {
+    const root = makeCrankProject({ "a.ts": "x", "b.ts": "x", "z/hot.ts": "/** Hot path. */\n" });
+    git(root, "init", "-q");
+    gitCommit(root, "one");
+    for (const n of [2, 3]) {
+      fs.appendFileSync(path.join(root, "z/hot.ts"), `export const v${n} = ${n};\n`);
+      gitCommit(root, `hot ${n}`);
+    }
+    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), max_files: 2 });
+    const indexed = (): string[] =>
+      Object.keys(JSON.parse(fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8")).files);
+    for (let i = 0; i < 2; i++) {
+      expect(runHook(HOOK, JSON.stringify(claudeSessionStart(root))).status).toBe(0);
+      expect(indexed()).toContain("z/hot.ts");
+    }
+    const scan = spawnSync("bun", [path.join(REPO_ROOT, "src/cli/main.ts"), "scan"], { cwd: root, encoding: "utf-8" });
+    expect(scan.status).toBe(0);
+    expect(indexed()).toContain("z/hot.ts");
+    const anatomy = fs.readFileSync(path.join(root, ".crank/anatomy.md"), "utf-8");
+    expect(anatomy).toContain("## Most active files\n\n- `z/hot.ts` — Hot path.");
   });
 
   test("a .git that git rejects falls back to the directory walk and logs why", () => {

@@ -106,5 +106,19 @@ describe("index store", () => {
     const md = renderAnatomyMd(idx);
     expect(md).toContain("- `src/b.ts` — Beta (~600 tok)");
     expect(md).toContain("  - beta (fn, L1–L20, ~550 tok)");
+    expect(md).not.toContain("## Most active files");
+  });
+
+  test("renderAnatomyMd lists written then churned files first, one line each, before the alphabetical list", () => {
+    const idx = emptyIndex();
+    const sym = [{ name: "fn", kind: "fn" as const, startLine: 1, endLine: 9, tokens: 500 }];
+    idx.files["a.ts"] = { description: "", tokens: 5, size: 1, mtimeMs: 1 };
+    idx.files["hot.ts"] = { description: "Hot", tokens: 600, size: 1, mtimeMs: 1, symbols: sym };
+    idx.files["new.ts"] = { description: "", tokens: 7, size: 1, mtimeMs: 2, writeCount: 1 };
+    idx.meta.churn = { head: "abc", paths: ["hot.ts", "deleted.ts"] };
+    const md = renderAnatomyMd(idx);
+    const active = md.slice(md.indexOf("## Most active files"), md.indexOf("## All files"));
+    expect(active.trim().split("\n").slice(2)).toEqual(["- `new.ts` (~7 tok)", "- `hot.ts` — Hot (~600 tok)"]);
+    expect(md.slice(md.indexOf("## All files"))).toContain("- `hot.ts` — Hot (~600 tok)\n  - fn (fn, L1–L9, ~500 tok)");
   });
 });

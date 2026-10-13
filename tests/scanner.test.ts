@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { fullScan, refreshIndex, walkProject } from "../src/hooks/lib/scanner.ts";
 import { defaultConfig } from "../src/hooks/lib/config.ts";
 import { SYMBOL_MIN_TOKENS } from "../src/hooks/lib/symbols.ts";
-import { git } from "./helpers.ts";
+import { git, gitCommit } from "./helpers.ts";
 
 function makeProject(files: Record<string, string>): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-scan-"));
@@ -226,5 +226,44 @@ describe("refreshIndex", () => {
     const result = refreshIndex(root, config, { version: 1, meta: { lastScanned: null, fileCount: 0 }, files: {} }, -1);
     expect(result.partial).toBe(true);
     expect(result.index.meta.partial).toBe(true);
+  });
+});
+
+describe("churn and write pins", () => {
+  test("ranks by commits, skips commits touching more than 50 files, and reuses the list while HEAD stays put", () => {
+    const bulk: Record<string, string> = {};
+    for (let i = 0; i < 51; i++) bulk[`vendor/v${i}.ts`] = "x";
+    const root = makeProject({ "src/a.ts": "x", "src/b.ts": "x", ...bulk });
+    git(root, "init", "-q");
+    gitCommit(root, "bulk");
+    fs.writeFileSync(path.join(root, "src/b.ts"), "y");
+    gitCommit(root, "b");
+    fs.writeFileSync(path.join(root, "src/b.ts"), "z");
+    fs.writeFileSync(path.join(root, "src/a.ts"), "z");
+    gitCommit(root, "a and b");
+    const config = defaultConfig();
+    const index = fullScan(root, config);
+    const head = git(root, "rev-parse", "HEAD").trim();
+    expect(index.meta.churn).toEqual({ head, paths: ["src/b.ts", "src/a.ts"] });
+
+    // A cached list for the current HEAD is trusted as is; a new commit replaces it.
+    index.meta.churn = { head, paths: ["src/a.ts"] };
+    expect(refreshIndex(root, config, index, 5000).index.meta.churn!.paths).toEqual(["src/a.ts"]);
+    fs.writeFileSync(path.join(root, "src/a.ts"), "w");
+    gitCommit(root, "a");
+    expect(refreshIndex(root, config, index, 5000).index.meta.churn!.paths).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  test("a refresh keeps at most 100 pins, dropping the least recently written", () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 101; i++) files[`f${String(i).padStart(3, "0")}.ts`] = "x";
+    const root = makeProject(files);
+    fs.utimesSync(path.join(root, "f050.ts"), new Date(2020, 0, 1), new Date(2020, 0, 1));
+    const config = defaultConfig();
+    const index = fullScan(root, config);
+    for (const entry of Object.values(index.files)) entry.writeCount = 1;
+    const after = refreshIndex(root, config, index, 5000).index;
+    expect(after.files["f050.ts"]!.writeCount).toBeUndefined();
+    expect(Object.values(after.files).filter((e) => e.writeCount === 1).length).toBe(100);
   });
 });
