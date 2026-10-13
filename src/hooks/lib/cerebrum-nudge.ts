@@ -36,7 +36,7 @@ const MARKER_FILE = "cerebrum-nudge.json";
 interface NudgeMarker {
   cerebrumMtimeMs: number;
   nudgedAtChanged: number;
-  /** Cerebrum size when this marker was written — the prune nudge is silent only while it falls. */
+  /** Oversized cerebrum size when this marker was written — the prune nudge is silent only while it falls. Absent under both limits. */
   pruneNudgedLines?: number;
   pruneNudgedTokens?: number;
   /** Journal debounce, same shape as the record nudge but keyed on journal.md. */
@@ -124,8 +124,14 @@ function mtimeOf(file: string): number | null {
  * so a later stall at 155 re-arms the nudge. Keeping the 160 would silence it
  * forever — the message promises to repeat until the file is under the limit.
  *
- * Writes the marker as a side effect when it nudges, and — the one silent write
- * — when it observes a prune in progress. Never throws.
+ * Once the file is back under both limits the floor is cleared, so a later
+ * regrowth past a limit nudges at once. A stale floor would count any edit that
+ * happens to lower one measure (e.g. 157 lines but fewer tokens than at the old
+ * nudge) as a prune in progress.
+ *
+ * Writes the marker as a side effect when it nudges, and silently in two cases:
+ * when it observes a prune in progress, and when it clears the floor. Never
+ * throws.
  */
 export function cerebrumNudge(crankDir: string): string | null {
   const cerebrum = readCerebrum(crankDir);
@@ -191,6 +197,14 @@ export function cerebrumNudge(crankDir: string): string | null {
         pruneNudgedLines: cerebrum.lineCount,
         pruneNudgedTokens: cerebrum.tokenCount,
       });
+    } else if (
+      cerebrum &&
+      marker &&
+      !oversized &&
+      (marker.pruneNudgedLines !== undefined || marker.pruneNudgedTokens !== undefined)
+    ) {
+      // Back under both limits: the prune is over, so drop the floor.
+      writeMarker(crankDir, { ...marker, pruneNudgedLines: undefined, pruneNudgedTokens: undefined });
     }
     return null;
   }
@@ -211,10 +225,11 @@ export function cerebrumNudge(crankDir: string): string | null {
     // number) and never equals a real mtime, so nothing is wrongly debounced.
     cerebrumMtimeMs: cerebrum?.mtimeMs ?? 0,
     nudgedAtChanged: recordDue ? changed : baseline,
-    // Always the size observed now, whether or not the prune part fired: that
-    // is what lets a partial prune that then stalls re-arm the nudge.
-    pruneNudgedLines: cerebrum?.lineCount ?? marker?.pruneNudgedLines,
-    pruneNudgedTokens: cerebrum?.tokenCount ?? marker?.pruneNudgedTokens,
+    // The size observed now while oversized, whether or not the prune part
+    // fired: that is what lets a partial prune that then stalls re-arm the
+    // nudge. Under both limits there is no floor to keep.
+    pruneNudgedLines: !cerebrum ? marker?.pruneNudgedLines : oversized ? cerebrum.lineCount : undefined,
+    pruneNudgedTokens: !cerebrum ? marker?.pruneNudgedTokens : oversized ? cerebrum.tokenCount : undefined,
     journalMtimeMs: journalMtimeMs ?? marker?.journalMtimeMs,
     journalNudgedAtChanged: journalDue ? journalChanged : journalBaseline,
   });

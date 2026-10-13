@@ -217,4 +217,25 @@ describe("post-write cerebrum nudge (Codex only)", () => {
     expect(second.status).toBe(0);
     expect(second.stdout).toBe("");
   });
+
+  // A nudge that fires while cerebrum is under both limits must not stamp a
+  // prune floor: a later regrowth with fewer tokens would read as a prune.
+  test("a record nudge under the limits leaves no prune floor behind", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    const lines = (n: number, pad: string) =>
+      Array.from({ length: n }, (_, i) => `- entry ${i} ${pad}`).join("\n");
+    fs.writeFileSync(cerebrum(root), lines(103, "x".repeat(60))); // ~1850 tokens
+    setMtime(cerebrum(root), STALE);
+    const record = nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout);
+    expect(record).toContain("file(s) have changed");
+    expect(record).not.toContain("Prune");
+
+    // Regrowth past the line limit with fewer tokens than at the record nudge.
+    fs.writeFileSync(cerebrum(root), lines(157, ""));
+    setMtime(cerebrum(root), FRESH);
+    const regrown = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
+    expect(regrown.status).toBe(0);
+    expect(nudge(regrown.stdout)).toContain("157 lines");
+  });
 });

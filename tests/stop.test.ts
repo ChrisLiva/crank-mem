@@ -208,6 +208,33 @@ describe("stop hook (black-box)", () => {
     expect(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout).toBe("");
   });
 
+  // brew-pg, 2026-08-14: nudged at 156 lines, pruned to 103, regrew to 157
+  // lines with fewer tokens than at the nudge, and the stale token stamp read
+  // that as a prune in progress.
+  test("a prune that got under the limit clears the floor before regrowth", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    const padded = (n: number) =>
+      Array.from({ length: n }, (_, i) => `- entry ${i} padding words here`).join("\n");
+    fs.writeFileSync(cerebrum(root), padded(156));
+    setMtime(cerebrum(root), FRESH); // record part never due: prune part alone
+    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("156 lines");
+
+    // Pruned under both limits; this Stop observes it and stays silent.
+    fs.writeFileSync(cerebrum(root), longCerebrum(103));
+    setMtime(cerebrum(root), FRESH + 5000);
+    const under = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(under.status).toBe(0);
+    expect(under.stdout).toBe("");
+
+    // Regrowth past the line limit, with fewer tokens than the 156-line file.
+    fs.writeFileSync(cerebrum(root), longCerebrum(157));
+    setMtime(cerebrum(root), FRESH + 10_000);
+    const regrown = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(regrown.status).toBe(0);
+    expect(nudge(regrown.stdout)).toContain("157 lines");
+  });
+
   test("nudges to prune a short but token-heavy cerebrum", () => {
     const root = makeCrankProject(ENOUGH);
     seedIndex(root);
