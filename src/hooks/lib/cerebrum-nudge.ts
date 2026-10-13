@@ -8,6 +8,7 @@ import { parseBlocks } from "./bullets.ts";
 import { debugEvent } from "./debug.ts";
 import { loadConfig } from "./config.ts";
 import { gitChangedFiles } from "./changes.ts";
+import { instructionFiles } from "./hook-io.ts";
 
 // Shared memory-nudge logic: decide whether to remind the agent to record what
 // it learned (cerebrum), prune an overgrown cerebrum, or log where it left off
@@ -199,10 +200,10 @@ function mtimeOf(file: string): number | null {
  *
  * Writes the marker as a side effect when it nudges, and silently in two cases:
  * when it observes a prune in progress, and when it clears the floor. A prune
- * nudge also copies cerebrum.md to .crank/backups/cerebrum/ first. Never
- * throws.
+ * nudge also copies cerebrum.md to .crank/backups/cerebrum/ first. `codex`
+ * names AGENTS.md alone in the prune message. Never throws.
  */
-export function cerebrumNudge(crankDir: string): string | null {
+export function cerebrumNudge(crankDir: string, codex = false): string | null {
   const cerebrum = readCerebrum(crankDir);
   const journalMtimeMs = mtimeOf(path.join(crankDir, JOURNAL_FILE));
   if (!cerebrum && journalMtimeMs === null) {
@@ -359,7 +360,7 @@ export function cerebrumNudge(crankDir: string): string | null {
         `Prune it now: shorten long bullets to one line of at most ~200 characters; move ` +
         `superseded or one-off entries (finished fixes, entries that cite a commit) to ` +
         `.crank/${ARCHIVE_FILE}, which is not injected but stays greppable; delete only what ` +
-        `CLAUDE.md or the code already states; keep gotchas and do-not-repeat entries. A small ` +
+        `${instructionFiles(codex)} or the code already states; keep gotchas and do-not-repeat entries. A small ` +
         `trim is not enough; this reminder repeats until the file is back under the limit.`,
     );
   }

@@ -31,6 +31,19 @@ export function parsePayload(raw: string): HookPayload | null {
   }
 }
 
+/** Codex payloads carry a turn_id (tests/fixtures/payloads.ts); Claude's carry none. */
+export function isCodexPayload(payload: HookPayload): boolean {
+  return typeof payload.turn_id === "string";
+}
+
+/**
+ * The agent instructions files to name in model-visible text. Codex reads
+ * AGENTS.md; any payload without a Codex marker gets both names.
+ */
+export function instructionFiles(codex: boolean): string {
+  return codex ? "AGENTS.md" : "CLAUDE.md, AGENTS.md";
+}
+
 /**
  * Locate the project root (the dir containing `.crank/`) by walking up from
  * `cwd`. Returns null when crank-mem isn't installed here.

@@ -251,7 +251,8 @@ describe("buildInjection", () => {
   test("points at anatomy.md with a file count instead of listing files", () => {
     const out = buildInjection({ ...sources, index: fixtureIndex(200) }, 8192);
     expect(out).toContain("`.crank/anatomy.md` indexes 200 file(s)");
-    expect(out).toContain("check it before reading any file");
+    expect(out).toContain("That is every indexable file in the project.");
+    expect(out).toContain("symbol line ranges before slice-reading a large");
     // The map itself must not be recited — no indexed filename, no token annotation.
     expect(out).not.toContain("file7.ts");
     expect(out).not.toMatch(/~\d+ tok/);
@@ -399,7 +400,7 @@ describe("buildInjection", () => {
 
     test("instructions survive a budget too small to hold them", () => {
       const out = buildInjection(sources, 10);
-      expect(out).toContain("check it before reading any file");
+      expect(out).toContain("symbol line ranges before slice-reading a large");
       expect(out).toContain("Cerebrum protocol");
     });
   });

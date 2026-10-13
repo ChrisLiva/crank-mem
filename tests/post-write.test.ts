@@ -307,6 +307,9 @@ describe("post-write cerebrum nudge (Codex only)", () => {
     expect(fs.readFileSync(path.join(dir, copy!), "utf-8")).toBe(body);
     expect(ctx).toContain(`.crank/backups/cerebrum/${copy}`);
     expect(ctx).toContain(".crank/cerebrum-archive.md");
+    // Codex reads AGENTS.md, not CLAUDE.md.
+    expect(ctx).toContain("delete only what AGENTS.md or the code already states");
+    expect(ctx).not.toContain("CLAUDE.md");
   });
 
   test("apply_patch prune nudge exits 0 when backups cannot be written", () => {

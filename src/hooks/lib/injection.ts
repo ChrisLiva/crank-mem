@@ -3,6 +3,9 @@ import * as path from "node:path";
 import { estimateProseTokens } from "./tokens.ts";
 import { parseBullets } from "./bullets.ts";
 import { JOURNAL_FILE } from "./journal.ts";
+import { instructionFiles } from "./hook-io.ts";
+import { SOURCE_EXTENSIONS } from "./scanner.ts";
+import { symbolsSupported } from "./symbols.ts";
 import type { AnatomyIndex } from "./store.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
@@ -41,16 +44,50 @@ const PREFS_HEADING = "user preferences";
 
 const CEREBRUM_HEADER = "## Cerebrum (.crank/cerebrum.md)";
 
-const instructions = (fileCount: number): string => `## crank-mem (project memory)
+/** Unsupported source extensions named in the pointer, most indexed files first. */
+const SYMBOL_GAPS_NAMED = 3;
+
+/**
+ * The anatomy.md pointer, stating what the index covers. A pointer that said
+ * "check it before reading any file" over a capped index sent OrcaSlicer agents
+ * to a map holding none of src/; the cap and the languages without symbols are
+ * what an agent needs to know to fall back to search.
+ */
+function anatomyPointer(index: AnatomyIndex, codex: boolean): string {
+  const { fileCount, truncated, candidateCount } = index.meta;
+  const counted = truncated && candidateCount !== undefined ? `${fileCount} of ${candidateCount}` : `${fileCount}`;
+  // A truncated walk keeps candidateCount only when it came from git's ranked
+  // listing; the fallback directory walk stops uncounted, in path order.
+  const coverage = !truncated
+    ? "That is every indexable file in the project."
+    : `It is capped at max_files, active files first, then ${
+        candidateCount !== undefined ? "first-party source" : "by path"
+      }:\n  a file missing from it may still exist.`;
+  const gaps = new Map<string, number>();
+  for (const rel of Object.keys(index.files)) {
+    const ext = path.extname(rel).toLowerCase();
+    if (SOURCE_EXTENSIONS.has(ext) && !symbolsSupported(ext)) gaps.set(ext, (gaps.get(ext) ?? 0) + 1);
+  }
+  const named = [...gaps]
+    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1))
+    .slice(0, SYMBOL_GAPS_NAMED)
+    .map(([ext]) => ext);
+  const symbols = named.length ? ` (no symbol ranges for ${named.join(", ")} files)` : "";
+  const slice = codex ? "`sed -n 'START,ENDp' file`" : "Read with offset/limit, or `sed -n 'START,ENDp' file`";
+  return `- \`.crank/anatomy.md\` indexes ${counted} file(s) with descriptions, token sizes,
+  and per-symbol line ranges${symbols}.
+  ${coverage}
+  Use it for token sizes and symbol line ranges before slice-reading a large
+  file (${slice}).`;
+}
+
+const instructions = (index: AnatomyIndex, codex: boolean): string => `## crank-mem (project memory)
 
 This project keeps a token-annotated file index in \`.crank/anatomy.md\`, an
 agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in
 \`.crank/${JOURNAL_FILE}\`.
 
-- \`.crank/anatomy.md\` indexes ${fileCount} file(s) with descriptions, token sizes, and
-  per-symbol line ranges — check it before reading any file. Symbol sub-bullets
-  give line ranges, so slice-read just what you need (Read with offset/limit,
-  or \`sed -n 'START,ENDp' file\`).
+${anatomyPointer(index, codex)}
 - Cerebrum protocol: keep \`.crank/cerebrum.md\` current as you work. The bar is
   low — a one-line bullet is enough. Check for an existing bullet first and
   update it rather than add a near-copy; when replacing, write (supersedes
@@ -60,7 +97,7 @@ agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in
   - anything else worth keeping → \`## Memory\`: a non-obvious project
     convention, a framework/dependency quirk, surprising API behavior, or a
     gotcha that would trip up a fresh session.
-  Do NOT record: anything CLAUDE.md, the README, or the code already states; a
+  Do NOT record: anything ${instructionFiles(codex)}, the README, or the code already states; a
   narration of what you just did (that is the journal); a one-time fix that is
   finished. Respect existing entries; consolidate or prune a section when it
   grows bloated or stale.
@@ -93,6 +130,8 @@ export interface InjectionSources {
   /** Appended below the staleness note when the vendored hooks lag the clone. */
   driftNote?: string;
   adrPath: string;
+  /** Codex session: name AGENTS.md alone and no Read tool (ADR 0003). */
+  codex?: boolean;
 }
 
 const SEP = "\n\n";
@@ -209,7 +248,7 @@ function indexEntry(bullet: string): string {
  * by the fixed size of the instructions.
  */
 export function buildInjection(sources: InjectionSources, budgetBytes: number): string {
-  const parts: string[] = [instructions(sources.index.meta.fileCount)];
+  const parts: string[] = [instructions(sources.index, sources.codex ?? false)];
   let used = bytes(parts[0]!);
 
   const fit = (section: string): boolean => {

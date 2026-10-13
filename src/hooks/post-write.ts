@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook,
+  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload,
 } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { commitIndex } from "./lib/store.ts";
@@ -162,7 +162,7 @@ async function main(): Promise<void> {
   // on Codex — ADR 0001). Claude gets the same nudge at turn end via the Stop
   // hook, so it is skipped here to avoid double-nudging.
   if (payload.tool_name === "apply_patch") {
-    const msg = [cerebrumNudge(crankDir), overlaps].filter(Boolean).join("\n");
+    const msg = [cerebrumNudge(crankDir, isCodexPayload(payload)), overlaps].filter(Boolean).join("\n");
     if (msg) emitAdditionalContext("PostToolUse", msg);
   }
 }

@@ -23,6 +23,7 @@ describe("session-start hook (black-box)", () => {
     expect(ctx).toContain("crank-mem (project memory)");
     // The scan's result reaches the model as a count and a pointer, not a listing.
     expect(ctx).toContain("`.crank/anatomy.md` indexes 2 file(s)");
+    expect(ctx).toContain("That is every indexable file in the project.");
     expect(ctx).not.toContain("`app.ts`");
     // index + anatomy.md were written
     const index = JSON.parse(fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"));
@@ -46,6 +47,41 @@ describe("session-start hook (black-box)", () => {
     expect(Object.keys(index.files).sort()).toEqual(["a.ts", "b.ts"]);
     expect(index.meta.truncated).toBe(true);
     expect(index.meta.candidateCount).toBe(3);
+    // The pointer states the cap instead of claiming the whole project.
+    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    expect(ctx).toContain("`.crank/anatomy.md` indexes 2 of 3 file(s)");
+    expect(ctx).toContain("It is capped at max_files, active files first, then first-party source:");
+    expect(ctx).toContain("a file missing from it may still exist.");
+    expect(ctx).not.toContain("every indexable file");
+  });
+
+  test("outside git a capped index says the walk went by path and gives no total", () => {
+    const root = makeCrankProject({ "a.ts": "x", "b.ts": "x", "c.ts": "x" });
+    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), max_files: 1 });
+    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
+    expect(run.status).toBe(0);
+    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    expect(ctx).toContain("`.crank/anatomy.md` indexes 1 file(s)");
+    expect(ctx).toContain("It is capped at max_files, active files first, then by path:");
+  });
+
+  test("the pointer names indexed languages without symbol support, and wording follows the agent", () => {
+    const root = makeCrankProject({ "main.c": "int main(void) { return 0; }\n", "util.h": "int f(void);\n", "a.ts": "x" });
+    const ctxFor = (payload: object): string => {
+      const run = runHook(HOOK, JSON.stringify(payload));
+      expect(run.status).toBe(0);
+      return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    };
+    const codex = ctxFor(codexSessionStart(root));
+    expect(codex).toContain("(no symbol ranges for .c, .h files)");
+    // Codex has no Read tool and reads AGENTS.md (ADR 0003).
+    expect(codex).toContain("file (`sed -n 'START,ENDp' file`).");
+    expect(codex).not.toContain("offset/limit");
+    expect(codex).toContain("Do NOT record: anything AGENTS.md, the README");
+    expect(codex).not.toContain("CLAUDE.md");
+    const claude = ctxFor(claudeSessionStart(root));
+    expect(claude).toContain("Read with offset/limit, or `sed -n 'START,ENDp' file`");
+    expect(claude).toContain("Do NOT record: anything CLAUDE.md, AGENTS.md, the README");
   });
 
   test("the most committed file stays indexed past max_files across session starts and a scan", () => {

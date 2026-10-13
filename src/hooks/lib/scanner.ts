@@ -89,7 +89,7 @@ const DEMOTED_DIRS = new Set([
   "resources", "assets", "static", "public",
 ]);
 
-const SOURCE_EXTENSIONS = new Set([
+export const SOURCE_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java",
   ".kt", ".scala", ".swift", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp",
   ".m", ".mm", ".cs", ".rb", ".php", ".lua", ".dart", ".zig", ".sh", ".sql",

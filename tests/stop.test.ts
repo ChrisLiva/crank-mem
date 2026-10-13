@@ -318,6 +318,8 @@ describe("stop hook (black-box)", () => {
     expect(ctx).not.toContain("line 8");
     expect(ctx).toContain(".crank/cerebrum-archive.md");
     expect(ctx).toContain("keep gotchas and do-not-repeat entries");
+    // No Codex marker on the payload: both instructions files are named.
+    expect(ctx).toContain("delete only what CLAUDE.md, AGENTS.md or the code already states");
     expect(ctx).not.toContain("delete it");
   });
 

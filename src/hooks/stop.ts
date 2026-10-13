@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook,
+  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload,
 } from "./lib/hook-io.ts";
 import { CRANK_DIR, loadConfig } from "./lib/config.ts";
 import { cerebrumNudge, cerebrumOverlaps } from "./lib/cerebrum-nudge.ts";
@@ -28,7 +28,7 @@ async function main(): Promise<void> {
   const crankDir = path.join(root, CRANK_DIR);
   enableDebug(crankDir, loadConfig(crankDir).debug);
 
-  const msg = [cerebrumNudge(crankDir), cerebrumOverlaps(crankDir)].filter(Boolean).join("\n");
+  const msg = [cerebrumNudge(crankDir, isCodexPayload(payload)), cerebrumOverlaps(crankDir)].filter(Boolean).join("\n");
   if (!msg) return;
   emitAdditionalContext("Stop", msg);
   console.error("crank-mem: cerebrum nudge (stop)");

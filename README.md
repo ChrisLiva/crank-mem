@@ -50,6 +50,9 @@ it shows up in the churn list. `anatomy.md` opens with the 25 most active of
 these files. Submodule contents are not indexed. A write to a gitignored file
 is indexed by the write hook and dropped again at the next session start.
 Outside git, or if git fails, a sorted directory walk is used instead.
+When the cap cuts files, the session-start injection says so and, in git,
+gives the indexed count against the total; `crank-mem stats` counts every
+indexable file without the cap.
 
 ## Audit skill
 

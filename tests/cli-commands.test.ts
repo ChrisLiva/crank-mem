@@ -49,6 +49,19 @@ describe("stats", () => {
     expect(run.stdout).toContain("coverage 100%");
     expect(run.stdout).toMatch(/runtime: {10}(bun|node)/);
   });
+
+  test("counts every indexable file past the cap, so coverage shows what the cap left out", () => {
+    const root = initedProject();
+    const configPath = path.join(root, ".crank/config.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    fs.writeFileSync(configPath, JSON.stringify({ ...config, max_files: 1 }, null, 2));
+    fs.writeFileSync(path.join(root, "b.ts"), "export const b = 2;\n");
+    expect(cli(root, "scan").status).toBe(0);
+    const run = cli(root, "stats");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("files indexed:    1 (capped at max_files 1)");
+    expect(run.stdout).toContain("indexable files:  2 (coverage 50%)");
+  });
 });
 
 describe("upgrade", () => {

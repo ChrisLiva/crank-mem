@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook,
+  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload,
 } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex, commitIndex } from "./lib/store.ts";
@@ -78,6 +78,7 @@ async function main(): Promise<void> {
       stalenessNote,
       driftNote: drift ?? undefined,
       adrPath: config.adr_path,
+      codex: isCodexPayload(payload),
     },
     config.injection_budget_bytes
   );
