@@ -74,6 +74,11 @@ describe("extractSymbols — limits", () => {
     const src = Array.from({ length: 50 }, (_, i) => `function f${i}() {}`).join("\n");
     expect(extractSymbols(src, ".ts").length).toBe(SYMBOL_MAX_COUNT);
   });
+  test("last capped symbol ends before the next symbol, not at end of file", () => {
+    const src = Array.from({ length: 50 }, (_, i) => `function f${i}() {}`).join("\n");
+    const last = extractSymbols(src, ".ts").at(-1)!;
+    expect([last.name, last.startLine, last.endLine]).toEqual(["f29", 30, 30]);
+  });
   test("unsupported language returns empty", () => {
     expect(extractSymbols("def foo", ".rb")).toEqual([]);
   });
