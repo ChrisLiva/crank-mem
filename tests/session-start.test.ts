@@ -262,8 +262,6 @@ describe("memory reaches the model whole (black-box)", () => {
 describe("cited files (black-box)", () => {
   const day = (iso: string): Date => new Date(`${iso}T12:00:00`);
 
-  // A takeoff-poc bullet cited `tools/attribute.py` after commit 0f97e4a
-  // retired it, and 5 of 8 audited citations pointed at drifted code.
   test("a bullet citing a deleted path or a file changed after its date is tagged", () => {
     const root = makeCrankProject({
       "src/geometry.py": "def area(): pass\n",
@@ -297,10 +295,10 @@ describe("cited files (black-box)", () => {
 });
 
 describe("cerebrum index (black-box)", () => {
-  // Shaped after OrcaSlicer's Sep 30 injection: 7 preferences (~555 tokens,
-  // over PREFS_TOKEN_CAP), 21 memory bullets, a ~415-byte journal and an ADR
-  // list. It used 7,963 of 8,192 bytes and named none of the bullets it hid.
-  test("an OrcaSlicer-sized cerebrum stays under budget and names what it hides", () => {
+  // 7 preferences over PREFS_TOKEN_CAP, 21 memory bullets, a journal and an ADR
+  // list overflow the 8,192-byte budget, so the excerpt must hide bullets and
+  // name every one it hides.
+  test("a cerebrum too big for the budget stays under it and names the bullets it hides", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
     const bullet = (subject: string, i: number, clauses: number): string =>
@@ -334,8 +332,6 @@ describe("cerebrum index (black-box)", () => {
     expect(ctx).toMatch(/^- \*\*Gotcha 13\*\*: .*…$/m); // the newest hidden one
   });
 
-  // OrcaSlicer's Oct 13 cerebrum: memory bullets of 300 to 870 bytes filled the
-  // excerpt, and none of the 16 hidden memory bullets was named.
   test("memory bullets long enough to fill the excerpt still leave the hidden ones named", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
@@ -441,8 +437,6 @@ describe("journal (black-box)", () => {
     expect(ctx.indexOf("day 4: four")).toBeLessThan(ctx.indexOf("## Cerebrum"));
   });
 
-  // brew-pg 2026-09-23: with only the handoff injected, the agent told the
-  // user that the critique recorded in the same entry had never been run.
   test("each entry's done-clause reaches the model; only the newest NEXT: does", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     writeJournal(root, [

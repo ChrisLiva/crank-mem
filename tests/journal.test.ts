@@ -37,9 +37,6 @@ describe("injected headlines", () => {
     expect(line).not.toContain("\n");
   });
 
-  // Shaped after brew-pg 2026-09-23: the handoff alone reached the next
-  // session, which then told the user the critique recorded beside it had
-  // never been run.
   test("older entries inject what they did, not their stale NEXT: clauses", () => {
     const bullets = inject(
       HEADER +

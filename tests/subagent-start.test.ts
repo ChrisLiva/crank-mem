@@ -40,9 +40,9 @@ describe("subagent-start hook (black-box)", () => {
     expect(fs.existsSync(path.join(root, ".crank/anatomy-index.json"))).toBe(false);
   });
 
-  // At 2 KB the session-start priority, preferences before memory, left
-  // OrcaSlicer's subagents no gotcha at all; the subagent excerpt splits the room.
-  test("an OrcaSlicer-sized cerebrum is cut to a 2 KB excerpt that keeps a gotcha and says what it hides", () => {
+  // At 2 KB the session-start order, preferences before memory, leaves no room
+  // for a memory bullet, so the subagent excerpt splits the budget.
+  test("a cerebrum over 2 KB is cut to an excerpt that keeps a gotcha and says what it hides", () => {
     const root = makeCrankProject();
     const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
     const bullet = (subject: string, i: number): string =>

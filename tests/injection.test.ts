@@ -111,8 +111,8 @@ describe("excerptOf", () => {
     expect(ex).toContain("- Parent learning\n  - the qualifying detail");
   });
 
-  // A misfiled `### Key Learnings` nested inside `## Do-Not-Repeat` is real
-  // (takeoff-poc); under a line filter it evicted the section's first bullet.
+  // A misfiled `### Key Learnings` nested inside `## Do-Not-Repeat` must close
+  // the bullet above it, not join it or evict the section's first bullet.
   test("a nested heading neither joins a bullet nor appears in the excerpt", () => {
     const ex = excerpt(
       "# Cerebrum\n\n## Do-Not-Repeat\n\n- never run the migration twice\n" +
@@ -204,8 +204,6 @@ describe("excerptOf", () => {
     expect(section(starved, "Not shown")[0]).toMatch(/^### Not shown \(\d+ of 42; grep \.crank\/cerebrum\.md\)$/);
   });
 
-  // OrcaSlicer's 300 to 870-byte bullets used to push out every index entry,
-  // so 16 hidden memory bullets went unnamed.
   test("over budget, the oldest memory bullets go first and are listed in the index", () => {
     const md =
       "# Cerebrum\n\n## Memory\n\n" +
@@ -332,9 +330,8 @@ describe("composeInjection", () => {
 
   // Bytes are the budget that binds: Claude Code caps hook stdout, not tokens.
   describe("byte budget", () => {
-    // Shaped after the real takeoff-poc cerebrum: ~9.5KB, 5 wrapped preference
-    // bullets, 11 wrapped memory bullets. Whole bullets more than doubled the
-    // excerpt's cost, which is exactly what could re-open the truncation cliff.
+    // This 9,264-byte cerebrum of wrapped bullets, 5 preferences and 11 memory
+    // bullets, is big enough that the byte budget binds before the token cap.
     const wrapped = (label: string, n: number, lines: number): string =>
       Array.from({ length: n }, (_, i) =>
         `- ${label} ${i}: ` +
@@ -354,7 +351,7 @@ describe("composeInjection", () => {
         `## Memory\n\n${wrapped("Learning", 11, 7)}\n`,
     };
 
-    test("the fixture really is takeoff-poc-shaped", () => {
+    test("the fixture is big enough that bytes, not the token cap, bind", () => {
       const size = Buffer.byteLength(fat.cerebrumMd, "utf-8");
       expect(size).toBeGreaterThan(9_000);
       expect(size).toBeLessThan(10_000);

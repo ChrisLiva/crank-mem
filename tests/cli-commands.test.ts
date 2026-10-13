@@ -68,8 +68,6 @@ describe("stats", () => {
   });
 });
 
-// brew-pg's excerpt showed 20 of 35 bullets, 3 of 7 paths OrcaSlicer's
-// cerebrum cites are gone, and OrcaSlicer was never audited; stats said none of it.
 describe("stats: memory health", () => {
   const DAY = 86_400_000;
   const memory = Array.from({ length: 10 }, (_, i) => `- **m${i}**: note ${i} (2026-09-${String(10 + i)})`);
@@ -182,8 +180,6 @@ describe("stats: codex wiring", () => {
     return { root: fs.realpathSync(root), codexHome };
   }
 
-  // OrcaSlicer: 3 of 4 root threads after install got no injection, and
-  // nothing in crank-mem reported it.
   test("counts root threads since install that got no injection", () => {
     const { root, codexHome } = wiredProject();
     const later = new Date(Date.now() + 60_000).toISOString();
@@ -284,8 +280,8 @@ describe("upgrade", () => {
     expect(fs.readFileSync(path.join(crankDir, "backups", latest, "hooks/session-start.ts"), "utf-8")).toContain("stale vendored copy");
   });
 
-  // OrcaSlicer: bare commands in settings.local.json from an earlier init,
-  // plus wiring in the file the git mode uses, ran every hook twice.
+  // Crank commands in the settings file the git mode does not use, plus wiring
+  // in the one it does use, run every hook twice.
   test("re-wires an install at the current version and drops duplicate wiring", () => {
     const root = initedProject(); // exclude mode: wired into settings.local.json
     const local = path.join(root, ".claude/settings.local.json");

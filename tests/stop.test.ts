@@ -211,9 +211,9 @@ describe("stop hook (black-box)", () => {
     expect(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout).toBe("");
   });
 
-  // brew-pg, 2026-08-14: nudged at 156 lines, pruned to 103, regrew to 157
-  // lines with fewer tokens than at the nudge, and the stale token stamp read
-  // that as a prune in progress.
+  // A floor stamped while oversized must clear once the file is under both
+  // limits, or a regrowth with fewer tokens than the stamp reads as a prune in
+  // progress.
   test("a prune that got under the limit clears the floor before regrowth", () => {
     const root = makeCrankProject(ENOUGH);
     seedIndex(root);
@@ -615,8 +615,8 @@ describe("change count from git (black-box)", () => {
   });
 });
 
-// OrcaSlicer, 2026-09-27 and 09-28: two bullets on the same OpenGL.framework
-// build failure with different remedies, which word overlap scores at 0.31.
+// Two bullets on one build failure with different remedies: they share
+// identifiers but few words.
 const OPENGL_OLD =
   "- Fresh build dir fails: `OpenGL.framework` hits `-Werror=unguarded-availability-new`; set `DEVELOPER_DIR` (2026-09-27).";
 const OPENGL_NEW =
@@ -721,8 +721,8 @@ describe("cerebrum overlap check (black-box)", () => {
   });
 });
 
-// The audit skill is user-invoked only, so OrcaSlicer was never audited; the
-// suggestion tells the agent to ask the user, on a turn that already nudges.
+// The audit skill is user-invoked only, so the suggestion tells the agent to
+// ask the user, and only on a turn that already nudges.
 describe("audit suggestion (black-box)", () => {
   const DAY = 86_400_000;
   function installSkill(root: string, agentDir = ".claude"): void {
