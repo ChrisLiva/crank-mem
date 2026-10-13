@@ -390,11 +390,11 @@ describe("buildInjection", () => {
     // too long to fit is dropped anyway, and reserving for it would take the
     // cerebrum down with it.
     test("a budget too tight for the ADRs still spends it on the cerebrum", () => {
-      const out = buildInjection(sources, 2700);
+      const out = buildInjection(sources, 2970);
       expect(out).not.toContain("## ADRs");
       expect(out).toContain("## Cerebrum");
       expect(out).toContain("Mistake number 14");
-      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2700);
+      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2970);
     });
 
     test("instructions survive a budget too small to hold them", () => {

@@ -143,6 +143,20 @@ describe("memory reaches the model whole (black-box)", () => {
     expect(ctx).toContain("### User Preferences (in file: ## User Preferences, append at its end)");
     expect(ctx).toContain("append new bullets at the end of the section, newest last");
   });
+
+  // 5 of 8 file:line citations in audited cerebrums had drifted, and few
+  // bullets carried a date to judge them by.
+  test("the protocol asks for a date and path citations, and says memory is not proof", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
+    expect(run.status).toBe(0);
+    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    expect(ctx).toContain("End each cerebrum bullet with its date, `(YYYY-MM-DD)`");
+    expect(ctx).toContain("cite code by\n  backticked repo path and symbol name, not by line number");
+    expect(ctx).toContain(
+      "Memory is not proof of current behavior; verify a consequential claim\n  against the cited file before relying on it."
+    );
+  });
 });
 
 describe("cerebrum index (black-box)", () => {

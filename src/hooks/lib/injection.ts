@@ -74,6 +74,10 @@ agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in
   hedges; keep paths, identifiers, and error strings verbatim. Keep each
   cerebrum bullet to about 200 characters at most, and start it with a short
   **subject**: bullets the excerpt leaves out are listed by their first words.
+  End each cerebrum bullet with its date, \`(YYYY-MM-DD)\`, and cite code by
+  backticked repo path and symbol name, not by line number, which drifts.
+- Memory is not proof of current behavior; verify a consequential claim
+  against the cited file before relying on it.
 - ADR protocol: decisions that are hard to reverse, surprising, AND carry a
   real trade-off get an ADR (\`NNNN-slug.md\`, Pocock style) in the ADR
   directory. Existing ADRs are settled — don't relitigate them.`;
