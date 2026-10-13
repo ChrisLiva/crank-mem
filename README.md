@@ -78,7 +78,8 @@ Either writes `.crank/debug.log` — one record per hook run:
 removed/partial counts), `injected` (tokens vs. budget), `reindex`
 (`committed:false` means the write did not land), `lock-timeout` (contention —
 the only way to tell it apart from "nothing to write"), `nudge-skipped` (why no
-cerebrum/journal nudge fired).
+cerebrum/journal nudge fired; `source` says whether git or the index did the
+counting), `git-changes-failed` (why the count fell back to the index).
 
 `CRANK_DEBUG=0` forces it off. The log is gitignored, capped at 1 MB then
 restarted, never contains sensitive paths, and can never fail a session — a

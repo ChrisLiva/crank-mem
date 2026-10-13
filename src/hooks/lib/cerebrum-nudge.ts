@@ -5,6 +5,8 @@ import { estimateProseTokens } from "./tokens.ts";
 import { JOURNAL_FILE } from "./journal.ts";
 import { parseBlocks } from "./bullets.ts";
 import { debugEvent } from "./debug.ts";
+import { loadConfig } from "./config.ts";
+import { gitChangedFiles } from "./changes.ts";
 
 // Shared memory-nudge logic: decide whether to remind the agent to record what
 // it learned (cerebrum), prune an overgrown cerebrum, or log where it left off
@@ -153,11 +155,15 @@ function mtimeOf(file: string): number | null {
  * measure, so a session that keeps cerebrum current but never journals is
  * nudged about the journal alone.
  *
+ * Changed files come from git (lib/changes.ts), which sees the writes made
+ * through Bash and past the index cap. Outside a git work-tree root, or when
+ * git fails or runs out of time, the count falls back to index entries.
+ *
  * Record nudge: fires once per cerebrum version, then again only after
  * NUDGE_STEP more source files change. Updating cerebrum bumps its mtime —
  * resetting both the changed count (its mtime jumps ahead of the files) and the
  * debounce baseline — so a fresh recording quiets the nudge. cerebrum.md lives
- * under .crank/ and is never indexed, so editing it can't inflate the count.
+ * under .crank/ and is never indexable, so editing it can't inflate the count.
  *
  * Journal nudge: the same rule keyed on journal.md's mtime — appending an entry
  * quiets it. The mechanical trim in journal.ts restores the mtime it found, so
@@ -195,9 +201,17 @@ export function cerebrumNudge(crankDir: string): string | null {
     return null; // neither memory file exists — nothing to nudge about
   }
 
-  const index = loadIndex(crankDir);
-  const changedSince = (mtimeMs: number): number =>
-    Object.values(index.files).filter((e) => e.mtimeMs > mtimeMs).length;
+  // One git run serves both measures: list from the older file, filter per file.
+  const gitChanges = gitChangedFiles(
+    path.dirname(crankDir),
+    loadConfig(crankDir),
+    Math.min(cerebrum?.mtimeMs ?? Infinity, journalMtimeMs ?? Infinity),
+  );
+  const changeTimes = gitChanges
+    ? gitChanges.map((f) => f.changedMs)
+    : Object.values(loadIndex(crankDir).files).map((e) => e.mtimeMs);
+  const changedSince = (mtimeMs: number): number => changeTimes.filter((t) => t > mtimeMs).length;
+  const source = gitChanges ? "git" : "index";
 
   const marker = readMarker(crankDir);
 
@@ -234,6 +248,7 @@ export function cerebrumNudge(crankDir: string): string | null {
           ? "journal:absent"
           : `journal:${journalChanged < NUDGE_STEP ? "below-threshold" : "debounced"}`,
       ].join(" "),
+      source,
       changed,
       baseline,
       journalChanged,
@@ -264,6 +279,7 @@ export function cerebrumNudge(crankDir: string): string | null {
   }
 
   debugEvent("nudge-emitted", {
+    source,
     changed,
     baseline,
     journalChanged,

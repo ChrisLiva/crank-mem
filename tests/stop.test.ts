@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { makeCrankProject, runHook } from "./helpers.ts";
+import { spawnSync } from "node:child_process";
+import { enableDebugConfig, makeCrankProject, readDebugLog, runHook } from "./helpers.ts";
 import { claudeSessionStart, claudeStop } from "./fixtures/payloads.ts";
 import { BACKUP_KEEP, NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
 
@@ -506,5 +507,112 @@ describe("journal nudge (black-box)", () => {
     const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
     expect(ctx).toContain("cerebrum");
     expect(ctx).not.toContain("journal");
+  });
+});
+
+/** Run git in a temp project, with identity and signing pinned for CI. */
+function git(root: string, ...args: string[]): void {
+  const res = spawnSync(
+    "git",
+    ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args],
+    { cwd: root, encoding: "utf-8" },
+  );
+  if (res.status !== 0) throw new Error(`git ${args.join(" ")}: ${res.stderr}`);
+}
+/** A git repo with one empty commit, so `git log` has a branch to read. */
+function gitRepo(files: Record<string, string> = {}): string {
+  const root = makeCrankProject(files);
+  enableDebugConfig(root);
+  git(root, "init", "-q");
+  git(root, "commit", "-q", "--allow-empty", "-m", "init");
+  return root;
+}
+function debugEvents(root: string): Array<Record<string, any>> {
+  return readDebugLog(root).flatMap((r) => r.events);
+}
+/** Where the stop hook's count came from, per its last nudge event. */
+function countSource(root: string): string | undefined {
+  return debugEvents(root).filter((e) => e.event.startsWith("nudge-")).at(-1)?.source;
+}
+const HOUR = 3_600_000;
+
+// No session start runs in these tests, so the index is empty: any nudge
+// proves the count came from git.
+describe("change count from git (black-box)", () => {
+  test("counts files written after cerebrum that the index never saw", () => {
+    const root = gitRepo();
+    setMtime(cerebrum(root), Date.now() - HOUR);
+    for (const [f, src] of Object.entries(ENOUGH)) fs.writeFileSync(path.join(root, f), src);
+
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    expect(nudge(run.stdout)).toContain(`${NUDGE_STEP} file(s) have changed`);
+    expect(countSource(root)).toBe("git");
+  });
+
+  test("untracked files older than cerebrum do not count", () => {
+    const root = gitRepo(ENOUGH);
+    for (const f of Object.keys(ENOUGH)) setMtime(path.join(root, f), Date.now() - 2 * HOUR);
+    setMtime(cerebrum(root), Date.now() - HOUR);
+
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+    expect(countSource(root)).toBe("git");
+  });
+
+  test("files written before cerebrum and committed after it do not count", () => {
+    const root = gitRepo(ENOUGH);
+    for (const f of Object.keys(ENOUGH)) setMtime(path.join(root, f), Date.now() - 2 * HOUR);
+    setMtime(cerebrum(root), Date.now() - HOUR);
+    git(root, "add", ...Object.keys(ENOUGH));
+    git(root, "commit", "-q", "-m", "old work");
+
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+    expect(countSource(root)).toBe("git");
+  });
+
+  test("deleted files count", () => {
+    const root = gitRepo(ENOUGH);
+    for (const f of Object.keys(ENOUGH)) setMtime(path.join(root, f), Date.now() - 2 * HOUR);
+    git(root, "add", ...Object.keys(ENOUGH));
+    git(root, "commit", "-q", "-m", "old work");
+    setMtime(cerebrum(root), Date.now() - HOUR);
+    for (const f of Object.keys(ENOUGH)) fs.rmSync(path.join(root, f));
+
+    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain(
+      `${NUDGE_STEP} file(s) have changed`,
+    );
+  });
+
+  test("the journal part counts from git too", () => {
+    const root = gitRepo();
+    setMtime(cerebrum(root), FRESH);
+    writeJournal(root, Date.now() - HOUR);
+    for (const [f, src] of Object.entries(ENOUGH)) fs.writeFileSync(path.join(root, f), src);
+
+    const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
+    expect(ctx).toContain(`${NUDGE_STEP} file(s) changed since the last .crank/journal.md entry`);
+    expect(ctx).not.toContain("cerebrum");
+  });
+
+  test("a git that overruns the budget falls back to the index count", () => {
+    const root = gitRepo(ENOUGH);
+    seedIndex(root);
+    setMtime(cerebrum(root), STALE);
+    const bin = fs.mkdtempSync(path.join(root, "..", "crank-fakegit-"));
+    fs.writeFileSync(path.join(bin, "git"), "#!/bin/sh\nexec sleep 5\n", { mode: 0o755 });
+
+    const started = Date.now();
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)), undefined, {
+      PATH: `${bin}:${process.env.PATH}`,
+    });
+    expect(run.status).toBe(0);
+    expect(Date.now() - started).toBeLessThan(4000);
+    expect(nudge(run.stdout)).toContain(`${NUDGE_STEP} file(s) have changed`);
+    expect(countSource(root)).toBe("index");
+    expect(debugEvents(root).some((e) => e.event === "git-changes-failed")).toBe(true);
   });
 });
