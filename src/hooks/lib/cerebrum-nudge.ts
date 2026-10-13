@@ -220,6 +220,15 @@ function mtimeOf(file: string): number | null {
 }
 
 /**
+ * The record and journal debounce: due at NUDGE_STEP changed files, then again
+ * only NUDGE_STEP past the count that last nudged the same file version.
+ */
+function debounce(changed: number, sameFile: boolean, nudgedAt: number | undefined): { baseline: number; due: boolean } {
+  const baseline = sameFile ? (nudgedAt ?? 0) : 0;
+  return { baseline, due: changed >= NUDGE_STEP && changed >= baseline + NUDGE_STEP };
+}
+
+/**
  * A reminder to record this session's learnings, log where it left off, and/or
  * prune an overgrown cerebrum, or null when nothing is due.
  *
@@ -277,7 +286,7 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
   const journalMtimeMs = mtimeOf(path.join(crankDir, JOURNAL_FILE));
   if (!cerebrum && journalMtimeMs === null) {
     debugEvent("nudge-skipped", { reason: "no-memory-files" });
-    return null; // neither memory file exists — nothing to nudge about
+    return null;
   }
 
   // One git run serves both measures: list from the older file, filter per file.
@@ -292,9 +301,13 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
   const marker = readMarker(crankDir);
 
   const changed = cerebrum ? changedSince(cerebrum.mtimeMs) : 0;
-  const baseline =
-    marker && cerebrum && marker.cerebrumMtimeMs === cerebrum.mtimeMs ? marker.nudgedAtChanged : 0;
-  const recordDue = !!cerebrum && changed >= NUDGE_STEP && changed >= baseline + NUDGE_STEP;
+  const record = debounce(
+    changed,
+    !!marker && !!cerebrum && marker.cerebrumMtimeMs === cerebrum.mtimeMs,
+    marker?.nudgedAtChanged,
+  );
+  const baseline = record.baseline;
+  const recordDue = !!cerebrum && record.due;
 
   const oversized =
     !!cerebrum && (cerebrum.lineCount > PRUNE_LINE_LIMIT || cerebrum.tokenCount > PRUNE_TOKEN_LIMIT);
@@ -305,14 +318,20 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
     ((marker?.pruneNudgedLines !== undefined && cerebrum.lineCount < marker.pruneNudgedLines) ||
       (marker?.pruneNudgedTokens !== undefined && cerebrum.tokenCount < marker.pruneNudgedTokens));
   const pruneDue = oversized && !shrank;
+  const floor = !cerebrum
+    ? { lines: marker?.pruneNudgedLines, tokens: marker?.pruneNudgedTokens }
+    : oversized
+      ? { lines: cerebrum.lineCount, tokens: cerebrum.tokenCount }
+      : { lines: undefined, tokens: undefined };
 
   const journalChanged = journalMtimeMs === null ? 0 : changedSince(journalMtimeMs);
-  const journalBaseline =
-    marker && marker.journalMtimeMs === journalMtimeMs ? (marker.journalNudgedAtChanged ?? 0) : 0;
-  const journalDue =
-    journalMtimeMs !== null &&
-    journalChanged >= NUDGE_STEP &&
-    journalChanged >= journalBaseline + NUDGE_STEP;
+  const journal = debounce(
+    journalChanged,
+    !!marker && marker.journalMtimeMs === journalMtimeMs,
+    marker?.journalNudgedAtChanged,
+  );
+  const journalBaseline = journal.baseline;
+  const journalDue = journalMtimeMs !== null && journal.due;
 
   if (!recordDue && !pruneDue && !journalDue) {
     debugEvent("nudge-skipped", {
@@ -333,23 +352,9 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
       lineCount: cerebrum?.lineCount ?? null,
       tokenCount: cerebrum?.tokenCount ?? null,
     });
-    // Silence is not the end of it: a prune in progress must lower the floor,
-    // or the next stall would never be noticed — nothing else rewrites the
-    // marker until some other part happens to fire.
-    if (cerebrum && marker && oversized && shrank) {
-      writeMarker(crankDir, {
-        ...marker,
-        pruneNudgedLines: cerebrum.lineCount,
-        pruneNudgedTokens: cerebrum.tokenCount,
-      });
-    } else if (
-      cerebrum &&
-      marker &&
-      !oversized &&
-      (marker.pruneNudgedLines !== undefined || marker.pruneNudgedTokens !== undefined)
-    ) {
-      // Back under both limits: the prune is over, so drop the floor.
-      writeMarker(crankDir, { ...marker, pruneNudgedLines: undefined, pruneNudgedTokens: undefined });
+    // A prune in progress lowers the floor, and a file back under both limits clears it.
+    if (marker && (floor.lines !== marker.pruneNudgedLines || floor.tokens !== marker.pruneNudgedTokens)) {
+      writeMarker(crankDir, { ...marker, pruneNudgedLines: floor.lines, pruneNudgedTokens: floor.tokens });
     }
     return null;
   }
@@ -378,11 +383,8 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
     // number) and never equals a real mtime, so nothing is wrongly debounced.
     cerebrumMtimeMs: cerebrum?.mtimeMs ?? 0,
     nudgedAtChanged: recordDue ? changed : baseline,
-    // The size observed now while oversized, whether or not the prune part
-    // fired: that is what lets a partial prune that then stalls re-arm the
-    // nudge. Under both limits there is no floor to keep.
-    pruneNudgedLines: !cerebrum ? marker?.pruneNudgedLines : oversized ? cerebrum.lineCount : undefined,
-    pruneNudgedTokens: !cerebrum ? marker?.pruneNudgedTokens : oversized ? cerebrum.tokenCount : undefined,
+    pruneNudgedLines: floor.lines,
+    pruneNudgedTokens: floor.tokens,
     journalMtimeMs: journalMtimeMs ?? marker?.journalMtimeMs,
     journalNudgedAtChanged: journalDue ? journalChanged : journalBaseline,
     auditSuggestedAtMs: auditDue ? now : marker?.auditSuggestedAtMs,
