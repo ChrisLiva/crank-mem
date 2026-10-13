@@ -249,6 +249,43 @@ describe("memory reaches the model whole (black-box)", () => {
   });
 });
 
+describe("cited files (black-box)", () => {
+  const day = (iso: string): Date => new Date(`${iso}T12:00:00`);
+
+  // A takeoff-poc bullet cited `tools/attribute.py` after commit 0f97e4a
+  // retired it, and 5 of 8 audited citations pointed at drifted code.
+  test("a bullet citing a deleted path or a file changed after its date is tagged", () => {
+    const root = makeCrankProject({
+      "src/geometry.py": "def area(): pass\n",
+      "src/stable.py": "def keep(): pass\n",
+    });
+    fs.utimesSync(path.join(root, "src/geometry.py"), day("2026-03-01"), day("2026-03-01"));
+    fs.utimesSync(path.join(root, "src/stable.py"), day("2026-01-01"), day("2026-01-01"));
+    fs.writeFileSync(
+      path.join(root, ".crank/cerebrum.md"),
+      "# Cerebrum\n\n## Memory\n\n" +
+        "- **Faces**: `tools/attribute.py` splits faces (2026-01-05).\n" +
+        "- **Area**: `geometry.py:834` clamps negative area (2026-01-05).\n" +
+        "- **Keep**: `src/stable.py` is the entry (2026-02-01).\n" +
+        "- **Undated**: `src/geometry.py` owns area.\n" +
+        "- **Noise**: `--force`, `~/notes/x.py`, `src/*.py`, `fs.statSync`, `nothere.py` (2026-01-05).\n"
+    );
+
+    const ctx = inject(root);
+    expect(ctx).toContain(
+      "- **Faces**: `tools/attribute.py` splits faces (2026-01-05). [cited file missing: tools/attribute.py]"
+    );
+    expect(ctx).toContain(
+      "- **Area**: `geometry.py:834` clamps negative area (2026-01-05). " +
+        "[cited file modified after this note; check: geometry.py]"
+    );
+    expect(ctx).toContain("- **Keep**: `src/stable.py` is the entry (2026-02-01).\n");
+    expect(ctx).toContain("- **Undated**: `src/geometry.py` owns area.\n");
+    expect(ctx).toEndWith("`nothere.py` (2026-01-05).");
+    expect((ctx.match(/\[cited file/g) ?? []).length).toBe(2);
+  });
+});
+
 describe("cerebrum index (black-box)", () => {
   // Shaped after OrcaSlicer's Sep 30 injection: 7 preferences (~555 tokens,
   // over PREFS_TOKEN_CAP), 21 memory bullets, a ~415-byte journal and an ADR
@@ -387,6 +424,21 @@ describe("journal (black-box)", () => {
     expect(ctx).toContain("- 2026-09-23 — fixed contrast; NEXT: Chris smoke-checks rails.");
     expect(ctx).not.toContain("run impeccable critique");
     expect(ctx).not.toContain("fix the contrast findings");
+  });
+
+  test("states how many files changed since the last entry, counting Bash-made files", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    const journal = writeJournal(root, ["2026-09-23: fixed contrast; NEXT: smoke-check rails."]);
+    git(root, "init", "-q");
+    gitCommit(root, "init");
+    const hourAgo = new Date(Date.now() - 3_600_000);
+    for (const f of [journal, path.join(root, "a.ts")]) fs.utimesSync(f, hourAgo, hourAgo);
+    expect(inject(root)).toContain("smoke-check rails.\n0 file(s) changed since the last journal entry.");
+
+    // Written outside any hook, as a Bash `cp` or `sed -i` would.
+    fs.writeFileSync(path.join(root, "b.ts"), "x");
+    fs.writeFileSync(path.join(root, "a.ts"), "const a = 2;");
+    expect(inject(root)).toContain("2 file(s) changed since the last journal entry.");
   });
 
   test("no journal file: section omitted, everything else injects", () => {

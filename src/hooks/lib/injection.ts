@@ -132,6 +132,10 @@ export interface InjectionSources {
   adrPath: string;
   /** Codex session: name AGENTS.md alone and no Read tool (ADR 0003). */
   codex?: boolean;
+  /** Project root; when set, the excerpt tags cited files that vanished or changed. */
+  projectRoot?: string;
+  /** Files changed since journal.md's mtime, stated under the journal bullets. */
+  journalChanged?: number;
 }
 
 const SEP = "\n\n";
@@ -168,7 +172,7 @@ const bytes = (s: string): number => Buffer.byteLength(s, "utf-8");
  * next session most needs, and a user-stated preference outranks anything the
  * agent inferred. Nothing is ever cut mid-bullet.
  */
-export function cerebrumExcerpt(md: string, budgetBytes: number): string {
+export function cerebrumExcerpt(md: string, budgetBytes: number, cited?: CitedFiles): string {
   const prefsLines: string[] = [];
   const memoryLines: string[] = [];
   let prefsHeading = "## User Preferences";
@@ -195,6 +199,14 @@ export function cerebrumExcerpt(md: string, budgetBytes: number): string {
   }
   const prefsOverCap = prefsIndex.length > 0;
   const memoryIndex = memory.splice(0, Math.max(0, memory.length - MEMORY_RECENT_COUNT)).map(indexEntry);
+  if (cited) {
+    const byName = new Map<string, string[]>();
+    for (const rel of Object.keys(cited.index.files)) {
+      const name = path.posix.basename(rel);
+      byName.set(name, [...(byName.get(name) ?? []), rel]);
+    }
+    for (const list of [prefs, memory]) list.forEach((b, i) => (list[i] = b + citationTags(b, cited, byName)));
+  }
 
   const render = (): string => {
     if (!prefs.length && !memory.length && !prefsIndex.length && !memoryIndex.length) return "";
@@ -217,6 +229,57 @@ export function cerebrumExcerpt(md: string, budgetBytes: number): string {
     text = render();
   }
   return text;
+}
+
+/** What the excerpt checks a bullet's citations against. */
+export interface CitedFiles {
+  index: AnatomyIndex;
+  root: string;
+}
+
+/** A backticked file citation: a path or basename with an extension, then an optional `:line`. */
+const FILE_CITATION = /^([^\s*=:]+\.[A-Za-z]\w*)(?::\d+(?:-\d+)?)?$/;
+const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
+
+/**
+ * Tags for the files a bullet cites in backticks: ` [cited file missing: …]`
+ * for a path that is neither indexed nor on disk, and ` [cited file modified
+ * after this note; check: …]` for an indexed file whose mtime is past the end
+ * of the bullet's latest date. Empty when nothing is flagged.
+ *
+ * A basename resolves by a unique suffix match against the index, because
+ * agents cite `geometry.py` far more often than its full path. An unresolved
+ * basename is never called missing: the index omits files past max_files and
+ * unindexable ones, and a dotted symbol such as `fs.statSync` reads the same.
+ * Spans starting with `-`, `/` or `~` are flags, routes and home paths, and
+ * `*` or `=` marks a glob or an assignment, so none of them count. An undated
+ * bullet gets no modified tag; a checkout resets mtimes, hence "check".
+ */
+function citationTags(bullet: string, cited: CitedFiles, byName: Map<string, string[]>): string {
+  let noteEndMs: number | null = null;
+  for (const [, y, m, d] of bullet.matchAll(ISO_DATE)) {
+    const end = new Date(Number(y), Number(m) - 1, Number(d) + 1).getTime();
+    if (!Number.isNaN(end) && (noteEndMs === null || end > noteEndMs)) noteEndMs = end;
+  }
+  const missing = new Set<string>();
+  const modified = new Set<string>();
+  for (const [, span] of bullet.matchAll(/`([^`\n]+)`/g)) {
+    const match = /^[-/~]/.test(span!) ? null : FILE_CITATION.exec(span!);
+    if (!match) continue;
+    const rel = match[1]!.replace(/^\.\//, "");
+    const hits = cited.index.files[rel]
+      ? [rel]
+      : (byName.get(path.posix.basename(rel)) ?? []).filter((c) => c.endsWith("/" + rel));
+    if (hits.length === 1) {
+      if (noteEndMs !== null && cited.index.files[hits[0]!]!.mtimeMs > noteEndMs) modified.add(rel);
+    } else if (!hits.length && rel.includes("/") && !fs.existsSync(path.join(cited.root, rel))) {
+      missing.add(rel);
+    }
+  }
+  return (
+    (missing.size ? ` [cited file missing: ${[...missing].join(", ")}]` : "") +
+    (modified.size ? ` [cited file modified after this note; check: ${[...modified].join(", ")}]` : "")
+  );
 }
 
 /**
@@ -266,7 +329,11 @@ export function buildInjection(sources: InjectionSources, budgetBytes: number): 
   // and a fixed count of length-capped bullets (see journal.ts) keeps it from
   // crowding out the cerebrum excerpt behind it.
   if (sources.journalBullets?.length) {
-    fit([`## Journal (recent — .crank/${JOURNAL_FILE})`, ...sources.journalBullets].join("\n"));
+    const changed =
+      sources.journalChanged === undefined
+        ? []
+        : [`${sources.journalChanged} file(s) changed since the last journal entry.`];
+    fit([`## Journal (recent — .crank/${JOURNAL_FILE})`, ...sources.journalBullets, ...changed].join("\n"));
   }
 
   const adrSection = sources.adrFilenames.length
@@ -282,7 +349,11 @@ export function buildInjection(sources: InjectionSources, budgetBytes: number): 
   const adrReserve = used + adrCost <= budgetBytes ? adrCost : 0;
 
   if (sources.cerebrumMd) {
-    const excerpt = cerebrumExcerpt(sources.cerebrumMd, budgetBytes - used - adrReserve - bytes(SEP));
+    const excerpt = cerebrumExcerpt(
+      sources.cerebrumMd,
+      budgetBytes - used - adrReserve - bytes(SEP),
+      sources.projectRoot ? { index: sources.index, root: sources.projectRoot } : undefined,
+    );
     if (excerpt) fit(excerpt);
   }
 

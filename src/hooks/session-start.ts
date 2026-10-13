@@ -9,7 +9,8 @@ import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { buildInjection, listAdrFilenames } from "./lib/injection.ts";
 import { driftNote } from "./lib/drift.ts";
-import { trimJournal, recentJournalBullets } from "./lib/journal.ts";
+import { trimJournal, recentJournalBullets, JOURNAL_FILE } from "./lib/journal.ts";
+import { gitChangedFiles } from "./lib/changes.ts";
 import { estimateProseTokens } from "./lib/tokens.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
 
@@ -66,6 +67,17 @@ async function main(): Promise<void> {
   const source = typeof payload.source === "string" ? payload.source : null;
   if (source !== "compact") trimJournal(crankDir);
   const journalBullets = recentJournalBullets(crankDir);
+  // How stale the handoff is: files changed since the last entry, from git
+  // (which sees Bash writes), else from the index the refresh just wrote.
+  let journalChanged: number | undefined;
+  if (journalBullets.length) {
+    try {
+      const sinceMs = fs.statSync(path.join(crankDir, JOURNAL_FILE)).mtimeMs;
+      journalChanged =
+        gitChangedFiles(root, config, sinceMs)?.length ??
+        Object.values(index.files).filter((e) => e.mtimeMs > sinceMs).length;
+    } catch {}
+  }
 
   const adrFilenames = listAdrFilenames(root, config.adr_path);
   const drift = driftNote(config);
@@ -79,6 +91,8 @@ async function main(): Promise<void> {
       driftNote: drift ?? undefined,
       adrPath: config.adr_path,
       codex: isCodexPayload(payload),
+      projectRoot: root,
+      journalChanged,
     },
     config.injection_budget_bytes
   );
@@ -95,6 +109,7 @@ async function main(): Promise<void> {
     hasCerebrum: cerebrumMd !== null,
     drift: drift !== null,
     journalBullets: journalBullets.length,
+    journalChanged: journalChanged ?? null,
     adrCount: adrFilenames.length,
     stale: stalenessNote !== undefined,
   });
