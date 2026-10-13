@@ -41,7 +41,7 @@ function changeTime(rootDir: string, relPath: string): number | null {
  * commits yet, or when git fails or overruns budgetMs; the caller then falls
  * back to the index. Never throws.
  */
-export function gitChangedFiles(
+function gitChangedFiles(
   rootDir: string,
   config: CrankConfig,
   sinceMs: number,
@@ -82,10 +82,24 @@ export function gitChangedFiles(
   return out;
 }
 
+/**
+ * Change times of the files that may have changed after sinceMs. From git,
+ * every time is past sinceMs; from the index, every entry's mtime is listed
+ * and the caller filters. index() runs only on the fallback. Never throws.
+ */
+export function changeTimesSince(
+  rootDir: string,
+  config: CrankConfig,
+  sinceMs: number,
+  index: () => AnatomyIndex
+): { times: number[]; source: "git" | "index" } {
+  const files = gitChangedFiles(rootDir, config, sinceMs);
+  return files
+    ? { times: files.map((f) => f.changedMs), source: "git" }
+    : { times: Object.values(index().files).map((e) => e.mtimeMs), source: "index" };
+}
+
 /** Files changed after sinceMs, from git, else from the index's mtimes. Never throws. */
 export function countChangedSince(rootDir: string, config: CrankConfig, index: AnatomyIndex, sinceMs: number): number {
-  return (
-    gitChangedFiles(rootDir, config, sinceMs)?.length ??
-    Object.values(index.files).filter((e) => e.mtimeMs > sinceMs).length
-  );
+  return changeTimesSince(rootDir, config, sinceMs, () => index).times.filter((t) => t > sinceMs).length;
 }

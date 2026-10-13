@@ -7,7 +7,7 @@ import { JOURNAL_FILE } from "./journal.ts";
 import { parseBlocks } from "./bullets.ts";
 import { debugEvent } from "./debug.ts";
 import { loadConfig } from "./config.ts";
-import { gitChangedFiles } from "./changes.ts";
+import { changeTimesSince } from "./changes.ts";
 import { instructionFiles } from "./hook-io.ts";
 
 // Shared memory-nudge logic: decide whether to remind the agent to record what
@@ -281,16 +281,13 @@ export function cerebrumNudge(crankDir: string, codex = false): string | null {
   }
 
   // One git run serves both measures: list from the older file, filter per file.
-  const gitChanges = gitChangedFiles(
+  const { times: changeTimes, source } = changeTimesSince(
     path.dirname(crankDir),
     loadConfig(crankDir),
     Math.min(cerebrum?.mtimeMs ?? Infinity, journalMtimeMs ?? Infinity),
+    () => loadIndex(crankDir),
   );
-  const changeTimes = gitChanges
-    ? gitChanges.map((f) => f.changedMs)
-    : Object.values(loadIndex(crankDir).files).map((e) => e.mtimeMs);
   const changedSince = (mtimeMs: number): number => changeTimes.filter((t) => t > mtimeMs).length;
-  const source = gitChanges ? "git" : "index";
 
   const marker = readMarker(crankDir);
 
