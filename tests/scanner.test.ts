@@ -120,6 +120,14 @@ describe("walkProject in a git repo", () => {
     });
   });
 
+  test("an oversized file takes no max_files slot", () => {
+    const root = makeRepo({ "src/a.ts": "x".repeat(100), "src/b.ts": "x", "src/c.ts": "x" });
+    git(root, "add", ".");
+    const config = { ...defaultConfig(), max_files: 2, max_file_size_bytes: 50 };
+    expect(walkProject(root, config).files).toEqual(["src/b.ts", "src/c.ts"]);
+    expect(Object.keys(fullScan(root, config).files)).toEqual(["src/b.ts", "src/c.ts"]);
+  });
+
   test("a tracked symlink is not a file to index", () => {
     const root = makeRepo({ "src/a.ts": "x" });
     const outside = makeProject({ "secret.txt": "outside the project" });

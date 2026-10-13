@@ -207,10 +207,12 @@ function keepPin(entry: FileEntry, prior: FileEntry | undefined): FileEntry {
 }
 
 // lstat, as the tree walk's Dirent does: symlinks, submodules and
-// deleted-but-tracked paths are not files to index.
-function isRegularFile(rootDir: string, rel: string): boolean {
+// deleted-but-tracked paths are not files to index. An oversized file would
+// take a max_files slot that indexFile then leaves empty: 15 of OrcaSlicer's 500.
+function isWalkableFile(rootDir: string, rel: string, config: CrankConfig): boolean {
   try {
-    return fs.lstatSync(path.join(rootDir, rel)).isFile();
+    const stat = fs.lstatSync(path.join(rootDir, rel));
+    return stat.isFile() && stat.size <= config.max_file_size_bytes;
   } catch {
     return false;
   }
@@ -240,7 +242,7 @@ function walkListing(rootDir: string, listed: string[], config: CrankConfig, see
     .map(({ rel }) => rel);
   const files: string[] = [];
   for (const rel of [...first, ...ranked]) {
-    if (!isRegularFile(rootDir, rel)) continue;
+    if (!isWalkableFile(rootDir, rel, config)) continue;
     if (files.length === config.max_files) return { files, truncated: true, candidateCount: candidates.length };
     files.push(rel);
   }
@@ -250,7 +252,7 @@ function walkListing(rootDir: string, listed: string[], config: CrankConfig, see
 function walkTree(rootDir: string, config: CrankConfig, seeds: string[]): Walk {
   // Collects one past the cap, the cheapest proof that the cap cut something.
   const limit = config.max_files + 1;
-  const out = seeds.filter((rel) => isIndexableName(rel, config) && isRegularFile(rootDir, rel)).slice(0, limit);
+  const out = seeds.filter((rel) => isIndexableName(rel, config) && isWalkableFile(rootDir, rel, config)).slice(0, limit);
   const seeded = new Set(out);
   const walk = (dir: string): void => {
     if (out.length >= limit) return;
