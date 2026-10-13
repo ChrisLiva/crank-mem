@@ -42,6 +42,11 @@ function makeProject(extra: Record<string, string> = {}): { root: string; codexH
 }
 
 /** Recursive listing + contents of everything except .git and crank. */
+/** True when git ignores `rel` in `root`. */
+function ignored(root: string, rel: string): boolean {
+  return spawnSync("git", ["check-ignore", "-q", "--", rel], { cwd: root }).status === 0;
+}
+
 function snapshot(root: string): Record<string, string> {
   const out: Record<string, string> = {};
   const walk = (dir: string): void => {
@@ -103,15 +108,103 @@ describe("init → uninstall round-trip", () => {
     expect(fs.existsSync(path.join(root, ".crank/cerebrum.md"))).toBe(true); // kept
   });
 
-  test("commit mode: shared settings.json used, .crank/.gitignore covers backups", () => {
+  test("commit mode: shared settings.json used, .crank/.gitignore admits only crank-mem's files", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
     expect(fs.existsSync(path.join(root, ".claude/settings.json"))).toBe(true);
     expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
-    expect(fs.readFileSync(path.join(root, ".crank/.gitignore"), "utf-8")).toContain("backups/");
+    for (const rel of [".crank/cerebrum.md", ".crank/journal.md", ".crank/config.json", ".crank/hooks/stop.ts"]) {
+      expect(ignored(root, rel)).toBe(false);
+    }
+    for (const rel of [".crank/backups/x/manifest.json", ".crank/debug.log", ".crank/anatomy-index.lock", ".crank/efforts/e1/plan.md"]) {
+      expect(ignored(root, rel)).toBe(true);
+    }
     // exclude file untouched in commit mode
     const excl = path.join(root, ".git/info/exclude");
     if (fs.existsSync(excl)) expect(fs.readFileSync(excl, "utf-8")).not.toContain(".crank/");
+  });
+
+  test("init backs up another tool's .crank/.gitignore and restore brings it back", () => {
+    const { root, codexHome } = makeProject({ ".crank/.gitignore": "*\n", ".crank/efforts/e1/plan.md": "plan\n" });
+    expect(cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip").status).toBe(0);
+    expect(fs.readFileSync(path.join(root, ".crank/.gitignore"), "utf-8")).toStartWith("/*\n");
+    cli(root, codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
+    expect(fs.readFileSync(path.join(root, ".crank/.gitignore"), "utf-8")).toBe("*\n");
+    expect(fs.readFileSync(path.join(root, ".crank/efforts/e1/plan.md"), "utf-8")).toBe("plan\n");
+  });
+
+  test("commit-mode init strips crank-mem's own ignore block that hides cerebrum", () => {
+    const { root, codexHome } = makeProject({ ".gitignore": "dist/\n# crank-mem\n.crank/\n" });
+    const init = cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
+    expect(init.status).toBe(0);
+    expect(init.stdout).toContain("removed the crank-mem .crank/ ignore block from .gitignore");
+    expect(fs.readFileSync(path.join(root, ".gitignore"), "utf-8")).toBe("dist/\n");
+    expect(ignored(root, ".crank/cerebrum.md")).toBe(false);
+  });
+
+  test("commit-mode init warns about a foreign rule that hides cerebrum and leaves it alone", () => {
+    const { root, codexHome } = makeProject({ ".gitignore": ".crank\n" });
+    const init = cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
+    expect(init.status).toBe(0);
+    expect(init.stderr).toContain("git ignores .crank/cerebrum.md via .gitignore:1 (.crank)");
+    expect(fs.readFileSync(path.join(root, ".gitignore"), "utf-8")).toBe(".crank\n");
+  });
+
+  test("commit-mode upgrade strips an ignore block left by an earlier exclude-mode init", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
+    const exclude = path.join(root, ".git/info/exclude");
+    fs.appendFileSync(exclude, "# crank-mem\n.crank/\n");
+    expect(ignored(root, ".crank/cerebrum.md")).toBe(true);
+    const up = cli(root, codexHome, "upgrade");
+    expect(up.status).toBe(0);
+    expect(up.stdout).toContain("removed the crank-mem .crank/ ignore block from .git/info/exclude");
+    expect(fs.readFileSync(exclude, "utf-8")).not.toContain(".crank/");
+    expect(ignored(root, ".crank/cerebrum.md")).toBe(false);
+  });
+
+  test("--delete-crank deletes only crank-mem's files and keeps another tool's", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--codex", "skip");
+    const crank = path.join(root, ".crank");
+    for (const name of ["debug.log", "cerebrum-nudge.json", "anatomy-index.lock", "journal.md.tmp"]) {
+      fs.writeFileSync(path.join(crank, name), "x");
+    }
+    fs.mkdirSync(path.join(crank, "efforts/e1"), { recursive: true });
+    fs.writeFileSync(path.join(crank, "efforts/e1/plan.md"), "plan\n");
+    fs.writeFileSync(path.join(crank, "backups/plugin-note.md"), "note\n");
+
+    const un = cli(root, codexHome, "uninstall", "--yes", "--delete-crank");
+    expect(un.status).toBe(0);
+    expect(un.stdout).toContain("kept what other tools wrote: backups, efforts");
+    expect(fs.readdirSync(crank).sort()).toEqual([".gitignore", "backups", "efforts"]);
+    expect(fs.readdirSync(path.join(crank, "backups"))).toEqual(["plugin-note.md"]);
+    expect(fs.readFileSync(path.join(crank, "efforts/e1/plan.md"), "utf-8")).toBe("plan\n");
+  });
+
+  test("commit-mode init moves crank hooks out of a pre-seeded settings.local.json", () => {
+    const local = JSON.stringify({
+      permissions: { allow: ["Bash(ls:*)"] },
+      hooks: { SessionStart: [{ hooks: [{ type: "command", command: 'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/session-start.ts' }] }] },
+    }, null, 2) + "\n";
+    const { root, codexHome } = makeProject({ ".claude/settings.local.json": local });
+    const before = snapshot(root);
+    const init = cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
+    expect(init.status).toBe(0);
+    expect(init.stdout).toContain("removed duplicate crank hooks from .claude/settings.local.json");
+    const crankStarts = [".claude/settings.json", ".claude/settings.local.json"].flatMap((rel) => {
+      const parsed = JSON.parse(fs.readFileSync(path.join(root, rel), "utf-8"));
+      return (parsed.hooks?.SessionStart ?? []).filter((g: any) => g.hooks.some((h: any) => h.command.includes(".crank/hooks/")));
+    });
+    expect(crankStarts.length).toBe(1);
+    expect(JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8")).permissions)
+      .toEqual({ allow: ["Bash(ls:*)"] });
+    // Restore brings back the backed-up local file; uninstall then strips every crank hook.
+    cli(root, codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
+    expect(snapshot(root)).toEqual({
+      ...before,
+      ".claude/settings.local.json": JSON.stringify({ permissions: { allow: ["Bash(ls:*)"] } }, null, 2) + "\n",
+    });
   });
 
   test("codex-trust write: entries land in CODEX_HOME config and are removed on uninstall", () => {

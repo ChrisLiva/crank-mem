@@ -18,7 +18,7 @@ import { isSensitiveFile } from "./config.ts";
 //     friends; the debug log must not leak by the back door what the index
 //     deliberately excludes.
 
-const LOG_FILE = "debug.log";
+export const LOG_FILE = "debug.log";
 /** Past this, the log is discarded and restarted — a debug trace, not an audit log. */
 const MAX_LOG_BYTES = 1024 * 1024;
 /** Bounds memory if a caller logs in a loop. */

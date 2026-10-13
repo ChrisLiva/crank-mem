@@ -7,10 +7,11 @@ import { cliVersion, REPO_ROOT } from "./version.ts";
 import { vendorHooks, templatePath } from "./vendor.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
-  crankHooks, mergeHooksIntoFile, addIgnoreLines, ensureCodexFeatures,
+  crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles,
+  addIgnoreLines, ensureCodexFeatures, unignoreCerebrum,
 } from "./settings.ts";
 import {
-  trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath,
+  trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
 } from "./codex-trust.ts";
 import { defaultConfig, saveConfig, CRANK_DIR } from "../hooks/lib/config.ts";
 import { fullScan } from "../hooks/lib/scanner.ts";
@@ -88,14 +89,16 @@ export async function run(args: string[]): Promise<number> {
   // ── Backups of every file we might modify ────────────────────────────────
   fs.mkdirSync(crankDir, { recursive: true });
   const backupDir = newBackupDir(crankDir);
-  const claudeSettings = path.join(
-    root, ".claude", gitMode === "commit" ? "settings.json" : "settings.local.json"
-  );
+  const { wired: claudeSettings, other: otherClaudeSettings } = claudeSettingsFiles(root, gitMode);
+  // Crank hooks in both Claude settings files run every event twice.
+  const duplicateWiring = hasCrankHooks(otherClaudeSettings);
   const codexConfigToml = path.join(root, ".codex", "config.toml");
   const gitignore = path.join(root, ".gitignore");
   const gitExclude = path.join(root, ".git", "info", "exclude");
+  const crankGitignore = path.join(crankDir, ".gitignore");
 
   backupFile(backupDir, claudeSettings);
+  if (duplicateWiring) backupFile(backupDir, otherClaudeSettings);
   if (codexMode === "merge") {
     backupFile(backupDir, codexHooksJson);
     backupFile(backupDir, codexConfigToml);
@@ -103,10 +106,14 @@ export async function run(args: string[]): Promise<number> {
   if (gitMode === "ignore") backupFile(backupDir, gitignore);
   if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) backupFile(backupDir, gitExclude);
   if (codexTrust === "write") backupFile(backupDir, userCodexConfigPath());
+  // Another tool sharing .crank/ may have written its own .gitignore first.
+  backupFile(backupDir, crankGitignore);
 
   // Backups are secured — from here on, a partial failure is recoverable via
   // `uninstall --restore`, so surface that instead of auto-rolling back.
   let scanned: ReturnType<typeof commitIndex>;
+  let ignoredBy: string | null = null;
+  const unignored: string[] = [];
   try {
     // ── Vendor hooks + write config ────────────────────────────────────────
     vendorHooks(crankDir);
@@ -123,6 +130,7 @@ export async function run(args: string[]): Promise<number> {
 
     // ── Agent wiring ───────────────────────────────────────────────────────
     mergeHooksIntoFile(claudeSettings, crankHooks(runtime, "claude"));
+    if (duplicateWiring) removeCrankHooksFromFile(otherClaudeSettings);
     if (codexMode === "merge") {
       mergeHooksIntoFile(codexHooksJson, crankHooks(runtime, "codex"));
       ensureCodexFeatures(codexConfigToml);
@@ -138,11 +146,16 @@ export async function run(args: string[]): Promise<number> {
     // ── Git mode ───────────────────────────────────────────────────────────
     if (gitMode === "ignore") addIgnoreLines(gitignore);
     if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) addIgnoreLines(gitExclude);
-    // Even in commit mode, backups and the lockfile never belong in git.
+    // An allowlist: in commit mode only crank-mem's tracked files enter git,
+    // never backups, the lockfile, the debug log, or another tool's files.
     fs.writeFileSync(
-      path.join(crankDir, ".gitignore"),
-      "backups/\nanatomy-index.lock\ncerebrum-nudge.json\ndebug.log\n*.tmp\n"
+      crankGitignore,
+      "/*\n!/.gitignore\n!/config.json\n!/cerebrum.md\n!/journal.md\n!/anatomy.md\n!/anatomy-index.json\n!/hooks/\n"
     );
+    if (gitMode === "commit") ignoredBy = unignoreCerebrum(root, (f) => {
+      backupFile(backupDir, f);
+      unignored.push(f);
+    });
 
     // ── Seed cerebrum + journal + first scan ───────────────────────────────
     fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, "cerebrum.md"));
@@ -164,17 +177,19 @@ export async function run(args: string[]): Promise<number> {
   console.log(`crank-mem ${cliVersion()} initialized (runtime: ${runtime}, git: ${gitMode})`);
   console.log(`  indexed ${scanned?.meta.fileCount ?? "?"} files → .crank/anatomy.md`);
   console.log(`  Claude Code: hooks wired into ${path.relative(root, claudeSettings)}`);
+  if (duplicateWiring) console.log(`  removed duplicate crank hooks from ${path.relative(root, otherClaudeSettings)}`);
   if (codexMode === "merge") {
     console.log(`  Codex: hooks wired into .codex/hooks.json`);
     if (codexTrust === "write") {
       console.log(`  Codex trust: trusted_hash entries written to ${userCodexConfigPath()}`);
     } else {
-      console.log(`  Codex trust: open codex once in this project and accept the hooks review`);
-      console.log(`  (or headless: codex --dangerously-bypass-hook-trust)`);
+      for (const line of CODEX_REVIEW_HINT) console.log(line);
     }
   } else {
     console.log(`  Codex: skipped`);
   }
+  for (const f of unignored) console.log(`  removed the crank-mem .crank/ ignore block from ${path.relative(root, f)}`);
+  if (ignoredBy) console.error(`crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`);
   console.log(`Next: start a Claude Code session here — project memory injects at session start.`);
   console.log(`Optional: install the audit skill — npx skills add ChrisLiva/crank-mem`);
   return 0;

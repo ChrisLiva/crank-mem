@@ -2,10 +2,14 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile,
   addIgnoreLines, removeIgnoreLines, ensureCodexFeatures, removeCodexFeatures,
 } from "../src/cli/settings.ts";
+import { vendorHooks } from "../src/cli/vendor.ts";
+import { makeCrankProject } from "./helpers.ts";
+import { claudeSessionStart } from "./fixtures/payloads.ts";
 
 function tmpFile(name = "settings.json"): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crank-set-")), name);
@@ -61,8 +65,89 @@ describe("mergeHooksIntoFile", () => {
     const hooks = crankHooks("node", "codex");
     expect(hooks.PostToolUse![0]!.matcher).toBe("apply_patch");
     expect(hooks.SessionStart![0]!.hooks[0]!.command).toBe(
-      "node --disable-warning=ExperimentalWarning .crank/hooks/session-start.ts"
+      "[ ! -f .crank/hooks/session-start.ts ] || node --disable-warning=ExperimentalWarning .crank/hooks/session-start.ts"
     );
+  });
+
+  test("re-merge replaces bare and guarded crank commands without duplicating", () => {
+    const bare = "bun .crank/hooks/session-start.ts";
+    const guarded = "[ ! -f .crank/hooks/session-start.ts ] || bun .crank/hooks/session-start.ts";
+    for (const old of [bare, guarded]) {
+      const f = tmpFile("hooks.json");
+      fs.writeFileSync(f, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: old }] }] } }));
+      mergeHooksIntoFile(f, crankHooks("bun", "codex"));
+      const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
+      expect(parsed.hooks.SessionStart.length).toBe(1);
+      expect(parsed.hooks.SessionStart[0].hooks[0].command).toBe(guarded);
+    }
+  });
+
+  test("refreshes crank's own forms in place and keeps a user-edited command", () => {
+    const f = tmpFile();
+    const userStop = 'test -f "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts && bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts';
+    const bareStart = 'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/session-start.ts';
+    fs.writeFileSync(f, JSON.stringify({
+      hooks: {
+        SessionStart: [
+          { hooks: [{ type: "command", command: bareStart }] },
+          { hooks: [{ type: "command", command: "echo mine" }] },
+          { hooks: [{ type: "command", command: bareStart }] },
+        ],
+        Stop: [{ hooks: [{ type: "command", command: userStop }] }],
+      },
+    }));
+    const want = crankHooks("bun", "claude");
+    expect(mergeHooksIntoFile(f, want)).toBe(true);
+    const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
+    // First copy replaced where it stood, the second copy dropped.
+    expect(parsed.hooks.SessionStart).toEqual([want.SessionStart![0], { hooks: [{ type: "command", command: "echo mine" }] }]);
+    expect(parsed.hooks.Stop).toEqual([{ hooks: [{ type: "command", command: userStop }] }]);
+    // The event with no group for its script is appended.
+    expect(parsed.hooks.PostToolUse).toEqual(want.PostToolUse);
+  });
+
+  test("an already-wired file is not rewritten", () => {
+    const f = tmpFile();
+    mergeHooksIntoFile(f, crankHooks("bun", "claude"));
+    let called = false;
+    expect(mergeHooksIntoFile(f, crankHooks("bun", "claude"), () => { called = true; })).toBe(false);
+    expect(called).toBe(false);
+  });
+});
+
+/** Run a wired command the way the agents do: through sh, in the project. */
+function runWired(command: string, root: string, stdin = "{}") {
+  const res = spawnSync("sh", ["-c", command], {
+    cwd: root,
+    input: stdin,
+    encoding: "utf-8",
+    timeout: 15_000,
+    env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+  });
+  return { status: res.status ?? -1, stdout: res.stdout };
+}
+
+describe("wired commands", () => {
+  test("exit 0 with empty stdout when .crank/hooks is missing", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-clean-checkout-"));
+    for (const runtime of ["bun", "node"] as const) {
+      for (const agent of ["claude", "codex"] as const) {
+        for (const groups of Object.values(crankHooks(runtime, agent))) {
+          const run = runWired(groups[0]!.hooks[0]!.command, root);
+          expect(run.status).toBe(0);
+          expect(run.stdout).toBe("");
+        }
+      }
+    }
+  });
+
+  test("still run the vendored hook when it is present", () => {
+    const root = makeCrankProject({ "app.ts": "export const app = 1;\n" });
+    vendorHooks(path.join(root, ".crank"));
+    const command = crankHooks("bun", "claude").SessionStart![0]!.hooks[0]!.command;
+    const run = runWired(command, root, JSON.stringify(claudeSessionStart(root)));
+    expect(run.status).toBe(0);
+    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("cerebrum");
   });
 });
 

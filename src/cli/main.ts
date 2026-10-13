@@ -8,7 +8,7 @@ Commands:
   init       Wire hooks into this project and run the first scan
   scan       Full index rebuild
   stats      Index report
-  upgrade    Re-vendor hooks after a git pull in the clone
+  upgrade    Re-vendor hooks and repair their wiring after a git pull
   uninstall  Remove all wiring, offer backup restore
 `;
 

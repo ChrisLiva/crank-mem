@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { REPO_ROOT } from "./helpers.ts";
+import { crankHooks } from "../src/cli/settings.ts";
 
 const MAIN = path.join(REPO_ROOT, "src/cli/main.ts");
 
@@ -87,6 +88,46 @@ describe("upgrade", () => {
     const backups = fs.readdirSync(path.join(crankDir, "backups")).sort();
     const latest = backups[backups.length - 1]!;
     expect(fs.readFileSync(path.join(crankDir, "backups", latest, "hooks/session-start.ts"), "utf-8")).toContain("stale vendored copy");
+  });
+
+  // OrcaSlicer: bare commands in settings.local.json from an earlier init,
+  // plus wiring in the file the git mode uses, ran every hook twice.
+  test("re-wires an install at the current version and drops duplicate wiring", () => {
+    const root = initedProject(); // exclude mode: wired into settings.local.json
+    const local = path.join(root, ".claude/settings.local.json");
+    const shared = path.join(root, ".claude/settings.json");
+    const bare = (agent: "claude" | "codex") => {
+      const hooks = crankHooks("bun", agent);
+      for (const groups of Object.values(hooks)) for (const g of groups) for (const h of g.hooks) h.command = h.command.split(" || ")[1]!;
+      return { hooks };
+    };
+    fs.writeFileSync(local, JSON.stringify(bare("claude")));
+    fs.writeFileSync(shared, JSON.stringify(bare("claude")));
+    fs.mkdirSync(path.join(root, ".codex"));
+    fs.writeFileSync(path.join(root, ".codex/hooks.json"), JSON.stringify(bare("codex")));
+
+    const run = cli(root, "upgrade");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("removed duplicate crank hooks from .claude/settings.json");
+    expect(run.stdout).toContain("accept the hooks review");
+    expect(run.stdout).toContain("nothing else to do");
+    expect(JSON.parse(fs.readFileSync(local, "utf-8")).hooks).toEqual(crankHooks("bun", "claude"));
+    expect(JSON.parse(fs.readFileSync(shared, "utf-8"))).toEqual({});
+    expect(JSON.parse(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf-8")).hooks).toEqual(crankHooks("bun", "codex"));
+
+    // Converged: a second run changes nothing and leaves no new backup.
+    const backups = fs.readdirSync(path.join(root, ".crank/backups")).length;
+    expect(cli(root, "upgrade").stdout).not.toContain("re-wired");
+    expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(backups);
+  });
+
+  test("leaves a hooks.json without crank entries alone", () => {
+    const root = initedProject();
+    fs.mkdirSync(path.join(root, ".codex"));
+    const own = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "echo mine" }] }] } });
+    fs.writeFileSync(path.join(root, ".codex/hooks.json"), own);
+    expect(cli(root, "upgrade").status).toBe(0);
+    expect(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf-8")).toBe(own);
   });
 
   // The version stamp gates re-vendoring, not the journal: a deleted journal

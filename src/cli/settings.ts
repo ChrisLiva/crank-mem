@@ -1,8 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 
 // Additive wiring of hook entries into agent settings files, and its exact
-// inverse. Merge appends only; removal deletes exactly the entries whose
+// inverse. Merge adds missing entries and refreshes only command forms
+// crank-mem itself emitted; removal deletes exactly the entries whose
 // command references .crank/hooks/. Files are written as 2-space JSON.
 
 export const CRANK_HOOK_MARKER = ".crank/hooks/";
@@ -30,15 +32,38 @@ interface HookGroup {
 
 export type HooksMap = Record<string, HookGroup[]>;
 
-export function hookCommand(runtime: "bun" | "node", script: string, agent: "claude" | "codex"): string {
+type Runtime = "bun" | "node";
+type Agent = "claude" | "codex";
+
+function commandParts(runtime: Runtime, script: string, agent: Agent): { runner: string; p: string } {
   const runner = runtime === "bun" ? "bun" : "node --disable-warning=ExperimentalWarning";
   // Claude expands $CLAUDE_PROJECT_DIR; Codex runs hooks with the project cwd.
   const p = agent === "claude" ? `"$CLAUDE_PROJECT_DIR"/.crank/hooks/${script}` : `.crank/hooks/${script}`;
-  return `${runner} ${p}`;
+  return { runner, p };
+}
+
+export function hookCommand(runtime: Runtime, script: string, agent: Agent): string {
+  const { runner, p } = commandParts(runtime, script, agent);
+  // A committed settings file outlives .crank/ in clean checkouts and
+  // worktrees; without the script the hook exits 0 instead of failing.
+  return `[ ! -f ${p} ] || ${runner} ${p}`;
+}
+
+/** Every command form crank-mem has emitted for a script: the unguarded form
+ * older releases wrote and the current guarded one, for both runtimes and both agents. */
+function commandForms(script: string): Set<string> {
+  const forms = new Set<string>();
+  for (const runtime of ["bun", "node"] as const) {
+    for (const agent of ["claude", "codex"] as const) {
+      const { runner, p } = commandParts(runtime, script, agent);
+      forms.add(`${runner} ${p}`).add(hookCommand(runtime, script, agent));
+    }
+  }
+  return forms;
 }
 
 /** The hook entries crank-mem wires, per agent. */
-export function crankHooks(runtime: "bun" | "node", agent: "claude" | "codex"): HooksMap {
+export function crankHooks(runtime: Runtime, agent: Agent): HooksMap {
   const matcher = agent === "claude" ? "Write|Edit|MultiEdit" : "apply_patch";
   const map: HooksMap = {
     SessionStart: [
@@ -68,23 +93,69 @@ function writeJson(file: string, value: unknown): void {
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
 }
 
+/** The script a command runs from .crank/hooks/, or undefined. */
+function hookScript(command: string | undefined): string | undefined {
+  if (!isCrankHookCommand(command)) return undefined;
+  return command!.slice(command!.indexOf(CRANK_HOOK_MARKER) + CRANK_HOOK_MARKER.length).split(/[\s"']/)[0];
+}
+
 /**
- * Append crank hook groups into a settings-shaped file ({hooks: {Event: []}}
- * — Claude settings.json and Codex hooks.json share this shape). Existing
- * content is preserved; crank groups already present are not duplicated.
+ * Wire crank hook groups into a settings-shaped file ({hooks: {Event: []}}
+ * — Claude settings.json and Codex hooks.json share this shape), additively.
+ * A group in a form crank-mem emitted is replaced in place by the current
+ * one, and further copies are dropped. A command the user edited that runs
+ * the same script counts as wired and stays as written. Events with no group
+ * for their script are appended. Everything else is preserved. Writes only
+ * when something changed, calling `beforeWrite` first; returns whether it
+ * wrote.
  */
-export function mergeHooksIntoFile(file: string, add: HooksMap): void {
+export function mergeHooksIntoFile(file: string, add: HooksMap, beforeWrite?: () => void): boolean {
   const root: Record<string, unknown> = fs.existsSync(file) ? readJson(file) : {};
+  const before = JSON.stringify(root);
   const hooks = (root.hooks ?? {}) as Record<string, unknown>;
   for (const [event, groups] of Object.entries(add)) {
-    const existing = Array.isArray(hooks[event]) ? (hooks[event] as HookGroup[]) : [];
-    const withoutCrank = existing.filter(
-      (g) => !(g.hooks ?? []).some((h) => h.command?.includes(CRANK_HOOK_MARKER))
-    );
-    hooks[event] = [...withoutCrank, ...groups];
+    let list = Array.isArray(hooks[event]) ? (hooks[event] as HookGroup[]) : [];
+    for (const want of groups) {
+      const script = hookScript(want.hooks[0]?.command);
+      const forms = commandForms(script ?? "");
+      const runs = (g: HookGroup) => (g.hooks ?? []).some((h) => hookScript(h.command) === script);
+      const ours = (g: HookGroup) => (g.hooks ?? []).every((h) => forms.has(h.command ?? ""));
+      const userWired = list.some((g) => runs(g) && !ours(g));
+      let placed = userWired;
+      list = list.flatMap((g) => {
+        if (!runs(g) || !ours(g)) return [g];
+        if (placed) return [];
+        placed = true;
+        return [want];
+      });
+      if (!placed) list.push(want);
+    }
+    hooks[event] = list;
   }
   root.hooks = hooks;
+  if (JSON.stringify(root) === before) return false;
+  beforeWrite?.();
   writeJson(file, root);
+  return true;
+}
+
+/** True when a settings-shaped file holds any crank hook group. */
+export function hasCrankHooks(file: string): boolean {
+  try {
+    const hooks = readJson(file).hooks as Record<string, HookGroup[]> | undefined;
+    return Object.values(hooks ?? {}).some(
+      (groups) => Array.isArray(groups) && groups.some((g) => (g.hooks ?? []).some((h) => isCrankHookCommand(h.command)))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** The Claude settings file a git mode wires, and the other one, which must hold no crank hooks. */
+export function claudeSettingsFiles(root: string, git: "commit" | "ignore" | "exclude"): { wired: string; other: string } {
+  const shared = path.join(root, ".claude", "settings.json");
+  const local = path.join(root, ".claude", "settings.local.json");
+  return git === "commit" ? { wired: shared, other: local } : { wired: local, other: shared };
 }
 
 /**
@@ -149,6 +220,30 @@ export function removeIgnoreLines(file: string, block: string = IGNORE_BLOCK): v
   const content = fs.readFileSync(file, "utf-8");
   if (!content.includes(block)) return;
   fs.writeFileSync(file, content.replace(block, ""));
+}
+
+/**
+ * Commit mode needs .crank/cerebrum.md in git. Strip crank-mem's own ignore
+ * block from each file that makes git ignore it (left by an earlier ignore or
+ * exclude-mode init), calling `beforeStrip` first. Returns the foreign rule
+ * that still ignores it as `source:line (pattern)`, or null.
+ */
+export function unignoreCerebrum(root: string, beforeStrip: (file: string) => void): string | null {
+  const git = (...args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf-8" });
+  const top = git("rev-parse", "--show-toplevel").stdout?.trim();
+  if (!top) return null;
+  for (;;) {
+    const [, source, line, pattern] =
+      git("check-ignore", "-v", "--", ".crank/cerebrum.md").stdout?.match(/^(.*):(\d+):(.*)\t/) ?? [];
+    // No match, or a re-including `!` match, which -v also reports with exit 0.
+    if (!source || !pattern || pattern.startsWith("!")) return null;
+    // check-ignore names sources relative to the repo top, not the cwd.
+    const file = path.resolve(top, source);
+    const content = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
+    if (pattern !== IGNORE_LINE || !content.includes(IGNORE_BLOCK)) return `${source}:${line} (${pattern})`;
+    beforeStrip(file);
+    removeIgnoreLines(file);
+  }
 }
 
 export const CODEX_FEATURES_SNIPPET = "\n# crank-mem\n[features]\nhooks = true\n";

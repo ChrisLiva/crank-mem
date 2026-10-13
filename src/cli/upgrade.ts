@@ -5,11 +5,15 @@ import { vendorHooks, templatePath } from "./vendor.ts";
 import { openProject } from "./project.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
-  trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath,
+  trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
 } from "./codex-trust.ts";
+import {
+  crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, unignoreCerebrum,
+} from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
 
-// Non-interactive: re-vendor hooks after a `git pull` in the clone. Never
+// Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
+// the hook wiring and, in commit mode, a stale crank-mem ignore block. Never
 // touches config.json values (beyond the version stamp), cerebrum, or the
 // index. Recomputes Codex trusted hashes iff the user opted in at init.
 
@@ -46,26 +50,56 @@ export async function run(_args: string[]): Promise<number> {
     saveConfig(crankDir, config);
   }
 
-  if (config.vendored_version === current) {
-    console.log(`crank-mem: already at ${current} — nothing else to do.`);
-    return 0;
+  // Created on first use, so an upgrade that changes nothing leaves no backup.
+  let backupDir: string | null = null;
+  const backup = (file: string) => backupFile((backupDir ??= newBackupDir(crankDir)), file);
+
+  // Ahead of the version check too: a wiring change (a new event, a new
+  // command form) must reach installs already at the current version, and
+  // crank hooks left in the Claude settings file the git mode does not use
+  // run every event twice. A corrupt settings file costs the re-wire, not the
+  // upgrade.
+  const codexHooksJson = path.join(root, ".codex", "hooks.json");
+  let codexRewired = false;
+  try {
+    const { wired, other } = claudeSettingsFiles(root, config.git);
+    if (hasCrankHooks(other)) {
+      backup(other);
+      removeCrankHooksFromFile(other);
+      console.log(`  removed duplicate crank hooks from ${path.relative(root, other)}`);
+    }
+    if (mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), () => backup(wired))) {
+      console.log(`  re-wired Claude Code hooks in ${path.relative(root, wired)}`);
+    }
+    // Codex wiring was opt-in at init: leave a hooks.json without crank entries alone.
+    if (hasCrankHooks(codexHooksJson)) {
+      codexRewired = mergeHooksIntoFile(codexHooksJson, crankHooks(config.runtime, "codex"), () => backup(codexHooksJson));
+      if (codexRewired) {
+        console.log(`  re-wired Codex hooks in .codex/hooks.json`);
+        if (!config.codex_trust_written) for (const line of CODEX_REVIEW_HINT) console.log(line);
+      }
+    }
+  } catch (err) {
+    console.error(`crank-mem: could not re-wire hooks (${err instanceof Error ? err.message : String(err)})`);
   }
 
-  // Backup the vendored hooks (as files under a timestamped backup dir).
-  const backupDir = newBackupDir(crankDir);
-  const hooksDir = path.join(crankDir, "hooks");
-  if (fs.existsSync(hooksDir)) {
-    fs.cpSync(hooksDir, path.join(backupDir, "hooks"), { recursive: true });
+  // An install switched to commit mode can still carry the ignore block its
+  // earlier ignore or exclude-mode init wrote, which keeps cerebrum out of git.
+  if (config.git === "commit") {
+    try {
+      const ignoredBy = unignoreCerebrum(root, (f) => {
+        backup(f);
+        console.log(`  removed the crank-mem .crank/ ignore block from ${path.relative(root, f)}`);
+      });
+      if (ignoredBy) console.error(`crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`);
+    } catch (err) {
+      console.error(`crank-mem: could not check .crank/cerebrum.md against git ignores (${err instanceof Error ? err.message : String(err)})`);
+    }
   }
 
-  vendorHooks(crankDir);
-  const prev = config.vendored_version;
-  config.vendored_version = current;
-  saveConfig(crankDir, config);
-
-  if (config.codex_trust_written) {
-    const codexHooksJson = path.join(root, ".codex", "hooks.json");
-    backupFile(backupDir, userCodexConfigPath());
+  const versionChanged = config.vendored_version !== current;
+  if (config.codex_trust_written && (versionChanged || codexRewired)) {
+    backup(userCodexConfigPath());
     writeTrustEntries(
       userCodexConfigPath(),
       trustEntriesFromFile(codexHooksJson),
@@ -73,6 +107,22 @@ export async function run(_args: string[]): Promise<number> {
     );
     console.log(`  recomputed Codex trusted_hash entries`);
   }
+
+  if (!versionChanged) {
+    console.log(`crank-mem: already at ${current} — nothing else to do.`);
+    return 0;
+  }
+
+  // Backup the vendored hooks (as files under a timestamped backup dir).
+  const hooksDir = path.join(crankDir, "hooks");
+  if (fs.existsSync(hooksDir)) {
+    fs.cpSync(hooksDir, path.join((backupDir ??= newBackupDir(crankDir)), "hooks"), { recursive: true });
+  }
+
+  vendorHooks(crankDir);
+  const prev = config.vendored_version;
+  config.vendored_version = current;
+  saveConfig(crankDir, config);
 
   console.log(`crank-mem: upgraded vendored hooks ${prev} → ${current}`);
   return 0;

@@ -14,7 +14,8 @@ cd <your project> && crank-mem init
 ```
 
 Upgrade = `git pull` in the clone, then `crank-mem upgrade` in each project
-(re-vendors the hooks copied into `.crank/hooks/`).
+(re-vendors the hooks copied into `.crank/hooks/`, adds missing hook wiring,
+and removes crank hooks from the Claude settings file the git mode does not use).
 
 Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 
@@ -23,7 +24,7 @@ Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 - `crank-mem init` — wire hooks into `.claude`/`.codex`, seed `.crank/`, first scan
 - `crank-mem scan` — full index rebuild
 - `crank-mem stats` — index report
-- `crank-mem upgrade` — re-vendor hooks after a `git pull`
+- `crank-mem upgrade` — re-vendor hooks and repair their wiring after a `git pull`
 - `crank-mem uninstall` — remove all wiring, offer backup restore
 
 ## Layout under `.crank/`

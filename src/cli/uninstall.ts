@@ -9,7 +9,12 @@ import {
 import {
   trustEntriesFromFile, staleTrustKeysFromFile, removeTrustEntries, userCodexConfigPath,
 } from "./codex-trust.ts";
-import { CRANK_DIR } from "../hooks/lib/config.ts";
+import { CRANK_DIR, CONFIG_FILE } from "../hooks/lib/config.ts";
+import { INDEX_FILE, ANATOMY_FILE } from "../hooks/lib/store.ts";
+import { LOCK_FILE } from "../hooks/lib/lock.ts";
+import { MARKER_FILE } from "../hooks/lib/cerebrum-nudge.ts";
+import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
+import { LOG_FILE } from "../hooks/lib/debug.ts";
 import { openProject } from "./project.ts";
 import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
 
@@ -101,8 +106,9 @@ export async function run(args: string[]): Promise<number> {
       (await choose("Delete the .crank/ data directory?", ["delete", "keep"], "keep")) === "delete");
 
   if (deleteCrank) {
-    fs.rmSync(crankDir, { recursive: true, force: true });
-    console.log("  deleted .crank/");
+    const left = deleteOwnedFiles(crankDir);
+    if (left.length === 0) console.log("  deleted .crank/");
+    else console.log(`  deleted crank-mem's files from .crank/, kept what other tools wrote: ${left.join(", ")}`);
   } else {
     console.log("  kept .crank/ (delete it manually when ready)");
   }
@@ -155,6 +161,37 @@ function sweepLegacy(root: string): void {
   if (legacyPresent(root)) {
     fs.rmSync(path.join(root, "crank"), { recursive: true, force: true });
     console.log("  deleted legacy crank/");
+  }
+}
+
+/**
+ * Delete only what crank-mem writes into .crank/, since another tool may share
+ * the directory, and return the entries left behind. .gitignore goes only with
+ * the directory, because it keeps a remaining tool's files out of git.
+ */
+function deleteOwnedFiles(crankDir: string): string[] {
+  const owned = [CONFIG_FILE, INDEX_FILE, ANATOMY_FILE, LOCK_FILE, MARKER_FILE, JOURNAL_FILE, LOG_FILE, "cerebrum.md", "hooks"];
+  for (const name of owned) fs.rmSync(path.join(crankDir, name), { recursive: true, force: true });
+  for (const name of readdirOrEmpty(crankDir)) {
+    if (name.endsWith(".tmp")) fs.rmSync(path.join(crankDir, name), { force: true });
+  }
+  // A backup dir is crank-mem's only when it holds the manifest newBackupDir writes.
+  const backups = path.join(crankDir, "backups");
+  for (const name of readdirOrEmpty(backups)) {
+    const dir = path.join(backups, name);
+    if (fs.existsSync(path.join(dir, "manifest.json"))) fs.rmSync(dir, { recursive: true, force: true });
+  }
+  removeEmptyDirs(crankDir, ["backups"]);
+  const left = readdirOrEmpty(crankDir).filter((name) => name !== ".gitignore");
+  if (left.length === 0) fs.rmSync(crankDir, { recursive: true, force: true });
+  return left;
+}
+
+function readdirOrEmpty(dir: string): string[] {
+  try {
+    return fs.readdirSync(dir);
+  } catch {
+    return [];
   }
 }
 
