@@ -8,20 +8,25 @@ import { parseBlocks, parseBullets } from "./bullets.ts";
 // off". Entries expire by recency, trimmed mechanically here, so the agent
 // never has to curate the file. The trim bounds the entry count, not the byte
 // size — an entry is kept verbatim, sub-bullets and all — and what reaches the
-// model is bounded separately by JOURNAL_INJECT_MAX_BYTES.
+// model is bounded separately by the JOURNAL_*_MAX_BYTES caps below.
 
 /** Entries kept on disk. Older ones are dropped at the next session start. */
 export const JOURNAL_KEEP = 20;
 /** Entries injected at session start — enough to orient, small enough to be free. */
 export const JOURNAL_INJECT_COUNT = 3;
 /**
- * Per-entry cap on the injected headline, in bytes — the unit the injection
+ * Per-entry caps on the injected headline, in bytes — the unit the injection
  * budget is spent in, so a CJK journal costs the same as an ASCII one. The
  * section is added ahead of the cerebrum excerpt, so without a cap three
  * sprawling entries (a pasted stack trace, a paragraph-long "next step") could
  * eat the budget and push User Preferences and the ADR list out entirely.
+ * The newest entry carries the handoff and gets the larger cap; the two before
+ * it carry only what they did. Together: 360 + 2 × 160 = 680 bytes.
  */
-export const JOURNAL_INJECT_MAX_BYTES = 240;
+export const JOURNAL_NEWEST_MAX_BYTES = 360;
+export const JOURNAL_OLDER_MAX_BYTES = 160;
+/** A cut moves back to a word boundary only when one lies this close. */
+const SNAP_MAX_BYTES = 24;
 
 /**
  * The handoff marker. Matched literal-uppercase: the protocol asks for `NEXT:`
@@ -45,7 +50,9 @@ const byteLength = (s: string): number => Buffer.byteLength(s, "utf-8");
 /**
  * Longest prefix fitting maxBytes, plus a trailing `…` when anything was cut.
  * Walks code points, not UTF-16 units: slicing mid-surrogate would emit a lone
- * half. The ellipsis costs 3 bytes, so leave room for it.
+ * half. The ellipsis costs 3 bytes, so leave room for it. The cut backs up to
+ * the last space when one lies within SNAP_MAX_BYTES, so a word is not split;
+ * text without a nearby space keeps the code-point cut.
  */
 function capHead(text: string, maxBytes: number): string {
   if (byteLength(text) <= maxBytes) return text;
@@ -58,53 +65,51 @@ function capHead(text: string, maxBytes: number): string {
     kept += ch;
     used += cost;
   }
+  const space = kept.lastIndexOf(" ");
+  if (space > 0 && byteLength(kept.slice(space)) <= SNAP_MAX_BYTES) kept = kept.slice(0, space);
   return kept.trimEnd() + "…";
-}
-
-/** Longest suffix fitting maxBytes, with a leading `…` when anything was cut. */
-function capTail(text: string, maxBytes: number): string {
-  if (byteLength(text) <= maxBytes) return text;
-  const room = maxBytes - 3;
-  const chars = Array.from(text);
-  let kept = "";
-  let used = 0;
-  for (let i = chars.length - 1; i >= 0; i--) {
-    const cost = byteLength(chars[i]!);
-    if (used + cost > room) break;
-    kept = chars[i]! + kept;
-    used += cost;
-  }
-  return "…" + kept.trimStart();
 }
 
 /** Entry lead-in: `- `, an optional ISO date, and whatever separates it from the body. */
 const ENTRY_PREFIX = /^- (?:(\d{4}-\d{2}-\d{2})[\s:—–-]*)?/;
 
 /**
- * The injected form of one entry: its date, then the part that carries the
- * handoff.
+ * The injected form of one entry: its date, then what it did, and for the
+ * newest entry its `NEXT:` handoff too.
  *
  * An entry is squashed to a single line first — a bullet wraps across physical
  * lines, and `NEXT:` routinely straddles the wrap, so matching per-line finds
  * nothing and injecting per-line breaks the bullet.
  *
- * What survives is the `NEXT:` clause when there is one (it runs to the end of
- * the entry — the protocol puts the handoff last) and otherwise the entry's
- * tail, which is where an entry without the marker still says where it stopped.
- * `…` marks the side material was lost on: trailing for a capped clause,
- * leading for a tail. Nothing else in the injection cuts mid-stream, so the
- * ellipsis is unambiguous.
+ * The done-clause is everything before `NEXT:` (the protocol puts the handoff
+ * last), or the whole body when the marker is absent. A handoff alone misled
+ * an agent into saying work recorded in the same entry had never been done,
+ * so the done-clause always rides along. Only the newest entry's `NEXT:` is
+ * injected: an older entry's handoff is usually what a later entry already
+ * did. Within the newest entry's cap, the handoff takes all but the
+ * done-clause's share (its size, counted up to JOURNAL_OLDER_MAX_BYTES), and
+ * the done-clause takes whatever the handoff leaves. A trailing `…` marks a
+ * cut; nothing else in the injection cuts mid-stream, so the ellipsis is
+ * unambiguous.
  */
-function headline(entry: string): string {
+function headline(entry: string, newest: boolean): string {
   const flat = entry.replace(/\s+/g, " ").trim();
   const match = ENTRY_PREFIX.exec(flat);
   const date = match?.[1];
   const body = flat.slice(match?.[0].length ?? 0);
   const next = body.indexOf(NEXT_MARKER);
-  const injected =
-    next >= 0
-      ? capHead(body.slice(next), JOURNAL_INJECT_MAX_BYTES)
-      : capTail(body, JOURNAL_INJECT_MAX_BYTES);
+  const done = (next >= 0 ? body.slice(0, next) : body).replace(/[\s;,]+$/, "");
+  const handoff = newest && next >= 0 ? body.slice(next) : "";
+  let injected: string;
+  if (!handoff) {
+    injected = capHead(done || body, newest ? JOURNAL_NEWEST_MAX_BYTES : JOURNAL_OLDER_MAX_BYTES);
+  } else if (!done) {
+    injected = capHead(handoff, JOURNAL_NEWEST_MAX_BYTES);
+  } else {
+    const room = JOURNAL_NEWEST_MAX_BYTES - byteLength("; ");
+    const nextPart = capHead(handoff, room - Math.min(byteLength(done), JOURNAL_OLDER_MAX_BYTES));
+    injected = `${capHead(done, room - byteLength(nextPart))}; ${nextPart}`;
+  }
   return `- ${date ? `${date} — ` : ""}${injected}`;
 }
 
@@ -115,7 +120,8 @@ function headline(entry: string): string {
 export function recentJournalBullets(crankDir: string): string[] {
   const text = readJournal(crankDir);
   if (text === null) return [];
-  return parseBullets(text.split("\n")).slice(-JOURNAL_INJECT_COUNT).map(headline);
+  const entries = parseBullets(text.split("\n")).slice(-JOURNAL_INJECT_COUNT);
+  return entries.map((entry, i) => headline(entry, i === entries.length - 1));
 }
 
 /**

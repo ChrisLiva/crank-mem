@@ -1,9 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { loadIndex } from "./store.ts";
 import { estimateProseTokens } from "./tokens.ts";
 import { JOURNAL_FILE } from "./journal.ts";
+import { parseBlocks } from "./bullets.ts";
 import { debugEvent } from "./debug.ts";
+import { loadConfig } from "./config.ts";
+import { gitChangedFiles } from "./changes.ts";
 
 // Shared memory-nudge logic: decide whether to remind the agent to record what
 // it learned (cerebrum), prune an overgrown cerebrum, or log where it left off
@@ -31,12 +35,22 @@ export const PRUNE_TOKEN_LIMIT = 3000;
 export const PRUNE_TARGET_LINES = 105;
 export const PRUNE_TARGET_TOKENS = 2100;
 
+// Before a prune nudge, cerebrum.md is copied here so a prune that cuts a
+// load-bearing entry can be undone. No manifest.json, so `uninstall --restore`
+// never mistakes this dir for an init/upgrade backup (lib/backups.ts).
+const BACKUP_DIR = path.join("backups", "cerebrum");
+export const BACKUP_KEEP = 5;
+// Bullets the prune nudge names by line, longest first.
+const LONGEST_NAMED = 3;
+// A hex run with at least one digit: a commit sha, the mark of a one-off fix.
+const COMMIT_SHA = /\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/;
+
 export const MARKER_FILE = "cerebrum-nudge.json";
 
 interface NudgeMarker {
   cerebrumMtimeMs: number;
   nudgedAtChanged: number;
-  /** Cerebrum size when this marker was written — the prune nudge is silent only while it falls. */
+  /** Oversized cerebrum size when this marker was written — the prune nudge is silent only while it falls. Absent under both limits. */
   pruneNudgedLines?: number;
   pruneNudgedTokens?: number;
   /** Journal debounce, same shape as the record nudge but keyed on journal.md. */
@@ -67,6 +81,7 @@ function writeMarker(crankDir: string, marker: NudgeMarker): void {
 }
 
 interface CerebrumStats {
+  text: string;
   mtimeMs: number;
   lineCount: number;
   tokenCount: number;
@@ -77,10 +92,56 @@ function readCerebrum(crankDir: string): CerebrumStats | null {
     const file = path.join(crankDir, "cerebrum.md");
     const mtimeMs = fs.statSync(file).mtimeMs;
     const text = fs.readFileSync(file, "utf-8");
-    return { mtimeMs, lineCount: text.split("\n").length, tokenCount: estimateProseTokens(text) };
+    return { text, mtimeMs, lineCount: text.split("\n").length, tokenCount: estimateProseTokens(text) };
   } catch {
     return null;
   }
+}
+
+/**
+ * Copy cerebrum.md to backups/cerebrum/<timestamp>.md unless the newest copy
+ * already matches, keeping the last BACKUP_KEEP. Returns the project-relative
+ * path of the copy that matches the file now, or null when the copy failed.
+ */
+function backupCerebrum(crankDir: string, text: string): string | null {
+  try {
+    const dir = path.join(crankDir, BACKUP_DIR);
+    fs.mkdirSync(dir, { recursive: true });
+    // ISO stamps sort chronologically, so the last name is the newest copy.
+    const copies = fs.readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+    let name = copies[copies.length - 1];
+    if (!name || fs.readFileSync(path.join(dir, name), "utf-8") !== text) {
+      name = new Date().toISOString().replace(/[:.]/g, "-") + ".md";
+      fs.writeFileSync(path.join(dir, name), text);
+      copies.push(name);
+    }
+    for (const old of copies.slice(0, -BACKUP_KEEP)) fs.rmSync(path.join(dir, old), { force: true });
+    return path.join(".crank", BACKUP_DIR, name);
+  } catch (err) {
+    debugEvent("cerebrum-backup-failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/** Whole bullets with the 1-based line each starts on, in file order. */
+function bulletsWithLines(text: string): Array<{ line: number; body: string }> {
+  const bullets: Array<{ line: number; body: string }> = [];
+  let line = 1;
+  for (const block of parseBlocks(text.split("\n"))) {
+    if (block.kind === "bullet") bullets.push({ line, body: block.lines.join("\n").trimEnd() });
+    line += block.lines.length;
+  }
+  return bullets;
+}
+
+/** The LONGEST_NAMED longest whole bullets, as "line N (C chars)", longest first. */
+function longestBullets(text: string): string[] {
+  return bulletsWithLines(text)
+    .sort((a, b) => b.body.length - a.body.length)
+    .slice(0, LONGEST_NAMED)
+    .map((b) => `line ${b.line} (${b.body.length} chars${COMMIT_SHA.test(b.body) ? ", cites a commit" : ""})`);
 }
 
 function mtimeOf(file: string): number | null {
@@ -100,11 +161,15 @@ function mtimeOf(file: string): number | null {
  * measure, so a session that keeps cerebrum current but never journals is
  * nudged about the journal alone.
  *
+ * Changed files come from git (lib/changes.ts), which sees the writes made
+ * through Bash and past the index cap. Outside a git work-tree root, or when
+ * git fails or runs out of time, the count falls back to index entries.
+ *
  * Record nudge: fires once per cerebrum version, then again only after
  * NUDGE_STEP more source files change. Updating cerebrum bumps its mtime —
  * resetting both the changed count (its mtime jumps ahead of the files) and the
  * debounce baseline — so a fresh recording quiets the nudge. cerebrum.md lives
- * under .crank/ and is never indexed, so editing it can't inflate the count.
+ * under .crank/ and is never indexable, so editing it can't inflate the count.
  *
  * Journal nudge: the same rule keyed on journal.md's mtime — appending an entry
  * quiets it. The mechanical trim in journal.ts restores the mtime it found, so
@@ -124,8 +189,15 @@ function mtimeOf(file: string): number | null {
  * so a later stall at 155 re-arms the nudge. Keeping the 160 would silence it
  * forever — the message promises to repeat until the file is under the limit.
  *
- * Writes the marker as a side effect when it nudges, and — the one silent write
- * — when it observes a prune in progress. Never throws.
+ * Once the file is back under both limits the floor is cleared, so a later
+ * regrowth past a limit nudges at once. A stale floor would count any edit that
+ * happens to lower one measure (e.g. 157 lines but fewer tokens than at the old
+ * nudge) as a prune in progress.
+ *
+ * Writes the marker as a side effect when it nudges, and silently in two cases:
+ * when it observes a prune in progress, and when it clears the floor. A prune
+ * nudge also copies cerebrum.md to .crank/backups/cerebrum/ first. Never
+ * throws.
  */
 export function cerebrumNudge(crankDir: string): string | null {
   const cerebrum = readCerebrum(crankDir);
@@ -135,9 +207,17 @@ export function cerebrumNudge(crankDir: string): string | null {
     return null; // neither memory file exists — nothing to nudge about
   }
 
-  const index = loadIndex(crankDir);
-  const changedSince = (mtimeMs: number): number =>
-    Object.values(index.files).filter((e) => e.mtimeMs > mtimeMs).length;
+  // One git run serves both measures: list from the older file, filter per file.
+  const gitChanges = gitChangedFiles(
+    path.dirname(crankDir),
+    loadConfig(crankDir),
+    Math.min(cerebrum?.mtimeMs ?? Infinity, journalMtimeMs ?? Infinity),
+  );
+  const changeTimes = gitChanges
+    ? gitChanges.map((f) => f.changedMs)
+    : Object.values(loadIndex(crankDir).files).map((e) => e.mtimeMs);
+  const changedSince = (mtimeMs: number): number => changeTimes.filter((t) => t > mtimeMs).length;
+  const source = gitChanges ? "git" : "index";
 
   const marker = readMarker(crankDir);
 
@@ -174,6 +254,7 @@ export function cerebrumNudge(crankDir: string): string | null {
           ? "journal:absent"
           : `journal:${journalChanged < NUDGE_STEP ? "below-threshold" : "debounced"}`,
       ].join(" "),
+      source,
       changed,
       baseline,
       journalChanged,
@@ -191,11 +272,20 @@ export function cerebrumNudge(crankDir: string): string | null {
         pruneNudgedLines: cerebrum.lineCount,
         pruneNudgedTokens: cerebrum.tokenCount,
       });
+    } else if (
+      cerebrum &&
+      marker &&
+      !oversized &&
+      (marker.pruneNudgedLines !== undefined || marker.pruneNudgedTokens !== undefined)
+    ) {
+      // Back under both limits: the prune is over, so drop the floor.
+      writeMarker(crankDir, { ...marker, pruneNudgedLines: undefined, pruneNudgedTokens: undefined });
     }
     return null;
   }
 
   debugEvent("nudge-emitted", {
+    source,
     changed,
     baseline,
     journalChanged,
@@ -211,10 +301,11 @@ export function cerebrumNudge(crankDir: string): string | null {
     // number) and never equals a real mtime, so nothing is wrongly debounced.
     cerebrumMtimeMs: cerebrum?.mtimeMs ?? 0,
     nudgedAtChanged: recordDue ? changed : baseline,
-    // Always the size observed now, whether or not the prune part fired: that
-    // is what lets a partial prune that then stalls re-arm the nudge.
-    pruneNudgedLines: cerebrum?.lineCount ?? marker?.pruneNudgedLines,
-    pruneNudgedTokens: cerebrum?.tokenCount ?? marker?.pruneNudgedTokens,
+    // The size observed now while oversized, whether or not the prune part
+    // fired: that is what lets a partial prune that then stalls re-arm the
+    // nudge. Under both limits there is no floor to keep.
+    pruneNudgedLines: !cerebrum ? marker?.pruneNudgedLines : oversized ? cerebrum.lineCount : undefined,
+    pruneNudgedTokens: !cerebrum ? marker?.pruneNudgedTokens : oversized ? cerebrum.tokenCount : undefined,
     journalMtimeMs: journalMtimeMs ?? marker?.journalMtimeMs,
     journalNudgedAtChanged: journalDue ? journalChanged : journalBaseline,
   });
@@ -225,15 +316,16 @@ export function cerebrumNudge(crankDir: string): string | null {
       `crank-mem: ${changed} file(s) have changed since .crank/cerebrum.md was last updated. ` +
         `If this session surfaced a user preference, a project convention, a dependency quirk, or a ` +
         `gotcha worth keeping, add a one-line bullet to the matching cerebrum section before moving ` +
-        `on — a slightly redundant entry beats a lost one.`,
+        `on. Check for an existing bullet first and update it rather than add a near-copy; when ` +
+        `replacing, write (supersedes YYYY-MM-DD: old claim).`,
     );
   }
   if (journalDue) {
     parts.push(
       `crank-mem: ${journalChanged} file(s) changed since the last .crank/journal.md entry. ` +
         `Append one dated bullet — \`- YYYY-MM-DD: what you did; where you left off; NEXT: next step\` ` +
-        `— telegram-style. The \`NEXT:\` clause is what the next session is shown, so put the handoff ` +
-        `there, last: that is how it picks up mid-thread instead of re-deriving where it was.`,
+        `— telegram-style. The next session is shown what you did and the \`NEXT:\` clause, so put ` +
+        `the handoff there, last: that is how it picks up mid-thread instead of re-deriving where it was.`,
     );
   }
   if (pruneDue && cerebrum) {
@@ -253,15 +345,150 @@ export function cerebrumNudge(crankDir: string): string | null {
         `~${cerebrum.tokenCount} tokens (limit: ${PRUNE_TOKEN_LIMIT}) — get under ~${PRUNE_TARGET_TOKENS}`,
       );
     }
+    // Pruning by deletion lost a gotcha that a later session re-learned the
+    // hard way, so the nudge backs the file up and asks to archive, not delete.
+    const backup = backupCerebrum(crankDir, cerebrum.text);
+    const longest = longestBullets(cerebrum.text);
     parts.push(
       `crank-mem: .crank/cerebrum.md is at ${over.join(", and ")}. ` +
-        `Prune it now, by deleting whole entries rather than tightening wording: delete anything ` +
-        `that describes code or decisions that have since changed, restates what the codebase or ` +
-        `CLAUDE.md already makes obvious, or records a one-time fix that is finished. When unsure ` +
-        `whether an entry still earns its place, delete it — a fresh session can re-learn a cheap ` +
-        `fact, but every session pays to read a stale one. A small trim is not enough; this ` +
-        `reminder repeats until the file is back under the limit.`,
+        (backup ? `A copy of the current file is at ${backup}. ` : "") +
+        (longest.length ? `Longest bullets: ${longest.join(", ")}. ` : "") +
+        `Prune it now: shorten long bullets to one line of at most ~200 characters; move ` +
+        `superseded or one-off entries (finished fixes, entries that cite a commit) to ` +
+        `.crank/cerebrum-archive.md, which is not injected but stays greppable; delete only what ` +
+        `CLAUDE.md or the code already states; keep gotchas and do-not-repeat entries. A small ` +
+        `trim is not enough; this reminder repeats until the file is back under the limit.`,
     );
   }
   return parts.join("\n");
+}
+
+// Overlap check state: cerebrum's mtime and a hash per bullet at the last look.
+// A file of its own, so it never disturbs the nudge marker's debounce.
+const DEDUP_FILE = "cerebrum-dedup.json";
+// A new bullet sharing this many identifiers with an older one is flagged.
+// Word overlap misses real duplicates (0.31 Jaccard on an OrcaSlicer pair that
+// re-describes the same build failure); shared identifiers catch them.
+const OVERLAP_MIN_SHARED = 2;
+const OVERLAP_MAX_PAIRS = 2;
+const SHARED_NAMED = 3;
+
+const BACKTICKED = /`([^`\n]+)`/g;
+// A file name with a letter extension, with any directory prefix: stop.ts, OpenGL.framework.
+const PATH = /(?<![\w./~-])(?:[\w.~-]*\/)*[\w.-]*\w\.[A-Za-z]\w+/g;
+// -Werror=unguarded-availability-new, --force. Not "re-run": the dash must open the word.
+const FLAG = /(?<![\w-])--?[A-Za-z][\w=.-]*\w/g;
+const CAMEL_OR_SNAKE = /\b(?:\w*[a-z][A-Z]\w*|\w*[A-Za-z0-9]_[A-Za-z0-9]\w*)\b/g;
+const MIN_WORD = 6;
+
+interface DedupState {
+  cerebrumMtimeMs: number;
+  bulletHashes: string[];
+}
+
+function readDedupState(crankDir: string): DedupState | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(crankDir, DEDUP_FILE), "utf-8"));
+    if (typeof raw?.cerebrumMtimeMs === "number" && Array.isArray(raw?.bulletHashes)) return raw as DedupState;
+  } catch {}
+  return null;
+}
+
+function hashBullet(body: string): string {
+  return createHash("sha1").update(body.trim()).digest("hex").slice(0, 16);
+}
+
+/** Backticked spans, paths, flags, and CamelCase or snake_case words, each counted once. */
+function identifiers(body: string): Set<string> {
+  const ids = new Set<string>();
+  // Each kind is cut out before the next, so a path's snake_case stem does not
+  // count a second time.
+  const take = (text: string, re: RegExp, keep: (m: string) => boolean): string =>
+    text.replace(re, (m: string, inner?: string) => {
+      const id = typeof inner === "string" ? inner.trim() : m;
+      if (keep(id)) ids.add(id);
+      return " ";
+    });
+  let rest = take(body, BACKTICKED, (id) => id.length > 0);
+  rest = take(rest, PATH, () => true);
+  rest = take(rest, FLAG, () => true);
+  take(rest, CAMEL_OR_SNAKE, (id) => id.length >= MIN_WORD);
+  return ids;
+}
+
+/**
+ * One line per new cerebrum bullet that shares OVERLAP_MIN_SHARED or more
+ * identifiers with an older bullet, at most OVERLAP_MAX_PAIRS, or null.
+ *
+ * Runs only when cerebrum's mtime moved since the last look, so an unchanged
+ * file is never reparsed. The first run records the bullet hashes and stays
+ * silent. "New" means a bullet whose hash was not there last time; older
+ * bullets are those still present, so an edited bullet is never paired with
+ * the version it replaced. The audit's run of this rule found 5 pairs in 63
+ * bullets, 2 of them true duplicates, so the message keeps "keep both" a no-op
+ * answer. Never throws.
+ */
+export function cerebrumOverlaps(crankDir: string): string | null {
+  try {
+    const file = path.join(crankDir, "cerebrum.md");
+    const mtimeMs = mtimeOf(file);
+    if (mtimeMs === null) return null;
+    const state = readDedupState(crankDir);
+    if (state && state.cerebrumMtimeMs === mtimeMs) return null;
+
+    const bullets = bulletsWithLines(fs.readFileSync(file, "utf-8")).map((b) => ({
+      ...b,
+      hash: hashBullet(b.body),
+    }));
+    try {
+      const next: DedupState = { cerebrumMtimeMs: mtimeMs, bulletHashes: bullets.map((b) => b.hash) };
+      fs.writeFileSync(path.join(crankDir, DEDUP_FILE), JSON.stringify(next));
+    } catch (err) {
+      // Every later Stop reparses and may repeat a flag. Silent by contract.
+      debugEvent("dedup-state-write-failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    if (!state) return null;
+
+    // Counted, not a set: a second copy of an existing bullet is new.
+    const remaining = new Map<string, number>();
+    for (const h of state.bulletHashes) remaining.set(h, (remaining.get(h) ?? 0) + 1);
+    const older: Array<{ line: number; ids: Set<string> }> = [];
+    const added: Array<{ line: number; ids: Set<string> }> = [];
+    for (const b of bullets) {
+      const left = remaining.get(b.hash) ?? 0;
+      if (left > 0) remaining.set(b.hash, left - 1);
+      (left > 0 ? older : added).push({ line: b.line, ids: identifiers(b.body) });
+    }
+
+    const pairs: Array<{ line: number; olderLine: number; shared: string[] }> = [];
+    for (const n of added) {
+      let best: { olderLine: number; shared: string[] } | null = null;
+      for (const o of older) {
+        const shared = [...n.ids].filter((id) => o.ids.has(id));
+        if (shared.length >= OVERLAP_MIN_SHARED && shared.length > (best?.shared.length ?? 0)) {
+          best = { olderLine: o.line, shared };
+        }
+      }
+      if (best) pairs.push({ line: n.line, ...best });
+    }
+    debugEvent("overlap-checked", { added: added.length, pairs: pairs.length });
+    if (pairs.length === 0) return null;
+
+    const lines = pairs
+      .sort((a, b) => b.shared.length - a.shared.length)
+      .slice(0, OVERLAP_MAX_PAIRS)
+      .map(
+        (p) =>
+          `crank-mem: new .crank/cerebrum.md bullet at line ${p.line} overlaps line ${p.olderLine} ` +
+          `(shared: ${p.shared.slice(0, SHARED_NAMED).map((id) => `\`${id}\``).join(", ")}): ` +
+          `merge them, supersede the old one by deleting it and ending the new one with ` +
+          `(supersedes YYYY-MM-DD: old claim), or keep both if they say different things, which needs no edit.`,
+      );
+    return lines.join("\n");
+  } catch (err) {
+    debugEvent("overlap-check-failed", { error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
 }

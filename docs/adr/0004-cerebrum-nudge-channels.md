@@ -45,9 +45,11 @@ Claude at turn end via the **Stop** hook; Codex after a write via **post-write**
 `additionalContext` (gated on `tool_name === "apply_patch"` so Claude isn't
 double-nudged). Shared logic in `lib/cerebrum-nudge.ts` debounces via a marker
 (`.crank/cerebrum-nudge.json`, `{cerebrumMtimeMs, nudgedAtChanged}`): one nudge
-per cerebrum version, then again only after `NUDGE_STEP` more indexed files
-change since cerebrum's mtime. Updating cerebrum resets both signals. The
-advisory-only invariant is preserved — no `decision:"block"` anywhere.
+per cerebrum version, then again only after `NUDGE_STEP` more indexable files
+change since cerebrum's mtime. The count comes from `git status` and `git log`
+filtered by mtime (`lib/changes.ts`), and from the index outside a git root.
+Updating cerebrum resets both signals. The advisory-only invariant is
+preserved — no `decision:"block"` anywhere.
 
 ## Re-verification 2026-07-19
 

@@ -169,7 +169,7 @@ describe("memory reaches the model whole (black-box)", () => {
         "  z-index of 10 — it becomes a backdrop root, killing the overlay blur."
     );
     // The handoff wraps across physical lines and had never once been delivered.
-    expect(ctx).toContain("- 2026-07-30 — NEXT: probe both live installs after the bump.");
+    expect(ctx).toContain("- 2026-07-30 — swept the board, tree clean; NEXT: probe both live installs after the bump.");
     expect(ctx).toContain("Always use tabs");
   });
 
@@ -184,6 +184,71 @@ describe("memory reaches the model whole (black-box)", () => {
     const ctx = inject(root);
     expect(ctx).toContain("The API rate-limits at 100 rps");
     expect(ctx).toContain("Never force-push main");
+  });
+
+  test("the excerpt names the heading the file really has", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    fs.writeFileSync(
+      path.join(root, ".crank/cerebrum.md"),
+      "# Cerebrum\n\n## User Preferences\n\n- Always use tabs\n\n## Key Learnings\n\n- The API rate-limits at 100 rps\n"
+    );
+    const ctx = inject(root);
+    expect(ctx).toContain("### Memory (in file: ## Key Learnings, append at its end)\n- The API rate-limits at 100 rps");
+    expect(ctx).toContain("### User Preferences (in file: ## User Preferences, append at its end)");
+    expect(ctx).toContain("append new bullets at the end of the section, newest last");
+  });
+
+  // 5 of 8 file:line citations in audited cerebrums had drifted, and few
+  // bullets carried a date to judge them by.
+  test("the protocol asks for a date and path citations, and says memory is not proof", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
+    expect(run.status).toBe(0);
+    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    expect(ctx).toContain("End each cerebrum bullet with its date, `(YYYY-MM-DD)`");
+    expect(ctx).toContain("cite code by\n  backticked repo path and symbol name, not by line number");
+    expect(ctx).toContain(
+      "Memory is not proof of current behavior; verify a consequential claim\n  against the cited file before relying on it."
+    );
+  });
+});
+
+describe("cerebrum index (black-box)", () => {
+  // Shaped after OrcaSlicer's Sep 30 injection: 7 preferences (~555 tokens,
+  // over PREFS_TOKEN_CAP), 21 memory bullets, a ~415-byte journal and an ADR
+  // list. It used 7,963 of 8,192 bytes and named none of the bullets it hid.
+  test("an OrcaSlicer-sized cerebrum stays under budget and names what it hides", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
+    const bullet = (subject: string, i: number, clauses: number): string =>
+      `- **${subject} ${i}**: ${clause.repeat(clauses).trim()} (2026-09-${10 + i}).`;
+    fs.writeFileSync(
+      path.join(root, ".crank/cerebrum.md"),
+      "# Cerebrum\n\n## User Preferences\n" +
+        Array.from({ length: 7 }, (_, i) => bullet("Pref", i, 4)).join("\n") +
+        "\n\n## Memory\n" +
+        Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i, 5)).join("\n") +
+        "\n"
+    );
+    fs.writeFileSync(
+      path.join(root, ".crank/journal.md"),
+      "# Journal\n\n" +
+        Array.from({ length: 3 }, (_, i) => `- 2026-09-2${i + 7}: ${"tuned the scaffold planner ".repeat(4)}; NEXT: rerun bench`).join("\n") +
+        "\n"
+    );
+    fs.mkdirSync(path.join(root, "docs/adr"), { recursive: true });
+    for (const f of ["0001-scaffold-points.md", "0002-pad-solid.md", "0003-tilt-cap.md"]) {
+      fs.writeFileSync(path.join(root, "docs/adr", f), "# x");
+    }
+
+    const ctx = inject(root);
+    expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(8192);
+    expect(ctx).toContain("## ADRs");
+    expect(ctx).toContain("- **Gotcha 20**:"); // the newest memory bullet, whole
+    expect(ctx).toMatch(/^### Not shown \(\d+ of 28; grep \.crank\/cerebrum\.md\)$/m);
+    expect(ctx).toMatch(/^prefs: \d of 7 shown, consolidate$/m);
+    expect(ctx).toContain("- **Pref 0**: `Support.cpp` caps pillar reach at…");
+    expect(ctx).toMatch(/^- \*\*Gotcha 13\*\*: .*…$/m); // the newest hidden one
   });
 });
 
@@ -270,6 +335,24 @@ describe("journal (black-box)", () => {
     expect(ctx.indexOf("day 4: four")).toBeLessThan(ctx.indexOf("## Cerebrum"));
   });
 
+  // brew-pg 2026-09-23: with only the handoff injected, the agent told the
+  // user that the critique recorded in the same entry had never been run.
+  test("each entry's done-clause reaches the model; only the newest NEXT: does", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    writeJournal(root, [
+      "2026-09-21: wired the rails; NEXT: run impeccable critique.",
+      "2026-09-22: impeccable critique (30/40); NEXT: fix the contrast findings.",
+      "2026-09-23: fixed contrast; NEXT: Chris smoke-checks rails.",
+    ]);
+
+    const ctx = inject(root);
+    expect(ctx).toContain("- 2026-09-21 — wired the rails\n");
+    expect(ctx).toContain("- 2026-09-22 — impeccable critique (30/40)\n");
+    expect(ctx).toContain("- 2026-09-23 — fixed contrast; NEXT: Chris smoke-checks rails.");
+    expect(ctx).not.toContain("run impeccable critique");
+    expect(ctx).not.toContain("fix the contrast findings");
+  });
+
   test("no journal file: section omitted, everything else injects", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     const ctx = inject(root);
@@ -317,10 +400,10 @@ describe("journal (black-box)", () => {
     expect(ctx).toContain("## Journal");
     expect(ctx).toContain("Always use tabs");
     expect(ctx).toContain("0001-use-tabs.md");
-    // The long entry survives as a capped headline, not verbatim.
-    expect(ctx).toContain("NEXT: yyy");
-    expect(ctx).toContain("…");
-    expect(ctx.split("\n").every((l) => l.length < 300)).toBe(true);
+    // The long entry survives as a capped headline, not verbatim: what it did
+    // and its handoff, each cut short. "- " plus the 360-byte newest-entry cap.
+    expect(ctx).toContain("…; NEXT: yyy");
+    expect(ctx.split("\n").every((l) => Buffer.byteLength(l, "utf-8") <= 362)).toBe(true);
   });
 
   // The cap is spent in the same unit as the injection budget, so a non-ASCII
@@ -333,10 +416,11 @@ describe("journal (black-box)", () => {
       .split("\n")
       .filter((l) => l.startsWith("- 2026-07-"));
     expect(bullets.length).toBe(2);
-    for (const b of bullets) {
-      expect(Buffer.byteLength(b, "utf-8")).toBeLessThanOrEqual(257); // "- <date> — " (17B) + cap
-      expect(b).not.toContain("�"); // no lone surrogate half
-    }
+    // "- <date> — " (17B) plus the older (160B) and newest (360B) entry caps.
+    expect(Buffer.byteLength(bullets[0]!, "utf-8")).toBeLessThanOrEqual(177);
+    expect(Buffer.byteLength(bullets[1]!, "utf-8")).toBeLessThanOrEqual(377);
+    for (const b of bullets) expect(b).not.toContain("�"); // no lone surrogate half
+    expect(bullets[1]).toContain("x; NEXT: 🚀"); // what the entry did rides along
     expect(bullets[1]).toContain("🚀…"); // the capped NEXT: clause ends mid-stream
   });
 

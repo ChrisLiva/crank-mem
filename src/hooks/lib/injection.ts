@@ -26,7 +26,10 @@ export const CEREBRUM_INJECT_TOKEN_CAP = 1500;
 /** Sub-cap on User Preferences, so prefs can't crowd memory out of the excerpt. */
 export const PREFS_TOKEN_CAP = 400;
 export const ADR_RECENT_COUNT = 20;
-export const MEMORY_RECENT_COUNT = 10;
+/** Recent memory bullets shown whole; 7 rather than 10 leaves room for the index. */
+export const MEMORY_RECENT_COUNT = 7;
+/** Width of one index entry: a bullet's opening words, enough to grep for. */
+export const INDEX_ENTRY_CHARS = 48;
 
 /**
  * Cerebrum sections read as semantic memory, lowercased. `## Memory` is the
@@ -36,7 +39,7 @@ export const MEMORY_RECENT_COUNT = 10;
 const MEMORY_HEADINGS = new Set(["memory", "key learnings", "do-not-repeat"]);
 const PREFS_HEADING = "user preferences";
 
-const CEREBRUM_HEADER = "## Cerebrum (.crank/cerebrum.md — full file has more)";
+const CEREBRUM_HEADER = "## Cerebrum (.crank/cerebrum.md)";
 
 const instructions = (fileCount: number): string => `## crank-mem (project memory)
 
@@ -49,23 +52,32 @@ agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in
   give line ranges, so slice-read just what you need (Read with offset/limit,
   or \`sed -n 'START,ENDp' file\`).
 - Cerebrum protocol: keep \`.crank/cerebrum.md\` current as you work. The bar is
-  low — a one-line bullet is enough, and a slightly redundant entry beats a
-  lost one. Record it the moment you learn it, not at the end:
+  low — a one-line bullet is enough. Check for an existing bullet first and
+  update it rather than add a near-copy; when replacing, write (supersedes
+  YYYY-MM-DD: old claim). Record it the moment you learn it, not at the end of
+  the task, and append new bullets at the end of the section, newest last:
   - the user corrects you or states a preference → \`## User Preferences\`;
   - anything else worth keeping → \`## Memory\`: a non-obvious project
     convention, a framework/dependency quirk, surprising API behavior, or a
     gotcha that would trip up a fresh session.
   Do NOT record: anything CLAUDE.md, the README, or the code already states; a
   narration of what you just did (that is the journal); a one-time fix that is
-  finished; a restatement of an existing bullet. Respect existing entries;
-  consolidate or prune a section when it grows bloated or stale.
+  finished. Respect existing entries; consolidate or prune a section when it
+  grows bloated or stale.
 - Journal protocol: \`.crank/${JOURNAL_FILE}\` is the episodic counterpart — where you
   left off, not what is true. Append one dated bullet
   (\`- YYYY-MM-DD: what you did; where you left off; NEXT: next step\`) at the end
   of a chunk of work; newest last, oldest entries trimmed automatically. The
-  \`NEXT:\` clause is what the next session is shown — put the handoff there, last.
+  next session is shown what the last three entries did, plus the newest one's
+  \`NEXT:\` clause — put the handoff there, last.
 - Write cerebrum entries and journal bullets telegram-style: drop articles and
-  hedges; keep paths, identifiers, and error strings verbatim.
+  hedges; keep paths, identifiers, and error strings verbatim. Keep each
+  cerebrum bullet to about 200 characters at most, and start it with a short
+  **subject**: bullets the excerpt leaves out are listed by their first words.
+  End each cerebrum bullet with its date, \`(YYYY-MM-DD)\`, and cite code by
+  backticked repo path and symbol name, not by line number, which drifts.
+- Memory is not proof of current behavior; verify a consequential claim
+  against the cited file before relying on it.
 - ADR protocol: decisions that are hard to reverse, surprising, AND carry a
   real trade-off get an ADR (\`NNNN-slug.md\`, Pocock style) in the ADR
   directory. Existing ADRs are settled — don't relitigate them.`;
@@ -99,44 +111,86 @@ const bytes = (s: string): number => Buffer.byteLength(s, "utf-8");
  *
  * Bullets arrive whole — wrapped prose, sub-bullets and all (see lib/bullets.ts)
  * — because the first physical line of an agent-written bullet is usually a
- * fragment, and half a learning is worse than none. Headings never appear.
+ * fragment, and half a learning is worse than none. The file's own headings
+ * never appear inside a bucket. Each bucket's label instead names the file's
+ * literal heading, the last one of its kind, because agents anchor edits on
+ * the label and a label naming a heading the file lacks made those edits miss.
+ * Appending under that last heading keeps the newest bullet last, where the
+ * recency slice below looks for it.
  *
- * Over either the token cap or `budgetBytes`, the OLDEST memory bullet goes
- * first, then the oldest preference: what an agent just recorded is what the
- * next session most needs, and the header already says the full file has more.
- * Nothing is ever cut mid-bullet.
+ * Every bullet left out, older memory or preferences over PREFS_TOKEN_CAP, is
+ * listed after the excerpt by its first INDEX_ENTRY_CHARS characters, so an
+ * agent can grep for it. Without the index, a warning that rotated out of the
+ * recency slice was gone from every later session while still in the file.
+ *
+ * Over either the token cap or `budgetBytes`, the oldest memory index entry
+ * goes first, then the oldest recent memory bullet, then the preference index
+ * entries, then the oldest preference: what an agent just recorded is what the
+ * next session most needs, and a user-stated preference outranks anything the
+ * agent inferred. Nothing is ever cut mid-bullet.
  */
 export function cerebrumExcerpt(md: string, budgetBytes: number): string {
   const prefsLines: string[] = [];
   const memoryLines: string[] = [];
+  let prefsHeading = "## User Preferences";
+  let memoryHeading = "## Memory";
   let bucket: string[] | null = null;
   for (const line of md.split("\n")) {
     if (line.startsWith("## ")) {
       const heading = line.slice(3).trim().toLowerCase();
       bucket =
         heading === PREFS_HEADING ? prefsLines : MEMORY_HEADINGS.has(heading) ? memoryLines : null;
+      if (bucket === prefsLines) prefsHeading = line.trimEnd();
+      if (bucket === memoryLines) memoryHeading = line.trimEnd();
     }
     bucket?.push(line);
   }
 
   const prefs = parseBullets(prefsLines);
-  const memory = parseBullets(memoryLines).slice(-MEMORY_RECENT_COUNT);
-  while (prefs.length && estimateProseTokens(prefs.join("\n")) > PREFS_TOKEN_CAP) prefs.shift();
+  const memory = parseBullets(memoryLines);
+  const total = prefs.length + memory.length;
+  const prefsTotal = prefs.length;
+  const prefsIndex: string[] = [];
+  while (prefs.length && estimateProseTokens(prefs.join("\n")) > PREFS_TOKEN_CAP) {
+    prefsIndex.push(indexEntry(prefs.shift()!));
+  }
+  const prefsOverCap = prefsIndex.length > 0;
+  const memoryIndex = memory.splice(0, Math.max(0, memory.length - MEMORY_RECENT_COUNT)).map(indexEntry);
 
   const render = (): string => {
-    const parts: string[] = [];
-    if (prefs.length) parts.push("### User Preferences", ...prefs);
-    if (memory.length) parts.push("### Memory", ...memory);
-    return parts.length ? [CEREBRUM_HEADER, ...parts].join("\n") : "";
+    if (!prefs.length && !memory.length && !prefsIndex.length && !memoryIndex.length) return "";
+    const parts: string[] = [CEREBRUM_HEADER];
+    if (prefs.length) parts.push(`### User Preferences (in file: ${prefsHeading}, append at its end)`, ...prefs);
+    if (memory.length) parts.push(`### Memory (in file: ${memoryHeading}, append at its end)`, ...memory);
+    const hidden = total - prefs.length - memory.length;
+    if (hidden) parts.push(`### Not shown (${hidden} of ${total}; grep .crank/cerebrum.md)`);
+    if (prefsOverCap) parts.push(`prefs: ${prefs.length} of ${prefsTotal} shown, consolidate`);
+    parts.push(...prefsIndex, ...memoryIndex);
+    return parts.join("\n");
   };
 
   let text = render();
   while (text && (estimateProseTokens(text) > CEREBRUM_INJECT_TOKEN_CAP || bytes(text) > budgetBytes)) {
-    if (memory.length) memory.shift();
+    if (memoryIndex.length) memoryIndex.shift();
+    else if (memory.length) memory.shift();
+    else if (prefsIndex.length) prefsIndex.shift();
     else prefs.shift();
     text = render();
   }
   return text;
+}
+
+/**
+ * One index line for a bullet: its text on one line, cut at a word boundary
+ * to INDEX_ENTRY_CHARS, with a code span the cut opened closed again.
+ */
+function indexEntry(bullet: string): string {
+  const flat = bullet.replace(/^- /, "").replace(/\s+/g, " ").trim();
+  if (flat.length <= INDEX_ENTRY_CHARS) return `- ${flat}`;
+  const space = flat.lastIndexOf(" ", INDEX_ENTRY_CHARS);
+  let cut = flat.slice(0, space > 0 ? space : INDEX_ENTRY_CHARS).trimEnd();
+  if ((cut.match(/`/g) ?? []).length % 2) cut += "`";
+  return `- ${cut}…`;
 }
 
 /**

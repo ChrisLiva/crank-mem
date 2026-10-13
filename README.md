@@ -30,8 +30,11 @@ Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 ## Layout under `.crank/`
 
 `anatomy-index.json` (data), `anatomy.md` (human/agent view), `cerebrum.md`
-(agent-written semantic memory), `journal.md` (agent-written session log, last
-20 bullets kept), `config.json`, `hooks/` (vendored), `backups/`.
+(agent-written semantic memory), `cerebrum-archive.md` (entries a prune moved
+out; never injected), `journal.md` (agent-written session log, last 20 bullets
+kept), `config.json`, `hooks/` (vendored), `backups/` (init/upgrade snapshots,
+plus `backups/cerebrum/`: the last 5 copies of cerebrum.md, taken before each
+prune nudge).
 
 ## What gets indexed
 
@@ -91,9 +94,10 @@ Either writes `.crank/debug.log` — one record per hook run:
 removed/partial counts), `injected` (tokens vs. budget), `reindex`
 (`committed:false` means the write did not land), `lock-timeout` (contention —
 the only way to tell it apart from "nothing to write"), `nudge-skipped` (why no
-cerebrum/journal nudge fired), `walk-fallback` (git listing failed, so the
-directory walk ran), `churn-skipped` (no churn list, for example before the
-first commit).
+cerebrum/journal nudge fired; `source` says whether git or the index did the
+counting), `git-changes-failed` (why the count fell back to the index),
+`walk-fallback` (git listing failed, so the directory walk ran),
+`churn-skipped` (no churn list, for example before the first commit).
 
 `CRANK_DEBUG=0` forces it off. The log is gitignored, capped at 1 MB then
 restarted, never contains sensitive paths, and can never fail a session — a

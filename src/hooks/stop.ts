@@ -3,11 +3,12 @@ import {
   readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook,
 } from "./lib/hook-io.ts";
 import { CRANK_DIR, loadConfig } from "./lib/config.ts";
-import { cerebrumNudge } from "./lib/cerebrum-nudge.ts";
+import { cerebrumNudge, cerebrumOverlaps } from "./lib/cerebrum-nudge.ts";
 import { enableDebug } from "./lib/debug.ts";
 
 // Stop hook (Claude Code only). At turn end, if source files have changed since
-// cerebrum.md was last touched, nudge the model to record what it learned. On
+// cerebrum.md was last touched, nudge the model to record what it learned, and
+// flag a new cerebrum bullet that repeats an older one's identifiers. On
 // Claude, additionalContext is wrapped in a system reminder at end of turn and
 // the conversation continues WITHOUT forcing the agent to keep running — so the
 // nudge stays advisory. Codex Stop has no such channel (probed 2026-07-17:
@@ -27,7 +28,7 @@ async function main(): Promise<void> {
   const crankDir = path.join(root, CRANK_DIR);
   enableDebug(crankDir, loadConfig(crankDir).debug);
 
-  const msg = cerebrumNudge(crankDir);
+  const msg = [cerebrumNudge(crankDir), cerebrumOverlaps(crankDir)].filter(Boolean).join("\n");
   if (!msg) return;
   emitAdditionalContext("Stop", msg);
   console.error("crank-mem: cerebrum nudge (stop)");

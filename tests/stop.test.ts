@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { makeCrankProject, runHook } from "./helpers.ts";
+import { spawnSync } from "node:child_process";
+import { enableDebugConfig, makeCrankProject, readDebugLog, runHook } from "./helpers.ts";
 import { claudeSessionStart, claudeStop } from "./fixtures/payloads.ts";
-import { NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
+import { BACKUP_KEEP, NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
 
 const HOOK = "src/hooks/stop.ts";
 
@@ -26,6 +27,12 @@ function longCerebrum(lines: number): string {
 /** Few lines, lots of prose: under the line guideline, over the token one. */
 function fatCerebrum(chars: number): string {
   return Array.from({ length: 10 }, (_, i) => `- entry ${i} ${"x".repeat(chars / 10)}`).join("\n");
+}
+function backupDir(root: string): string {
+  return path.join(root, ".crank/backups/cerebrum");
+}
+function backups(root: string): string[] {
+  return fs.readdirSync(backupDir(root)).sort();
 }
 function journal(root: string): string {
   return path.join(root, ".crank/journal.md");
@@ -208,6 +215,33 @@ describe("stop hook (black-box)", () => {
     expect(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout).toBe("");
   });
 
+  // brew-pg, 2026-08-14: nudged at 156 lines, pruned to 103, regrew to 157
+  // lines with fewer tokens than at the nudge, and the stale token stamp read
+  // that as a prune in progress.
+  test("a prune that got under the limit clears the floor before regrowth", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    const padded = (n: number) =>
+      Array.from({ length: n }, (_, i) => `- entry ${i} padding words here`).join("\n");
+    fs.writeFileSync(cerebrum(root), padded(156));
+    setMtime(cerebrum(root), FRESH); // record part never due: prune part alone
+    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("156 lines");
+
+    // Pruned under both limits; this Stop observes it and stays silent.
+    fs.writeFileSync(cerebrum(root), longCerebrum(103));
+    setMtime(cerebrum(root), FRESH + 5000);
+    const under = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(under.status).toBe(0);
+    expect(under.stdout).toBe("");
+
+    // Regrowth past the line limit, with fewer tokens than the 156-line file.
+    fs.writeFileSync(cerebrum(root), longCerebrum(157));
+    setMtime(cerebrum(root), FRESH + 10_000);
+    const regrown = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(regrown.status).toBe(0);
+    expect(nudge(regrown.stdout)).toContain("157 lines");
+  });
+
   test("nudges to prune a short but token-heavy cerebrum", () => {
     const root = makeCrankProject(ENOUGH);
     seedIndex(root);
@@ -221,6 +255,85 @@ describe("stop hook (black-box)", () => {
     expect(ctx).not.toContain("lines"); // only the measure that tripped is named
   });
 
+  test("prune nudge backs cerebrum up first and names the copy", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    fs.writeFileSync(cerebrum(root), longCerebrum(160));
+    setMtime(cerebrum(root), FRESH);
+
+    const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
+    const [copy] = backups(root);
+    expect(backups(root)).toHaveLength(1);
+    expect(fs.readFileSync(path.join(backupDir(root), copy!), "utf-8")).toBe(longCerebrum(160));
+    expect(ctx).toContain(`A copy of the current file is at .crank/backups/cerebrum/${copy}`);
+
+    // Nudge repeats on an unchanged file: no second copy, same path named.
+    const again = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
+    expect(backups(root)).toEqual([copy!]);
+    expect(again).toContain(`.crank/backups/cerebrum/${copy}`);
+  });
+
+  test("prune backups keep only the newest copies", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    // Each run grows the file, so the nudge fires and the content differs.
+    for (let n = 160; n < 160 + BACKUP_KEEP + 2; n++) {
+      fs.writeFileSync(cerebrum(root), longCerebrum(n));
+      setMtime(cerebrum(root), FRESH + n);
+      expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain(`${n} lines`);
+    }
+    const kept = backups(root);
+    expect(kept).toHaveLength(BACKUP_KEEP);
+    expect(fs.readFileSync(path.join(backupDir(root), kept[0]!), "utf-8")).toBe(longCerebrum(162));
+    expect(fs.readFileSync(path.join(backupDir(root), kept.at(-1)!), "utf-8")).toBe(
+      longCerebrum(160 + BACKUP_KEEP + 1),
+    );
+  });
+
+  test("prune nudge names the longest whole bullets and asks to archive, not delete", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    const shaBullet = `- gamma fixed in a18c44f ${"x".repeat(4000)}`;
+    fs.writeFileSync(
+      cerebrum(root),
+      [
+        "# Cerebrum",
+        "",
+        "## Memory",
+        `- alpha ${"x".repeat(6000)}`, // line 4
+        "- beta", // line 5: short first line, long wrapped body
+        `  ${"x".repeat(5000)}`,
+        shaBullet, // line 7
+        "- delta short", // line 8
+      ].join("\n"),
+    );
+    setMtime(cerebrum(root), FRESH);
+
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    const ctx = nudge(run.stdout)!;
+    expect(ctx).toContain(
+      `Longest bullets: line 4 (6008 chars), line 5 (5009 chars), line 7 (${shaBullet.length} chars, cites a commit).`,
+    );
+    expect(ctx).not.toContain("line 8");
+    expect(ctx).toContain(".crank/cerebrum-archive.md");
+    expect(ctx).toContain("keep gotchas and do-not-repeat entries");
+    expect(ctx).not.toContain("delete it");
+  });
+
+  test("prune nudge still fires, exit 0, when backups cannot be written", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, ".crank/backups"), "not a directory");
+    fs.writeFileSync(cerebrum(root), longCerebrum(160));
+    setMtime(cerebrum(root), FRESH);
+
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    expect(nudge(run.stdout)).toContain("Prune");
+    expect(nudge(run.stdout)).not.toContain("A copy of the current file");
+  });
+
   test("stays quiet at the guideline exactly", () => {
     const root = makeCrankProject(ENOUGH);
     seedIndex(root);
@@ -229,6 +342,7 @@ describe("stop hook (black-box)", () => {
 
     const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
     expect(run.stdout).toBe("");
+    expect(fs.existsSync(backupDir(root))).toBe(false); // no prune nudge, no backup
   });
 
   test("record and prune nudges combine when both are due", () => {
@@ -393,5 +507,218 @@ describe("journal nudge (black-box)", () => {
     const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
     expect(ctx).toContain("cerebrum");
     expect(ctx).not.toContain("journal");
+  });
+});
+
+/** Run git in a temp project, with identity and signing pinned for CI. */
+function git(root: string, ...args: string[]): void {
+  const res = spawnSync(
+    "git",
+    ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args],
+    { cwd: root, encoding: "utf-8" },
+  );
+  if (res.status !== 0) throw new Error(`git ${args.join(" ")}: ${res.stderr}`);
+}
+/** A git repo with one empty commit, so `git log` has a branch to read. */
+function gitRepo(files: Record<string, string> = {}): string {
+  const root = makeCrankProject(files);
+  enableDebugConfig(root);
+  git(root, "init", "-q");
+  git(root, "commit", "-q", "--allow-empty", "-m", "init");
+  return root;
+}
+function debugEvents(root: string): Array<Record<string, any>> {
+  return readDebugLog(root).flatMap((r) => r.events);
+}
+/** Where the stop hook's count came from, per its last nudge event. */
+function countSource(root: string): string | undefined {
+  return debugEvents(root).filter((e) => e.event.startsWith("nudge-")).at(-1)?.source;
+}
+const HOUR = 3_600_000;
+
+// No session start runs in these tests, so the index is empty: any nudge
+// proves the count came from git.
+describe("change count from git (black-box)", () => {
+  test("counts files written after cerebrum that the index never saw", () => {
+    const root = gitRepo();
+    setMtime(cerebrum(root), Date.now() - HOUR);
+    for (const [f, src] of Object.entries(ENOUGH)) fs.writeFileSync(path.join(root, f), src);
+
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    expect(nudge(run.stdout)).toContain(`${NUDGE_STEP} file(s) have changed`);
+    expect(countSource(root)).toBe("git");
+  });
+
+  test("untracked files older than cerebrum do not count", () => {
+    const root = gitRepo(ENOUGH);
+    for (const f of Object.keys(ENOUGH)) setMtime(path.join(root, f), Date.now() - 2 * HOUR);
+    setMtime(cerebrum(root), Date.now() - HOUR);
+
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+    expect(countSource(root)).toBe("git");
+  });
+
+  test("files written before cerebrum and committed after it do not count", () => {
+    const root = gitRepo(ENOUGH);
+    for (const f of Object.keys(ENOUGH)) setMtime(path.join(root, f), Date.now() - 2 * HOUR);
+    setMtime(cerebrum(root), Date.now() - HOUR);
+    git(root, "add", ...Object.keys(ENOUGH));
+    git(root, "commit", "-q", "-m", "old work");
+
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+    expect(countSource(root)).toBe("git");
+  });
+
+  test("deleted files count", () => {
+    const root = gitRepo(ENOUGH);
+    for (const f of Object.keys(ENOUGH)) setMtime(path.join(root, f), Date.now() - 2 * HOUR);
+    git(root, "add", ...Object.keys(ENOUGH));
+    git(root, "commit", "-q", "-m", "old work");
+    setMtime(cerebrum(root), Date.now() - HOUR);
+    for (const f of Object.keys(ENOUGH)) fs.rmSync(path.join(root, f));
+
+    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain(
+      `${NUDGE_STEP} file(s) have changed`,
+    );
+  });
+
+  test("the journal part counts from git too", () => {
+    const root = gitRepo();
+    setMtime(cerebrum(root), FRESH);
+    writeJournal(root, Date.now() - HOUR);
+    for (const [f, src] of Object.entries(ENOUGH)) fs.writeFileSync(path.join(root, f), src);
+
+    const ctx = nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout);
+    expect(ctx).toContain(`${NUDGE_STEP} file(s) changed since the last .crank/journal.md entry`);
+    expect(ctx).not.toContain("cerebrum");
+  });
+
+  test("a git that overruns the budget falls back to the index count", () => {
+    const root = gitRepo(ENOUGH);
+    seedIndex(root);
+    setMtime(cerebrum(root), STALE);
+    const bin = fs.mkdtempSync(path.join(root, "..", "crank-fakegit-"));
+    fs.writeFileSync(path.join(bin, "git"), "#!/bin/sh\nexec sleep 5\n", { mode: 0o755 });
+
+    const started = Date.now();
+    const run = runHook(HOOK, JSON.stringify(claudeStop(root)), undefined, {
+      PATH: `${bin}:${process.env.PATH}`,
+    });
+    expect(run.status).toBe(0);
+    expect(Date.now() - started).toBeLessThan(4000);
+    expect(nudge(run.stdout)).toContain(`${NUDGE_STEP} file(s) have changed`);
+    expect(countSource(root)).toBe("index");
+    expect(debugEvents(root).some((e) => e.event === "git-changes-failed")).toBe(true);
+  });
+});
+
+// OrcaSlicer, 2026-09-27 and 09-28: two bullets on the same OpenGL.framework
+// build failure with different remedies, which word overlap scores at 0.31.
+const OPENGL_OLD =
+  "- Fresh build dir fails: `OpenGL.framework` hits `-Werror=unguarded-availability-new`; set `DEVELOPER_DIR` (2026-09-27).";
+const OPENGL_NEW =
+  "- GUI compile fails (2026-09-28): OpenGL.framework under MacOSX.sdk, -Werror=unguarded-availability-new; use CMAKE_PROJECT_INCLUDE.";
+/** OPENGL_OLD on line 4 and an unrelated bullet on line 5, plus any bullets after. */
+function memory(...extra: string[]): string {
+  return ["# Cerebrum", "", "## Memory", OPENGL_OLD, "- Tests run under `bun test`.", ...extra].join("\n");
+}
+function dedupState(root: string): string {
+  return path.join(root, ".crank/cerebrum-dedup.json");
+}
+/** Write cerebrum at a given mtime and run Stop. No source files, so only the overlap check can speak. */
+function stopAfter(root: string, text: string, mtimeMs: number) {
+  fs.writeFileSync(cerebrum(root), text);
+  setMtime(cerebrum(root), mtimeMs);
+  return runHook(HOOK, JSON.stringify(claudeStop(root)));
+}
+
+describe("cerebrum overlap check (black-box)", () => {
+  test("the first run records the bullets and stays silent", () => {
+    const root = makeCrankProject();
+    const run = stopAfter(root, memory(OPENGL_NEW), FRESH);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+    expect(fs.existsSync(dedupState(root))).toBe(true);
+  });
+
+  test("flags a new bullet that shares identifiers with an older one, once", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+
+    const run = stopAfter(root, memory(OPENGL_NEW), FRESH + 5000);
+    expect(run.status).toBe(0);
+    const ctx = nudge(run.stdout)!;
+    expect(ctx).toContain("bullet at line 6 overlaps line 4");
+    expect(ctx).toContain("`OpenGL.framework`");
+    expect(ctx).toContain("`-Werror=unguarded-availability-new`");
+    expect(ctx).toContain("keep both");
+
+    // Same file, same mtime: nothing new to say.
+    expect(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout).toBe("");
+  });
+
+  test("an unchanged mtime is not reparsed", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+
+    // Content changed but the mtime did not: the check does not look.
+    expect(stopAfter(root, memory(OPENGL_NEW), FRESH).stdout).toBe("");
+    expect(nudge(stopAfter(root, memory(OPENGL_NEW), FRESH + 5000).stdout)).toContain("overlaps line 4");
+  });
+
+  test("an edited bullet is not paired with the version it replaced", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+
+    const edited = memory().replace(OPENGL_OLD, `${OPENGL_OLD} Still true on SDK 27.`);
+    const run = stopAfter(root, edited, FRESH + 5000);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+  });
+
+  test("one shared identifier is not enough", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+    const run = stopAfter(root, memory("- `DEVELOPER_DIR` also picks the `xcrun` toolchain."), FRESH + 5000);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+  });
+
+  test("a second copy of an existing bullet counts as new", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+    expect(nudge(stopAfter(root, memory(OPENGL_OLD), FRESH + 5000).stdout)).toContain(
+      "bullet at line 6 overlaps line 4",
+    );
+  });
+
+  test("names at most two pairs", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+    const three = [1, 2, 3].map((i) => `${OPENGL_NEW} Variant ${i}.`);
+    const ctx = nudge(stopAfter(root, memory(...three), FRESH + 5000).stdout)!;
+    expect(ctx.match(/overlaps line 4/g)).toHaveLength(2);
+  });
+
+  test("rides along with the record nudge in one message", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+    const ctx = nudge(stopAfter(root, memory(OPENGL_NEW), STALE).stdout)!;
+    expect(ctx).toContain(`${NUDGE_STEP} file(s) have changed`);
+    expect(ctx).toContain("overlaps line 4");
+  });
+
+  test("a state file that cannot be written: exit 0, silent", () => {
+    const root = makeCrankProject();
+    fs.mkdirSync(dedupState(root)); // a directory where the file belongs
+    const run = stopAfter(root, memory(OPENGL_NEW), FRESH);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
   });
 });

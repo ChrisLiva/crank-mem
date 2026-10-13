@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  recentJournalBullets, trimJournal, JOURNAL_KEEP, JOURNAL_INJECT_MAX_BYTES,
+  recentJournalBullets, trimJournal, JOURNAL_KEEP, JOURNAL_NEWEST_MAX_BYTES, JOURNAL_OLDER_MAX_BYTES,
 } from "../src/hooks/lib/journal.ts";
 
 const HEADER = "# Journal\n\nSession log, newest last.\n\n";
@@ -16,43 +16,68 @@ function withJournal(text: string): string {
 }
 const inject = (text: string): string[] => recentJournalBullets(withJournal(text));
 const only = (entry: string): string => inject(HEADER + entry)[0]!;
+/** The `- 2026-07-30 — ` lead-in, which the per-entry caps do not count. */
+const PREFIX_BYTES = Buffer.byteLength("- 2026-07-30 — ", "utf-8");
 
 describe("injected headlines", () => {
-  test("a NEXT: clause that fits is injected whole, no ellipsis", () => {
+  test("the newest entry injects what it did and its NEXT: clause, whole", () => {
     expect(only("- 2026-07-30: ran the sweep; NEXT: pick the unaided rule shape.\n"))
-      .toBe("- 2026-07-30 — NEXT: pick the unaided rule shape.");
+      .toBe("- 2026-07-30 — ran the sweep; NEXT: pick the unaided rule shape.");
   });
 
-  // The reason the journal exists: the handoff sits in the last quarter of the
-  // entry and used to be dropped entirely.
   test("NEXT: is found even when it straddles a line wrap", () => {
     const line = only(
       "- 2026-07-30: rewrote the excerpt, tests green at 41980e5; NEXT: wire the\n" +
         "  drift note into session-start and re-probe brew-pg.\n"
     );
     expect(line).toBe(
-      "- 2026-07-30 — NEXT: wire the drift note into session-start and re-probe brew-pg."
+      "- 2026-07-30 — rewrote the excerpt, tests green at 41980e5; " +
+        "NEXT: wire the drift note into session-start and re-probe brew-pg."
     );
     expect(line).not.toContain("\n");
   });
 
-  test("an over-long NEXT: clause is capped with a trailing ellipsis", () => {
-    const line = only(`- 2026-07-30: did things; NEXT: ${"item ".repeat(80)}done.\n`);
-    expect(line.startsWith("- 2026-07-30 — NEXT: item item")).toBe(true);
-    expect(line.endsWith("…")).toBe(true);
-    expect(line).not.toContain("done.");
-    expect(Buffer.byteLength(line, "utf-8")).toBeLessThanOrEqual(
-      JOURNAL_INJECT_MAX_BYTES + Buffer.byteLength("- 2026-07-30 — ", "utf-8")
+  // Shaped after brew-pg 2026-09-23: the handoff alone reached the next
+  // session, which then told the user the critique recorded beside it had
+  // never been run.
+  test("older entries inject what they did, not their stale NEXT: clauses", () => {
+    const bullets = inject(
+      HEADER +
+        "- 2026-09-21: wired the rails; NEXT: run impeccable critique.\n" +
+        "- 2026-09-22: impeccable critique (30/40); NEXT: fix the contrast findings.\n" +
+        "- 2026-09-23: fixed contrast; NEXT: Chris smoke-checks rails.\n"
     );
+    expect(bullets).toEqual([
+      "- 2026-09-21 — wired the rails",
+      "- 2026-09-22 — impeccable critique (30/40)",
+      "- 2026-09-23 — fixed contrast; NEXT: Chris smoke-checks rails.",
+    ]);
   });
 
-  test("an entry without NEXT: injects its tail, with a leading ellipsis", () => {
-    const line = only(`- 2026-07-30: ${"filler ".repeat(60)}board unchanged, tree clean at 41980e5.\n`);
-    expect(line.startsWith("- 2026-07-30 — …")).toBe(true);
-    expect(line.endsWith("board unchanged, tree clean at 41980e5.")).toBe(true);
-    expect(Buffer.byteLength(line, "utf-8")).toBeLessThanOrEqual(
-      JOURNAL_INJECT_MAX_BYTES + Buffer.byteLength("- 2026-07-30 — ", "utf-8")
-    );
+  test("an over-long NEXT: clause is capped at a word, keeping what the entry did", () => {
+    const line = only(`- 2026-07-30: did things; NEXT: ${"item ".repeat(80)}done.\n`);
+    expect(line.startsWith("- 2026-07-30 — did things; NEXT: item item")).toBe(true);
+    expect(line.endsWith(" item…")).toBe(true);
+    expect(line).not.toContain("done.");
+    expect(Buffer.byteLength(line, "utf-8")).toBeLessThanOrEqual(JOURNAL_NEWEST_MAX_BYTES + PREFIX_BYTES);
+  });
+
+  test("when both clauses are long, each is cut and the handoff still arrives", () => {
+    const line = only(`- 2026-07-30: ${"did ".repeat(100)}; NEXT: ${"then ".repeat(100)}\n`);
+    expect(line).toMatch(/^- 2026-07-30 — did( did)*…; NEXT: then( then)*…$/);
+    // Neither clause crowds the other out.
+    for (const part of line.split("; NEXT:")) expect(Buffer.byteLength(part, "utf-8")).toBeGreaterThan(120);
+    expect(Buffer.byteLength(line, "utf-8")).toBeLessThanOrEqual(JOURNAL_NEWEST_MAX_BYTES + PREFIX_BYTES);
+  });
+
+  test("an entry without NEXT: injects its head, cut at a word", () => {
+    const entry = `- 2026-07-30: ${"filler ".repeat(80)}tree clean at 41980e5.\n`;
+    const [older, newest] = inject(HEADER + entry + entry);
+    for (const [line, cap] of [[older!, JOURNAL_OLDER_MAX_BYTES], [newest!, JOURNAL_NEWEST_MAX_BYTES]] as const) {
+      expect(line).toMatch(/^- 2026-07-30 — filler( filler)*…$/);
+      expect(Buffer.byteLength(line, "utf-8")).toBeLessThanOrEqual(cap + PREFIX_BYTES);
+    }
+    expect(Buffer.byteLength(newest!, "utf-8")).toBeGreaterThan(JOURNAL_OLDER_MAX_BYTES + PREFIX_BYTES);
   });
 
   test("a short entry without NEXT: is injected whole, no ellipsis", () => {
@@ -62,13 +87,18 @@ describe("injected headlines", () => {
 
   test("a dateless entry gets no date prefix", () => {
     expect(only("- ran the sweep; NEXT: pick the rule shape.\n"))
-      .toBe("- NEXT: pick the rule shape.");
+      .toBe("- ran the sweep; NEXT: pick the rule shape.");
     expect(only("- just a note\n")).toBe("- just a note");
+  });
+
+  test("an older entry that is only a handoff still injects it", () => {
+    expect(inject(HEADER + "- 2026-07-29: NEXT: bump the cap.\n- 2026-07-30: bumped it.\n"))
+      .toEqual(["- 2026-07-29 — NEXT: bump the cap.", "- 2026-07-30 — bumped it."]);
   });
 
   test("sub-bullets and wrapped prose are folded into the one headline", () => {
     const line = only("- 2026-07-30: fixed the parser\n  - dropped sectionBody\n\n  NEXT: bump the cap.\n");
-    expect(line).toBe("- 2026-07-30 — NEXT: bump the cap.");
+    expect(line).toBe("- 2026-07-30 — fixed the parser - dropped sectionBody; NEXT: bump the cap.");
   });
 
   test("the last three entries are injected, oldest first", () => {
@@ -85,14 +115,14 @@ describe("injected headlines", () => {
   // The cap is spent in the same unit as the injection budget, so a non-ASCII
   // journal cannot cost 3× an ASCII one — and a cut must never land inside a
   // character.
-  test("the cap is bytes and never splits a character", () => {
-    for (const entry of [`- 2026-07-30: ${"中".repeat(400)}`, `- 2026-07-30: x; NEXT: ${"🚀".repeat(400)}`]) {
-      const line = only(entry + "\n");
-      expect(Buffer.byteLength(line, "utf-8")).toBeLessThanOrEqual(
-        JOURNAL_INJECT_MAX_BYTES + Buffer.byteLength("- 2026-07-30 — ", "utf-8")
-      );
-      expect(line).not.toContain("�"); // no lone surrogate half
-    }
+  test("the caps are bytes and never split a character", () => {
+    const [older, newest] = inject(
+      HEADER + `- 2026-07-29: ${"中".repeat(400)}\n- 2026-07-30: ${"中".repeat(400)}; NEXT: ${"🚀".repeat(400)}\n`
+    );
+    expect(Buffer.byteLength(older!, "utf-8")).toBeLessThanOrEqual(JOURNAL_OLDER_MAX_BYTES + PREFIX_BYTES);
+    expect(Buffer.byteLength(newest!, "utf-8")).toBeLessThanOrEqual(JOURNAL_NEWEST_MAX_BYTES + PREFIX_BYTES);
+    expect(newest).toContain("中…; NEXT: 🚀");
+    for (const line of [older!, newest!]) expect(line).not.toContain("�"); // no lone surrogate half
   });
 
   test("missing or empty journal yields no bullets", () => {
