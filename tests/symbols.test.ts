@@ -40,6 +40,18 @@ describe("extractSymbols — TypeScript", () => {
     expect(syms[0]!.endLine).toBe(6);
     expect(syms[3]!.endLine).toBe(15);
   });
+
+  test("finds return-typed, annotated and generic arrows, not parenthesized math", () => {
+    const src = [
+      "const bytes = (s: string): number => Buffer.byteLength(s);",
+      "export const load = async (p: string): Promise<Map<string, number>> => new Map();",
+      "export const handler: Handler = async (req) => req;",
+      "let pick = <T>(xs: T[]): T => xs[0]!;",
+      "const x = (1 + 2) * 3;",
+      "const cfg: Record<string, number> = {};",
+    ].join("\n");
+    expect(extractSymbols(src, ".ts").map((s) => s.name)).toEqual(["bytes", "load", "handler", "pick"]);
+  });
 });
 
 describe("extractSymbols — Python", () => {
