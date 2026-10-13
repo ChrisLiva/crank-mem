@@ -26,6 +26,10 @@ describe("walkProject", () => {
       ".github/workflows/ci.yml": "on: push",
       ".env": "SECRET=1",
       "logo.png": "binary",
+      "img/layer1.webp": "binary",
+      "deps/libgmp-10.lib": "binary",
+      "pnpm-lock.yaml": "lockfileVersion: 9",
+      "web/package-lock.json": "{}",
     });
     const files = walkProject(root, defaultConfig());
     expect(files.sort()).toEqual(["README.md", "src/a.ts"]);
@@ -59,6 +63,15 @@ describe("fullScan", () => {
     expect(big.tokens).toBeGreaterThan(300);
     expect(big.symbols!.length).toBeGreaterThan(0);
     expect(index.files["notes.md"]!.description).toBe("Notes");
+  });
+
+  test("skips files with a NUL byte in the first 8,000 bytes", () => {
+    const root = makeProject({
+      "blob.dat": "RIFF\0\0WEBP",
+      "late-nul.txt": "x".repeat(8000) + "\0",
+      "plain.txt": "hello",
+    });
+    expect(Object.keys(fullScan(root, defaultConfig()).files).sort()).toEqual(["late-nul.txt", "plain.txt"]);
   });
 });
 

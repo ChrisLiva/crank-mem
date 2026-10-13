@@ -9,30 +9,39 @@ import { emptyIndex, type AnatomyIndex, type FileEntry } from "./store.ts";
 // Project walk + full scan + incremental refresh. Pure over the filesystem;
 // locking and persistence are the caller's job.
 
+// Fast path ahead of the NUL sniff in indexFile, which catches the rest.
 const BINARY_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg",
+  ".webp", ".avif", ".heic", ".heif",
   ".woff", ".woff2", ".ttf", ".eot", ".otf",
   ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
-  ".exe", ".dll", ".so", ".dylib", ".bin",
+  ".exe", ".dll", ".so", ".dylib", ".bin", ".a", ".lib", ".o",
   ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
   ".mp3", ".mp4", ".avi", ".mov", ".webm", ".ogg",
-  ".sqlite", ".db", ".wasm", ".lock",
+  ".sqlite", ".db", ".wasm", ".npy", ".npz", ".lock",
 ]);
+
+// Generated lockfiles the ".lock" extension misses (pnpm-lock.yaml, …).
+const LOCKFILE = /(^|\/)(package-lock\.json|[^/]*-lock\.yaml)$/;
+
+// git's binary heuristic: a NUL byte within the first 8,000 bytes.
+const BINARY_SNIFF_BYTES = 8000;
 
 function toPosix(p: string): string {
   return p.split(path.sep).join("/");
 }
 
-/** Stat-free name gate: excluded or binary paths are never indexable. */
+/** Stat-free name gate: excluded, binary or lockfile paths are never indexable. */
 export function isIndexableName(relPath: string, config: CrankConfig): boolean {
   if (isExcluded(relPath, config.excludes)) return false;
   if (BINARY_EXTENSIONS.has(path.extname(relPath).toLowerCase())) return false;
+  if (LOCKFILE.test(relPath)) return false;
   return true;
 }
 
 /**
  * The one gate for turning a path into a FileEntry: name checks, one stat,
- * size gate, then read + analyze. Null on any rejection or I/O failure.
+ * size gate, read, NUL sniff, then analyze. Null on any rejection or I/O failure.
  */
 export function indexFile(
   rootDir: string,
@@ -42,14 +51,16 @@ export function indexFile(
   if (!isIndexableName(relPath, config)) return null;
   const absPath = path.join(rootDir, relPath);
   let stat: fs.Stats;
-  let content: string;
+  let buf: Buffer;
   try {
     stat = fs.statSync(absPath);
     if (stat.size > config.max_file_size_bytes) return null;
-    content = fs.readFileSync(absPath, "utf-8");
+    buf = fs.readFileSync(absPath);
   } catch {
     return null;
   }
+  if (buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return null;
+  const content = buf.toString("utf-8");
   const ext = path.extname(absPath).toLowerCase();
   const tokens = estimateTokens(content, absPath);
   const symbols =

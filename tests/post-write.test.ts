@@ -132,6 +132,15 @@ describe("post-write hook (black-box)", () => {
     expect(loadIndex(path.join(root, ".crank")).files["huge.ts"]).toBeUndefined();
   });
 
+  test("binary content under an unlisted extension is skipped", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    seedIndex(root);
+    fs.writeFileSync(path.join(root, "model.weights"), Buffer.from([0x93, 0x4e, 0x55, 0x00, 0x01]));
+    const run = runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "model.weights"))));
+    expect(run.status).toBe(0);
+    expect(loadIndex(path.join(root, ".crank")).files["model.weights"]).toBeUndefined();
+  });
+
   test("path outside project is ignored", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     seedIndex(root);

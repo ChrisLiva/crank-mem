@@ -122,8 +122,8 @@ async function main(): Promise<void> {
       }
       const entry = indexFile(root, op.relPath, config);
       if (!entry) {
-        // Excluded, oversized, or unreadable — indistinguishable here, but the
-        // path alone answers "why didn't my file get indexed?".
+        // Excluded, binary, oversized, or unreadable — indistinguishable here,
+        // but the path alone answers "why didn't my file get indexed?".
         skipped.push(safePath(op.relPath));
         continue;
       }
