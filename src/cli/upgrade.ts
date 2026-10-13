@@ -8,14 +8,14 @@ import {
   trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
 } from "./codex-trust.ts";
 import {
-  crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles,
+  crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, unignoreCerebrum,
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
-// the hook wiring. Never touches config.json values (beyond the version
-// stamp), cerebrum, or the index. Recomputes Codex trusted hashes iff the user
-// opted in at init.
+// the hook wiring and, in commit mode, a stale crank-mem ignore block. Never
+// touches config.json values (beyond the version stamp), cerebrum, or the
+// index. Recomputes Codex trusted hashes iff the user opted in at init.
 
 export async function run(_args: string[]): Promise<number> {
   const project = openProject();
@@ -81,6 +81,20 @@ export async function run(_args: string[]): Promise<number> {
     }
   } catch (err) {
     console.error(`crank-mem: could not re-wire hooks (${err instanceof Error ? err.message : String(err)})`);
+  }
+
+  // An install switched to commit mode can still carry the ignore block its
+  // earlier ignore or exclude-mode init wrote, which keeps cerebrum out of git.
+  if (config.git === "commit") {
+    try {
+      const ignoredBy = unignoreCerebrum(root, (f) => {
+        backup(f);
+        console.log(`  removed the crank-mem .crank/ ignore block from ${path.relative(root, f)}`);
+      });
+      if (ignoredBy) console.error(`crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`);
+    } catch (err) {
+      console.error(`crank-mem: could not check .crank/cerebrum.md against git ignores (${err instanceof Error ? err.message : String(err)})`);
+    }
   }
 
   const versionChanged = config.vendored_version !== current;

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 
 // Additive wiring of hook entries into agent settings files, and its exact
 // inverse. Merge adds missing entries and refreshes only command forms
@@ -219,6 +220,30 @@ export function removeIgnoreLines(file: string, block: string = IGNORE_BLOCK): v
   const content = fs.readFileSync(file, "utf-8");
   if (!content.includes(block)) return;
   fs.writeFileSync(file, content.replace(block, ""));
+}
+
+/**
+ * Commit mode needs .crank/cerebrum.md in git. Strip crank-mem's own ignore
+ * block from each file that makes git ignore it (left by an earlier ignore or
+ * exclude-mode init), calling `beforeStrip` first. Returns the foreign rule
+ * that still ignores it as `source:line (pattern)`, or null.
+ */
+export function unignoreCerebrum(root: string, beforeStrip: (file: string) => void): string | null {
+  const git = (...args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf-8" });
+  const top = git("rev-parse", "--show-toplevel").stdout?.trim();
+  if (!top) return null;
+  for (;;) {
+    const [, source, line, pattern] =
+      git("check-ignore", "-v", "--", ".crank/cerebrum.md").stdout?.match(/^(.*):(\d+):(.*)\t/) ?? [];
+    // No match, or a re-including `!` match, which -v also reports with exit 0.
+    if (!source || !pattern || pattern.startsWith("!")) return null;
+    // check-ignore names sources relative to the repo top, not the cwd.
+    const file = path.resolve(top, source);
+    const content = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
+    if (pattern !== IGNORE_LINE || !content.includes(IGNORE_BLOCK)) return `${source}:${line} (${pattern})`;
+    beforeStrip(file);
+    removeIgnoreLines(file);
+  }
 }
 
 export const CODEX_FEATURES_SNIPPET = "\n# crank-mem\n[features]\nhooks = true\n";

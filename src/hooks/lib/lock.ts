@@ -15,7 +15,7 @@ import { debugEvent } from "./debug.ts";
 // Callers NEVER block the agent: on budget exhaustion withLock returns null
 // and the caller skips its update (the next writer converges the state).
 
-const LOCK_FILE = "anatomy-index.lock";
+export const LOCK_FILE = "anatomy-index.lock";
 const STALE_MS = 10_000; // > hook timeout, so a killed hook's lock is reclaimable
 /** Floor of the acquire poll backoff, and so the shortest wait that means real contention. */
 const POLL_MIN_MS = 25;

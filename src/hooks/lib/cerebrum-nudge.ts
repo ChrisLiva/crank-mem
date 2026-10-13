@@ -31,7 +31,7 @@ export const PRUNE_TOKEN_LIMIT = 3000;
 export const PRUNE_TARGET_LINES = 105;
 export const PRUNE_TARGET_TOKENS = 2100;
 
-const MARKER_FILE = "cerebrum-nudge.json";
+export const MARKER_FILE = "cerebrum-nudge.json";
 
 interface NudgeMarker {
   cerebrumMtimeMs: number;
