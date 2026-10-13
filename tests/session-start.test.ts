@@ -131,6 +131,18 @@ describe("memory reaches the model whole (black-box)", () => {
     expect(ctx).toContain("The API rate-limits at 100 rps");
     expect(ctx).toContain("Never force-push main");
   });
+
+  test("the excerpt names the heading the file really has", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    fs.writeFileSync(
+      path.join(root, ".crank/cerebrum.md"),
+      "# Cerebrum\n\n## User Preferences\n\n- Always use tabs\n\n## Key Learnings\n\n- The API rate-limits at 100 rps\n"
+    );
+    const ctx = inject(root);
+    expect(ctx).toContain("### Memory (in file: ## Key Learnings, append at its end)\n- The API rate-limits at 100 rps");
+    expect(ctx).toContain("### User Preferences (in file: ## User Preferences, append at its end)");
+    expect(ctx).toContain("append new bullets at the end of the section, newest last");
+  });
 });
 
 describe("vendored-hook drift (black-box)", () => {

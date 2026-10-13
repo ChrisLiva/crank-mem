@@ -50,7 +50,8 @@ agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in
   or \`sed -n 'START,ENDp' file\`).
 - Cerebrum protocol: keep \`.crank/cerebrum.md\` current as you work. The bar is
   low — a one-line bullet is enough, and a slightly redundant entry beats a
-  lost one. Record it the moment you learn it, not at the end:
+  lost one. Record it the moment you learn it, not at the end of the task, and
+  append new bullets at the end of the section, newest last:
   - the user corrects you or states a preference → \`## User Preferences\`;
   - anything else worth keeping → \`## Memory\`: a non-obvious project
     convention, a framework/dependency quirk, surprising API behavior, or a
@@ -99,7 +100,12 @@ const bytes = (s: string): number => Buffer.byteLength(s, "utf-8");
  *
  * Bullets arrive whole — wrapped prose, sub-bullets and all (see lib/bullets.ts)
  * — because the first physical line of an agent-written bullet is usually a
- * fragment, and half a learning is worse than none. Headings never appear.
+ * fragment, and half a learning is worse than none. The file's own headings
+ * never appear inside a bucket. Each bucket's label instead names the file's
+ * literal heading, the last one of its kind, because agents anchor edits on
+ * the label and a label naming a heading the file lacks made those edits miss.
+ * Appending under that last heading keeps the newest bullet last, where the
+ * recency slice below looks for it.
  *
  * Over either the token cap or `budgetBytes`, the OLDEST memory bullet goes
  * first, then the oldest preference: what an agent just recorded is what the
@@ -109,12 +115,16 @@ const bytes = (s: string): number => Buffer.byteLength(s, "utf-8");
 export function cerebrumExcerpt(md: string, budgetBytes: number): string {
   const prefsLines: string[] = [];
   const memoryLines: string[] = [];
+  let prefsHeading = "## User Preferences";
+  let memoryHeading = "## Memory";
   let bucket: string[] | null = null;
   for (const line of md.split("\n")) {
     if (line.startsWith("## ")) {
       const heading = line.slice(3).trim().toLowerCase();
       bucket =
         heading === PREFS_HEADING ? prefsLines : MEMORY_HEADINGS.has(heading) ? memoryLines : null;
+      if (bucket === prefsLines) prefsHeading = line.trimEnd();
+      if (bucket === memoryLines) memoryHeading = line.trimEnd();
     }
     bucket?.push(line);
   }
@@ -125,8 +135,8 @@ export function cerebrumExcerpt(md: string, budgetBytes: number): string {
 
   const render = (): string => {
     const parts: string[] = [];
-    if (prefs.length) parts.push("### User Preferences", ...prefs);
-    if (memory.length) parts.push("### Memory", ...memory);
+    if (prefs.length) parts.push(`### User Preferences (in file: ${prefsHeading}, append at its end)`, ...prefs);
+    if (memory.length) parts.push(`### Memory (in file: ${memoryHeading}, append at its end)`, ...memory);
     return parts.length ? [CEREBRUM_HEADER, ...parts].join("\n") : "";
   };
 

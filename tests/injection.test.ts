@@ -92,12 +92,26 @@ describe("cerebrumExcerpt", () => {
     expect(ex).toContain("The API rate-limits at 100 rps");
     expect(ex).toContain("Never force-push main");
     expect(ex).toContain("Appended after the rename");
-    expect(ex).toContain("### Memory");
+    // The label names the last memory heading, where an append lands newest-last.
+    expect(ex).toContain("### Memory (in file: ## Memory, append at its end)");
     expect(ex).not.toContain("### Key Learnings");
     expect(ex).not.toContain("### Do-Not-Repeat");
     // Document order: an agent appending a fresh `## Memory` at the bottom of
     // an unmigrated file must not have its newest bullets sorted to the front.
     expect(ex.indexOf("rate-limits")).toBeLessThan(ex.indexOf("Appended after the rename"));
+  });
+
+  // Agents anchor edits on the label: a label naming a heading the file lacks
+  // sent 9 audited edits to a missing anchor, and one learning was lost.
+  test("labels name the file's literal headings, not the canonical ones", () => {
+    const ex = excerpt(
+      "# Cerebrum\n\n## user preferences\n\n- Prefers pnpm\n\n" +
+        "## Key Learnings\n\n- The API rate-limits at 100 rps\n\n" +
+        "## Do-Not-Repeat\n\n- Never force-push main\n"
+    );
+    expect(ex).toContain("### User Preferences (in file: ## user preferences, append at its end)");
+    expect(ex).toContain("### Memory (in file: ## Do-Not-Repeat, append at its end)");
+    expect(ex).not.toContain("## Memory,");
   });
 
   test("sections outside the union are never injected", () => {
@@ -197,6 +211,7 @@ describe("buildInjection", () => {
     expect(out).toContain("`## Memory`");
     expect(out).toContain("Do NOT record");
     expect(out).not.toContain("Key Learnings"); // the protocol names one target
+    expect(out).toContain("append new bullets at the end of the section, newest last");
   });
 
   test("instructions carry the journal protocol and the telegraphic style rule", () => {
@@ -304,11 +319,11 @@ describe("buildInjection", () => {
     // too long to fit is dropped anyway, and reserving for it would take the
     // cerebrum down with it.
     test("a budget too tight for the ADRs still spends it on the cerebrum", () => {
-      const out = buildInjection(sources, 2200);
+      const out = buildInjection(sources, 2400);
       expect(out).not.toContain("## ADRs");
       expect(out).toContain("## Cerebrum");
       expect(out).toContain("Mistake number 14");
-      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2200);
+      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2400);
     });
 
     test("instructions survive a budget too small to hold them", () => {
