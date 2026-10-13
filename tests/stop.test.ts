@@ -616,3 +616,109 @@ describe("change count from git (black-box)", () => {
     expect(debugEvents(root).some((e) => e.event === "git-changes-failed")).toBe(true);
   });
 });
+
+// OrcaSlicer, 2026-09-27 and 09-28: two bullets on the same OpenGL.framework
+// build failure with different remedies, which word overlap scores at 0.31.
+const OPENGL_OLD =
+  "- Fresh build dir fails: `OpenGL.framework` hits `-Werror=unguarded-availability-new`; set `DEVELOPER_DIR` (2026-09-27).";
+const OPENGL_NEW =
+  "- GUI compile fails (2026-09-28): OpenGL.framework under MacOSX.sdk, -Werror=unguarded-availability-new; use CMAKE_PROJECT_INCLUDE.";
+/** OPENGL_OLD on line 4 and an unrelated bullet on line 5, plus any bullets after. */
+function memory(...extra: string[]): string {
+  return ["# Cerebrum", "", "## Memory", OPENGL_OLD, "- Tests run under `bun test`.", ...extra].join("\n");
+}
+function dedupState(root: string): string {
+  return path.join(root, ".crank/cerebrum-dedup.json");
+}
+/** Write cerebrum at a given mtime and run Stop. No source files, so only the overlap check can speak. */
+function stopAfter(root: string, text: string, mtimeMs: number) {
+  fs.writeFileSync(cerebrum(root), text);
+  setMtime(cerebrum(root), mtimeMs);
+  return runHook(HOOK, JSON.stringify(claudeStop(root)));
+}
+
+describe("cerebrum overlap check (black-box)", () => {
+  test("the first run records the bullets and stays silent", () => {
+    const root = makeCrankProject();
+    const run = stopAfter(root, memory(OPENGL_NEW), FRESH);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+    expect(fs.existsSync(dedupState(root))).toBe(true);
+  });
+
+  test("flags a new bullet that shares identifiers with an older one, once", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+
+    const run = stopAfter(root, memory(OPENGL_NEW), FRESH + 5000);
+    expect(run.status).toBe(0);
+    const ctx = nudge(run.stdout)!;
+    expect(ctx).toContain("bullet at line 6 overlaps line 4");
+    expect(ctx).toContain("`OpenGL.framework`");
+    expect(ctx).toContain("`-Werror=unguarded-availability-new`");
+    expect(ctx).toContain("keep both");
+
+    // Same file, same mtime: nothing new to say.
+    expect(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout).toBe("");
+  });
+
+  test("an unchanged mtime is not reparsed", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+
+    // Content changed but the mtime did not: the check does not look.
+    expect(stopAfter(root, memory(OPENGL_NEW), FRESH).stdout).toBe("");
+    expect(nudge(stopAfter(root, memory(OPENGL_NEW), FRESH + 5000).stdout)).toContain("overlaps line 4");
+  });
+
+  test("an edited bullet is not paired with the version it replaced", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+
+    const edited = memory().replace(OPENGL_OLD, `${OPENGL_OLD} Still true on SDK 27.`);
+    const run = stopAfter(root, edited, FRESH + 5000);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+  });
+
+  test("one shared identifier is not enough", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+    const run = stopAfter(root, memory("- `DEVELOPER_DIR` also picks the `xcrun` toolchain."), FRESH + 5000);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+  });
+
+  test("a second copy of an existing bullet counts as new", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+    expect(nudge(stopAfter(root, memory(OPENGL_OLD), FRESH + 5000).stdout)).toContain(
+      "bullet at line 6 overlaps line 4",
+    );
+  });
+
+  test("names at most two pairs", () => {
+    const root = makeCrankProject();
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+    const three = [1, 2, 3].map((i) => `${OPENGL_NEW} Variant ${i}.`);
+    const ctx = nudge(stopAfter(root, memory(...three), FRESH + 5000).stdout)!;
+    expect(ctx.match(/overlaps line 4/g)).toHaveLength(2);
+  });
+
+  test("rides along with the record nudge in one message", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    expect(stopAfter(root, memory(), FRESH).stdout).toBe("");
+    const ctx = nudge(stopAfter(root, memory(OPENGL_NEW), STALE).stdout)!;
+    expect(ctx).toContain(`${NUDGE_STEP} file(s) have changed`);
+    expect(ctx).toContain("overlaps line 4");
+  });
+
+  test("a state file that cannot be written: exit 0, silent", () => {
+    const root = makeCrankProject();
+    fs.mkdirSync(dedupState(root)); // a directory where the file belongs
+    const run = stopAfter(root, memory(OPENGL_NEW), FRESH);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+  });
+});

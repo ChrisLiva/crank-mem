@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { loadIndex } from "./store.ts";
 import { estimateProseTokens } from "./tokens.ts";
 import { JOURNAL_FILE } from "./journal.ts";
@@ -124,15 +125,20 @@ function backupCerebrum(crankDir: string, text: string): string | null {
   }
 }
 
-/** The LONGEST_NAMED longest whole bullets, as "line N (C chars)", longest first. */
-function longestBullets(text: string): string[] {
+/** Whole bullets with the 1-based line each starts on, in file order. */
+function bulletsWithLines(text: string): Array<{ line: number; body: string }> {
   const bullets: Array<{ line: number; body: string }> = [];
   let line = 1;
   for (const block of parseBlocks(text.split("\n"))) {
     if (block.kind === "bullet") bullets.push({ line, body: block.lines.join("\n").trimEnd() });
     line += block.lines.length;
   }
-  return bullets
+  return bullets;
+}
+
+/** The LONGEST_NAMED longest whole bullets, as "line N (C chars)", longest first. */
+function longestBullets(text: string): string[] {
+  return bulletsWithLines(text)
     .sort((a, b) => b.body.length - a.body.length)
     .slice(0, LONGEST_NAMED)
     .map((b) => `line ${b.line} (${b.body.length} chars${COMMIT_SHA.test(b.body) ? ", cites a commit" : ""})`);
@@ -310,7 +316,8 @@ export function cerebrumNudge(crankDir: string): string | null {
       `crank-mem: ${changed} file(s) have changed since .crank/cerebrum.md was last updated. ` +
         `If this session surfaced a user preference, a project convention, a dependency quirk, or a ` +
         `gotcha worth keeping, add a one-line bullet to the matching cerebrum section before moving ` +
-        `on — a slightly redundant entry beats a lost one.`,
+        `on. Check for an existing bullet first and update it rather than add a near-copy; when ` +
+        `replacing, write (supersedes YYYY-MM-DD: old claim).`,
     );
   }
   if (journalDue) {
@@ -354,4 +361,134 @@ export function cerebrumNudge(crankDir: string): string | null {
     );
   }
   return parts.join("\n");
+}
+
+// Overlap check state: cerebrum's mtime and a hash per bullet at the last look.
+// A file of its own, so it never disturbs the nudge marker's debounce.
+const DEDUP_FILE = "cerebrum-dedup.json";
+// A new bullet sharing this many identifiers with an older one is flagged.
+// Word overlap misses real duplicates (0.31 Jaccard on an OrcaSlicer pair that
+// re-describes the same build failure); shared identifiers catch them.
+const OVERLAP_MIN_SHARED = 2;
+const OVERLAP_MAX_PAIRS = 2;
+const SHARED_NAMED = 3;
+
+const BACKTICKED = /`([^`\n]+)`/g;
+// A file name with a letter extension, with any directory prefix: stop.ts, OpenGL.framework.
+const PATH = /(?<![\w./~-])(?:[\w.~-]*\/)*[\w.-]*\w\.[A-Za-z]\w+/g;
+// -Werror=unguarded-availability-new, --force. Not "re-run": the dash must open the word.
+const FLAG = /(?<![\w-])--?[A-Za-z][\w=.-]*\w/g;
+const CAMEL_OR_SNAKE = /\b(?:\w*[a-z][A-Z]\w*|\w*[A-Za-z0-9]_[A-Za-z0-9]\w*)\b/g;
+const MIN_WORD = 6;
+
+interface DedupState {
+  cerebrumMtimeMs: number;
+  bulletHashes: string[];
+}
+
+function readDedupState(crankDir: string): DedupState | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(crankDir, DEDUP_FILE), "utf-8"));
+    if (typeof raw?.cerebrumMtimeMs === "number" && Array.isArray(raw?.bulletHashes)) return raw as DedupState;
+  } catch {}
+  return null;
+}
+
+function hashBullet(body: string): string {
+  return createHash("sha1").update(body.trim()).digest("hex").slice(0, 16);
+}
+
+/** Backticked spans, paths, flags, and CamelCase or snake_case words, each counted once. */
+function identifiers(body: string): Set<string> {
+  const ids = new Set<string>();
+  // Each kind is cut out before the next, so a path's snake_case stem does not
+  // count a second time.
+  const take = (text: string, re: RegExp, keep: (m: string) => boolean): string =>
+    text.replace(re, (m: string, inner?: string) => {
+      const id = typeof inner === "string" ? inner.trim() : m;
+      if (keep(id)) ids.add(id);
+      return " ";
+    });
+  let rest = take(body, BACKTICKED, (id) => id.length > 0);
+  rest = take(rest, PATH, () => true);
+  rest = take(rest, FLAG, () => true);
+  take(rest, CAMEL_OR_SNAKE, (id) => id.length >= MIN_WORD);
+  return ids;
+}
+
+/**
+ * One line per new cerebrum bullet that shares OVERLAP_MIN_SHARED or more
+ * identifiers with an older bullet, at most OVERLAP_MAX_PAIRS, or null.
+ *
+ * Runs only when cerebrum's mtime moved since the last look, so an unchanged
+ * file is never reparsed. The first run records the bullet hashes and stays
+ * silent. "New" means a bullet whose hash was not there last time; older
+ * bullets are those still present, so an edited bullet is never paired with
+ * the version it replaced. The audit's run of this rule found 5 pairs in 63
+ * bullets, 2 of them true duplicates, so the message keeps "keep both" a no-op
+ * answer. Never throws.
+ */
+export function cerebrumOverlaps(crankDir: string): string | null {
+  try {
+    const file = path.join(crankDir, "cerebrum.md");
+    const mtimeMs = mtimeOf(file);
+    if (mtimeMs === null) return null;
+    const state = readDedupState(crankDir);
+    if (state && state.cerebrumMtimeMs === mtimeMs) return null;
+
+    const bullets = bulletsWithLines(fs.readFileSync(file, "utf-8")).map((b) => ({
+      ...b,
+      hash: hashBullet(b.body),
+    }));
+    try {
+      const next: DedupState = { cerebrumMtimeMs: mtimeMs, bulletHashes: bullets.map((b) => b.hash) };
+      fs.writeFileSync(path.join(crankDir, DEDUP_FILE), JSON.stringify(next));
+    } catch (err) {
+      // Every later Stop reparses and may repeat a flag. Silent by contract.
+      debugEvent("dedup-state-write-failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    if (!state) return null;
+
+    // Counted, not a set: a second copy of an existing bullet is new.
+    const remaining = new Map<string, number>();
+    for (const h of state.bulletHashes) remaining.set(h, (remaining.get(h) ?? 0) + 1);
+    const older: Array<{ line: number; ids: Set<string> }> = [];
+    const added: Array<{ line: number; ids: Set<string> }> = [];
+    for (const b of bullets) {
+      const left = remaining.get(b.hash) ?? 0;
+      if (left > 0) remaining.set(b.hash, left - 1);
+      (left > 0 ? older : added).push({ line: b.line, ids: identifiers(b.body) });
+    }
+
+    const pairs: Array<{ line: number; olderLine: number; shared: string[] }> = [];
+    for (const n of added) {
+      let best: { olderLine: number; shared: string[] } | null = null;
+      for (const o of older) {
+        const shared = [...n.ids].filter((id) => o.ids.has(id));
+        if (shared.length >= OVERLAP_MIN_SHARED && shared.length > (best?.shared.length ?? 0)) {
+          best = { olderLine: o.line, shared };
+        }
+      }
+      if (best) pairs.push({ line: n.line, ...best });
+    }
+    debugEvent("overlap-checked", { added: added.length, pairs: pairs.length });
+    if (pairs.length === 0) return null;
+
+    const lines = pairs
+      .sort((a, b) => b.shared.length - a.shared.length)
+      .slice(0, OVERLAP_MAX_PAIRS)
+      .map(
+        (p) =>
+          `crank-mem: new .crank/cerebrum.md bullet at line ${p.line} overlaps line ${p.olderLine} ` +
+          `(shared: ${p.shared.slice(0, SHARED_NAMED).map((id) => `\`${id}\``).join(", ")}): ` +
+          `merge them, supersede the old one by deleting it and ending the new one with ` +
+          `(supersedes YYYY-MM-DD: old claim), or keep both if they say different things, which needs no edit.`,
+      );
+    return lines.join("\n");
+  } catch (err) {
+    debugEvent("overlap-check-failed", { error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
 }

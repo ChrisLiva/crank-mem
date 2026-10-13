@@ -49,17 +49,18 @@ agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in
   give line ranges, so slice-read just what you need (Read with offset/limit,
   or \`sed -n 'START,ENDp' file\`).
 - Cerebrum protocol: keep \`.crank/cerebrum.md\` current as you work. The bar is
-  low — a one-line bullet is enough, and a slightly redundant entry beats a
-  lost one. Record it the moment you learn it, not at the end of the task, and
-  append new bullets at the end of the section, newest last:
+  low — a one-line bullet is enough. Check for an existing bullet first and
+  update it rather than add a near-copy; when replacing, write (supersedes
+  YYYY-MM-DD: old claim). Record it the moment you learn it, not at the end of
+  the task, and append new bullets at the end of the section, newest last:
   - the user corrects you or states a preference → \`## User Preferences\`;
   - anything else worth keeping → \`## Memory\`: a non-obvious project
     convention, a framework/dependency quirk, surprising API behavior, or a
     gotcha that would trip up a fresh session.
   Do NOT record: anything CLAUDE.md, the README, or the code already states; a
   narration of what you just did (that is the journal); a one-time fix that is
-  finished; a restatement of an existing bullet. Respect existing entries;
-  consolidate or prune a section when it grows bloated or stale.
+  finished. Respect existing entries; consolidate or prune a section when it
+  grows bloated or stale.
 - Journal protocol: \`.crank/${JOURNAL_FILE}\` is the episodic counterpart — where you
   left off, not what is true. Append one dated bullet
   (\`- YYYY-MM-DD: what you did; where you left off; NEXT: next step\`) at the end

@@ -264,4 +264,38 @@ describe("post-write cerebrum nudge (Codex only)", () => {
     expect(nudge(run.stdout)).toContain("160 lines");
     expect(nudge(run.stdout)).not.toContain("A copy of the current file");
   });
+
+  // Codex appends to cerebrum with a patch that touches nothing else, and that
+  // patch takes the early return for .crank/-only writes.
+  const CEREBRUM_PATCH = "*** Begin Patch\n*** Update File: .crank/cerebrum.md\n+x\n*** End Patch";
+  const OLD = "- Fresh build dir fails: `OpenGL.framework` hits `-Werror=unguarded-availability-new` (2026-09-27).";
+  const NEW = "- GUI compile fails: OpenGL.framework, -Werror=unguarded-availability-new; use CMAKE_PROJECT_INCLUDE.";
+  const memory = (...bullets: string[]) => ["# Cerebrum", "", "## Memory", ...bullets].join("\n");
+
+  test("a cerebrum-only apply_patch flags an overlapping new bullet after a silent seed", () => {
+    const root = makeCrankProject();
+    fs.writeFileSync(cerebrum(root), memory(OLD));
+    setMtime(cerebrum(root), FRESH);
+    const seed = runHook(HOOK, JSON.stringify(codexApplyPatch(root, CEREBRUM_PATCH)));
+    expect(seed.status).toBe(0);
+    expect(seed.stdout).toBe("");
+
+    fs.writeFileSync(cerebrum(root), memory(OLD, NEW));
+    setMtime(cerebrum(root), FRESH + 5000);
+    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, CEREBRUM_PATCH)));
+    expect(run.status).toBe(0);
+    expect(nudge(run.stdout)).toContain("bullet at line 5 overlaps line 4");
+  });
+
+  test("Claude writes to cerebrum never run the overlap check here", () => {
+    const root = makeCrankProject();
+    for (const [text, ms] of [[memory(OLD), FRESH], [memory(OLD, NEW), FRESH + 5000]] as const) {
+      fs.writeFileSync(cerebrum(root), text);
+      setMtime(cerebrum(root), ms);
+      const run = runHook(HOOK, JSON.stringify(claudePostEdit(root, cerebrum(root))));
+      expect(run.status).toBe(0);
+      expect(run.stdout).toBe("");
+    }
+    expect(fs.existsSync(path.join(root, ".crank/cerebrum-dedup.json"))).toBe(false);
+  });
 });
