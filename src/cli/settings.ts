@@ -34,7 +34,9 @@ export function hookCommand(runtime: "bun" | "node", script: string, agent: "cla
   const runner = runtime === "bun" ? "bun" : "node --disable-warning=ExperimentalWarning";
   // Claude expands $CLAUDE_PROJECT_DIR; Codex runs hooks with the project cwd.
   const p = agent === "claude" ? `"$CLAUDE_PROJECT_DIR"/.crank/hooks/${script}` : `.crank/hooks/${script}`;
-  return `${runner} ${p}`;
+  // A committed settings file outlives .crank/ in clean checkouts and
+  // worktrees; without the script the hook exits 0 instead of failing.
+  return `[ ! -f ${p} ] || ${runner} ${p}`;
 }
 
 /** The hook entries crank-mem wires, per agent. */
