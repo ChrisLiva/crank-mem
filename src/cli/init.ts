@@ -13,14 +13,14 @@ import {
 import {
   trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
 } from "./codex-trust.ts";
-import { defaultConfig, saveConfig, CRANK_DIR } from "../hooks/lib/config.ts";
+import { defaultConfig, saveConfig, CRANK_DIR, type CrankConfig } from "../hooks/lib/config.ts";
 import { fullScan } from "../hooks/lib/scanner.ts";
 import { commitIndex } from "../hooks/lib/store.ts";
 import { CLI_LOCK_BUDGET_MS } from "../hooks/lib/lock.ts";
+import { CEREBRUM_FILE } from "../hooks/lib/cerebrum-nudge.ts";
+import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
 
-type GitMode = "commit" | "ignore" | "exclude";
-
-function detectRuntime(): "bun" | "node" | null {
+function detectRuntime(): CrankConfig["runtime"] | null {
   if (spawnSync("bun", ["--version"], { stdio: "ignore" }).status === 0) return "bun";
   const res = spawnSync("node", ["--version"], { encoding: "utf-8" });
   if (res.status === 0) {
@@ -62,10 +62,10 @@ export async function run(args: string[]): Promise<number> {
     }
   }
 
-  const gitMode: GitMode = (
-    typeof flags.git === "string" ? (flags.git as GitMode)
+  const gitMode: CrankConfig["git"] = (
+    typeof flags.git === "string" ? (flags.git as CrankConfig["git"])
     : yes ? "exclude"
-    : ((await choose("Track .crank/ in git?", ["commit", "ignore", "exclude"], "exclude")) as GitMode)
+    : await choose("Track .crank/ in git?", ["commit", "ignore", "exclude"], "exclude")
   );
 
   const adrPath = typeof flags.adr === "string" ? flags.adr : "docs/adr";
@@ -151,8 +151,8 @@ export async function run(args: string[]): Promise<number> {
     });
 
     // ── Seed cerebrum + journal + first scan ───────────────────────────────
-    fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, "cerebrum.md"));
-    fs.copyFileSync(templatePath("journal.md"), path.join(crankDir, "journal.md"));
+    fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, CEREBRUM_FILE));
+    fs.copyFileSync(templatePath("journal.md"), path.join(crankDir, JOURNAL_FILE));
     scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
   } catch (err) {
     console.error(`crank-mem: ${err instanceof Error ? err.message : String(err)}`);

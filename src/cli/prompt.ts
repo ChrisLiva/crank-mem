@@ -25,7 +25,7 @@ export function decodeKey(input: string, index: number, count: number): KeyActio
   return { type: "none" };
 }
 
-export async function choose(question: string, options: string[], def: string): Promise<string> {
+export async function choose<T extends string>(question: string, options: readonly T[], def: T): Promise<T> {
   if (!process.stdin.isTTY || !process.stderr.isTTY) return def;
   const out = process.stderr;
   let index = Math.max(0, options.indexOf(def));
@@ -41,7 +41,7 @@ export async function choose(question: string, options: string[], def: string): 
   out.write("\x1b[?25l"); // hide cursor while the menu is live
   renderOptions();
 
-  const selected = await new Promise<string>((resolve) => {
+  const selected = await new Promise<T>((resolve) => {
     const stdin = process.stdin;
     const restore = (): void => {
       stdin.setRawMode(false);

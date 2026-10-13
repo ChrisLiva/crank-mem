@@ -10,7 +10,7 @@ import { parseBullets } from "../hooks/lib/bullets.ts";
 import { countChangedSince } from "../hooks/lib/changes.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
 import {
-  auditSkillInstalled, installedAtMs, lastAuditMs, overlapPairCount, OVERLAP_MIN_SHARED,
+  auditSkillInstalled, installedAtMs, lastAuditMs, overlapPairCount, OVERLAP_MIN_SHARED, CEREBRUM_FILE,
 } from "../hooks/lib/cerebrum-nudge.ts";
 import { hasCrankHooks } from "./settings.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
@@ -44,7 +44,7 @@ function readText(file: string): string | null {
  */
 function memoryLines(root: string, crankDir: string, config: CrankConfig, index: AnatomyIndex): string[] {
   const lines: string[] = [];
-  const cerebrumMd = readText(path.join(crankDir, "cerebrum.md"));
+  const cerebrumMd = readText(path.join(crankDir, CEREBRUM_FILE));
   const journalMd = readText(path.join(crankDir, JOURNAL_FILE));
 
   if (!cerebrumMd) {

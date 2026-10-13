@@ -12,7 +12,7 @@ import {
 import { CRANK_DIR, CONFIG_FILE } from "../hooks/lib/config.ts";
 import { INDEX_FILE, ANATOMY_FILE } from "../hooks/lib/store.ts";
 import { LOCK_FILE } from "../hooks/lib/lock.ts";
-import { MARKER_FILE, DEDUP_FILE, ARCHIVE_FILE, BACKUP_DIR, isAuditBackup } from "../hooks/lib/cerebrum-nudge.ts";
+import { MARKER_FILE, DEDUP_FILE, CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, isAuditBackup } from "../hooks/lib/cerebrum-nudge.ts";
 import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
 import { openProject } from "./project.ts";
@@ -41,7 +41,7 @@ export async function run(args: string[]): Promise<number> {
 
   const restore =
     flags.restore === true ||
-    (!flags.yes && process.stdin.isTTY &&
+    (!flags.yes &&
       (await choose("Restore modified files from the init-time backup?", ["restore", "surgical"], "surgical")) === "restore");
 
   const codexHooksJson = path.join(root, ".codex", "hooks.json");
@@ -102,7 +102,7 @@ export async function run(args: string[]): Promise<number> {
 
   const deleteCrank =
     flags["delete-crank"] === true ||
-    (flags["keep-crank"] !== true && !flags.yes && process.stdin.isTTY &&
+    (flags["keep-crank"] !== true && !flags.yes &&
       (await choose("Delete the .crank/ data directory?", ["delete", "keep"], "keep")) === "delete");
 
   if (deleteCrank) {
@@ -172,7 +172,7 @@ function sweepLegacy(root: string): void {
 function deleteOwnedFiles(crankDir: string): string[] {
   const owned = [
     CONFIG_FILE, INDEX_FILE, ANATOMY_FILE, LOCK_FILE, MARKER_FILE, DEDUP_FILE, JOURNAL_FILE, LOG_FILE,
-    "cerebrum.md", ARCHIVE_FILE, BACKUP_DIR, "hooks",
+    CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, "hooks",
   ];
   for (const name of owned) fs.rmSync(path.join(crankDir, name), { recursive: true, force: true });
   for (const name of readdirOrEmpty(crankDir)) {

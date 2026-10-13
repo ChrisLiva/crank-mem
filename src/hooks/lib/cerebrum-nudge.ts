@@ -41,6 +41,7 @@ export const PRUNE_TARGET_TOKENS = 2100;
 // never mistakes this dir for an init/upgrade backup (cli/backups.ts);
 // `uninstall --delete-crank` removes it by name.
 export const BACKUP_DIR = path.join("backups", "cerebrum");
+export const CEREBRUM_FILE = "cerebrum.md";
 // Where the prune nudge sends superseded entries; never injected.
 export const ARCHIVE_FILE = "cerebrum-archive.md";
 export const BACKUP_KEEP = 5;
@@ -101,7 +102,7 @@ interface CerebrumStats {
 
 function readCerebrum(crankDir: string): CerebrumStats | null {
   try {
-    const file = path.join(crankDir, "cerebrum.md");
+    const file = path.join(crankDir, CEREBRUM_FILE);
     const mtimeMs = fs.statSync(file).mtimeMs;
     const text = fs.readFileSync(file, "utf-8");
     return { text, mtimeMs, lineCount: text.split("\n").length, tokenCount: estimateProseTokens(text) };
@@ -157,7 +158,7 @@ function longestBullets(text: string): string[] {
 }
 
 // What the audit skill's backup step copies (skills/crank-mem-audit/SKILL.md).
-const AUDIT_BACKUP_FILES = new Set(["cerebrum.md", JOURNAL_FILE, ARCHIVE_FILE]);
+const AUDIT_BACKUP_FILES = new Set([CEREBRUM_FILE, JOURNAL_FILE, ARCHIVE_FILE]);
 
 /**
  * True for a .crank/backups/ dir the audit skill wrote: it holds only copies of
@@ -533,7 +534,7 @@ export function overlapPairCount(text: string): number {
  */
 export function cerebrumOverlaps(crankDir: string): string | null {
   try {
-    const file = path.join(crankDir, "cerebrum.md");
+    const file = path.join(crankDir, CEREBRUM_FILE);
     const mtimeMs = mtimeOf(file);
     if (mtimeMs === null) return null;
     const state = readDedupState(crankDir);

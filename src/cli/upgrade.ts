@@ -12,6 +12,7 @@ import {
   ensureCrankGitignore,
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
+import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
 // the hook wiring, the .crank/.gitignore allowlist and, in commit mode, a stale
@@ -33,7 +34,7 @@ export async function run(_args: string[]): Promise<number> {
   // Seeding runs before the backups below, so a failure here must not abort an
   // upgrade that would otherwise succeed — an absent journal costs a nudge, not
   // an install.
-  const journalPath = path.join(crankDir, "journal.md");
+  const journalPath = path.join(crankDir, JOURNAL_FILE);
   if (!fs.existsSync(journalPath)) {
     try {
       fs.copyFileSync(templatePath("journal.md"), journalPath);

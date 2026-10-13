@@ -5,6 +5,7 @@ import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex } from "./lib/store.ts";
 import { cerebrumExcerpt, INJECTION_HEADING } from "./lib/injection.ts";
 import { JOURNAL_FILE } from "./lib/journal.ts";
+import { CEREBRUM_FILE } from "./lib/cerebrum-nudge.ts";
 import { enableDebug } from "./lib/debug.ts";
 
 // SubagentStart hook (Claude Code only). SessionStart never fires inside a
@@ -29,7 +30,7 @@ async function main(): Promise<void> {
 
   let md: string;
   try {
-    md = fs.readFileSync(path.join(crankDir, "cerebrum.md"), "utf-8");
+    md = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
   } catch {
     return;
   }

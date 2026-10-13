@@ -43,11 +43,7 @@ function writeJournal(root: string, mtimeMs: number): void {
   setMtime(journal(root), mtimeMs);
 }
 function nudge(stdout: string): string | undefined {
-  try {
-    return JSON.parse(stdout)?.hookSpecificOutput?.additionalContext;
-  } catch {
-    return undefined;
-  }
+  return stdout ? JSON.parse(stdout).hookSpecificOutput.additionalContext : undefined;
 }
 
 /** N source files named f<offset>.ts onward — sized to the nudge threshold. */

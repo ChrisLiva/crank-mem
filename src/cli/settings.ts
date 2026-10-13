@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import type { CrankConfig } from "../hooks/lib/config.ts";
 
 // Additive wiring of hook entries into agent settings files, and its exact
 // inverse. Merge adds missing entries and refreshes only command forms
@@ -32,17 +33,16 @@ interface HookGroup {
 
 export type HooksMap = Record<string, HookGroup[]>;
 
-type Runtime = "bun" | "node";
 type Agent = "claude" | "codex";
 
-function commandParts(runtime: Runtime, script: string, agent: Agent): { runner: string; p: string } {
+function commandParts(runtime: CrankConfig["runtime"], script: string, agent: Agent): { runner: string; p: string } {
   const runner = runtime === "bun" ? "bun" : "node --disable-warning=ExperimentalWarning";
   // Claude expands $CLAUDE_PROJECT_DIR; Codex runs hooks with the project cwd.
   const p = agent === "claude" ? `"$CLAUDE_PROJECT_DIR"/.crank/hooks/${script}` : `.crank/hooks/${script}`;
   return { runner, p };
 }
 
-export function hookCommand(runtime: Runtime, script: string, agent: Agent): string {
+export function hookCommand(runtime: CrankConfig["runtime"], script: string, agent: Agent): string {
   const { runner, p } = commandParts(runtime, script, agent);
   // A committed settings file outlives .crank/ in clean checkouts and
   // worktrees; without the script the hook exits 0 instead of failing.
@@ -69,7 +69,7 @@ function commandForms(script: string): Set<string> {
 export const SUBAGENT_MATCHER = "^(general-purpose|Explore|Plan|workflow-subagent)$";
 
 /** The hook entries crank-mem wires, per agent. */
-export function crankHooks(runtime: Runtime, agent: Agent): HooksMap {
+export function crankHooks(runtime: CrankConfig["runtime"], agent: Agent): HooksMap {
   const matcher = agent === "claude" ? "Write|Edit|MultiEdit" : "apply_patch";
   const map: HooksMap = {
     SessionStart: [
@@ -165,7 +165,7 @@ export function hasCrankHooks(file: string): boolean {
 }
 
 /** The Claude settings file a git mode wires, and the other one, which must hold no crank hooks. */
-export function claudeSettingsFiles(root: string, git: "commit" | "ignore" | "exclude"): { wired: string; other: string } {
+export function claudeSettingsFiles(root: string, git: CrankConfig["git"]): { wired: string; other: string } {
   const shared = path.join(root, ".claude", "settings.json");
   const local = path.join(root, ".claude", "settings.local.json");
   return git === "commit" ? { wired: shared, other: local } : { wired: local, other: shared };

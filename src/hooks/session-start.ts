@@ -13,6 +13,7 @@ import { trimJournal, recentJournalBullets, JOURNAL_FILE } from "./lib/journal.t
 import { countChangedSince } from "./lib/changes.ts";
 import { estimateProseTokens } from "./lib/tokens.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
+import { CEREBRUM_FILE } from "./lib/cerebrum-nudge.ts";
 
 // SessionStart hook (Claude Code + Codex; startup|resume|clear|compact all
 // behave the same, so compaction re-injects). Refreshes the index under lock,
@@ -58,7 +59,7 @@ async function main(): Promise<void> {
 
   let cerebrumMd: string | null = null;
   try {
-    cerebrumMd = fs.readFileSync(path.join(crankDir, "cerebrum.md"), "utf-8");
+    cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
   } catch {}
 
   // `compact` fires mid-turn, while the agent may be appending an entry, and

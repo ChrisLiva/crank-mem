@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload,
+  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload, type HookPayload,
 } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { commitIndex } from "./lib/store.ts";
@@ -36,9 +36,9 @@ interface WriteScan {
   skip: { reason: SkipReason; dir?: string } | null;
 }
 
-function toWriteOps(payload: Record<string, unknown>, root: string, cwd: string): WriteScan {
+function toWriteOps(payload: HookPayload, root: string, cwd: string): WriteScan {
   const toolName = payload.tool_name;
-  const toolInput = (payload.tool_input ?? {}) as Record<string, unknown>;
+  const toolInput = payload.tool_input ?? {};
 
   // Relative tool paths are relative to the session cwd, which may be a
   // subdirectory of the project root.

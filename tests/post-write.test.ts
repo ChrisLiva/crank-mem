@@ -226,13 +226,8 @@ describe("post-write cerebrum nudge (Codex only)", () => {
   };
   const setMtime = (p: string, ms: number) => fs.utimesSync(p, new Date(ms), new Date(ms));
   const cerebrum = (root: string) => path.join(root, ".crank/cerebrum.md");
-  const nudge = (stdout: string): string | undefined => {
-    try {
-      return JSON.parse(stdout)?.hookSpecificOutput?.additionalContext;
-    } catch {
-      return undefined;
-    }
-  };
+  const nudge = (stdout: string): string | undefined =>
+    stdout ? JSON.parse(stdout).hookSpecificOutput.additionalContext : undefined;
   const UPDATE_A = "*** Begin Patch\n*** Update File: a.ts\n+x\n*** End Patch";
 
   test("apply_patch nudges when files changed since cerebrum was updated", () => {

@@ -75,7 +75,6 @@ export function extractSymbols(content: string, ext: string): SymbolEntry[] {
       }
     }
   }
-  if (found.length === 0) return [];
 
   const symbols: SymbolEntry[] = [];
   for (let i = 0; i < Math.min(found.length, SYMBOL_MAX_COUNT); i++) {

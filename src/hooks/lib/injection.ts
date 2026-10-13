@@ -303,7 +303,7 @@ function citationTags(bullet: string, cited: CitedFiles, byName: Map<string, str
   let noteEndMs: number | null = null;
   for (const [, y, m, d] of bullet.matchAll(ISO_DATE)) {
     const end = new Date(Number(y), Number(m) - 1, Number(d) + 1).getTime();
-    if (!Number.isNaN(end) && (noteEndMs === null || end > noteEndMs)) noteEndMs = end;
+    if (noteEndMs === null || end > noteEndMs) noteEndMs = end;
   }
   const missing = new Set<string>();
   const modified = new Set<string>();
