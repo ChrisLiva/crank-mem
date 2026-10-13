@@ -5,11 +5,15 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { REPO_ROOT } from "./helpers.ts";
 import { crankHooks } from "../src/cli/settings.ts";
+import { trustEntriesFromFile } from "../src/cli/codex-trust.ts";
 
 const MAIN = path.join(REPO_ROOT, "src/cli/main.ts");
 
 function cli(cwd: string, ...args: string[]): { status: number; stdout: string; stderr: string } {
-  const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "crank-ch-"));
+  return cliWithCodexHome(fs.mkdtempSync(path.join(os.tmpdir(), "crank-ch-")), cwd, ...args);
+}
+
+function cliWithCodexHome(codexHome: string, cwd: string, ...args: string[]): { status: number; stdout: string; stderr: string } {
   const res = spawnSync("bun", [MAIN, ...args], {
     cwd, encoding: "utf-8", timeout: 30_000,
     env: { ...process.env, CODEX_HOME: codexHome },
@@ -61,6 +65,93 @@ describe("stats", () => {
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("files indexed:    1 (capped at max_files 1)");
     expect(run.stdout).toContain("indexable files:  2 (coverage 50%)");
+  });
+});
+
+describe("stats: codex wiring", () => {
+  // A rollout file as Codex writes it: session_meta first, then the thread's records (ADR 0006).
+  function rollout(codexHome: string, name: string, meta: Record<string, unknown>, records: object[]): void {
+    const ts = String(meta.timestamp);
+    const dir = path.join(codexHome, "sessions", ts.slice(0, 4), ts.slice(5, 7), ts.slice(8, 10));
+    fs.mkdirSync(dir, { recursive: true });
+    const lines = [{ timestamp: ts, type: "session_meta", payload: meta }, ...records].map((r) => JSON.stringify(r));
+    fs.writeFileSync(path.join(dir, `rollout-${name}.jsonl`), lines.join("\n") + "\n");
+  }
+  const turn = { type: "turn_context", payload: {} };
+  const injection = {
+    type: "response_item",
+    payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "## crank-mem (project memory)\n\nThis project keeps" }] },
+  };
+
+  function wiredProject(): { root: string; codexHome: string } {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-cli-"));
+    fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
+    const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "crank-ch-"));
+    expect(cliWithCodexHome(codexHome, root, "init", "--yes").status).toBe(0);
+    // The CLI sees the resolved cwd (/private/var/... on macOS), so rollouts must too.
+    return { root: fs.realpathSync(root), codexHome };
+  }
+
+  // OrcaSlicer: 3 of 4 root threads after install got no injection, and
+  // nothing in crank-mem reported it.
+  test("counts root threads since install that got no injection", () => {
+    const { root, codexHome } = wiredProject();
+    const later = new Date(Date.now() + 60_000).toISOString();
+    rollout(codexHome, "injected", { cwd: root, timestamp: later, thread_source: "user" }, [turn, injection]);
+    rollout(codexHome, "missed", { cwd: root, timestamp: later, thread_source: "user" }, [turn]);
+    // Not counted: a thread with no turn, a sub-agent, another project, a thread before install.
+    rollout(codexHome, "aborted", { cwd: root, timestamp: later, thread_source: "code_review" }, []);
+    rollout(codexHome, "sub", { cwd: root, timestamp: later, parent_thread_id: "p", thread_source: "subagent" }, [turn]);
+    rollout(codexHome, "other", { cwd: "/elsewhere", timestamp: later }, [turn]);
+    rollout(codexHome, "old", { cwd: root, timestamp: "2020-01-01T00:00:00.000Z" }, [turn]);
+
+    const run = cliWithCodexHome(codexHome, root, "stats");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("codex sessions:   1 of 2 root threads since install got no injection");
+  });
+
+  test("reports stale and missing hook hashes with the review remediation", () => {
+    const { root, codexHome } = wiredProject();
+    const [first] = trustEntriesFromFile(path.join(root, ".codex/hooks.json"));
+    fs.writeFileSync(
+      path.join(codexHome, "config.toml"),
+      `[projects."${root}"]\ntrust_level = "trusted"\n\n[hooks.state."${first!.key}"]\ntrusted_hash = "sha256:${"0".repeat(64)}"\n`
+    );
+    const run = cliWithCodexHome(codexHome, root, "stats");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("codex hook trust: 0 of 2 hashes current, 1 stale, 1 missing");
+    expect(run.stdout).toContain("open codex once in this project and accept the hooks review");
+    expect(run.stdout).not.toContain("codex project:");
+    expect(run.stdout).not.toContain("--codex-trust write");
+  });
+
+  test("current hashes print no remediation; a missing exact-path trust_level is not called untrusted", () => {
+    const { root, codexHome } = wiredProject();
+    const entries = trustEntriesFromFile(path.join(root, ".codex/hooks.json"));
+    fs.writeFileSync(
+      path.join(codexHome, "config.toml"),
+      entries.map((e) => `[hooks.state."${e.key}"]\ntrusted_hash = "${e.hash}"\n`).join("\n")
+    );
+    const run = cliWithCodexHome(codexHome, root, "stats");
+    expect(run.stdout).toContain("codex hook trust: 2 of 2 hashes current\n");
+    expect(run.stdout).toContain("codex sessions:   no root threads since install");
+    expect(run.stdout).toContain("no exact-path trust_level");
+    expect(run.stdout).not.toContain("untrusted");
+    expect(run.stdout).not.toContain("accept the hooks review");
+  });
+
+  test("an exact-path trust_level other than trusted is reported as blocking the hooks", () => {
+    const { root, codexHome } = wiredProject();
+    fs.writeFileSync(path.join(codexHome, "config.toml"), `[projects."${root}"]\ntrust_level = "untrusted"\n`);
+    const run = cliWithCodexHome(codexHome, root, "stats");
+    expect(run.stdout).toContain(`codex project:    trust_level = "untrusted", so codex loads no .codex/ hooks here`);
+  });
+
+  test("an install without Codex wiring says so and reads no rollouts", () => {
+    const run = cli(initedProject(), "stats");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("codex:            not wired");
+    expect(run.stdout).not.toContain("codex sessions:");
   });
 });
 

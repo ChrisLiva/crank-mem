@@ -24,6 +24,16 @@ store on this machine (Codex CLI in daily use across several projects).
   forked and sub-agent threads land in the parent's file — so "one file ≈ one
   session" is approximate. Consumers should treat the file, not the
   `session_meta`, as the batching unit.
+- **Root threads** (amended 2026-10-13, 31 OrcaSlicer rollouts on Codex
+  0.151.0 to 0.159.2): the FIRST `session_meta` of a sub-agent file carries
+  `parent_thread_id` and `thread_source: "subagent"`; a root thread's carries
+  neither (`thread_source` is `user` or `code_review`). A thread the user never
+  prompted, such as an aborted code review, holds no `turn_context` record.
+- **Hook context** (same date): crank's SessionStart injection is a
+  `response_item` developer message whose first content item's `text` starts
+  with `## crank-mem (project memory)`, on 0.144.5 and 0.159.2 alike; 0.159.2
+  also tags it `content_item_kinds: ["hooks.additional_context"]`.
+  `crank-mem stats` counts root threads with a turn and no such message.
 
 The Claude Code counterpart (transcripts under
 `~/.claude/projects/<project-slug>/*.jsonl`) is already recorded in ADR 0005.

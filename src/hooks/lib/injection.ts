@@ -33,6 +33,8 @@ export const ADR_RECENT_COUNT = 20;
 export const MEMORY_RECENT_COUNT = 7;
 /** Width of one index entry: a bullet's opening words, enough to grep for. */
 export const INDEX_ENTRY_CHARS = 48;
+/** First line of every injection; `crank-mem stats` finds it in Codex rollouts. */
+export const INJECTION_HEADING = "## crank-mem (project memory)";
 
 /**
  * Cerebrum sections read as semantic memory, lowercased. `## Memory` is the
@@ -81,7 +83,7 @@ function anatomyPointer(index: AnatomyIndex, codex: boolean): string {
   file (${slice}).`;
 }
 
-const instructions = (index: AnatomyIndex, codex: boolean): string => `## crank-mem (project memory)
+const instructions = (index: AnatomyIndex, codex: boolean): string => `${INJECTION_HEADING}
 
 This project keeps a token-annotated file index in \`.crank/anatomy.md\`, an
 agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in

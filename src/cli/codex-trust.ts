@@ -151,8 +151,12 @@ export const CODEX_REVIEW_HINT = [
   "  (or headless: codex --dangerously-bypass-hook-trust)",
 ];
 
+export function codexHome(): string {
+  return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+}
+
 export function userCodexConfigPath(): string {
-  return path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "config.toml");
+  return path.join(codexHome(), "config.toml");
 }
 
 function entryBlock(e: TrustEntry): string {
@@ -189,4 +193,59 @@ function stripTrustEntries(content: string, keys: string[]): string {
     out = out.replace(re, "");
   }
   return out;
+}
+
+/**
+ * The string values under each [table] header, keyed by the header text as
+ * written. Enough TOML for the [projects."…"] and [hooks.state."…"] tables
+ * codex writes; arrays, inline tables and multi-line strings are skipped.
+ */
+function readTomlStrings(content: string): Map<string, Map<string, string>> {
+  const tables = new Map<string, Map<string, string>>();
+  let current = new Map<string, string>();
+  for (const line of content.split(/\r?\n/)) {
+    const header = line.match(/^\s*\[([^[].*)\]\s*(?:#.*)?$/);
+    if (header) {
+      current = new Map();
+      tables.set(header[1]!.trim(), current);
+      continue;
+    }
+    const kv = line.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$/);
+    if (kv) {
+      try {
+        current.set(kv[1]!, JSON.parse(kv[2]!));
+      } catch {}
+    }
+  }
+  return tables;
+}
+
+export interface TrustStatus {
+  /** trust_level of the exact-path [projects."<root>"] table; null when that table is absent. */
+  projectTrustLevel: string | null;
+  current: number;
+  /** trusted_hash present but different: codex re-asks for review and skips the hook until then. */
+  stale: number;
+  missing: number;
+}
+
+/** Compare the crank handlers in a hooks.json with the trust config.toml holds for them. */
+export function codexTrustStatus(configPath: string, root: string, hooksJsonPath: string): TrustStatus {
+  let tables = new Map<string, Map<string, string>>();
+  try {
+    tables = readTomlStrings(fs.readFileSync(configPath, "utf-8"));
+  } catch {}
+  const status: TrustStatus = {
+    projectTrustLevel: tables.get(`projects.${JSON.stringify(root)}`)?.get("trust_level") ?? null,
+    current: 0,
+    stale: 0,
+    missing: 0,
+  };
+  for (const e of trustEntriesFromFile(hooksJsonPath)) {
+    const hash = tables.get(`hooks.state.${JSON.stringify(e.key)}`)?.get("trusted_hash");
+    if (hash === undefined) status.missing++;
+    else if (hash === e.hash) status.current++;
+    else status.stale++;
+  }
+  return status;
 }

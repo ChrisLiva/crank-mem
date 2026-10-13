@@ -23,7 +23,7 @@ Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 
 - `crank-mem init` — wire hooks into `.claude`/`.codex`, seed `.crank/`, first scan
 - `crank-mem scan` — full index rebuild
-- `crank-mem stats` — index report
+- `crank-mem stats` — index report, plus whether Codex threads got the injection and whether its hook trust is current
 - `crank-mem upgrade` — re-vendor hooks and repair their wiring after a `git pull`
 - `crank-mem uninstall` — remove all wiring, offer backup restore
 
