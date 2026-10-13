@@ -90,7 +90,7 @@ describe("walkProject in a git repo", () => {
   test("a listing past 1 MiB still comes from git", () => {
     const root = makeRepo({ ".gitignore": "ignored/\n", "ignored/x.ts": "x", "src/a.ts": "x" });
     // 12,000 index entries with no file on disk: ~1.2 MB of output, which
-    // throws ENOBUFS at execFileSync's default buffer and would fall back to
+    // fails with ENOBUFS at the 1 MiB default maxBuffer and would fall back to
     // the tree walk, where ignored/x.ts reappears.
     const entries = Array.from(
       { length: 12_000 },
