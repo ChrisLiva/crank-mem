@@ -132,6 +132,21 @@ describe("post-write hook (black-box)", () => {
     expect(loadIndex(path.join(root, ".crank")).files["huge.ts"]).toBeUndefined();
   });
 
+  test("overwriting an indexed file past the size cap drops its entry", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;", "grows.ts": "const g = 1;" });
+    seedIndex(root);
+    const crankDir = path.join(root, ".crank");
+    const before = loadIndex(crankDir);
+    expect(before.files["grows.ts"]).toBeDefined();
+
+    fs.writeFileSync(path.join(root, "grows.ts"), "x".repeat(1024 * 1024 + 1));
+    const run = runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "grows.ts"))));
+    expect(run.status).toBe(0);
+    const after = loadIndex(crankDir);
+    expect(after.files["grows.ts"]).toBeUndefined();
+    expect(after.meta.fileCount).toBe(before.meta.fileCount - 1);
+  });
+
   test("binary content under an unlisted extension is skipped", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     seedIndex(root);

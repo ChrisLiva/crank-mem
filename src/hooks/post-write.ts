@@ -123,7 +123,12 @@ async function main(): Promise<void> {
       const entry = indexFile(root, op.relPath, config);
       if (!entry) {
         // Excluded, binary, oversized, or unreadable — indistinguishable here,
-        // but the path alone answers "why didn't my file get indexed?".
+        // but the path alone answers "why didn't my file get indexed?". An
+        // entry from before the write is stale; drop it as refreshIndex does.
+        if (index.files[op.relPath]) {
+          delete index.files[op.relPath];
+          dirty = true;
+        }
         skipped.push(safePath(op.relPath));
         continue;
       }
