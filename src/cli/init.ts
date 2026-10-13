@@ -150,7 +150,7 @@ export async function run(args: string[]): Promise<number> {
     // never backups, the lockfile, the debug log, or another tool's files.
     fs.writeFileSync(
       crankGitignore,
-      "/*\n!/.gitignore\n!/config.json\n!/cerebrum.md\n!/journal.md\n!/anatomy.md\n!/anatomy-index.json\n!/hooks/\n"
+      "/*\n!/.gitignore\n!/config.json\n!/cerebrum.md\n!/cerebrum-archive.md\n!/journal.md\n!/anatomy.md\n!/anatomy-index.json\n!/hooks/\n"
     );
     if (gitMode === "commit") ignoredBy = unignoreCerebrum(root, (f) => {
       backupFile(backupDir, f);

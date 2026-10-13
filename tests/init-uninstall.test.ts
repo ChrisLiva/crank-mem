@@ -113,10 +113,13 @@ describe("init → uninstall round-trip", () => {
     cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
     expect(fs.existsSync(path.join(root, ".claude/settings.json"))).toBe(true);
     expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
-    for (const rel of [".crank/cerebrum.md", ".crank/journal.md", ".crank/config.json", ".crank/hooks/stop.ts"]) {
+    for (const rel of [".crank/cerebrum.md", ".crank/cerebrum-archive.md", ".crank/journal.md", ".crank/config.json", ".crank/hooks/stop.ts"]) {
       expect(ignored(root, rel)).toBe(false);
     }
-    for (const rel of [".crank/backups/x/manifest.json", ".crank/debug.log", ".crank/anatomy-index.lock", ".crank/efforts/e1/plan.md"]) {
+    for (const rel of [
+      ".crank/backups/x/manifest.json", ".crank/backups/cerebrum/c.md", ".crank/debug.log", ".crank/anatomy-index.lock",
+      ".crank/cerebrum-dedup.json", ".crank/efforts/e1/plan.md",
+    ]) {
       expect(ignored(root, rel)).toBe(true);
     }
     // exclude file untouched in commit mode
@@ -167,9 +170,11 @@ describe("init → uninstall round-trip", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--codex", "skip");
     const crank = path.join(root, ".crank");
-    for (const name of ["debug.log", "cerebrum-nudge.json", "anatomy-index.lock", "journal.md.tmp"]) {
+    for (const name of ["debug.log", "cerebrum-nudge.json", "cerebrum-dedup.json", "cerebrum-archive.md", "anatomy-index.lock", "journal.md.tmp"]) {
       fs.writeFileSync(path.join(crank, name), "x");
     }
+    fs.mkdirSync(path.join(crank, "backups/cerebrum"), { recursive: true });
+    fs.writeFileSync(path.join(crank, "backups/cerebrum/2026-10-13T00-00-00-000Z.md"), "x");
     fs.mkdirSync(path.join(crank, "efforts/e1"), { recursive: true });
     fs.writeFileSync(path.join(crank, "efforts/e1/plan.md"), "plan\n");
     fs.writeFileSync(path.join(crank, "backups/plugin-note.md"), "note\n");

@@ -37,8 +37,11 @@ export const PRUNE_TARGET_TOKENS = 2100;
 
 // Before a prune nudge, cerebrum.md is copied here so a prune that cuts a
 // load-bearing entry can be undone. No manifest.json, so `uninstall --restore`
-// never mistakes this dir for an init/upgrade backup (lib/backups.ts).
-const BACKUP_DIR = path.join("backups", "cerebrum");
+// never mistakes this dir for an init/upgrade backup (cli/backups.ts);
+// `uninstall --delete-crank` removes it by name.
+export const BACKUP_DIR = path.join("backups", "cerebrum");
+// Where the prune nudge sends superseded entries; never injected.
+export const ARCHIVE_FILE = "cerebrum-archive.md";
 export const BACKUP_KEEP = 5;
 // Bullets the prune nudge names by line, longest first.
 const LONGEST_NAMED = 3;
@@ -355,7 +358,7 @@ export function cerebrumNudge(crankDir: string): string | null {
         (longest.length ? `Longest bullets: ${longest.join(", ")}. ` : "") +
         `Prune it now: shorten long bullets to one line of at most ~200 characters; move ` +
         `superseded or one-off entries (finished fixes, entries that cite a commit) to ` +
-        `.crank/cerebrum-archive.md, which is not injected but stays greppable; delete only what ` +
+        `.crank/${ARCHIVE_FILE}, which is not injected but stays greppable; delete only what ` +
         `CLAUDE.md or the code already states; keep gotchas and do-not-repeat entries. A small ` +
         `trim is not enough; this reminder repeats until the file is back under the limit.`,
     );
@@ -365,7 +368,7 @@ export function cerebrumNudge(crankDir: string): string | null {
 
 // Overlap check state: cerebrum's mtime and a hash per bullet at the last look.
 // A file of its own, so it never disturbs the nudge marker's debounce.
-const DEDUP_FILE = "cerebrum-dedup.json";
+export const DEDUP_FILE = "cerebrum-dedup.json";
 // A new bullet sharing this many identifiers with an older one is flagged.
 // Word overlap misses real duplicates (0.31 Jaccard on an OrcaSlicer pair that
 // re-describes the same build failure); shared identifiers catch them.

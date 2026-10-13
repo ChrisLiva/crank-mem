@@ -12,7 +12,7 @@ import {
 import { CRANK_DIR, CONFIG_FILE } from "../hooks/lib/config.ts";
 import { INDEX_FILE, ANATOMY_FILE } from "../hooks/lib/store.ts";
 import { LOCK_FILE } from "../hooks/lib/lock.ts";
-import { MARKER_FILE } from "../hooks/lib/cerebrum-nudge.ts";
+import { MARKER_FILE, DEDUP_FILE, ARCHIVE_FILE, BACKUP_DIR } from "../hooks/lib/cerebrum-nudge.ts";
 import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
 import { openProject } from "./project.ts";
@@ -170,7 +170,10 @@ function sweepLegacy(root: string): void {
  * the directory, because it keeps a remaining tool's files out of git.
  */
 function deleteOwnedFiles(crankDir: string): string[] {
-  const owned = [CONFIG_FILE, INDEX_FILE, ANATOMY_FILE, LOCK_FILE, MARKER_FILE, JOURNAL_FILE, LOG_FILE, "cerebrum.md", "hooks"];
+  const owned = [
+    CONFIG_FILE, INDEX_FILE, ANATOMY_FILE, LOCK_FILE, MARKER_FILE, DEDUP_FILE, JOURNAL_FILE, LOG_FILE,
+    "cerebrum.md", ARCHIVE_FILE, BACKUP_DIR, "hooks",
+  ];
   for (const name of owned) fs.rmSync(path.join(crankDir, name), { recursive: true, force: true });
   for (const name of readdirOrEmpty(crankDir)) {
     if (name.endsWith(".tmp")) fs.rmSync(path.join(crankDir, name), { force: true });
