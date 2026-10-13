@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
-import { isIndexableName } from "./scanner.ts";
+import { isIndexableName, runGit } from "./scanner.ts";
 import type { CrankConfig } from "./config.ts";
 import type { AnatomyIndex } from "./store.ts";
 import { debugEvent } from "./debug.ts";
@@ -51,25 +50,12 @@ export function gitChangedFiles(
   if (!fs.existsSync(path.join(rootDir, ".git"))) return null;
   const deadline = Date.now() + budgetMs;
   const git = (args: string[]): string[] | null => {
-    const timeout = deadline - Date.now();
-    const res =
-      timeout > 0
-        ? spawnSync("git", ["--no-optional-locks", ...args], {
-            cwd: rootDir,
-            encoding: "utf-8",
-            timeout,
-            maxBuffer: 64 * 1024 * 1024,
-            stdio: ["ignore", "pipe", "ignore"],
-          })
-        : null;
-    if (!res || res.error || res.status !== 0) {
-      debugEvent("git-changes-failed", {
-        command: args[0],
-        error: !res ? "budget spent" : (res.error?.message ?? `exit ${res.status}`),
-      });
+    const r = runGit(rootDir, args, deadline - Date.now());
+    if ("error" in r) {
+      debugEvent("git-changes-failed", { command: args[0], error: r.error });
       return null;
     }
-    return res.stdout.split("\0").filter(Boolean);
+    return r.stdout.split("\0").filter(Boolean);
   };
 
   const status = git(["status", "--porcelain", "-z", "-uall"]);

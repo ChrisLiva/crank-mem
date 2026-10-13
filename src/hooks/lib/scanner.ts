@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { describeFile, isGenerated } from "./describe.ts";
 import { estimateTokens } from "./tokens.ts";
 import { extractSymbols, symbolsSupported, SYMBOL_MIN_TOKENS } from "./symbols.ts";
@@ -103,7 +103,7 @@ function rank(relPath: string): number {
   return demoted + (SOURCE_EXTENSIONS.has(path.extname(relPath).toLowerCase()) ? 0 : 1);
 }
 
-// OrcaSlicer's listing is 1.37 MB, past execFileSync's 1 MiB default buffer.
+// OrcaSlicer's listing is 1.37 MB, past spawnSync's 1 MiB default buffer.
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 // walkProject runs before the refresh deadline is checked, so git gets its own.
 const GIT_TIMEOUT_MS = 500;
@@ -117,18 +117,19 @@ export interface Walk {
   candidateCount: number | null;
 }
 
-function runGit(rootDir: string, args: string[]): string {
-  return execFileSync("git", args, {
+/** Run git in rootDir; on failure, the error code or exit status instead of stdout. Never throws. */
+export function runGit(rootDir: string, args: string[], timeoutMs: number): { stdout: string } | { error: string } {
+  if (timeoutMs <= 0) return { error: "budget spent" };
+  const res = spawnSync("git", ["--no-optional-locks", ...args], {
     cwd: rootDir,
+    encoding: "utf-8",
+    timeout: timeoutMs,
     maxBuffer: GIT_MAX_BUFFER,
-    timeout: GIT_TIMEOUT_MS,
     stdio: ["ignore", "pipe", "ignore"],
-  }).toString("utf-8");
-}
-
-function gitFailure(err: unknown): string {
-  const e = err as { code?: string; status?: number };
-  return e.code ?? `exit ${e.status ?? "?"}`;
+  });
+  if (res.error) return { error: (res.error as NodeJS.ErrnoException).code ?? res.error.message };
+  if (res.status !== 0) return { error: `exit ${res.status}` };
+  return { stdout: res.stdout };
 }
 
 /**
@@ -139,12 +140,12 @@ function gitFailure(err: unknown): string {
  */
 function gitListing(rootDir: string): string[] | null {
   if (!fs.existsSync(path.join(rootDir, ".git"))) return null;
-  try {
-    return [...new Set(runGit(rootDir, ["ls-files", "-co", "--exclude-standard", "-z"]).split("\0").filter(Boolean))];
-  } catch (err) {
-    debugEvent("walk-fallback", { reason: gitFailure(err) });
+  const r = runGit(rootDir, ["ls-files", "-co", "--exclude-standard", "-z"], GIT_TIMEOUT_MS);
+  if ("error" in r) {
+    debugEvent("walk-fallback", { reason: r.error });
     return null;
   }
+  return [...new Set(r.stdout.split("\0").filter(Boolean))];
 }
 
 const CHURN_COMMITS = 300;
@@ -161,27 +162,31 @@ const CHURN_KEEP = 100;
  */
 function churnFor(rootDir: string, config: CrankConfig, cached: Churn | undefined): Churn | undefined {
   if (!fs.existsSync(path.join(rootDir, ".git"))) return undefined;
-  try {
-    const head = runGit(rootDir, ["rev-parse", "HEAD"]).trim();
-    if (cached?.head === head) return cached;
-    const counts = new Map<string, number>();
-    // One \x1e record per commit, then "\0\n" and NUL-separated paths.
-    const log = runGit(rootDir, ["log", `-n${CHURN_COMMITS}`, "-z", "--name-only", "--format=%x1e"]);
-    for (const record of log.split("\x1e")) {
-      const paths = record.split("\0").map((p) => p.replace(/^\n/, "")).filter(Boolean);
-      if (paths.length > CHURN_BULK_FILES) continue;
-      for (const p of paths) counts.set(p, (counts.get(p) ?? 0) + 1);
-    }
-    const paths = [...counts]
-      .filter(([rel]) => isIndexableName(rel, config))
-      .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
-      .slice(0, CHURN_KEEP)
-      .map(([rel]) => rel);
-    return { head, paths };
-  } catch (err) {
-    debugEvent("churn-skipped", { reason: gitFailure(err) });
+  const rev = runGit(rootDir, ["rev-parse", "HEAD"], GIT_TIMEOUT_MS);
+  if ("error" in rev) {
+    debugEvent("churn-skipped", { reason: rev.error });
     return undefined;
   }
+  const head = rev.stdout.trim();
+  if (cached?.head === head) return cached;
+  // One \x1e record per commit, then "\0\n" and NUL-separated paths.
+  const log = runGit(rootDir, ["log", `-n${CHURN_COMMITS}`, "-z", "--name-only", "--format=%x1e"], GIT_TIMEOUT_MS);
+  if ("error" in log) {
+    debugEvent("churn-skipped", { reason: log.error });
+    return undefined;
+  }
+  const counts = new Map<string, number>();
+  for (const record of log.stdout.split("\x1e")) {
+    const paths = record.split("\0").map((p) => p.replace(/^\n/, "")).filter(Boolean);
+    if (paths.length > CHURN_BULK_FILES) continue;
+    for (const p of paths) counts.set(p, (counts.get(p) ?? 0) + 1);
+  }
+  const paths = [...counts]
+    .filter(([rel]) => isIndexableName(rel, config))
+    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
+    .slice(0, CHURN_KEEP)
+    .map(([rel]) => rel);
+  return { head, paths };
 }
 
 /**
