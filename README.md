@@ -13,19 +13,33 @@ ln -s ~/GitHub/crank-mem/bin/crank-mem ~/.local/bin/crank-mem
 cd <your project> && crank-mem init
 ```
 
-Upgrade = `git pull` in the clone, then `crank-mem upgrade` in each project
-(re-vendors the hooks copied into `.crank/hooks/`, adds missing hook wiring,
-and removes crank hooks from the Claude settings file the git mode does not use).
+Upgrade = `git pull` in the clone, then `crank-mem upgrade` in each project.
+It re-vendors the hooks copied into `.crank/hooks/`, adds hook wiring the
+install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
+wrote to the current form, and removes crank hooks from the Claude settings
+file the git mode does not use, since wiring in both runs every hook twice.
+A hook command you edited stays as written. In commit mode it also removes
+crank-mem's own `.crank/` ignore block, left by an earlier ignore or exclude
+mode init, so `cerebrum.md` can be tracked. An upgrade that changes nothing
+writes no backup.
+
+Hook commands are guarded, `[ ! -f <script> ] || bun <script>`, so a clone or
+worktree that has the committed settings file but no `.crank/hooks/` exits 0
+instead of reporting a hook error. Codex hashes each hook command for its
+trust check, so the first upgrade that rewrites the Codex commands makes
+Codex ask once for a hooks review: open codex in the project and accept it.
+An install made with `--codex-trust write` skips that, because upgrade
+recomputes the trusted hashes.
 
 Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
 
 ## Commands
 
-- `crank-mem init` — wire hooks into `.claude`/`.codex`, seed `.crank/`, first scan
+- `crank-mem init` — wire hooks into `.claude`/`.codex`, seed `.crank/`, first scan; removes crank hooks from the other Claude settings file
 - `crank-mem scan` — full index rebuild
 - `crank-mem stats` — index report; memory health (cerebrum bullets injected against total, the oldest one left out, cited paths that still exist, overlapping bullet pairs, journal entries without `NEXT:`, days since the last audit, nudge counts from `debug.log`); whether Codex threads got the injection and whether its hook trust is current
 - `crank-mem upgrade` — re-vendor hooks and repair their wiring after a `git pull`
-- `crank-mem uninstall` — remove all wiring, offer backup restore
+- `crank-mem uninstall` — remove all wiring, offer backup restore; `--delete-crank` deletes only the files crank-mem writes in `.crank/`, and removes the directory only when nothing else is left in it
 
 ## Layout under `.crank/`
 
@@ -35,6 +49,21 @@ out; never injected), `journal.md` (agent-written session log, last 20 bullets
 kept), `config.json`, `hooks/` (vendored), `backups/` (init/upgrade snapshots,
 plus `backups/cerebrum/`: the last 5 copies of cerebrum.md, taken before each
 prune nudge).
+
+`.crank/.gitignore` is an allowlist: it ignores everything in `.crank/` except
+`config.json`, `cerebrum.md`, `cerebrum-archive.md`, `journal.md`,
+`anatomy.md`, `anatomy-index.json` and `hooks/`. In commit mode, backups, the
+lock file, the debug log and files another tool writes into `.crank/` stay
+out of git. `init` backs up a `.crank/.gitignore` that another tool wrote
+before replacing it.
+
+## Subagents
+
+Claude Code fires `SessionStart` only in the main session, so crank-mem wires
+`SubagentStart` too. Each `general-purpose`, `Explore`, `Plan` and
+`workflow-subagent` subagent gets a 2,048-byte cerebrum excerpt and a pointer
+to `cerebrum.md` and `journal.md`; custom and plugin agents get nothing. The
+parent session does not see it. See ADR 0007.
 
 ## What gets indexed
 
@@ -97,7 +126,7 @@ Either writes `.crank/debug.log` — one record per hook run:
 ```
 
 `ok:false` carries the full stack. Useful events: `refresh` (changed/added/
-removed/partial counts), `injected` (tokens vs. budget), `reindex`
+removed/partial counts), `injected` (bytes vs. budget, plus estimated tokens), `reindex`
 (`committed:false` means the write did not land), `lock-timeout` (contention —
 the only way to tell it apart from "nothing to write"), `nudge-skipped` (why no
 cerebrum/journal nudge fired; `source` says whether git or the index did the

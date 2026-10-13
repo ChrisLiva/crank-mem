@@ -7,7 +7,7 @@ Usage: crank-mem <command> [flags]
 Commands:
   init       Wire hooks into this project and run the first scan
   scan       Full index rebuild
-  stats      Index report
+  stats      Index coverage, memory health and Codex hook status
   upgrade    Re-vendor hooks and repair their wiring after a git pull
   uninstall  Remove all wiring, offer backup restore
 `;

@@ -21,11 +21,11 @@ export interface CrankConfig {
   max_files: number;
   max_file_size_bytes: number;
   /**
-   * Cap on the session-start injection, in bytes. Bytes, not tokens: Claude
-   * Code measures hook stdout and silently swaps an oversized injection for a
-   * ~2KB notice (ADR 0005), so a token budget cannot see the limit that binds.
-   * The default leaves headroom under that cliff for the JSON envelope and for
-   * newline escaping, which inflates the payload past the raw context length.
+   * Cap on the session-start injection, in bytes. Claude Code caps
+   * additionalContext at 10,000 characters and swaps an oversized injection
+   * for a file path and a 2,000-character preview (ADR 0005), so a token
+   * budget cannot see the limit that binds. UTF-8 bytes never undercount
+   * characters, so a byte budget under the cap holds for any text.
    */
   injection_budget_bytes: number;
   adr_path: string;

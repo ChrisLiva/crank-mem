@@ -81,7 +81,8 @@ export function crankHooks(runtime: Runtime, agent: Agent): HooksMap {
   };
   // Stop nudge is Claude-only: it emits advisory additionalContext, which Codex
   // Stop hooks don't support (their only lever forces a continuation, which the
-  // advisory-only invariant forbids). Codex leans on the session-start reminder.
+  // advisory-only invariant forbids). Codex gets the nudge from post-write
+  // after an apply_patch instead (ADR 0004).
   if (agent === "claude") {
     map.Stop = [
       { hooks: [{ type: "command", command: hookCommand(runtime, "stop.ts", agent), timeout: 10 }] },

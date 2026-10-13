@@ -9,7 +9,7 @@ Claude Code caps what a hook may return through
 `hookSpecificOutput.additionalContext`. Past the cap it does **not** truncate
 the text and pass the rest along, and it does not error: it replaces the whole
 injection with a short `<persisted-output>` notice and spills the real content
-to a file the model is never shown.
+to a file the model is never asked to read.
 
 What the model receives instead is:
 
@@ -30,13 +30,33 @@ Measured, in one project's transcripts:
 
 So the cliff sits between 9,726 and ~10,035 bytes — consistent with a
 10,000-byte limit — and the failure is silent in both directions: the hook
-exits 0, stderr says nothing, and the model sees a ~2.2KB notice it has no
-tool to follow up on. The spill file is real and complete, but nothing in the
-transcript reads it.
+exits 0, stderr says nothing, and the model sees a ~2.2KB notice that nothing
+prompts it to follow up on. The spill file is real and complete, but nothing
+in the transcript reads it.
 
-The unit is **bytes of hook stdout**, not tokens, and the cap applies to the
-JSON payload, not the raw context — newline escaping and the envelope inflate
-it. `injection_budget_bytes` defaults to 8,192 to leave room for both.
+The unit is not tokens. (Amended 2026-10-13: this paragraph first said the cap
+counts bytes of the JSON payload, so newline escaping and the envelope inflate
+it. That rationale is dropped; see the next section.)
+
+## Documented cap (amended 2026-10-13)
+
+The Claude Code hooks reference (code.claude.com/docs/en/hooks, "JSON output"
+and "Add context for Claude", read 2026-10-13) now documents the cap:
+
+- `additionalContext`, `systemMessage` and `initialUserMessage` are each capped
+  at 10,000 characters. Claude Code measures each field on its own, even when
+  several hooks run for the same event; plain stdout is measured whole.
+- An over-cap value is saved to a file in the session directory and replaced
+  by the file path plus a preview of up to the first 2,000 characters. Claude
+  can read that file, but Claude Code does not ask it to. No setting raises
+  the cap.
+
+The cap counts the field's characters, not the JSON envelope, which matches
+the measured cliff above (9,726 B intact, ~10,035 B truncated, on mostly-ASCII
+text) and the ~2.2 KB delivered notice (the path plus the 2,000-character
+preview). `injection_budget_bytes` stays at 8,192: a string's UTF-8 byte
+length is never smaller than its character count, so a byte budget under
+10,000 holds for any text.
 
 ## Probe method
 
@@ -46,7 +66,8 @@ those records and match `Output too large \(([\d.]+)KB\)` against
 `attachment.content`: matching records are the truncated ones and carry the
 spill path, non-matching records carry the full injected text, so both the
 threshold and the delivered size are directly measurable. Re-run this after any
-Claude Code upgrade — the cap is undocumented and may move.
+Claude Code upgrade, and re-read the hooks reference: the documented cap may
+still move.
 
 ## Decision
 
@@ -62,6 +83,9 @@ Treat `injection_budget_bytes` as a hard ceiling enforced by
 - `tests/injection.test.ts` asserts the byte ceiling against a
   realistically-sized cerebrum, so the cliff cannot silently reopen.
 
-Alternative rejected: raising the budget toward the observed cliff. The cap is
-undocumented, was measured on one version, and a truncated injection loses
-*everything* rather than degrading — the asymmetry argues for headroom.
+Alternative rejected: raising the budget toward the observed cliff. A truncated
+injection loses *everything* past the 2,000-character preview rather than
+degrading, and the model is not prompted to read the rest — the asymmetry
+argues for headroom. (Amended 2026-10-13: the cap was first described here as
+undocumented and measured on one version; the hooks reference now documents
+it, and the asymmetry argument stands on its own.)

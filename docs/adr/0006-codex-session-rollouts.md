@@ -19,11 +19,21 @@ store on this machine (Codex CLI in daily use across several projects).
   `payload.content[].text`. Sampled across 10 files / 874 `response_item`
   records: 103 `message`, 18 `agent_message`, the rest `reasoning` and
   `custom_tool_call`. A parallel `event_msg` stream duplicates
-  `agent_message`/`user_message` content and can be ignored for mining.
-- **Wrinkle**: one rollout file may hold multiple `session_meta` blocks —
-  forked and sub-agent threads land in the parent's file — so "one file ≈ one
-  session" is approximate. Consumers should treat the file, not the
-  `session_meta`, as the batching unit.
+  `agent_message`/`user_message` content and can be ignored for mining
+  messages, but not edits (amended 2026-10-13, same 31 rollouts as below):
+  all 548 `custom_tool_call` records are named `exec` and none is a top-level
+  `apply_patch`, and a file edit appears only as an `event_msg` record with
+  `payload.type == "item_completed"` whose `payload.item.type` is `FileChange`
+  (31 records). ADR 0007 probed that PostToolUse still fires with
+  `tool_name: "apply_patch"` for a patch issued inside `exec`.
+- **Wrinkle** (amended 2026-10-13, the 31 rollouts below): sub-agent threads get
+  their own rollout files; they do not land in the parent's file, as first
+  recorded here. 23 of the 31 files are sub-agent threads and 8 are root
+  threads, so a file count overstates sessions 3.9x. 5 of the 23 sub-agent
+  files also embed a second `session_meta`, the parent's (4 `user`, 1
+  `code_review`), so only a file's FIRST `session_meta` names its own thread.
+  Consumers should still treat the file as the batching unit, and classify
+  it by its first `session_meta`.
 - **Root threads** (amended 2026-10-13, 31 OrcaSlicer rollouts on Codex
   0.151.0 to 0.159.2): the FIRST `session_meta` of a sub-agent file carries
   `parent_thread_id` and `thread_source: "subagent"`; a root thread's carries
@@ -51,6 +61,12 @@ Run on 2026-08-14, this machine:
 3. `grep -l '"cwd":"<abs path>"' ~/.codex/sessions/*/*/*/rollout-*.jsonl`
    with a real project path (58 files) and an unused project path (0 files).
 
+The 2026-10-13 amendments parsed every rollout whose text holds
+`"cwd":"<OrcaSlicer path>"` (31 files) and counted files by the first
+`session_meta`'s `thread_source` and `cli_version`, `session_meta` blocks per
+file, `custom_tool_call` and `function_call` records by `name`, and
+`event_msg` `item_completed` records by `payload.item.type`.
+
 Re-run after a Codex CLI upgrade — the store layout is undocumented and may
 move (other stores exist beside it: `session_index.jsonl`, `history.jsonl`,
 sqlite DBs; rollouts are the source of record for transcript mining).
@@ -59,4 +75,6 @@ sqlite DBs; rollouts are the source of record for transcript mining).
 
 The `crank-mem-audit` skill mines Codex sessions from rollout files only,
 filters by date directory plus the cwd grep, and batches per file (never
-splitting a file) because of the multi-`session_meta` wrinkle.
+splitting a file) because of the multi-`session_meta` wrinkle. `crank-mem
+stats` classifies each file as a root or sub-agent thread by its first
+`session_meta` (`src/cli/codex-sessions.ts`).

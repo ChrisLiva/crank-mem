@@ -99,8 +99,9 @@ async function main(): Promise<void> {
     source,
     fileCount: index.meta.fileCount,
     injectionTokens: estimateProseTokens(context),
-    // Bytes, not tokens, are what Claude Code caps (ADR 0005): past the cliff
-    // it swaps the whole injection for a notice. Watch this, not tokens.
+    // Claude Code caps characters, not tokens (ADR 0005), and bytes never
+    // undercount characters: past the cap it swaps the whole injection for a
+    // notice. Watch this, not tokens.
     injectionBytes: Buffer.byteLength(context, "utf-8"),
     budgetBytes: config.injection_budget_bytes,
     hasCerebrum: cerebrumMd !== null,
