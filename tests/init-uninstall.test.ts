@@ -114,6 +114,31 @@ describe("init → uninstall round-trip", () => {
     if (fs.existsSync(excl)) expect(fs.readFileSync(excl, "utf-8")).not.toContain(".crank/");
   });
 
+  test("commit-mode init moves crank hooks out of a pre-seeded settings.local.json", () => {
+    const local = JSON.stringify({
+      permissions: { allow: ["Bash(ls:*)"] },
+      hooks: { SessionStart: [{ hooks: [{ type: "command", command: 'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/session-start.ts' }] }] },
+    }, null, 2) + "\n";
+    const { root, codexHome } = makeProject({ ".claude/settings.local.json": local });
+    const before = snapshot(root);
+    const init = cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
+    expect(init.status).toBe(0);
+    expect(init.stdout).toContain("removed duplicate crank hooks from .claude/settings.local.json");
+    const crankStarts = [".claude/settings.json", ".claude/settings.local.json"].flatMap((rel) => {
+      const parsed = JSON.parse(fs.readFileSync(path.join(root, rel), "utf-8"));
+      return (parsed.hooks?.SessionStart ?? []).filter((g: any) => g.hooks.some((h: any) => h.command.includes(".crank/hooks/")));
+    });
+    expect(crankStarts.length).toBe(1);
+    expect(JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8")).permissions)
+      .toEqual({ allow: ["Bash(ls:*)"] });
+    // Restore brings back the backed-up local file; uninstall then strips every crank hook.
+    cli(root, codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
+    expect(snapshot(root)).toEqual({
+      ...before,
+      ".claude/settings.local.json": JSON.stringify({ permissions: { allow: ["Bash(ls:*)"] } }, null, 2) + "\n",
+    });
+  });
+
   test("codex-trust write: entries land in CODEX_HOME config and are removed on uninstall", () => {
     const { root, codexHome } = makeProject();
     const codexConfig = path.join(codexHome, "config.toml");

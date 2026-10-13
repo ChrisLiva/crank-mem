@@ -81,6 +81,38 @@ describe("mergeHooksIntoFile", () => {
       expect(parsed.hooks.SessionStart[0].hooks[0].command).toBe(guarded);
     }
   });
+
+  test("refreshes crank's own forms in place and keeps a user-edited command", () => {
+    const f = tmpFile();
+    const userStop = 'test -f "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts && bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts';
+    const bareStart = 'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/session-start.ts';
+    fs.writeFileSync(f, JSON.stringify({
+      hooks: {
+        SessionStart: [
+          { hooks: [{ type: "command", command: bareStart }] },
+          { hooks: [{ type: "command", command: "echo mine" }] },
+          { hooks: [{ type: "command", command: bareStart }] },
+        ],
+        Stop: [{ hooks: [{ type: "command", command: userStop }] }],
+      },
+    }));
+    const want = crankHooks("bun", "claude");
+    expect(mergeHooksIntoFile(f, want)).toBe(true);
+    const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
+    // First copy replaced where it stood, the second copy dropped.
+    expect(parsed.hooks.SessionStart).toEqual([want.SessionStart![0], { hooks: [{ type: "command", command: "echo mine" }] }]);
+    expect(parsed.hooks.Stop).toEqual([{ hooks: [{ type: "command", command: userStop }] }]);
+    // The event with no group for its script is appended.
+    expect(parsed.hooks.PostToolUse).toEqual(want.PostToolUse);
+  });
+
+  test("an already-wired file is not rewritten", () => {
+    const f = tmpFile();
+    mergeHooksIntoFile(f, crankHooks("bun", "claude"));
+    let called = false;
+    expect(mergeHooksIntoFile(f, crankHooks("bun", "claude"), () => { called = true; })).toBe(false);
+    expect(called).toBe(false);
+  });
 });
 
 /** Run a wired command the way the agents do: through sh, in the project. */

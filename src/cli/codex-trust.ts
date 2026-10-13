@@ -145,6 +145,12 @@ export function staleTrustKeysFromFile(
   return hooks ? staleTrustKeys(hooksJsonPath, hooks, matches) : [];
 }
 
+/** What to do when crank's Codex hooks changed and no trust entries were written for them. */
+export const CODEX_REVIEW_HINT = [
+  "  Codex trust: open codex once in this project and accept the hooks review",
+  "  (or headless: codex --dangerously-bypass-hook-trust)",
+];
+
 export function userCodexConfigPath(): string {
   return path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "config.toml");
 }
