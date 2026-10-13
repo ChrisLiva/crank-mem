@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildInjection, cerebrumExcerpt, ADR_RECENT_COUNT, MEMORY_RECENT_COUNT, PREFS_TOKEN_CAP,
+  buildInjection, cerebrumExcerpt, ADR_RECENT_COUNT, INDEX_ENTRY_CHARS, MEMORY_RECENT_COUNT, PREFS_TOKEN_CAP,
 } from "../src/hooks/lib/injection.ts";
 import { emptyIndex, type AnatomyIndex } from "../src/hooks/lib/store.ts";
 import { estimateProseTokens } from "../src/hooks/lib/tokens.ts";
@@ -33,13 +33,57 @@ ${Array.from({ length: 15 }, (_, i) => `- Mistake number ${i}`).join("\n")}
 /** No budget pressure — isolates the excerpt's own rules from the byte cap. */
 const excerpt = (md: string): string => cerebrumExcerpt(md, 1_000_000);
 
+/** The excerpt's lines from the `### <name>` heading up to the next heading. */
+const section = (ex: string, name: string): string[] => {
+  const lines = ex.split("\n");
+  const start = lines.findIndex((l) => l.startsWith(`### ${name}`));
+  if (start < 0) return [];
+  const end = lines.findIndex((l, i) => i > start && l.startsWith("#"));
+  return lines.slice(start, end < 0 ? undefined : end);
+};
+
 describe("cerebrumExcerpt", () => {
   test("prefs in full, plus the most recent memory bullets", () => {
     const ex = excerpt(CEREBRUM);
     expect(ex).toContain("Prefers pnpm over npm");
     expect(ex).toContain("Mistake number 14");
-    expect(ex).toContain(`Mistake number ${15 - MEMORY_RECENT_COUNT}`);
-    expect(ex).not.toContain(`Mistake number ${15 - MEMORY_RECENT_COUNT - 1}`);
+    const memory = section(ex, "Memory");
+    expect(memory).toContain(`- Mistake number ${15 - MEMORY_RECENT_COUNT}`);
+    expect(memory).not.toContain(`- Mistake number ${15 - MEMORY_RECENT_COUNT - 1}`);
+  });
+
+  // A warning that rotated out of the recency slice used to vanish from every
+  // later session while still in the file; now it is listed by its first words.
+  test("every bullet the excerpt leaves out is listed after it", () => {
+    const ex = excerpt(CEREBRUM);
+    const hidden = 15 - MEMORY_RECENT_COUNT;
+    expect(section(ex, "Not shown")).toEqual([
+      `### Not shown (${hidden} of 17; grep .crank/cerebrum.md)`,
+      ...Array.from({ length: hidden }, (_, i) => `- Mistake number ${i}`),
+    ]);
+  });
+
+  test("nothing hidden, no index", () => {
+    expect(excerpt("# Cerebrum\n\n## Memory\n\n- only one\n")).not.toContain("Not shown");
+  });
+
+  test("an index entry is the bullet's opening words, cut at a word boundary", () => {
+    const md =
+      "# Cerebrum\n\n## Memory\n\n" +
+      "- **Build dir**: fresh worktree configure fails on the SDK\n  headers unless DEVELOPER_DIR is set\n" +
+      Array.from({ length: MEMORY_RECENT_COUNT }, (_, i) => `- recent ${i}`).join("\n");
+    const [, entry] = section(excerpt(md), "Not shown");
+    expect(entry).toBe("- **Build dir**: fresh worktree configure fails on…");
+    expect(entry!.length - "- …".length).toBeLessThanOrEqual(INDEX_ENTRY_CHARS);
+  });
+
+  test("a cut inside a code span closes the span", () => {
+    const md =
+      "# Cerebrum\n\n## Memory\n\n" +
+      "- `test_fates.test_every_vocabulary_entry_has_a_meaning` is red\n" +
+      Array.from({ length: MEMORY_RECENT_COUNT }, (_, i) => `- recent ${i}`).join("\n");
+    const [, entry] = section(excerpt(md), "Not shown");
+    expect(entry).toBe("- `test_fates.test_every_vocabulary_entry_has_a_me`…");
   });
 
   test("empty template yields empty excerpt", () => {
@@ -126,14 +170,38 @@ describe("cerebrumExcerpt", () => {
       Array.from({ length: 30 }, (_, i) => `- Preference ${i}: ${"spelled out at length ".repeat(5)}`).join("\n") +
       "\n\n## Memory\n\n- a learning\n";
     const ex = excerpt(md);
-    const prefs = ex
-      .slice(ex.indexOf("### User Preferences"), ex.indexOf("### Memory"))
-      .split("\n")
-      .filter((l) => l.startsWith("- "));
+    const prefs = section(ex, "User Preferences").filter((l) => l.startsWith("- "));
     expect(estimateProseTokens(prefs.join("\n"))).toBeLessThanOrEqual(PREFS_TOKEN_CAP);
-    expect(ex).toContain("Preference 29:"); // newest survives
-    expect(ex).not.toContain("Preference 0:"); // oldest evicted first
+    expect(prefs.join("\n")).toContain("Preference 29:"); // newest survives
+    expect(prefs.join("\n")).not.toContain("Preference 0:"); // oldest evicted first
     expect(ex).toContain("a learning"); // prefs never crowd memory out
+    // The evicted ones are listed first in the index, with a nudge to merge them.
+    const index = section(ex, "Not shown");
+    expect(index[1]).toBe(`prefs: ${prefs.length} of 30 shown, consolidate`);
+    expect(index[2]).toStartWith("- Preference 0:");
+  });
+
+  // Recent bullets outrank the index, and a preference outranks both.
+  test("over budget, the index sheds its oldest memory entries before any bullet", () => {
+    const md =
+      "# Cerebrum\n\n## User Preferences\n\n" +
+      Array.from({ length: 12 }, (_, i) => `- Preference ${i}: ${"spelled out at length ".repeat(8)}`).join("\n") +
+      "\n\n## Memory\n\n" +
+      Array.from({ length: 12 }, (_, i) => `- Learning ${i}: ${"detail ".repeat(10)}`).join("\n") +
+      "\n";
+    const full = excerpt(md);
+    const ex = cerebrumExcerpt(md, Buffer.byteLength(full, "utf-8") - 60);
+    const index = section(ex, "Not shown").join("\n");
+    expect(index).not.toContain("Learning 0:");
+    expect(index).toContain("Learning 4:");
+    expect(index).toContain("- Preference 0:");
+    expect(section(ex, "Memory")).toHaveLength(1 + MEMORY_RECENT_COUNT);
+    // Every recent memory bullet and every index entry gone, preferences stay.
+    const starved = cerebrumExcerpt(md, Buffer.byteLength(section(full, "User Preferences").join("\n")) + 200);
+    expect(starved).not.toContain("### Memory");
+    expect(starved).not.toContain("- Preference 0:");
+    expect(starved).toContain("Preference 11:");
+    expect(section(starved, "Not shown")[0]).toMatch(/^### Not shown \(\d+ of 24; grep \.crank\/cerebrum\.md\)$/);
   });
 
   test("over budget, the oldest memory bullets go first", () => {
@@ -222,6 +290,7 @@ describe("buildInjection", () => {
     expect(out).toContain("put the handoff there, last");
     expect(out).toContain("telegram-style");
     expect(out).toContain("Keep each\n  cerebrum bullet to about 200 characters at most");
+    expect(out).toContain("start it with a short\n  **subject**");
   });
 
   test("journal sits between the staleness note and the cerebrum", () => {
@@ -321,11 +390,11 @@ describe("buildInjection", () => {
     // too long to fit is dropped anyway, and reserving for it would take the
     // cerebrum down with it.
     test("a budget too tight for the ADRs still spends it on the cerebrum", () => {
-      const out = buildInjection(sources, 2500);
+      const out = buildInjection(sources, 2700);
       expect(out).not.toContain("## ADRs");
       expect(out).toContain("## Cerebrum");
       expect(out).toContain("Mistake number 14");
-      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2500);
+      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2700);
     });
 
     test("instructions survive a budget too small to hold them", () => {

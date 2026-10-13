@@ -145,6 +145,45 @@ describe("memory reaches the model whole (black-box)", () => {
   });
 });
 
+describe("cerebrum index (black-box)", () => {
+  // Shaped after OrcaSlicer's Sep 30 injection: 7 preferences (~555 tokens,
+  // over PREFS_TOKEN_CAP), 21 memory bullets, a ~415-byte journal and an ADR
+  // list. It used 7,963 of 8,192 bytes and named none of the bullets it hid.
+  test("an OrcaSlicer-sized cerebrum stays under budget and names what it hides", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
+    const bullet = (subject: string, i: number, clauses: number): string =>
+      `- **${subject} ${i}**: ${clause.repeat(clauses).trim()} (2026-09-${10 + i}).`;
+    fs.writeFileSync(
+      path.join(root, ".crank/cerebrum.md"),
+      "# Cerebrum\n\n## User Preferences\n" +
+        Array.from({ length: 7 }, (_, i) => bullet("Pref", i, 4)).join("\n") +
+        "\n\n## Memory\n" +
+        Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i, 5)).join("\n") +
+        "\n"
+    );
+    fs.writeFileSync(
+      path.join(root, ".crank/journal.md"),
+      "# Journal\n\n" +
+        Array.from({ length: 3 }, (_, i) => `- 2026-09-2${i + 7}: ${"tuned the scaffold planner ".repeat(4)}; NEXT: rerun bench`).join("\n") +
+        "\n"
+    );
+    fs.mkdirSync(path.join(root, "docs/adr"), { recursive: true });
+    for (const f of ["0001-scaffold-points.md", "0002-pad-solid.md", "0003-tilt-cap.md"]) {
+      fs.writeFileSync(path.join(root, "docs/adr", f), "# x");
+    }
+
+    const ctx = inject(root);
+    expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(8192);
+    expect(ctx).toContain("## ADRs");
+    expect(ctx).toContain("- **Gotcha 20**:"); // the newest memory bullet, whole
+    expect(ctx).toMatch(/^### Not shown \(\d+ of 28; grep \.crank\/cerebrum\.md\)$/m);
+    expect(ctx).toMatch(/^prefs: \d of 7 shown, consolidate$/m);
+    expect(ctx).toContain("- **Pref 0**: `Support.cpp` caps pillar reach at…");
+    expect(ctx).toMatch(/^- \*\*Gotcha 13\*\*: .*…$/m); // the newest hidden one
+  });
+});
+
 describe("vendored-hook drift (black-box)", () => {
   /** A stand-in clone: just the package.json the drift check reads. */
   function fakeClone(version: unknown): string {
