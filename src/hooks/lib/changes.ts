@@ -84,8 +84,8 @@ function gitChangedFiles(
 
 /**
  * Change times of the files that may have changed after sinceMs. From git,
- * every time is past sinceMs; from the index, every entry's mtime is listed
- * and the caller filters. index() runs only on the fallback. Never throws.
+ * every time is past sinceMs; from the index, it lists every entry's mtime and
+ * the caller filters. index() runs only on the fallback. Never throws.
  */
 export function changeTimesSince(
   rootDir: string,

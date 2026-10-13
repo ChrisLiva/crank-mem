@@ -460,17 +460,21 @@ describe("journal (black-box)", () => {
   });
 
   test("states how many files changed since the last entry, counting Bash-made files", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    const root = makeCrankProject({ "a.ts": "const a = 1;", "c.ts": "const c = 1;" });
     const journal = writeJournal(root, ["2026-09-23: fixed contrast; NEXT: smoke-check rails."]);
     git(root, "init", "-q");
     gitCommit(root, "init");
     const hourAgo = new Date(Date.now() - 3_600_000);
-    for (const f of [journal, path.join(root, "a.ts")]) fs.utimesSync(f, hourAgo, hourAgo);
+    for (const f of [journal, path.join(root, "a.ts"), path.join(root, "c.ts")]) fs.utimesSync(f, hourAgo, hourAgo);
     expect(inject(root)).toContain("smoke-check rails.\n0 file(s) changed since the last journal entry.");
 
     // Written outside any hook, as a Bash `cp` or `sed -i` would.
     fs.writeFileSync(path.join(root, "b.ts"), "x");
     fs.writeFileSync(path.join(root, "a.ts"), "const a = 2;");
+    expect(inject(root)).toContain("2 file(s) changed since the last journal entry.");
+
+    // Without git the count comes from the index, which still lists the unchanged c.ts.
+    fs.rmSync(path.join(root, ".git"), { recursive: true });
     expect(inject(root)).toContain("2 file(s) changed since the last journal entry.");
   });
 
