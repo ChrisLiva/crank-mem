@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { REPO_ROOT } from "./helpers.ts";
 import { crankHooks } from "../src/cli/settings.ts";
-import { trustEntriesFromFile } from "../src/cli/codex-trust.ts";
+import { crankTrust } from "../src/cli/codex-trust.ts";
 
 const MAIN = path.join(REPO_ROOT, "src/cli/main.ts");
 
@@ -202,7 +202,7 @@ describe("stats: codex wiring", () => {
 
   test("reports stale and missing hook hashes with the review remediation", () => {
     const { root, codexHome } = wiredProject();
-    const [first] = trustEntriesFromFile(path.join(root, ".codex/hooks.json"));
+    const [first] = crankTrust(path.join(root, ".codex/hooks.json")).entries;
     fs.writeFileSync(
       path.join(codexHome, "config.toml"),
       `[projects."${root}"]\ntrust_level = "trusted"\n\n[hooks.state."${first!.key}"]\ntrusted_hash = "sha256:${"0".repeat(64)}"\n`
@@ -217,7 +217,7 @@ describe("stats: codex wiring", () => {
 
   test("current hashes print no remediation; a missing exact-path trust_level is not called untrusted", () => {
     const { root, codexHome } = wiredProject();
-    const entries = trustEntriesFromFile(path.join(root, ".codex/hooks.json"));
+    const entries = crankTrust(path.join(root, ".codex/hooks.json")).entries;
     fs.writeFileSync(
       path.join(codexHome, "config.toml"),
       entries.map((e) => `[hooks.state."${e.key}"]\ntrusted_hash = "${e.hash}"\n`).join("\n")

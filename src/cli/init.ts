@@ -11,7 +11,7 @@ import {
   addIgnoreLines, ensureCodexFeatures, unignoreCerebrum, ensureCrankGitignore,
 } from "./settings.ts";
 import {
-  trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
+  crankTrust, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
 } from "./codex-trust.ts";
 import { defaultConfig, saveConfig, CRANK_DIR, type CrankConfig } from "../hooks/lib/config.ts";
 import { fullScan } from "../hooks/lib/scanner.ts";
@@ -132,11 +132,8 @@ export async function run(args: string[]): Promise<number> {
       mergeHooksIntoFile(codexHooksJson, crankHooks(runtime, "codex"));
       ensureCodexFeatures(codexConfigToml);
       if (codexTrust === "write") {
-        writeTrustEntries(
-          userCodexConfigPath(),
-          trustEntriesFromFile(codexHooksJson),
-          staleTrustKeysFromFile(codexHooksJson),
-        );
+        const t = crankTrust(codexHooksJson);
+        writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys);
       }
     }
 

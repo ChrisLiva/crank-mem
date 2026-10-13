@@ -127,22 +127,22 @@ export function staleTrustKeys(
   return out;
 }
 
-/** Trust entries computed from the hooks.json actually on disk. */
-export function trustEntriesFromFile(
-  hooksJsonPath: string,
-  matches?: (command: string | undefined) => boolean,
-): TrustEntry[] {
-  const hooks = readHooksMap(hooksJsonPath);
-  return hooks ? trustEntries(hooksJsonPath, hooks, matches) : [];
+export interface CrankTrust {
+  entries: TrustEntry[];
+  staleKeys: string[];
+  /** Every key crank owns in config.toml: the entries' keys, then the stale keys. */
+  keys: string[];
 }
 
-/** Stale (raw-event) keys derived from the hooks.json actually on disk. */
-export function staleTrustKeysFromFile(
+/** Crank's trust entries and stale keys from one read of the hooks.json on disk; all empty when unreadable. */
+export function crankTrust(
   hooksJsonPath: string,
-  matches?: (command: string | undefined) => boolean,
-): string[] {
+  matches: (command: string | undefined) => boolean = isCrankHookCommand,
+): CrankTrust {
   const hooks = readHooksMap(hooksJsonPath);
-  return hooks ? staleTrustKeys(hooksJsonPath, hooks, matches) : [];
+  const entries = hooks ? trustEntries(hooksJsonPath, hooks, matches) : [];
+  const staleKeys = hooks ? staleTrustKeys(hooksJsonPath, hooks, matches) : [];
+  return { entries, staleKeys, keys: [...entries.map((e) => e.key), ...staleKeys] };
 }
 
 /** What to do when crank's Codex hooks changed and no trust entries were written for them. */
@@ -241,7 +241,7 @@ export function codexTrustStatus(configPath: string, root: string, hooksJsonPath
     stale: 0,
     missing: 0,
   };
-  for (const e of trustEntriesFromFile(hooksJsonPath)) {
+  for (const e of crankTrust(hooksJsonPath).entries) {
     const hash = tables.get(`hooks.state.${JSON.stringify(e.key)}`)?.get("trusted_hash");
     if (hash === undefined) status.missing++;
     else if (hash === e.hash) status.current++;

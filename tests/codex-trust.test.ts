@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { crankHooks, mergeHooksIntoFile } from "../src/cli/settings.ts";
 import {
-  trustEntries, trustEntriesFromFile, staleTrustKeys, staleTrustKeysFromFile,
+  trustEntries, staleTrustKeys, crankTrust,
   writeTrustEntries, removeTrustEntries,
 } from "../src/cli/codex-trust.ts";
 
@@ -53,7 +53,7 @@ describe("trustEntries", () => {
   });
 });
 
-describe("trustEntriesFromFile", () => {
+describe("crankTrust", () => {
   test("crank group merged after a pre-existing user group gets its real index", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "crank-trust-"));
     const hooksJson = path.join(dir, "hooks.json");
@@ -61,20 +61,20 @@ describe("trustEntriesFromFile", () => {
       hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo user-hook" }] }] },
     }, null, 2));
     mergeHooksIntoFile(hooksJson, crankHooks("bun", "codex"));
-    const entries = trustEntriesFromFile(hooksJson);
-    expect(entries.map((e) => e.key).sort()).toEqual([
+    const t = crankTrust(hooksJson);
+    expect(t.entries.map((e) => e.key).sort()).toEqual([
       `${hooksJson}:post_tool_use:0:0`,
       `${hooksJson}:session_start:1:0`, // after the user's group
     ]);
     // Stale keys must name the same positions, or a strip would miss them.
-    expect(staleTrustKeysFromFile(hooksJson).sort()).toEqual([
+    expect([...t.staleKeys].sort()).toEqual([
       `${hooksJson}:PostToolUse:0:0`,
       `${hooksJson}:SessionStart:1:0`,
     ]);
+    expect(t.keys).toEqual([...t.entries.map((e) => e.key), ...t.staleKeys]);
   });
   test("missing file yields no entries", () => {
-    expect(trustEntriesFromFile("/nonexistent/hooks.json")).toEqual([]);
-    expect(staleTrustKeysFromFile("/nonexistent/hooks.json")).toEqual([]);
+    expect(crankTrust("/nonexistent/hooks.json")).toEqual({ entries: [], staleKeys: [], keys: [] });
   });
 });
 

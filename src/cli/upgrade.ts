@@ -5,7 +5,7 @@ import { vendorHooks, templatePath } from "./vendor.ts";
 import { openProject } from "./project.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
-  trustEntriesFromFile, staleTrustKeysFromFile, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
+  crankTrust, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
 } from "./codex-trust.ts";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, unignoreCerebrum,
@@ -112,11 +112,8 @@ export async function run(_args: string[]): Promise<number> {
   const versionChanged = config.vendored_version !== current;
   if (config.codex_trust_written && (versionChanged || codexRewired)) {
     backup(userCodexConfigPath());
-    writeTrustEntries(
-      userCodexConfigPath(),
-      trustEntriesFromFile(codexHooksJson),
-      staleTrustKeysFromFile(codexHooksJson),
-    );
+    const t = crankTrust(codexHooksJson);
+    writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys);
     console.log(`  recomputed Codex trusted_hash entries`);
   }
 
