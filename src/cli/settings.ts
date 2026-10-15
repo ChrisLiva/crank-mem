@@ -215,14 +215,25 @@ const IGNORE_BLOCK = `${IGNORE_COMMENT}\n${IGNORE_LINE}\n`;
 /** The block a legacy pre-rename install appended (non-dotted crank/). */
 export const LEGACY_IGNORE_BLOCK = `${IGNORE_COMMENT}\ncrank/\n`;
 
-/** Append our ignore block if .crank/ isn't covered, calling `beforeWrite` first. Creates the file if needed. */
-export function addIgnoreLines(file: string, beforeWrite?: (file: string) => void): void {
+/**
+ * Append our ignore block if .crank/ isn't covered, calling `beforeWrite`
+ * first. Creates the file if needed. Returns whether it wrote.
+ */
+export function addIgnoreLines(file: string, beforeWrite?: (file: string) => void): boolean {
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
-  if (existing.split("\n").some((l) => l.trim() === IGNORE_LINE)) return;
+  if (existing.split("\n").some((l) => l.trim() === IGNORE_LINE)) return false;
   const sep = existing === "" || existing.endsWith("\n") ? "" : "\n";
   beforeWrite?.(file);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, existing + sep + IGNORE_BLOCK);
+  return true;
+}
+
+/** The file that holds a git mode's ignore block, or null: commit mode has none, and exclude mode needs a .git directory. */
+export function modeIgnoreFile(root: string, git: "commit" | "ignore" | "exclude"): string | null {
+  if (git === "ignore") return path.join(root, ".gitignore");
+  if (git === "exclude" && fs.existsSync(path.join(root, ".git"))) return path.join(root, ".git", "info", "exclude");
+  return null;
 }
 
 /**

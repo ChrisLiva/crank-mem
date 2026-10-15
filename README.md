@@ -22,7 +22,9 @@ A hook command you edited stays as written. It replaces a `.crank/.gitignore`
 that is not the current allowlist, which admits only crank-mem's tracked files
 to git. In commit mode it also removes
 crank-mem's own `.crank/` ignore block, left by an earlier ignore or exclude
-mode init, so `cerebrum.md` can be tracked. An upgrade that changes nothing
+mode init, so `cerebrum.md` can be tracked. In ignore or exclude mode it adds
+the `.crank/` ignore block back to `.gitignore` or `.git/info/exclude` when
+it is missing. An upgrade that changes nothing
 writes no backup.
 
 Hook commands are guarded, `[ ! -f <script> ] || bun <script>`, so a clone or

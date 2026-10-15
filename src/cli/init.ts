@@ -8,7 +8,7 @@ import { vendorHooks, templatePath } from "./vendor.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, isCrankHookCommand,
-  addIgnoreLines, ensureCodexFeatures, unignoreCerebrum, ensureCrankGitignore,
+  addIgnoreLines, modeIgnoreFile, ensureCodexFeatures, unignoreCerebrum, ensureCrankGitignore,
 } from "./settings.ts";
 import {
   crankTrust, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
@@ -94,8 +94,7 @@ export async function run(args: string[]): Promise<number> {
   // Crank hooks in both Claude settings files run every event twice.
   const duplicateWiring = hasCrankHooks(otherClaudeSettings);
   const codexConfigToml = path.join(root, ".codex", "config.toml");
-  const gitignore = path.join(root, ".gitignore");
-  const gitExclude = path.join(root, ".git", "info", "exclude");
+  const ignoreFile = modeIgnoreFile(root, gitMode);
 
   // Each writer backs up its file just before writing it, so a partial failure
   // is recoverable through `uninstall --restore`; init prints that hint instead of rolling back.
@@ -129,8 +128,7 @@ export async function run(args: string[]): Promise<number> {
     }
 
     // ── Git mode ───────────────────────────────────────────────────────────
-    if (gitMode === "ignore") addIgnoreLines(gitignore, backup);
-    if (gitMode === "exclude" && fs.existsSync(path.join(root, ".git"))) addIgnoreLines(gitExclude, backup);
+    if (ignoreFile) addIgnoreLines(ignoreFile, backup);
     // Another tool sharing .crank/ may have written its own .gitignore first.
     ensureCrankGitignore(crankDir, backup);
     if (gitMode === "commit") ignoredBy = unignoreCerebrum(root, (f) => { backup(f); unignored.push(f); });

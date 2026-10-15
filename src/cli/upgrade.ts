@@ -9,14 +9,15 @@ import {
 } from "./codex-trust.ts";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, unignoreCerebrum,
-  ensureCrankGitignore, isCrankHookCommand,
+  ensureCrankGitignore, isCrankHookCommand, addIgnoreLines, modeIgnoreFile,
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
 import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
-// the hook wiring, the .crank/.gitignore allowlist and, in commit mode, a stale
-// crank-mem ignore block. Of config.json it updates only vendored_version and
+// the hook wiring, the .crank/.gitignore allowlist, and the git mode's ignore
+// state: commit mode loses a stale crank-mem ignore block, ignore and exclude
+// mode regain a missing one. Of config.json it updates only vendored_version and
 // clone_root; it never touches cerebrum or the index. Recomputes Codex trusted
 // hashes iff the user opted in at init.
 
@@ -104,6 +105,17 @@ export async function run(_args: string[]): Promise<number> {
       if (ignoredBy) console.error(`crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`);
     } catch (err) {
       console.error(`crank-mem: could not check .crank/cerebrum.md against git ignores (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
+
+  // An ignore or exclude-mode install without its ignore block, such as one an
+  // earlier upgrade under a commit-mode config stripped, exposes .crank/ to git.
+  const ignoreFile = modeIgnoreFile(root, config.git);
+  if (ignoreFile) {
+    try {
+      if (addIgnoreLines(ignoreFile, backup)) console.log(`  added the crank-mem .crank/ ignore block to ${path.relative(root, ignoreFile)}`);
+    } catch (err) {
+      console.error(`crank-mem: could not write ${path.relative(root, ignoreFile)} (${err instanceof Error ? err.message : String(err)})`);
     }
   }
 

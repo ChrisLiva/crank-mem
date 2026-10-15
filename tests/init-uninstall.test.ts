@@ -175,6 +175,34 @@ describe("init → uninstall round-trip", () => {
     expect(ignored(root, ".crank/cerebrum.md")).toBe(false);
   });
 
+  test("ignore-mode upgrade adds back a missing ignore block, once", () => {
+    const { root, codexHome } = makeProject({ ".gitignore": "dist/\n" });
+    cli(root, codexHome, "init", "--yes", "--git", "ignore", "--codex", "skip");
+    const gitignore = path.join(root, ".gitignore");
+    fs.writeFileSync(gitignore, "dist/\n");
+    expect(ignored(root, ".crank/cerebrum.md")).toBe(false);
+    const up = cli(root, codexHome, "upgrade");
+    expect(up.status).toBe(0);
+    expect(up.stdout).toContain("added the crank-mem .crank/ ignore block to .gitignore");
+    expect(fs.readFileSync(gitignore, "utf-8")).toBe("dist/\n# crank-mem\n.crank/\n");
+    expect(ignored(root, ".crank/cerebrum.md")).toBe(true);
+    expect(cli(root, codexHome, "upgrade").stdout).not.toContain("ignore block");
+    cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
+    expect(fs.readFileSync(gitignore, "utf-8")).toBe("dist/\n");
+  });
+
+  test("exclude-mode upgrade adds back a missing ignore block and leaves .gitignore alone", () => {
+    const { root, codexHome } = makeProject({ ".gitignore": "dist/\n" });
+    cli(root, codexHome, "init", "--yes", "--git", "exclude", "--codex", "skip");
+    const exclude = path.join(root, ".git/info/exclude");
+    fs.writeFileSync(exclude, "");
+    const up = cli(root, codexHome, "upgrade");
+    expect(up.status).toBe(0);
+    expect(up.stdout).toContain("added the crank-mem .crank/ ignore block to .git/info/exclude");
+    expect(ignored(root, ".crank/cerebrum.md")).toBe(true);
+    expect(fs.readFileSync(path.join(root, ".gitignore"), "utf-8")).toBe("dist/\n");
+  });
+
   test("upgrade replaces a pre-allowlist .crank/.gitignore, and restore brings the old one back", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
