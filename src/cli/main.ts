@@ -7,7 +7,7 @@ Usage: crank-mem <command> [flags]
 Commands:
   init       Wire hooks into this project and run the first scan
   scan       Full index rebuild
-  digest     Turn background digests on or off
+  digest     Turn background digests on or off, or resume them
   search     Search stored memory by keyword
   timeline   Show the observations around one id
   get        Print stored observations in full
@@ -33,6 +33,8 @@ async function main(): Promise<number> {
       return (await import("./recall.ts")).get(rest);
     case "job":
       return (await import("../daemon/digest-job.ts")).run(rest);
+    case "daemon":
+      return (await import("../daemon/daemon.ts")).run(rest);
     case "stats":
       return (await import("./stats.ts")).run(rest);
     case "upgrade":

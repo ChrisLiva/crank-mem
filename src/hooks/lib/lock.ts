@@ -70,8 +70,8 @@ function isStale(lockPath: string): boolean {
   }
 }
 
-/** Steal a stale lock. */
-function trySteal(lockPath: string): void {
+/** Steal a stale lock: rename it to a random name and unlink that, so of N stealers one wins. */
+export function trySteal(lockPath: string): void {
   const graveyard = lockPath + "." + crypto.randomBytes(4).toString("hex") + ".stale";
   try {
     fs.renameSync(lockPath, graveyard);

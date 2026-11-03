@@ -1,10 +1,11 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type * as sqlite from "node:sqlite";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { memoryPath, openMemory, type NewObservation } from "../src/hooks/lib/memory.ts";
+import { DAEMON_FILE, type DaemonState } from "../src/hooks/lib/spool.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");
 
@@ -228,4 +229,76 @@ export function fakeClaude(dir: string, scenarios: FakeScenario[]): { env: Recor
       return readJsonl(path.join(dir, "calls.jsonl")).map((c, n) => ({ ...c, endMs: ends.get(n) ?? null }));
     },
   };
+}
+
+/** A temp project with digests on; `extraConfig` keys are written into config.json as given, and `temps` registers the root for cleanup. */
+export function digestProject(extraConfig: Record<string, unknown> = {}, temps?: string[]): string {
+  const root = makeCrankProject();
+  temps?.push(root);
+  saveConfig(path.join(root, ".crank"), { ...defaultConfig(), digest: true });
+  if (Object.keys(extraConfig).length > 0) {
+    const file = path.join(root, ".crank/config.json");
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), ...extraConfig }, null, 2));
+  }
+  return root;
+}
+
+/** The names under a crank home's spool/ ([] when it is absent). */
+export function spoolFiles(home: string): string[] {
+  try {
+    return fs.readdirSync(path.join(home, "spool"));
+  } catch {
+    return [];
+  }
+}
+
+/** Poll `cond` every 20 ms until it holds, or throw after `timeoutMs`. */
+export async function waitFor(cond: () => boolean, timeoutMs = 10_000): Promise<void> {
+  const end = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error("waitFor timed out");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/** A `user` transcript record as one JSONL line. */
+export function userRecord(uuid: string, timestamp: string, content: string): string {
+  return JSON.stringify({ type: "user", uuid, timestamp, message: { role: "user", content } });
+}
+
+/** Append records to a transcript; the leading newline ends the fixture's partial last line. */
+export function appendRecords(transcript: string, records: string[]): void {
+  fs.appendFileSync(transcript, "\n" + records.join("\n") + "\n");
+}
+
+/** The parsed daemon.json under a crank home, or null when it is absent or does not parse. */
+export function readDaemon(crankHome: string): DaemonState | null {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(crankHome, DAEMON_FILE), "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Spawn `<cloneRoot ?? REPO_ROOT>/bin/crank-mem daemon ...args`, detached, so the daemon leads its own process group. */
+export function startDaemon(
+  args: string[], env: Record<string, string>, cloneRoot?: string,
+): { proc: ChildProcess; exited: Promise<number> } {
+  const root = cloneRoot ?? REPO_ROOT;
+  const proc = spawn(path.join(root, "bin/crank-mem"), ["daemon", ...args], {
+    cwd: root, env: { ...process.env, ...env }, detached: true, stdio: "ignore",
+  });
+  const exited = new Promise<number>((resolve) => proc.once("exit", (code) => resolve(code ?? -1)));
+  return { proc, exited };
+}
+
+/** SIGKILL the process group of the pid in daemon.json, if any, so a running job and its fake claude die with the daemon. */
+export function killDaemon(crankHome: string): void {
+  const pid = readDaemon(crankHome)?.pid;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 1) return;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // No such group: the daemon already exited.
+  }
 }

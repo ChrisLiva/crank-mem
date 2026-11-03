@@ -35,7 +35,7 @@ function initedProject(): string {
 
 const ON = "crank-mem: digests on. They run on your Claude login through `claude -p`.\n";
 const OFF = "crank-mem: digests off. Stored memory stays readable.\n";
-const USAGE = "Usage: crank-mem digest on|off";
+const USAGE = "Usage: crank-mem digest on|off|resume\n";
 
 describe("digest on|off", () => {
   test("on and off flip the config from the project root and print the exact line", () => {
@@ -72,7 +72,7 @@ describe("digest on|off", () => {
     for (const args of [["digest"], ["digest", "maybe"], ["digest", "ON"]]) {
       const run = runCli(root, args);
       expect(run.status).toBe(1);
-      expect(run.stderr).toContain(USAGE);
+      expect(run.stderr).toBe(USAGE);
       expect(run.stdout).toBe("");
     }
     expect(fs.readFileSync(path.join(root, ".crank/config.json"), "utf-8")).toBe(before);
@@ -161,6 +161,6 @@ describe("user state under the crank home", () => {
 
 describe("help", () => {
   test("usage lists the digest command", () => {
-    expect(runCli(tempDir("crank-digest-help-"), ["--help"]).stdout).toContain("digest     Turn background digests");
+    expect(runCli(tempDir("crank-digest-help-"), ["--help"]).stdout).toContain("digest     Turn background digests on or off, or resume them\n");
   });
 });

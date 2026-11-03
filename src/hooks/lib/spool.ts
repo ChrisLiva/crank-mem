@@ -1,9 +1,10 @@
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { CrankConfig } from "./config.ts";
 import { debugEvent } from "./debug.ts";
 import type { HookPayload } from "./hook-io.ts";
-import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
+import { crankHome, ensureCrankHome, readStopState, writeJsonAtomic } from "./user-state.ts";
 
 // The digest spool: one <crank home>/spool/<stem>.json per Claude session that
 // has work to digest, keyed by the transcript's basename. Stop and SessionEnd
@@ -12,6 +13,11 @@ import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 
 export type SpoolEntry = { transcriptPath: string; projectRoot: string; agent: "claude"; ended: boolean; updatedAt: number };
 export type SpoolItem = { stem: string; entry: SpoolEntry };
+
+export const DAEMON_FILE = "daemon.json";
+/** A heartbeat older than this means the daemon is gone; it heartbeats once a sweep. */
+export const HEARTBEAT_MAX_MS = 90_000;
+export type DaemonState = { pid: number; version: string; heartbeatMs: number };
 
 const PARKED = "parked";
 const EXT = ".json";
@@ -47,8 +53,53 @@ export function signalDigest(payload: HookPayload, projectRoot: string, config: 
   if (!config.digest || typeof payload.transcript_path !== "string") return;
   try {
     writeSignal(payload.transcript_path, projectRoot, ended);
+    if (readStopState() === null) ensureDaemon(config);
   } catch (err) {
     debugEvent("signal-failed", { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+/**
+ * True while daemon.json holds a heartbeat younger than HEARTBEAT_MAX_MS. A file
+ * that does not parse counts by its mtime instead, because a starter between
+ * its `wx` create and its first write leaves an empty file.
+ */
+export function daemonAlive(): boolean {
+  const file = path.join(crankHome(), DAEMON_FILE);
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf-8");
+  } catch {
+    return false;
+  }
+  try {
+    const state = JSON.parse(text) as Partial<DaemonState> | null;
+    if (typeof state?.heartbeatMs === "number") return Date.now() - state.heartbeatMs <= HEARTBEAT_MAX_MS;
+  } catch {
+    // Fall through to the file's age.
+  }
+  try {
+    return Date.now() - fs.statSync(file).mtimeMs < HEARTBEAT_MAX_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Start the clone's daemon unless one is alive. Detached with stdio ignored, so
+ * the hook returns at once and nothing reaches its stdout; cwd is the clone so
+ * bun never loads a project's .env. Never throws.
+ */
+export function ensureDaemon(config: Pick<CrankConfig, "clone_root">): void {
+  try {
+    if (!config.clone_root || daemonAlive()) return;
+    const bin = path.join(config.clone_root, "bin", "crank-mem");
+    if (!fs.existsSync(bin)) return;
+    const child = spawn(bin, ["daemon"], { cwd: config.clone_root, detached: true, stdio: "ignore" });
+    child.on("error", () => {});
+    child.unref();
+  } catch (err) {
+    debugEvent("daemon-start-failed", { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
