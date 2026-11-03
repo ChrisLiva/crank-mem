@@ -15,6 +15,7 @@ import { LOCK_FILE } from "../hooks/lib/lock.ts";
 import { MARKER_FILE, DEDUP_FILE, CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, isCrankBackup } from "../hooks/lib/cerebrum-nudge.ts";
 import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
+import { MEMORY_FILE } from "../hooks/lib/memory.ts";
 import { openProject } from "./project.ts";
 import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
 
@@ -167,6 +168,7 @@ function deleteOwnedFiles(crankDir: string): string[] {
   const owned = [
     CONFIG_FILE, INDEX_FILE, ANATOMY_FILE, LOCK_FILE, MARKER_FILE, DEDUP_FILE, JOURNAL_FILE, LOG_FILE,
     CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, "hooks",
+    MEMORY_FILE, `${MEMORY_FILE}-wal`, `${MEMORY_FILE}-shm`,
   ];
   for (const name of owned) fs.rmSync(path.join(crankDir, name), { recursive: true, force: true });
   for (const name of readdirOrEmpty(crankDir)) {

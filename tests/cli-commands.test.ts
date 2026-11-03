@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -409,6 +410,37 @@ describe("upgrade", () => {
     const after = JSON.parse(fs.readFileSync(local, "utf-8")).hooks;
     expect(after.SubagentStart).toEqual(crankHooks("bun", "claude").SubagentStart);
     expect(after.Stop[0].hooks[0].command).toContain("# mine");
+  });
+
+  test("wires SessionEnd and file history into an install from before 0.8.0 and leaves memory.db untouched", () => {
+    const root = initedProject();
+    const crankDir = path.join(root, ".crank");
+    const configPath = path.join(crankDir, "config.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    config.vendored_version = "0.7.0";
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    const local = path.join(root, ".claude/settings.local.json");
+    const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
+    delete settings.hooks.SessionEnd;
+    settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter((g: { matcher?: string }) => g.matcher !== "Read|Bash");
+    fs.writeFileSync(local, JSON.stringify(settings));
+    fs.rmSync(path.join(crankDir, "hooks/post-read.ts"));
+    seedMemory(root, [{ title: "Kept across upgrade" }]);
+    const store = path.join(crankDir, "memory.db");
+    const sha = () => crypto.createHash("sha256").update(fs.readFileSync(store)).digest("hex");
+    const before = sha();
+
+    const run = cli(root, "upgrade");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("upgraded vendored hooks 0.7.0 → 0.8.0");
+    const after = JSON.parse(fs.readFileSync(local, "utf-8")).hooks;
+    const wired = crankHooks("bun", "claude");
+    expect(after.SessionEnd).toHaveLength(1);
+    expect(after.SessionEnd).toEqual(wired.SessionEnd);
+    expect(after.PostToolUse.map((g: { matcher?: string }) => g.matcher)).toEqual(["Write|Edit|MultiEdit", "Read|Bash"]);
+    expect(after.PostToolUse).toEqual(wired.PostToolUse);
+    expect(fs.existsSync(path.join(crankDir, "hooks/post-read.ts"))).toBe(true);
+    expect(sha()).toBe(before);
   });
 
   test("leaves a hooks.json without crank entries alone", () => {

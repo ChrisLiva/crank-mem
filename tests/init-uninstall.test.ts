@@ -27,6 +27,8 @@ function makeProject(extra: Record<string, string> = {}): { root: string; codexH
   return { root, codexHome };
 }
 
+const STORE_FILES = ["memory.db", "memory.db-wal", "memory.db-shm"];
+
 /** True when git ignores `rel` in `root`. */
 function ignored(root: string, rel: string): boolean {
   return spawnSync("git", ["check-ignore", "-q", "--", rel], { cwd: root }).status === 0;
@@ -74,6 +76,10 @@ describe("init → uninstall round-trip", () => {
     const settings = JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8"));
     expect(settings.hooks.SessionStart[0].hooks[0].command).toContain(".crank/hooks/session-start.ts");
     expect(settings.permissions.allow).toEqual(["Bash(crank-mem *)"]);
+    expect(settings.hooks.SessionEnd[0].hooks[0].command).toContain(".crank/hooks/session-end.ts");
+    const fileHistory = settings.hooks.PostToolUse.find((g: { matcher?: string }) => g.matcher === "Read|Bash");
+    expect(fileHistory.hooks[0].command).toContain(".crank/hooks/post-read.ts");
+    for (const hook of ["session-end.ts", "post-read.ts"]) expect(fs.existsSync(path.join(root, ".crank/hooks", hook))).toBe(true);
     const codexHooks = JSON.parse(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf-8"));
     expect(codexHooks.hooks.PostToolUse[0].matcher).toBe("apply_patch");
     expect(fs.readFileSync(path.join(root, ".codex/config.toml"), "utf-8")).toContain("hooks = true");
@@ -213,9 +219,11 @@ describe("init → uninstall round-trip", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
     fs.writeFileSync(path.join(root, ".crank/debug.log"), "x");
+    for (const name of STORE_FILES) fs.writeFileSync(path.join(root, ".crank", name), "x");
     const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--keep-crank");
     expect(un.status).toBe(0);
     expect(un.stdout).not.toContain(".gitignore");
+    for (const name of STORE_FILES) expect(fs.existsSync(path.join(root, ".crank", name))).toBe(true);
     for (const rel of [".crank/debug.log", ".crank/cerebrum-nudge.json"]) expect(ignored(root, rel)).toBe(true);
   });
 
@@ -252,6 +260,7 @@ describe("init → uninstall round-trip", () => {
     const audit = path.join(root, ".crank/backups/2026-10-01T12-00-00");
     fs.mkdirSync(audit);
     fs.writeFileSync(path.join(audit, "cerebrum.md"), "# Cerebrum\n");
+    for (const name of STORE_FILES) fs.writeFileSync(path.join(root, ".crank", name), "x");
     const un = cli(root, codexHome, "uninstall", "--yes", "--delete-crank");
     expect(un.status).toBe(0);
     expect(un.stdout).toContain("  deleted .crank/\n");
