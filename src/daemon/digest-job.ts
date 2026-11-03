@@ -75,10 +75,8 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
     }
     return 1;
   }
-  // readEntries validates no fields, so a hand-edited or corrupt entry's cwd may not be a string.
-  const cwd = typeof entry.cwd === "string" ? entry.cwd : entry.projectRoot;
   const outcome = memory.appendDigest({
-    session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot, cwd),
+    session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot, entry.cwd),
   });
   if (outcome === "appended") {
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");

@@ -11,9 +11,9 @@ import { crankHome, ensureCrankHome, readStopState, writeJsonAtomic, type StopSt
 // write it; the digest job reads it, and parks an entry it cannot finish
 // under spool/parked/.
 
-/** `cwd` is the session's working directory; entries written before it existed lack it. */
+/** `cwd` is the session's working directory. */
 export type SpoolEntry = {
-  transcriptPath: string; projectRoot: string; cwd?: string; agent: "claude"; ended: boolean; updatedAt: number;
+  transcriptPath: string; projectRoot: string; cwd: string; agent: "claude"; ended: boolean; updatedAt: number;
 };
 export type SpoolItem = { stem: string; entry: SpoolEntry };
 
@@ -120,7 +120,11 @@ function readEntries(dir: string): SpoolItem[] {
     if (!name.endsWith(EXT)) continue;
     try {
       const entry = JSON.parse(fs.readFileSync(path.join(dir, name), "utf-8"));
-      if (typeof entry === "object" && entry !== null) items.push({ stem: name.slice(0, -EXT.length), entry });
+      if (typeof entry === "object" && entry !== null) {
+        // An entry written before entries carried cwd takes its project root.
+        if (typeof entry.cwd !== "string") entry.cwd = entry.projectRoot;
+        items.push({ stem: name.slice(0, -EXT.length), entry });
+      }
     } catch {
       // Unparseable or vanished mid-read: skip it.
     }
