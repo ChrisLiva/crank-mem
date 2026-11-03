@@ -229,8 +229,8 @@ describe("addAllowRule", () => {
       permissions: { allow: ["Bash(ls:*)", "Bash(git *)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] },
     });
   });
-  test("leaves a malformed permissions or allow alone", () => {
-    for (const value of [{ permissions: [] }, { permissions: null }, { permissions: "x" }, { permissions: { allow: "x" } }, { permissions: { allow: {} } }]) {
+  test("leaves a non-object file or a malformed permissions or allow alone", () => {
+    for (const value of [[], null, "x", { permissions: [] }, { permissions: null }, { permissions: "x" }, { permissions: { allow: "x" } }, { permissions: { allow: {} } }]) {
       const f = writeSettings(value);
       const bytes = fs.readFileSync(f, "utf-8");
       expect(addAllowRule(f)).toBe(false);

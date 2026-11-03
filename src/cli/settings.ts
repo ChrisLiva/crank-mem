@@ -227,11 +227,13 @@ export const LEGACY_ALLOW_RULE = "Bash(crank-mem *)";
  * Put CRANK_ALLOW_RULES in a Claude settings file's permissions.allow,
  * creating the keys when missing: drops LEGACY_ALLOW_RULE, keeps every other
  * entry in place, and appends each missing rule in order. Writes only when the
- * array changed, calling `beforeWrite` first, and leaves a foreign-shaped
- * permissions/allow alone. Returns whether it wrote.
+ * array changed, calling `beforeWrite` first, and leaves a file that is not a
+ * JSON object, or a foreign-shaped permissions/allow, alone. Returns whether it
+ * wrote.
  */
 export function addAllowRule(file: string, beforeWrite?: (file: string) => void): boolean {
-  const root: Record<string, unknown> = fs.existsSync(file) ? readJson(file) : {};
+  const root: unknown = fs.existsSync(file) ? readJson(file) : {};
+  if (!isObj(root)) return false;
   const permissions = "permissions" in root ? root.permissions : {};
   if (!isObj(permissions)) return false;
   const allow = "allow" in permissions ? permissions.allow : [];
