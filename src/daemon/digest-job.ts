@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { parseArgs } from "../cli/args.ts";
+import { parseArgs, positive } from "../cli/args.ts";
 import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
 import { deleteEntry, parkEntry, readSpool, type SpoolEntry } from "../hooks/lib/spool.ts";
@@ -42,7 +42,7 @@ export async function run(args: string[]): Promise<number> {
     return 0;
   }
   const { flags } = parseArgs(args.slice(1), ["run-timeout-ms"]);
-  const timeoutMs = typeof flags["run-timeout-ms"] === "string" ? Number(flags["run-timeout-ms"]) : RUN_TIMEOUT_MS;
+  const timeoutMs = positive(flags["run-timeout-ms"], RUN_TIMEOUT_MS);
 
   const opened = openMemory(memoryPath(entry.projectRoot), "write");
   if (opened.status !== "open") return 1;

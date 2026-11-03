@@ -54,7 +54,7 @@ function journey(
   root: string,
   scenarios: FakeScenario[],
   opts: {
-    transcript?: string; env?: Record<string, string>; skipJob?: boolean; timeoutMs?: number; home?: string; stem?: string;
+    transcript?: string; env?: Record<string, string>; skipJob?: boolean; timeoutMs?: number | string; home?: string; stem?: string;
   } = {},
 ): Journey {
   const home = opts.home ?? makeCrankHome();
@@ -77,7 +77,7 @@ function journey(
 
 /** Run `job <stem>` again on a journey's project, home and fake. */
 function rerun(
-  j: Pick<Journey, "root" | "home" | "fake"> & { stem?: string }, timeoutMs = 10_000, env: Record<string, string> = {},
+  j: Pick<Journey, "root" | "home" | "fake"> & { stem?: string }, timeoutMs: number | string = 10_000, env: Record<string, string> = {},
 ): CliRun {
   const args = ["job", j.stem ?? "s1", "--run-timeout-ms", String(timeoutMs)];
   return runCli(j.root, args, { ...j.fake.env, CRANK_HOME: j.home, ...env });
@@ -394,6 +394,14 @@ describe("digest job failure classes (black-box)", () => {
     expect(fake.calls()).toEqual([]);
     expect(stopState(home)).toBeNull();
   });
+
+  test.each(["abc", "0"])("--run-timeout-ms %s falls back to the default timeout and stores the digest", (timeoutMs) => {
+    const { root, fake, job, spool } = journey(digestProject({}, temps), [ok()], { timeoutMs });
+    expect(job.status).toBe(0);
+    expect(fake.calls().length).toBe(1);
+    expect(spool).toEqual([]);
+    expect(search(root, "EEXIST")).toMatch(/ bugfix Lock file writes retry on EEXIST\n$/);
+  }, 30_000);
 
   test("no claude on PATH retries without a stop file", () => {
     const j = journey(digestProject({}, temps), [ok()], { skipJob: true });

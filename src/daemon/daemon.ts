@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseArgs } from "../cli/args.ts";
+import { parseArgs, positive } from "../cli/args.ts";
 import { REPO_ROOT, cliVersion } from "../cli/version.ts";
 import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { trySteal } from "../hooks/lib/lock.ts";
@@ -9,6 +9,7 @@ import {
   DAEMON_FILE, daemonAlive, deleteEntry, deleteParked, readParked, readSpool, type DaemonState, type SpoolItem,
 } from "../hooks/lib/spool.ts";
 import { SEEN_DIR, crankHome, ensureCrankHome, readStopState, writeJsonAtomic } from "../hooks/lib/user-state.ts";
+import { RUN_TIMEOUT_MS } from "./gateway.ts";
 
 // `crank-mem daemon`: one per user, owning <crank home>/daemon.json. Each sweep
 // heartbeats, prunes the spool and starts at most one `crank-mem job` child,
@@ -23,7 +24,7 @@ const RETRY_CAP_MS = 3_600_000;
 const QUIET_MS = 30 * 60_000;
 const SEEN_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 
-type Options = { sweepMs: number; idleMs: number; retryMs: number; retryCapMs: number; runTimeoutMs: string | null; once: boolean };
+type Options = { sweepMs: number; idleMs: number; retryMs: number; retryCapMs: number; runTimeoutMs: number | null; once: boolean };
 
 export async function run(args: string[]): Promise<number> {
   const { flags } = parseArgs(args, ["sweep-ms", "idle-ms", "retry-ms", "retry-cap-ms", "run-timeout-ms"]);
@@ -32,7 +33,7 @@ export async function run(args: string[]): Promise<number> {
     idleMs: positive(flags["idle-ms"], IDLE_MS),
     retryMs: positive(flags["retry-ms"], RETRY_MS),
     retryCapMs: positive(flags["retry-cap-ms"], RETRY_CAP_MS),
-    runTimeoutMs: typeof flags["run-timeout-ms"] === "string" ? flags["run-timeout-ms"] : null,
+    runTimeoutMs: flags["run-timeout-ms"] === undefined ? null : positive(flags["run-timeout-ms"], RUN_TIMEOUT_MS),
     once: flags.once === true,
   };
   ensureCrankHome();
@@ -46,12 +47,6 @@ export async function run(args: string[]): Promise<number> {
     if (ownedBy(file, process.pid)) fs.rmSync(file, { force: true });
   }
   return 0;
-}
-
-/** A numeric flag's value, or the default when it is absent, valueless (`true`) or not a positive number. */
-function positive(value: string | boolean | undefined, fallback: number): number {
-  const n = typeof value === "string" ? Number(value) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 function state(version: string): DaemonState {
@@ -169,7 +164,7 @@ class Daemon {
 
   private startJob(stem: string): void {
     const argv = ["job", stem];
-    if (this.opts.runTimeoutMs !== null) argv.push("--run-timeout-ms", this.opts.runTimeoutMs);
+    if (this.opts.runTimeoutMs !== null) argv.push("--run-timeout-ms", String(this.opts.runTimeoutMs));
     const child = spawn(path.join(REPO_ROOT, "bin", "crank-mem"), argv, { cwd: REPO_ROOT, stdio: "ignore" });
     this.job = new Promise<void>((resolve) => {
       let ended = false;

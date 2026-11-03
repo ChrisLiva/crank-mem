@@ -18,3 +18,9 @@ export function parseArgs(argv: string[], valueFlags: string[]): { flags: Record
   }
   return { flags, rest };
 }
+
+/** A numeric flag's value, or the default when it is absent, valueless (`true`) or not a positive number. */
+export function positive(value: string | boolean | undefined, fallback: number): number {
+  const n = typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
