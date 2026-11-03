@@ -152,7 +152,7 @@ describe("search query text", () => {
     for (const q of ['"', "*", "-", "AND", "NEAR("]) {
       const run = runCli(root, ["search", q]);
       expect(run.status, q).toBe(0);
-      expect(run.stderr).toBe("");
+      expect(run.stderr).toBe("crank-mem: keyword search only; run `crank-mem setup` for search by meaning.\n");
     }
     expect(runCli(root, ["search", '"']).stdout).toBe("");
   });
@@ -286,7 +286,7 @@ describe("help", () => {
   test("--help lists search, timeline and get, and hides --model-host", () => {
     const run = runCli(os.tmpdir(), ["--help"]);
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("  search     Search stored memory by keyword\n");
+    expect(run.stdout).toContain("  search     Search stored memory by meaning or keyword\n");
     expect(run.stdout).toContain("  timeline   Show the observations around one id\n");
     expect(run.stdout).toContain("  get        Print stored observations in full\n");
     expect(run.stdout).not.toContain("--model-host");

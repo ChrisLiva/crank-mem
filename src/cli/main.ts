@@ -8,7 +8,7 @@ Commands:
   init       Wire hooks into this project and run the first scan
   scan       Full index rebuild
   digest     Turn background digests on or off, or resume them
-  search     Search stored memory by keyword
+  search     Search stored memory by meaning or keyword
   timeline   Show the observations around one id
   get        Print stored observations in full
   setup      Install packages and download the local search model

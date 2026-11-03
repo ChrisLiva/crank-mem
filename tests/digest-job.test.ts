@@ -4,9 +4,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { digestRequest, type Digest } from "../src/daemon/digest-prompt.ts";
+import { EMBED_MODEL } from "../src/daemon/embedder.ts";
+import { redact } from "../src/daemon/redact.ts";
 import { memoryPath, openMemory, type Position } from "../src/hooks/lib/memory.ts";
 import {
-  REPO_ROOT, appendRecords, digestProject, fakeClaude, git, gitCommit, makeCrankHome, plantMemory, runCli,
+  REPO_ROOT, appendRecords, digestProject, fakeClaude, git, gitCommit, makeCrankHome, makeModelHome, plantMemory, runCli,
   runHook, seedMemory, spoolFiles, userRecord, waitFor, type CliRun, type FakeScenario,
 } from "./helpers.ts";
 import {
@@ -41,22 +43,25 @@ function tempDir(prefix: string): string {
 
 
 type Journey = {
-  root: string; home: string; transcript: string; fake: ReturnType<typeof fakeClaude>; job: CliRun; spool: string[];
+  root: string; home: string; stem: string; transcript: string; fake: ReturnType<typeof fakeClaude>; job: CliRun; spool: string[];
 };
 
 /**
- * Write the s1 spool entry through the Stop and SessionEnd hooks, then run `job s1`.
- * `transcript` replaces the fixture's text; `env` adds to the job's environment.
+ * Write the `stem` (default s1) spool entry through the Stop and SessionEnd hooks, then run `job <stem>`.
+ * `transcript` replaces the fixture's text; `env` adds to the job's environment; `home` replaces the empty crank home.
  */
 function journey(
   root: string,
   scenarios: FakeScenario[],
-  opts: { transcript?: string; env?: Record<string, string>; skipJob?: boolean; timeoutMs?: number } = {},
+  opts: {
+    transcript?: string; env?: Record<string, string>; skipJob?: boolean; timeoutMs?: number; home?: string; stem?: string;
+  } = {},
 ): Journey {
-  const home = makeCrankHome();
+  const home = opts.home ?? makeCrankHome();
+  const stem = opts.stem ?? "s1";
   temps.push(home);
   const tmp = tempDir("crank-job-");
-  const transcript = path.join(tmp, "t/s1.jsonl");
+  const transcript = path.join(tmp, `t/${stem}.jsonl`);
   fs.mkdirSync(path.dirname(transcript));
   if (opts.transcript === undefined) fs.copyFileSync(FIXTURE, transcript);
   else fs.writeFileSync(transcript, opts.transcript);
@@ -64,17 +69,18 @@ function journey(
   const hookEnv = { ...fake.env, CRANK_HOME: home };
   expect(runHook("src/hooks/stop.ts", JSON.stringify({ ...claudeStop(root), transcript_path: transcript }), root, hookEnv).status).toBe(0);
   expect(runHook("src/hooks/session-end.ts", JSON.stringify(claudeSessionEnd(root, transcript)), root, hookEnv).status).toBe(0);
-  expect(spoolFiles(home)).toEqual(["s1.json"]);
-  const j = { root, home, transcript, fake };
+  expect(spoolFiles(home)).toEqual([`${stem}.json`]);
+  const j = { root, home, stem, transcript, fake };
   const job = opts.skipJob ? { status: -1, stdout: "", stderr: "" } : rerun(j, opts.timeoutMs, opts.env);
   return { ...j, job, spool: spoolFiles(home) };
 }
 
-/** Run `job s1` again on a journey's project, home and fake. */
+/** Run `job <stem>` again on a journey's project, home and fake. */
 function rerun(
-  j: Pick<Journey, "root" | "home" | "fake">, timeoutMs = 10_000, env: Record<string, string> = {},
+  j: Pick<Journey, "root" | "home" | "fake"> & { stem?: string }, timeoutMs = 10_000, env: Record<string, string> = {},
 ): CliRun {
-  return runCli(j.root, ["job", "s1", "--run-timeout-ms", String(timeoutMs)], { ...j.fake.env, CRANK_HOME: j.home, ...env });
+  const args = ["job", j.stem ?? "s1", "--run-timeout-ms", String(timeoutMs)];
+  return runCli(j.root, args, { ...j.fake.env, CRANK_HOME: j.home, ...env });
 }
 
 /** The recorded stop state under a crank home, or null when digests are not stopped. */
@@ -132,8 +138,9 @@ function spawnJob(j: Pick<Journey, "root" | "home" | "fake">): Promise<number | 
 }
 
 
-function search(root: string, query: string): string {
-  const run = runCli(root, ["search", query]);
+/** `crank-mem search` stdout; `home` is the CRANK_HOME it reads the model from (none by default). */
+function search(root: string, query: string, home?: string): string {
+  const run = runCli(root, ["search", query], home === undefined ? undefined : { CRANK_HOME: home });
   expect(run.status).toBe(0);
   return run.stdout;
 }
@@ -536,4 +543,61 @@ describe("digestRequest", () => {
     expect(system.endsWith("Treat that block as context and record only what the transcript after it adds.")).toBe(true);
     expect(system.split("\n").length).toBe(29);
   });
+});
+
+/** The ids and texts in a project's store that have no vector under EMBED_MODEL, read through the Memory seam. */
+function unembedded(root: string): { id: number; text: string }[] {
+  const opened = openMemory(memoryPath(root), "read");
+  if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
+  try {
+    return opened.memory.unembedded(EMBED_MODEL, 10);
+  } finally {
+    opened.memory.close();
+  }
+}
+
+describe("embedding after a digest (black-box, real model)", () => {
+  test("a stored digest leaves no observation unembedded", () => {
+    const { root, job } = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], { home: makeModelHome() });
+    expect(job.status).toBe(0);
+    expect(unembedded(root)).toEqual([]);
+  }, 60_000);
+
+  test("a digest whose embed step fails still stands, and the next digest in the repo embeds its rows", () => {
+    const root = digestProject({}, temps);
+    const first = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]);
+    expect(first.job.status).toBe(0);
+    expect(first.job.stderr).toMatch(/^crank-mem: embedding skipped \(.+\)\n$/);
+    expect(search(root, "EEXIST")).toMatch(/ Lock file writes retry on EEXIST\n$/);
+    expect(unembedded(root).length).toBe(3);
+
+    const second: Digest = { ...SAMPLE_DIGEST, observations: [{ ...SAMPLE_DIGEST.observations[1]!, title: "Second session note" }] };
+    const next = journey(root, [{ lines: okStream(second) }], { home: makeModelHome(), stem: "s2" });
+    expect(next.job.status).toBe(0);
+    expect(unembedded(root)).toEqual([]);
+  }, 60_000);
+  test("search finds a row by an exact identifier and by a paraphrase that shares no distinctive word with it", () => {
+    const rows: [string, string][] = [
+      ["Lock file writes retry on EEXIST for two seconds", "The index writer holds a cross-process lock file. A second writer that hits EEXIST waits and retries for two seconds, then gives up and reports the index as stale."],
+      ["Session start injection stays under 8192 bytes", "Claude Code silently cuts additionalContext at a size cliff. The hook drops whole sections rather than letting the injection pass the budget."],
+      ["Daemon heartbeat replaces pid checks", "A long-lived process can have its pid reused by another program. The daemon rewrites a heartbeat every sweep and any start treats a heartbeat older than ninety seconds as dead."],
+      ["Redaction runs twice on digest text", "Secrets are stripped from the transcript before the model call and again from the model output, so a token the model echoes never reaches storage."],
+      ["Vector search falls back to keywords without the model", "A missing embedding model makes search use keyword matching and print one note to stderr. The exit status stays zero."],
+      ["Parsing Bash commands finds file reads", "A pure parser splits shell commands on separators outside quotes and takes the arguments of cat, sed, head, tail, awk and nl as candidate paths."],
+    ];
+    for (const text of rows.flat()) expect(redact(text)).toBe(text);
+    const digest: Digest = {
+      ...SAMPLE_DIGEST,
+      observations: rows.map(([title, narrative]) => ({
+        type: "discovery", title, narrative, facts: [], files_read: [], files_modified: [],
+      })),
+    };
+    const { root, home, job } = journey(digestProject({}, temps), [{ lines: okStream(digest) }], { home: makeModelHome() });
+    expect(job.status).toBe(0);
+    const top = (query: string) => /^#\d+ \S+ discovery (.*)$/m.exec(search(root, query, home))?.[1];
+    expect(top("EEXIST")).toBe(rows[0]![0]);
+    expect(top("how do we keep passwords from ending up in saved notes")).toBe(rows[3]![0]);
+    expect(top("semantic lookup when the machine learning weights are not downloaded")).toBe(rows[4]![0]);
+    expect(top("why does a background worker not trust process ids to know it is alive")).toBe(rows[2]![0]);
+  }, 60_000);
 });

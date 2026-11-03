@@ -5,6 +5,7 @@ import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/l
 import { deleteEntry, parkEntry, readSpool, type SpoolEntry } from "../hooks/lib/spool.ts";
 import { readStopState, writeStopState } from "../hooks/lib/user-state.ts";
 import { digestRequest, type Digest } from "./digest-prompt.ts";
+import { EMBED_MODEL, embed } from "./embedder.ts";
 import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
 import { redact } from "./redact.ts";
 import { distill } from "./transcript.ts";
@@ -18,6 +19,9 @@ export const MIN_DELTA_CHARS = 2_000;
 
 /** A file this small can hold a short session; a larger one with no conversation record is not a transcript. */
 const PARK_SIZE = 4096;
+
+/** Rows embedded per digest; rows past it wait for the next digest in the repo. */
+const EMBED_BATCH = 200;
 
 /** Rejections before an entry parks: a session the model will not digest must not cost a run every sweep. */
 const REJECTION_LIMIT = 3;
@@ -71,8 +75,23 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
   const outcome = memory.appendDigest({
     session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot),
   });
-  if (outcome === "appended" && !d.truncated && !touchedSince(stem, entry)) deleteEntry(stem);
+  if (outcome === "appended") {
+    if (!d.truncated && !touchedSince(stem, entry)) deleteEntry(stem);
+    await embedPending(memory);
+  }
   return 0;
+}
+
+/** Store vectors for rows that lack one; a failure leaves them for the next digest and never changes the exit code. */
+async function embedPending(memory: Memory): Promise<void> {
+  try {
+    const rows = memory.unembedded(EMBED_MODEL, EMBED_BATCH);
+    if (rows.length === 0) return;
+    const vectors = await embed(rows.map((r) => r.text), { remote: false });
+    memory.putVectors(EMBED_MODEL, rows.map((r, i) => ({ id: r.id, vector: vectors[i]! })));
+  } catch (err) {
+    console.error(`crank-mem: embedding skipped (${err instanceof Error ? err.message : String(err)})`);
+  }
 }
 
 /** The model's output as the store takes it: every string redacted, paths repo-relative and deduped. */

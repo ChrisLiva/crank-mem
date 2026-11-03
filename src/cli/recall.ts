@@ -1,11 +1,14 @@
+import { EMBED_MODEL, embed } from "../daemon/embedder.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 import {
-  formatLine, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE, type MemoryReader, type Observation, type ObservationType,
+  formatLine, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE,
+  type MemoryReader, type Observation, type ObservationType, type SearchQuery,
 } from "../hooks/lib/memory.ts";
 import { parseArgs } from "./args.ts";
 import { openNearestProject } from "./project.ts";
 
 export const NO_MEMORY_NOTE = "crank-mem: no memory exists yet.";
+const KEYWORD_ONLY_NOTE = "crank-mem: keyword search only; run `crank-mem setup` for search by meaning.";
 
 const STATE_NOTES = { newer: MEMORY_NEWER_NOTE, unreadable: MEMORY_UNREADABLE_NOTE } as const;
 
@@ -13,7 +16,9 @@ const STATE_NOTES = { newer: MEMORY_NEWER_NOTE, unreadable: MEMORY_UNREADABLE_NO
  * Runs `fn` on the project's store, closing it after. A missing store is an
  * empty result for search (stdout, exit 0) and an error for the rest.
  */
-function withMemory(root: string, missingIsEmpty: boolean, fn: (memory: MemoryReader) => number): number {
+async function withMemory(
+  root: string, missingIsEmpty: boolean, fn: (memory: MemoryReader) => number | Promise<number>,
+): Promise<number> {
   const opened = openMemory(memoryPath(root), "read");
   if (opened.status === "missing") {
     if (missingIsEmpty) {
@@ -28,7 +33,7 @@ function withMemory(root: string, missingIsEmpty: boolean, fn: (memory: MemoryRe
     return 1;
   }
   try {
-    return fn(opened.memory);
+    return await fn(opened.memory);
   } finally {
     opened.memory.close();
   }
@@ -67,15 +72,27 @@ export async function search(args: string[]): Promise<number> {
   if (!project) return 1;
   const relFile = file === undefined ? null : repoRelative(project.root, process.cwd(), file as string);
   if (file !== undefined && relFile === null) return 0;
-  return withMemory(project.root, true, (memory) => {
+  const host = typeof flags["model-host"] === "string" ? flags["model-host"] : undefined;
+  return withMemory(project.root, true, async (memory) => {
     const hits = memory.search({
-      text, vector: null,
+      text, vector: await queryVector(text, host),
       limit: limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT),
       type: (type as ObservationType | undefined) ?? null, sinceMs, file: relFile,
     });
     for (const hit of hits) console.log(formatLine(hit));
     return 0;
   });
+}
+
+/** The query's embedding, or null with a note on stderr when the local model cannot run; never fetches. */
+async function queryVector(text: string, host: string | undefined): Promise<SearchQuery["vector"]> {
+  try {
+    const [values] = await embed([text], { remote: false, host });
+    return { model: EMBED_MODEL, values: values! };
+  } catch {
+    console.error(KEYWORD_ONLY_NOTE);
+    return null;
+  }
 }
 
 const TIMELINE_USAGE = "Usage: crank-mem timeline <id> [--depth n]";
