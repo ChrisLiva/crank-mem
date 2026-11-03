@@ -46,3 +46,5 @@ Tests are black-box: hooks and CLI commands are executed as real child processes
 `bun test` runs the test process in UTC with `TZ` unset, while `runCli` and `runHook` children run in the system zone, so an in-process local-date assertion passes against UTC getters too. Pin local dates through a CLI child with `TZ` in its env, in zones on both sides of UTC (`tests/recall-cli.test.ts` → `ZONES`).
 
 `runCli`'s `spawnSync` timeout (`tests/helpers.ts:79`) kills only the CLI child; a grandchild that hangs, such as `fakeClaude` with `auth: "hang"`, keeps running at ppid 1. After a RED run that hit the timeout, find leftover fake `claude` processes with `ps` and kill them.
+
+To probe an fs failure path (such as `src/hooks/lib/spool.ts` → `settleEntry`'s non-`EEXIST` link fallback), run the probe under node: assigning `fs.linkSync` on the default `node:fs` import and calling `syncBuiltinESMExports()` reaches a module's `import * as fs` namespace under node 26 (the call threw the mock's `EPERM`) but not under bun 1.4 (it threw the real `ENOENT`).
