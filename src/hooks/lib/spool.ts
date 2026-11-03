@@ -162,9 +162,48 @@ export function readParked(): SpoolItem[] {
   return readEntries(parkedDir());
 }
 
-export function parkEntry(stem: string): void {
-  fs.mkdirSync(parkedDir(), { recursive: true, mode: 0o700 });
-  fs.renameSync(path.join(spoolDir(), stem + EXT), path.join(parkedDir(), stem + EXT));
+/**
+ * Delete or park spool/<stem>.json only while it still holds the entry the job
+ * read (same updatedAt). The claim name does not end in .json, so readers skip
+ * it and a hook writing meanwhile creates a fresh entry. A rewritten entry is
+ * linked back unless a newer one already took its place. True when settled.
+ */
+export function settleEntry(stem: string, updatedAt: number, how: "delete" | "park"): boolean {
+  const file = path.join(spoolDir(), stem + EXT);
+  const claim = `${file}.${process.pid}.claim`;
+  try {
+    fs.renameSync(file, claim);
+  } catch {
+    return false;
+  }
+  let same = false;
+  try {
+    same = (JSON.parse(fs.readFileSync(claim, "utf-8")) as Partial<SpoolEntry> | null)?.updatedAt === updatedAt;
+  } catch {
+    // Unparseable: not the entry the job read.
+  }
+  if (!same) {
+    try {
+      fs.linkSync(claim, file);
+    } catch (e) {
+      // EEXIST: a hook wrote a newer entry after the claim; keep it. Without
+      // hard links, a rename puts the claim back rather than lose the entry.
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
+        try {
+          fs.renameSync(claim, file);
+        } catch {}
+      }
+    }
+    fs.rmSync(claim, { force: true });
+    return false;
+  }
+  if (how === "delete") {
+    fs.rmSync(claim, { force: true });
+  } else {
+    fs.mkdirSync(parkedDir(), { recursive: true, mode: 0o700 });
+    fs.renameSync(claim, path.join(parkedDir(), stem + EXT));
+  }
+  return true;
 }
 
 export function deleteEntry(stem: string): void {

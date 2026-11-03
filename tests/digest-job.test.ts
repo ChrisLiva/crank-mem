@@ -478,6 +478,17 @@ describe("digest job failure classes (black-box)", () => {
     expect(fs.readdirSync(path.join(j.home, "spool/parked"))).toEqual(["s1.json"]);
   }, 20_000);
 
+  test("a Stop during the third refusal keeps the entry unparked", async () => {
+    const refusal = { lines: refusalStream() };
+    const j = journey(digestProject({}, temps), [refusal, refusal, { ...refusal, sleepMs: 1500 }]);
+    rerun(j);
+    const exited = spawnJob(j);
+    await waitFor(() => j.fake.calls().length === 3);
+    stop(j);
+    expect(await exited).toBe(0);
+    expect(spoolFiles(j.home)).toEqual(["s1.json"]);
+  }, 30_000);
+
   test("a stored digest resets the rejection count", () => {
     const refusal = { lines: refusalStream() };
     const j = journey(digestProject({}, temps), [refusal, refusal, ok(), refusal]);

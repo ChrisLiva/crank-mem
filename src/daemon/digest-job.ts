@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import { parseArgs, positive } from "../cli/args.ts";
 import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
-import { deleteEntry, parkEntry, readSpool, type SpoolEntry } from "../hooks/lib/spool.ts";
+import { deleteEntry, readSpool, settleEntry, type SpoolEntry } from "../hooks/lib/spool.ts";
 import { readStopState, writeStopState } from "../hooks/lib/user-state.ts";
 import { digestRequest, type Digest } from "./digest-prompt.ts";
 import { EMBED_MODEL, embed } from "./embedder.ts";
@@ -53,11 +53,11 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
   const pos = memory.position(stem);
   const d = distill(entry.transcriptPath, pos, MAX_DELTA_CHARS);
   if (pos === null && fs.statSync(entry.transcriptPath).size > PARK_SIZE && d.records === 0) {
-    parkEntry(stem);
+    settleEntry(stem, entry.updatedAt, "park");
     return 0;
   }
   if (d.text.length < MIN_DELTA_CHARS || d.next === null) {
-    deleteEntry(stem);
+    settleEntry(stem, entry.updatedAt, "delete");
     return 0;
   }
   const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem)), { timeoutMs });
@@ -68,14 +68,14 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
   }
   const session: SessionKey = { id: stem, agent: "claude", transcriptPath: entry.transcriptPath };
   if (r.kind === "rejected") {
-    if (memory.recordRejection(session) >= REJECTION_LIMIT) parkEntry(stem);
+    if (memory.recordRejection(session) >= REJECTION_LIMIT) settleEntry(stem, entry.updatedAt, "park");
     return 0;
   }
   const outcome = memory.appendDigest({
     session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot),
   });
   if (outcome === "appended") {
-    if (!d.truncated && !touchedSince(stem, entry)) deleteEntry(stem);
+    if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
     await embedPending(memory);
   }
   return 0;
@@ -107,10 +107,4 @@ function stored(output: Digest, root: string) {
       filesRead: files(o.files_read), filesModified: files(o.files_modified),
     })),
   };
-}
-
-/** A hook rewrote the entry while the job ran, so the session has more to digest. */
-function touchedSince(stem: string, entry: SpoolEntry): boolean {
-  const now = readSpool().find((i) => i.stem === stem);
-  return now !== undefined && now.entry.updatedAt !== entry.updatedAt;
 }

@@ -4,11 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import {
-  REPO_ROOT, digestProject, fakeClaude, killDaemon, makeCrankHome, makeCrankProject, readDaemon, runHook, setMtime, spoolFiles,
-  waitFor,
+  REPO_ROOT, digestProject, fakeClaude, killDaemon, makeCrankHome, makeCrankProject, readDaemon, runHook, setMtime, spoolEntry,
+  spoolFiles, waitFor,
 } from "./helpers.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
-import { deleteEntry, deleteParked, parkEntry, readParked, readSpool } from "../src/hooks/lib/spool.ts";
+import { deleteEntry, deleteParked, readParked, readSpool, settleEntry } from "../src/hooks/lib/spool.ts";
 
 const STOP = "src/hooks/stop.ts";
 const SESSION_END = "src/hooks/session-end.ts";
@@ -161,13 +161,60 @@ describe("digest signals (black-box)", () => {
     fs.writeFileSync(path.join(home, "spool/bad.json"), "{");
     process.env.CRANK_HOME = home;
     try {
-      expect(readSpool().map((i) => i.stem)).toEqual(["abc-1"]);
-      parkEntry("abc-1");
+      const [item] = readSpool();
+      expect(item?.stem).toBe("abc-1");
+      expect(settleEntry("abc-1", item!.entry.updatedAt, "park")).toBe(true);
       expect(readSpool()).toEqual([]);
       expect(readParked().map((i) => i.stem)).toEqual(["abc-1"]);
       deleteParked("abc-1");
       expect(readParked()).toEqual([]);
       expect(() => deleteEntry("nope")).not.toThrow();
+    } finally {
+      if (saved === undefined) delete process.env.CRANK_HOME;
+      else process.env.CRANK_HOME = saved;
+    }
+  });
+
+  test("settleEntry removes or parks only the entry the job read", () => {
+    const root = digestProject();
+    const home = makeCrankHome();
+    const spool = path.join(home, "spool");
+    const t = 1_700_000_000_000.5;
+    const claims = () => fs.readdirSync(spool).filter((n) => n.endsWith(".claim"));
+    const saved = process.env.CRANK_HOME;
+    process.env.CRANK_HOME = home;
+    try {
+      spoolEntry(home, "s1", root, t);
+      expect(settleEntry("s1", t, "delete")).toBe(true);
+      expect(fs.readdirSync(spool)).toEqual([]);
+
+      spoolEntry(home, "s1", root, t);
+      expect(settleEntry("s1", t, "park")).toBe(true);
+      expect(readSpool()).toEqual([]);
+      expect(readParked().map((i) => i.entry.updatedAt)).toEqual([t]);
+      expect(claims()).toEqual([]);
+      deleteParked("s1");
+
+      spoolEntry(home, "s1", root, t + 1);
+      expect(settleEntry("s1", t, "delete")).toBe(false);
+      expect(settleEntry("s1", t, "park")).toBe(false);
+      expect(readSpool().map((i) => i.entry.updatedAt)).toEqual([t + 1]);
+      expect(readParked()).toEqual([]);
+      expect(claims()).toEqual([]);
+
+      fs.writeFileSync(path.join(spool, "s1.json"), "{");
+      expect(settleEntry("s1", t, "delete")).toBe(false);
+      expect(fs.readFileSync(path.join(spool, "s1.json"), "utf-8")).toBe("{");
+      expect(claims()).toEqual([]);
+      deleteEntry("s1");
+
+      expect(settleEntry("nope", t, "delete")).toBe(false);
+      expect(claims()).toEqual([]);
+
+      spoolEntry(home, "s1", root, t);
+      expect(settleEntry("s1", t, "delete")).toBe(true);
+      expect(settleEntry("s1", t, "delete")).toBe(false);
+      expect(fs.readdirSync(spool)).toEqual(["parked"]);
     } finally {
       if (saved === undefined) delete process.env.CRANK_HOME;
       else process.env.CRANK_HOME = saved;
