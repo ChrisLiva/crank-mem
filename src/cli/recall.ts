@@ -54,29 +54,36 @@ function localMidnight(value: string): number | null {
   return date.getTime();
 }
 
+/** A value flag's string, undefined when absent, or null when it came without a value. */
+function stringFlag(value: string | boolean | undefined): string | undefined | null {
+  return value === undefined ? undefined : typeof value === "string" ? value : null;
+}
+
+const isObservationType = (value: string): value is ObservationType => OBSERVATION_TYPES.some((t) => t === value);
+
 export async function search(args: string[]): Promise<number> {
   const { flags, rest } = parseArgs(args, SEARCH_FLAGS);
   // An unknown flag is query text, so `search --max-turns` finds that option.
   const extra = Object.keys(flags).filter((key) => key !== "" && !SEARCH_FLAGS.includes(key)).map((key) => `--${key}`);
   const text = [...rest, ...extra].join(" ");
   const usage = () => { console.error(SEARCH_USAGE); return 1; };
-  const { limit, type, since, file } = flags;
+  const [limit, type, since, file] = [flags.limit, flags.type, flags.since, flags.file].map(stringFlag);
   if (!text.trim()) return usage();
-  for (const value of [limit, type, since, file]) if (value !== undefined && typeof value !== "string") return usage();
-  if (limit !== undefined && !/^[1-9]\d*$/.test(limit as string)) return usage();
-  if (type !== undefined && !OBSERVATION_TYPES.includes(type as ObservationType)) return usage();
-  const sinceMs = since === undefined ? null : localMidnight(since as string);
+  if (limit === null || type === null || since === null || file === null) return usage();
+  if (limit !== undefined && !/^[1-9]\d*$/.test(limit)) return usage();
+  if (type !== undefined && !isObservationType(type)) return usage();
+  const sinceMs = since === undefined ? null : localMidnight(since);
   if (since !== undefined && sinceMs === null) return usage();
   const project = openNearestProject();
   if (!project) return 1;
-  const relFile = file === undefined ? null : repoRelative(project.root, process.cwd(), file as string);
+  const relFile = file === undefined ? null : repoRelative(project.root, process.cwd(), file);
   if (file !== undefined && relFile === null) return 0;
   const host = typeof flags["model-host"] === "string" ? flags["model-host"] : undefined;
   return withMemory(project.root, true, async (memory) => {
     const hits = memory.search({
       text, vector: await queryVector(text, host),
       limit: limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT),
-      type: (type as ObservationType | undefined) ?? null, sinceMs, file: relFile,
+      type: type ?? null, sinceMs, file: relFile,
     });
     for (const hit of hits) console.log(formatLine(hit));
     return 0;
