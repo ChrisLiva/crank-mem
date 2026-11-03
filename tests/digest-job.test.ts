@@ -296,6 +296,18 @@ describe("digest job failure classes (black-box)", () => {
     expectStopped(home, "login");
   });
 
+  test("a digest whose own text quotes the login error is stored, not read as a login failure", () => {
+    const [first, ...others] = SAMPLE_DIGEST.observations;
+    const quoting = {
+      ...SAMPLE_DIGEST,
+      observations: [{ ...first!, narrative: `${first!.narrative} The CLI printed Not logged in · Please run /login.` }, ...others],
+    };
+    const { root, home, job } = journey(digestProject(), [{ lines: okStream(quoting) }]);
+    expect(job.status).toBe(0);
+    expect(stopState(home)).toBeNull();
+    expect(search(root, "EEXIST").trim().split("\n").length).toBe(1);
+  });
+
   test.each([
     ["output that fails the schema", { lines: invalidOutputStream() }],
     ["hitting max turns", { lines: maxTurnsStream(), exit: 1 }],

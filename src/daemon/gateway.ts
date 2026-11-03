@@ -134,8 +134,11 @@ function classify<T>(run: Run, validate: (value: unknown) => value is T): ModelR
   const providers = Object.values(modelUsage).filter(isObj).map((u) => u.provider).filter((p) => p !== undefined);
   const other = providers.find((p) => p !== "firstParty");
   if (other !== undefined) return { kind: "stopped", reason: "credential", detail: `claude -p ran on provider ${String(other)}` };
-  // Raw stdout covers both the plain-text form (exp/d.out) and the result line's `result` string.
-  if (run.stdout.includes("Not logged in")) {
+  // Only failure text counts: a non-JSON line (exp/d.out) or an error result's `result` (plan/bare.jsonl).
+  // JSON lines also carry the digest's own text, which may quote the error.
+  const plainText = run.stdout.split("\n").filter((line) => parseJson(line) === undefined);
+  const errorText = result?.is_error === true && typeof result.result === "string" ? result.result : "";
+  if ([...plainText, errorText].some((text) => text.includes("Not logged in"))) {
     return { kind: "stopped", reason: "login", detail: "claude -p: not logged in" };
   }
   if (result?.api_error_status === 401 || result?.api_error_status === 403) {
