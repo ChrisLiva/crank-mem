@@ -1,4 +1,4 @@
-import type { DigestSummary, ObservationType } from "../hooks/lib/memory.ts";
+import { OBSERVATION_TYPES, type DigestSummary, type ObservationType } from "../hooks/lib/memory.ts";
 
 export type Digest = {
   observations: {
@@ -39,7 +39,6 @@ A session with no durable signal gets an empty observations array, with the summ
 
 An input opening with [PRIOR SUMMARY] continues an earlier digest. Treat that block as context and record only what the transcript after it adds.`;
 
-const TYPES: readonly ObservationType[] = ["bugfix", "feature", "refactor", "change", "discovery", "decision"];
 const SUMMARY_KEYS = ["request", "investigated", "learned", "completed", "next_steps"] as const;
 
 // Verbatim from the stage 1 digest probe's schema.json, which every probe run used (ADR 0008).
@@ -52,7 +51,7 @@ const SCHEMA = {
         type: "object", additionalProperties: false,
         required: ["type", "title", "narrative", "facts", "files_read", "files_modified"],
         properties: {
-          type: { type: "string", enum: TYPES },
+          type: { type: "string", enum: OBSERVATION_TYPES },
           title: { type: "string" },
           narrative: { type: "string" },
           facts: { type: "array", items: { type: "string" } },
@@ -74,7 +73,7 @@ const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === "string");
 
 function isObservation(v: unknown): boolean {
-  return isObj(v) && TYPES.includes(v.type as ObservationType) && typeof v.title === "string" &&
+  return isObj(v) && OBSERVATION_TYPES.includes(v.type as ObservationType) && typeof v.title === "string" &&
     typeof v.narrative === "string" && isStrings(v.facts) && isStrings(v.files_read) && isStrings(v.files_modified);
 }
 

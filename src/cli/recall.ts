@@ -1,7 +1,7 @@
 import { EMBED_MODEL, embed } from "../daemon/embedder.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 import {
-  formatLine, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE,
+  formatLine, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE, OBSERVATION_TYPES,
   type MemoryReader, type Observation, type ObservationType, type SearchQuery,
 } from "../hooks/lib/memory.ts";
 import { parseArgs } from "./args.ts";
@@ -41,7 +41,6 @@ async function withMemory(
 
 const SEARCH_USAGE = "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path]";
 const SEARCH_FLAGS = ["limit", "type", "since", "file", "model-host"];
-const TYPES: readonly ObservationType[] = ["bugfix", "feature", "refactor", "change", "discovery", "decision"];
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 
@@ -65,7 +64,7 @@ export async function search(args: string[]): Promise<number> {
   if (!text.trim()) return usage();
   for (const value of [limit, type, since, file]) if (value !== undefined && typeof value !== "string") return usage();
   if (limit !== undefined && !/^[1-9]\d*$/.test(limit as string)) return usage();
-  if (type !== undefined && !TYPES.includes(type as ObservationType)) return usage();
+  if (type !== undefined && !OBSERVATION_TYPES.includes(type as ObservationType)) return usage();
   const sinceMs = since === undefined ? null : localMidnight(since as string);
   if (since !== undefined && sinceMs === null) return usage();
   const project = openNearestProject();

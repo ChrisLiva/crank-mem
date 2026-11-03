@@ -22,7 +22,9 @@ export type MemoryWrite =
   | { status: "open"; memory: Memory }
   | { status: "newer" | "unreadable" };
 
-export type ObservationType = "bugfix" | "feature" | "refactor" | "change" | "discovery" | "decision";
+/** SCHEMA_V1's observations.type CHECK repeats this list as a literal; schema v1 freezes it. */
+export const OBSERVATION_TYPES = ["bugfix", "feature", "refactor", "change", "discovery", "decision"] as const;
+export type ObservationType = (typeof OBSERVATION_TYPES)[number];
 export type Position = { uuid: string; timestamp: string };
 export type SessionKey = { id: string; agent: "claude"; transcriptPath: string };
 export type DigestSummary = { request: string; investigated: string; learned: string; completed: string; next_steps: string };
