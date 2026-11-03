@@ -335,7 +335,7 @@ describe("daemon retry holds", () => {
     expect(spoolFiles(e.home)).toEqual(["s1.json"]);
   }, 10_000);
 
-  test("a hold belongs to one stem, and exit 0 clears it", async () => {
+  test("a hold belongs to one stem, a refusal holds like a failure, and exit 0 clears it", async () => {
     const two = setup([FAIL, OK, FAIL]);
     const a = digestProject({}, temps);
     const b = digestProject({}, temps);
@@ -355,10 +355,12 @@ describe("daemon retry holds", () => {
     const root = digestProject({}, temps);
     plantEntry(one.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
     daemon(["--sweep-ms", "25", "--retry-ms", "400"], one);
-    await waitFor(() => one.fake.calls().length >= 4, 10_000);
-    const gap = gaps(one.fake.calls())[2]!;
-    expect(gap).toBeGreaterThanOrEqual(400);
-    expect(gap).toBeLessThan(800);
+    await waitFor(() => one.fake.calls().length >= 3, 10_000);
+    const [g0, g1] = gaps(one.fake.calls());
+    expect(g0!).toBeGreaterThanOrEqual(400);
+    expect(g0!).toBeLessThan(800);
+    expect(g1!).toBeGreaterThanOrEqual(800);
+    expect(g1!).toBeLessThan(1_600);
   }, 25_000);
 });
 

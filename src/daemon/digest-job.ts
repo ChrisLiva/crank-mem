@@ -12,7 +12,8 @@ import { distill } from "./transcript.ts";
 
 // `crank-mem job <stem>`: digest one spool entry's new transcript records into
 // its project's store. Exit 0 settles the entry for this sweep; exit 1 asks
-// for a retry.
+// for a retry after the daemon's backoff, and a rejection short of the limit
+// takes that path too.
 
 export const MAX_DELTA_CHARS = 400_000;
 export const MIN_DELTA_CHARS = 2_000;
@@ -68,8 +69,11 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
   }
   const session: SessionKey = { id: stem, agent: "claude", transcriptPath: entry.transcriptPath };
   if (r.kind === "rejected") {
-    if (memory.recordRejection(session) >= REJECTION_LIMIT) settleEntry(stem, entry.updatedAt, "park");
-    return 0;
+    if (memory.recordRejection(session) >= REJECTION_LIMIT) {
+      settleEntry(stem, entry.updatedAt, "park");
+      return 0;
+    }
+    return 1;
   }
   const outcome = memory.appendDigest({
     session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot),

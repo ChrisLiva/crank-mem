@@ -459,7 +459,7 @@ describe("digest job failure classes (black-box)", () => {
     ["hitting max turns", { lines: maxTurnsStream(), exit: 1 }],
   ])("a rejection by %s stores nothing and keeps the entry", (_, scenario) => {
     const { root, home, job, spool } = journey(digestProject({}, temps), [scenario]);
-    expect(job.status).toBe(0);
+    expect(job.status).toBe(1);
     expect(stopState(home)).toBeNull();
     expect(search(root, "EEXIST")).toBe("");
     expect(spool).toEqual(["s1.json"]);
@@ -467,11 +467,11 @@ describe("digest job failure classes (black-box)", () => {
 
   test("a refusal stores nothing, and the third in a row parks the entry", () => {
     const j = journey(digestProject({}, temps), [{ lines: refusalStream() }]);
-    expect(j.job.status).toBe(0);
+    expect(j.job.status).toBe(1);
     expect(stopState(j.home)).toBeNull();
     expect(search(j.root, "EEXIST")).toBe("");
     expect(j.spool).toEqual(["s1.json"]);
-    expect(rerun(j).status).toBe(0);
+    expect(rerun(j).status).toBe(1);
     expect(spoolFiles(j.home)).toEqual(["s1.json"]);
     expect(rerun(j).status).toBe(0);
     expect(spoolFiles(j.home)).toEqual(["parked"]);
@@ -492,14 +492,15 @@ describe("digest job failure classes (black-box)", () => {
   test("a stored digest resets the rejection count", () => {
     const refusal = { lines: refusalStream() };
     const j = journey(digestProject({}, temps), [refusal, refusal, ok(), refusal]);
-    expect(rerun(j).status).toBe(0);
+    expect(j.job.status).toBe(1);
+    expect(rerun(j).status).toBe(1);
     expect(rerun(j).status).toBe(0);
     expect(spoolFiles(j.home)).toEqual([]);
 
     appendRecords(j.transcript, laterRecords().records);
     stop(j);
-    expect(rerun(j).status).toBe(0);
-    expect(rerun(j).status).toBe(0);
+    expect(rerun(j).status).toBe(1);
+    expect(rerun(j).status).toBe(1);
     expect(j.fake.calls().length).toBe(5);
     expect(spoolFiles(j.home)).toEqual(["s1.json"]);
   }, 30_000);
