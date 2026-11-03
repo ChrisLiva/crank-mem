@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { CrankConfig } from "./config.ts";
 
 // Per-user state under <crank home>: $CRANK_HOME when set, otherwise ~/.crank.
 
@@ -54,9 +53,4 @@ export function writeStopState(state: StopState): void {
 
 export function clearStopState(): void {
   fs.rmSync(path.join(crankHome(), STOP_FILE), { force: true });
-}
-
-/** Digests run for Claude sessions when the project turned them on and nothing stopped them. */
-export function digestRunning(config: CrankConfig, codex: boolean): boolean {
-  return config.digest && !codex && readStopState() === null;
 }

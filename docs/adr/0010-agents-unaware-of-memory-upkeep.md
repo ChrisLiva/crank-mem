@@ -15,10 +15,12 @@ agent effort. The user set the rule for that path:
 
 ## Decision
 
-- **One gate.** `digestRunning(config, codex)` in `src/hooks/lib/user-state.ts` is true when
-  `config.digest` is true, `<crank home>/digest-state.json` holds no stop state, and the
-  session is not Codex. `readStopState` reads a file whose `reason` is neither `credential`
-  nor `login`, or that does not parse, as no stop state.
+- **One gate.** `digestRunning(config, codex, root)` in `src/hooks/lib/spool.ts` is true when
+  `config.digest` is true, `<crank home>/digest-state.json` holds no stop state, the
+  session is not Codex, and no spool entry for this project has an `updatedAt` and a
+  transcript mtime that both lie more than `CAPTURE_STALL_MS` (2 hours) back.
+  `readStopState` reads a file whose `reason` is neither `credential` nor `login`, or that
+  does not parse, as no stop state.
 - **While it is true, nothing model-visible asks an agent to maintain memory.**
   - Session start (`src/hooks/lib/injection.ts` → `composeInjection`) leaves out the
     cerebrum, journal and telegram-style protocols, uses a lead that names no session log
@@ -50,5 +52,7 @@ agent effort. The user set the rule for that path:
   nothing to the model.
 - A stopped digest (`credential` or `login`) turns the gate false, so the protocols and
   nudges come back until `crank-mem digest resume` clears the stop state.
+- A stalled capture turns the gate false, so the protocols and nudges come back until the
+  spool drains, and the session-start note says so.
 - `src/templates/cerebrum.md` and `src/templates/journal.md` keep their protocol text: an
   agent sees it only by opening the seeded file.

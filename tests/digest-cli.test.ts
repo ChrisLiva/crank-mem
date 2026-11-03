@@ -6,9 +6,10 @@ import { git, gitCommit, makeCrankHome, runCli, runHook, spoolFiles } from "./he
 import { claudeStop } from "./fixtures/payloads.ts";
 import { defaultConfig } from "../src/hooks/lib/config.ts";
 import {
-  STOP_FILE, clearStopState, crankHome, digestRunning, ensureCrankHome, readStopState, writeJsonAtomic,
+  STOP_FILE, clearStopState, crankHome, ensureCrankHome, readStopState, writeJsonAtomic,
   writeStopState, type StopState,
 } from "../src/hooks/lib/user-state.ts";
+import { digestRunning } from "../src/hooks/lib/spool.ts";
 
 function tempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -140,20 +141,21 @@ describe("user state under the crank home", () => {
 
   test("digestRunning needs digest on, a Claude session and no stop file", () => {
     const on = { ...defaultConfig(), digest: true };
-    expect(digestRunning({ ...defaultConfig(), digest: false }, false)).toBe(false);
-    expect(digestRunning(on, true)).toBe(false);
-    expect(digestRunning(on, false)).toBe(true);
+    const root = "/project";
+    expect(digestRunning({ ...defaultConfig(), digest: false }, false, root)).toBe(false);
+    expect(digestRunning(on, true, root)).toBe(false);
+    expect(digestRunning(on, false, root)).toBe(true);
     const stop: StopState = { reason: "login", atMs: 1_730_000_000_123.456, detail: "Not logged in · ünïcode" };
     writeStopState(stop);
     expect(readStopState()).toEqual(stop);
-    expect(digestRunning(on, false)).toBe(false);
+    expect(digestRunning(on, false, root)).toBe(false);
     clearStopState();
-    expect(digestRunning(on, false)).toBe(true);
+    expect(digestRunning(on, false, root)).toBe(true);
     writeStopState(stop);
     fs.writeFileSync(path.join(home, STOP_FILE), "not json");
-    expect(digestRunning(on, false)).toBe(true);
+    expect(digestRunning(on, false, root)).toBe(true);
     fs.writeFileSync(path.join(home, STOP_FILE), "");
-    expect(digestRunning(on, false)).toBe(true);
+    expect(digestRunning(on, false, root)).toBe(true);
   });
 
   test("ensureCrankHome and writeJsonAtomic create a 0700 home and leave no temp file", () => {

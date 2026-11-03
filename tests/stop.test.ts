@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { enableDebugConfig, makeCrankHome, makeCrankProject, readDebugLog, runHook, setMtime } from "./helpers.ts";
+import { enableDebugConfig, makeCrankHome, makeCrankProject, readDebugLog, runHook, setMtime, spoolEntry } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { claudeSessionStart, claudeStop } from "./fixtures/payloads.ts";
@@ -83,6 +83,14 @@ describe("stop hook (black-box)", () => {
     const running = runHook(HOOK, JSON.stringify(claudeStop(root)), root, { CRANK_HOME: home });
     expect(running.status).toBe(0);
     expect(running.stdout).toBe("");
+
+    // A capture stalled past 2 hours turns the gate off.
+    spoolEntry(home, "old", root, Date.now() - 3 * 3_600_000);
+    const stalled = runHook(HOOK, JSON.stringify(claudeStop(root)), root, { CRANK_HOME: home });
+    expect(stalled.status).toBe(0);
+    expect(nudge(stalled.stdout)).toContain(`${NUDGE_STEP} file`);
+    fs.rmSync(path.join(home, "spool", "old.json"));
+    fs.rmSync(markerPath(root));
 
     fs.writeFileSync(path.join(home, STOP_FILE), JSON.stringify({ reason: "login", atMs: Date.now(), detail: "x" }));
     const stopped = runHook(HOOK, JSON.stringify(claudeStop(root)), root, { CRANK_HOME: home });

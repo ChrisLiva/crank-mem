@@ -611,7 +611,7 @@ const PAST_WORK = "- Past work: `crank-mem search <query>`";
 const NOTE_STOPPED =
   "_Note: crank-mem digests stopped (login): run `crank-mem digest resume` once that is fixed._";
 const NOTE_WAITED =
-  "_Note: crank-mem: a session here has waited over 24 hours for its digest; see `crank-mem stats`._";
+  "_Note: crank-mem: a session here has waited over 2 hours for its digest, so memory upkeep is back on; see `crank-mem stats`._";
 
 function memoryProject(digest: boolean): { root: string; home: string } {
   const root = makeCrankProject({ "a.ts": "const a = 1;" });
@@ -746,13 +746,35 @@ describe("digests running (black-box)", () => {
     for (const absent of ["## Recent memory", "## Next steps", PAST_WORK]) expect(ctx).not.toContain(absent);
   });
 
-  test("a session waiting over a day for its digest is noted, for this project only", () => {
+  test("a session waiting over 2 hours for its digest is noted, brings upkeep back, for this project only", () => {
     const { root, home } = memoryProject(true);
-    spoolEntry(home, "other", "/elsewhere", Date.now() - 25 * 3_600_000);
+    writeJournal(root, ["2026-07-01: did a thing"]);
+    seedMemory(root, titled(2), { nextSteps: "Wire the daemon." });
+    const threeHoursAgo = Date.now() - 3 * 3_600_000;
+    spoolEntry(home, "other", "/elsewhere", threeHoursAgo);
     spoolEntry(home, "fresh", root, Date.now());
-    expect(injectIn(root, home)).not.toContain(NOTE_WAITED);
-    spoolEntry(home, "old", root, Date.now() - 25 * 3_600_000);
-    expect(count(injectIn(root, home), NOTE_WAITED)).toBe(1);
+    spoolEntry(home, "recent", root, Date.now() - 3_600_000);
+    spoolEntry(home, "parked", root, threeHoursAgo, true);
+    let ctx = injectIn(root, home);
+    expect(ctx).not.toContain(NOTE_WAITED);
+    expect(ctx).not.toContain("## Journal (recent");
+
+    // A turn still running: the last Stop is old, but the transcript grows.
+    const transcript = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crank-live-")), "live.jsonl");
+    fs.writeFileSync(transcript, "{}\n");
+    fs.writeFileSync(
+      path.join(home, "spool", "live.json"),
+      JSON.stringify({ transcriptPath: transcript, projectRoot: root, agent: "claude", ended: false, updatedAt: threeHoursAgo })
+    );
+    ctx = injectIn(root, home);
+    expect(ctx).not.toContain(NOTE_WAITED);
+    expect(ctx).not.toContain("## Journal (recent");
+
+    spoolEntry(home, "old", root, threeHoursAgo);
+    ctx = injectIn(root, home);
+    expect(count(ctx, NOTE_WAITED)).toBe(1);
+    expect(ctx).toContain("## Journal (recent");
+    expect(ctx).not.toContain("## Next steps");
   });
 });
 

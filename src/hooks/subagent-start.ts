@@ -7,7 +7,7 @@ import { excerptOf, INJECTION_HEADING, RECALL_BULLET, recallApplies } from "./li
 import { JOURNAL_FILE } from "./lib/journal.ts";
 import { CEREBRUM_FILE } from "./lib/cerebrum-nudge.ts";
 import { enableDebug } from "./lib/debug.ts";
-import { digestRunning } from "./lib/user-state.ts";
+import { digestRunning } from "./lib/spool.ts";
 import { memoryPath, memoryStatus } from "./lib/memory.ts";
 
 // SubagentStart hook (Claude Code only). SessionStart never fires inside a
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   const config = loadConfig(crankDir);
   enableDebug(crankDir, config.debug);
 
-  const running = digestRunning(config, false);
+  const running = digestRunning(config, false, root);
   const recall = recallApplies(running, memoryStatus(memoryPath(root)));
 
   let md: string | null;

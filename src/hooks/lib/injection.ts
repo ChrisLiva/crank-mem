@@ -9,8 +9,8 @@ import { symbolsSupported } from "./symbols.ts";
 import { countChangedSince } from "./changes.ts";
 import { CEREBRUM_FILE } from "./cerebrum-nudge.ts";
 import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "./memory.ts";
-import { readSpool } from "./spool.ts";
-import { digestRunning, readStopState } from "./user-state.ts";
+import { captureStalled, digestRunning } from "./spool.ts";
+import { readStopState } from "./user-state.ts";
 import type { CrankConfig } from "./config.ts";
 import type { AnatomyIndex } from "./store.ts";
 
@@ -101,7 +101,6 @@ const NEXT_STEPS_MAX_BYTES = 512;
 const RECENT_MEMORY_MAX_BYTES = 1536;
 /** Observations read for the recent memory section, before the byte cap. */
 const RECENT_MEMORY_ROWS = 50;
-const SPOOL_WAIT_NOTE_MS = 24 * 3_600_000;
 
 /**
  * The instructions block. While digests run, nothing model-visible points at
@@ -194,11 +193,8 @@ export function captureNotes(root: string, config: CrankConfig, status: Recall["
   const stop = config.digest ? readStopState() : null;
   if (stop) notes.push(`crank-mem digests stopped (${stop.reason}): run \`crank-mem digest resume\` once that is fixed.`);
   if (status === "newer") notes.push(MEMORY_NEWER_NOTE);
-  if (config.digest) {
-    const cutoff = Date.now() - SPOOL_WAIT_NOTE_MS;
-    if (readSpool().some(({ entry }) => entry.projectRoot === root && entry.updatedAt < cutoff)) {
-      notes.push("crank-mem: a session here has waited over 24 hours for its digest; see `crank-mem stats`.");
-    }
+  if (config.digest && captureStalled(root)) {
+    notes.push("crank-mem: a session here has waited over 2 hours for its digest, so memory upkeep is back on; see `crank-mem stats`.");
   }
   return notes;
 }
@@ -535,7 +531,7 @@ export function injectionSources(
     cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
   } catch {}
 
-  const running = digestRunning(config, codex);
+  const running = digestRunning(config, codex, root);
   const recall = readRecall(root, running);
 
   const journalBullets = running ? [] : recentJournalBullets(crankDir);

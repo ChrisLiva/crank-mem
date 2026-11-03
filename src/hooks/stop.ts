@@ -5,8 +5,7 @@ import {
 import { CRANK_DIR, loadConfig } from "./lib/config.ts";
 import { cerebrumNudge, cerebrumOverlaps } from "./lib/cerebrum-nudge.ts";
 import { enableDebug } from "./lib/debug.ts";
-import { signalDigest } from "./lib/spool.ts";
-import { digestRunning } from "./lib/user-state.ts";
+import { digestRunning, signalDigest } from "./lib/spool.ts";
 
 // Stop hook, Claude Code only. At turn end it emits cerebrumNudge and
 // cerebrumOverlaps as additionalContext, which Claude wraps in a system
@@ -33,7 +32,7 @@ async function main(): Promise<void> {
   if (payload.stop_hook_active === true) return;
 
   const codex = isCodexPayload(payload);
-  const msg = digestRunning(config, codex)
+  const msg = digestRunning(config, codex, root)
     ? ""
     : [cerebrumNudge(crankDir, codex), cerebrumOverlaps(crankDir)].filter(Boolean).join("\n");
   if (!msg) return;

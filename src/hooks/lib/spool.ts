@@ -17,6 +17,8 @@ export type SpoolItem = { stem: string; entry: SpoolEntry };
 export const DAEMON_FILE = "daemon.json";
 /** A heartbeat older than this means the daemon is gone; it heartbeats once a sweep. */
 export const HEARTBEAT_MAX_MS = 90_000;
+/** A spool entry for this project quiet this long turns the digest gate off. */
+export const CAPTURE_STALL_MS = 2 * 3_600_000;
 export type DaemonState = { pid: number; version: string; heartbeatMs: number };
 
 const PARKED = "parked";
@@ -125,6 +127,35 @@ function readEntries(dir: string): SpoolItem[] {
 
 export function readSpool(): SpoolItem[] {
   return readEntries(spoolDir());
+}
+
+/** This project's spool entries; parked entries are not among them. */
+export function pendingFor(root: string): SpoolEntry[] {
+  return readSpool()
+    .map(({ entry }) => entry)
+    .filter((entry) => entry.projectRoot === root);
+}
+
+/**
+ * True when an entry for this project has been quiet past CAPTURE_STALL_MS.
+ * The transcript's mtime counts too: Stop fires only at turn end, so a long
+ * turn keeps an old updatedAt while its transcript grows.
+ */
+export function captureStalled(root: string): boolean {
+  const cutoff = Date.now() - CAPTURE_STALL_MS;
+  return pendingFor(root).some((entry) => {
+    if (!(entry.updatedAt < cutoff)) return false;
+    try {
+      return fs.statSync(entry.transcriptPath).mtimeMs < cutoff;
+    } catch {
+      return true;
+    }
+  });
+}
+
+/** Digests run for Claude sessions when the project turned them on, nothing stopped them, and its capture drains. */
+export function digestRunning(config: CrankConfig, codex: boolean, root: string): boolean {
+  return config.digest && !codex && readStopState() === null && !captureStalled(root);
 }
 
 export function readParked(): SpoolItem[] {
