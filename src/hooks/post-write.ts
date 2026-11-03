@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload, type HookPayload,
+  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload, repoRelative, type HookPayload,
 } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { commitIndex } from "./lib/store.ts";
@@ -37,12 +37,7 @@ function toWriteOps(payload: HookPayload, root: string, cwd: string): WriteScan 
 
   // Relative tool paths are relative to the session cwd, which may be a
   // subdirectory of the project root.
-  const rel = (p: string): string | null => {
-    const abs = path.isAbsolute(p) ? p : path.resolve(cwd, p);
-    const r = path.relative(root, abs);
-    if (r.startsWith("..") || path.isAbsolute(r)) return null; // outside project
-    return r.split(path.sep).join("/");
-  };
+  const rel = (p: string) => repoRelative(root, cwd, p);
 
   // Writes under .crank/ (cerebrum.md above all) are never indexable, so
   // resolving them costs an index lock to learn nothing. Answer here instead.

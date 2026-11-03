@@ -2,7 +2,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import type * as sqlite from "node:sqlite";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import { memoryPath, openMemory, type NewObservation } from "../src/hooks/lib/memory.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");
 
@@ -104,4 +106,58 @@ export function readDebugLog(root: string): Array<Record<string, any>> {
   } catch {
     return [];
   }
+}
+
+let seedCount = 0;
+
+/** Append one digest of `observations` to the project's store and return their ids in input order. */
+export function seedMemory(
+  root: string,
+  observations: Partial<NewObservation>[],
+  opts: { costUsd?: number; nextSteps?: string } = {}
+): number[] {
+  const n = ++seedCount;
+  const opened = openMemory(memoryPath(root), "write");
+  if (opened.status !== "open") throw new Error(`seedMemory: store is ${opened.status}`);
+  const memory = opened.memory;
+  try {
+    const before = memory.stats("seed", 0).observations;
+    memory.appendDigest({
+      session: { id: `seed-${n}`, agent: "claude", transcriptPath: `/seed/seed-${n}.jsonl` },
+      expected: null,
+      next: { uuid: `seed-${n}`, timestamp: new Date().toISOString() },
+      model: "seed",
+      costUsd: opts.costUsd ?? 0,
+      summary: { request: "s", investigated: "s", learned: "s", completed: "s", next_steps: opts.nextSteps ?? "none" },
+      observations: observations.map((o, i) => ({
+        type: o.type ?? "discovery",
+        title: o.title ?? `Observation ${i}`,
+        narrative: o.narrative ?? `Narrative ${i}`,
+        facts: o.facts ?? [],
+        filesRead: o.filesRead ?? [],
+        filesModified: o.filesModified ?? [],
+      })),
+    });
+    const after = memory.stats("seed", 0).observations;
+    if (after - before !== observations.length) {
+      throw new Error(`seedMemory: stored ${after - before} of ${observations.length} observations`);
+    }
+    return memory.recent(observations.length).map((line) => line.id).reverse();
+  } finally {
+    memory.close();
+  }
+}
+
+/** Write the project's store in one bad state: a newer schema, or a file that is not a database. */
+export function plantMemory(root: string, state: "newer" | "unreadable"): void {
+  const file = memoryPath(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (state === "unreadable") {
+    fs.writeFileSync(file, "not a database");
+    return;
+  }
+  const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
+  const db = new mod.DatabaseSync(file);
+  db.exec("PRAGMA user_version = 2");
+  db.close();
 }

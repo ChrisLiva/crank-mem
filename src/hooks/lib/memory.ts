@@ -2,6 +2,8 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
+import { CRANK_DIR } from "./config.ts";
+import { runGit } from "./scanner.ts";
 
 // The memory store: <project>/.crank/memory.db, one SQLite file per project
 // holding digests and their observations. node:sqlite loads through
@@ -95,6 +97,23 @@ END;
 
 /** STEPS[v] migrates a store at user_version v to v + 1. */
 const STEPS: readonly string[] = [SCHEMA_V1];
+
+/**
+ * The store for the project at `root`. A linked worktree (`.git` is a file)
+ * shares its main checkout's store when that checkout is initialized.
+ */
+export function memoryPath(root: string): string {
+  const own = path.join(root, CRANK_DIR, MEMORY_FILE);
+  try {
+    if (!fs.statSync(path.join(root, ".git")).isFile()) return own;
+  } catch {
+    return own;
+  }
+  const r = runGit(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], 500);
+  if ("error" in r) return own;
+  const main = path.dirname(r.stdout.trim());
+  return fs.existsSync(path.join(main, CRANK_DIR, "config.json")) ? path.join(main, CRANK_DIR, MEMORY_FILE) : own;
+}
 
 export function openMemory(file: string, mode: "read"): MemoryRead;
 export function openMemory(file: string, mode: "write"): MemoryWrite;

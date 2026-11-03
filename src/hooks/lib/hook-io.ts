@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CRANK_DIR } from "./config.ts";
+import { CRANK_DIR, isSensitiveFile } from "./config.ts";
 import { flushDebug } from "./debug.ts";
 
 // Hook I/O helpers. Hooks are advisory-only: they must never fail the tool
@@ -61,6 +61,24 @@ export function findProjectRoot(cwd: string): string | null {
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+/** `p` (absolute, or relative to `cwd`) as a `/`-separated path under `root`; null for the root itself or outside it. */
+export function repoRelative(root: string, cwd: string, p: string): string | null {
+  const abs = path.isAbsolute(p) ? p : path.resolve(cwd, p);
+  const r = path.relative(root, abs);
+  if (!r || r.startsWith("..") || path.isAbsolute(r)) return null;
+  return r.split(path.sep).join("/");
+}
+
+/** The paths memory may record: repo-relative, never sensitive, deduped in input order. */
+export function memoryPaths(root: string, cwd: string, paths: string[]): string[] {
+  const kept = new Set<string>();
+  for (const p of paths) {
+    const r = repoRelative(root, cwd, p);
+    if (r !== null && !isSensitiveFile(path.posix.basename(r))) kept.add(r);
+  }
+  return [...kept];
 }
 
 /** Emit model-visible context via hookSpecificOutput (both agents). */
