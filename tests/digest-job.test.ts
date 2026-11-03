@@ -87,16 +87,26 @@ function getOne(root: string, query: string): string {
 }
 
 describe("digest job (black-box)", () => {
-  test("settles one spool entry with one claude -p call", () => {
-    const { job, fake, spool } = journey(digestProject(), [{ lines: okStream(SAMPLE_DIGEST) }]);
+  test("an ok run settles the entry with one fixed-shape claude -p call and stores the digest redacted", () => {
+    const { root, home, job, fake, spool } = journey(digestProject(), [{ lines: okStream(SAMPLE_DIGEST) }]);
     expect(job.status).toBe(0);
     expect(fake.calls().length).toBe(1);
     expect(spool).toEqual([]);
-  });
 
-  test("stores the digest redacted, with repo-relative non-sensitive paths", () => {
-    const { root, job } = journey(digestProject(), [{ lines: okStream(SAMPLE_DIGEST) }]);
-    expect(job.status).toBe(0);
+    const call = fake.calls()[0]!;
+    expect(call.stdin).toBe(EXPECTED);
+    const longLines = EXPECTED.split("\n").filter((l) => l.length >= 20);
+    expect(longLines.length).toBeGreaterThan(0);
+    for (const arg of call.argv) for (const line of longLines) expect(arg.includes(line)).toBe(false);
+    const req = digestRequest("", null);
+    expect(call.argv).toEqual([
+      "-p", "--model", "haiku", "--effort", "low", "--tools", "", "--setting-sources", "",
+      "--settings", "{\"disableAllHooks\":true}", "--strict-mcp-config", "--no-session-persistence",
+      "--max-turns", "2", "--system-prompt", req.system, "--json-schema", JSON.stringify(req.schema),
+      "--output-format", "stream-json", "--verbose",
+    ]);
+    expect(call.cwd).toBe(fs.realpathSync(path.join(home, "run")));
+
     expect(search(root, "EEXIST")).toMatch(/^#\d+ \S+ bugfix Lock file writes retry on EEXIST\n$/);
     expect(getOne(root, "EEXIST")).toContain("files modified: src/hooks/lib/lock.ts");
     const secret = getOne(root, "credentials");
@@ -111,28 +121,6 @@ describe("digest job (black-box)", () => {
     expect(job.status).toBe(1);
     expect(spool).toEqual(["s1.json"]);
     expect(search(root, "EEXIST")).toBe("");
-  });
-
-  test("the digest input reaches claude on stdin, never in argv", () => {
-    const { fake } = journey(digestProject(), [{ lines: okStream(SAMPLE_DIGEST) }]);
-    const call = fake.calls()[0]!;
-    expect(call.stdin).toBe(EXPECTED);
-    const longLines = EXPECTED.split("\n").filter((l) => l.length >= 20);
-    expect(longLines.length).toBeGreaterThan(0);
-    for (const arg of call.argv) for (const line of longLines) expect(arg.includes(line)).toBe(false);
-  });
-
-  test("claude -p runs with the fixed call shape from <crank home>/run", () => {
-    const { home, fake } = journey(digestProject(), [{ lines: okStream(SAMPLE_DIGEST) }]);
-    const req = digestRequest("", null);
-    const call = fake.calls()[0]!;
-    expect(call.argv).toEqual([
-      "-p", "--model", "haiku", "--effort", "low", "--tools", "", "--setting-sources", "",
-      "--settings", "{\"disableAllHooks\":true}", "--strict-mcp-config", "--no-session-persistence",
-      "--max-turns", "2", "--system-prompt", req.system, "--json-schema", JSON.stringify(req.schema),
-      "--output-format", "stream-json", "--verbose",
-    ]);
-    expect(call.cwd).toBe(fs.realpathSync(path.join(home, "run")));
   });
 
   test("claude gets only the allowlisted environment", () => {
