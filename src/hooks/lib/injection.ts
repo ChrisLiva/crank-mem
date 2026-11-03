@@ -9,7 +9,7 @@ import { symbolsSupported } from "./symbols.ts";
 import { countChangedSince } from "./changes.ts";
 import { CEREBRUM_FILE } from "./cerebrum-nudge.ts";
 import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "./memory.ts";
-import { captureStalled, digestRunning } from "./spool.ts";
+import { captureStalled, digestRunning, pendingFor } from "./spool.ts";
 import { readStopState } from "./user-state.ts";
 import type { CrankConfig } from "./config.ts";
 import type { AnatomyIndex } from "./store.ts";
@@ -452,7 +452,7 @@ export function composeInjection(
   if (recall?.status === "open") {
     const { nextSteps, recentLines } = recall;
     if (running && nextSteps !== null && bytes(nextSteps) <= NEXT_STEPS_MAX_BYTES) {
-      fit(`## Next steps (last session)\n${nextSteps}`);
+      fit(`## Next steps (last digested session)\n${nextSteps}`);
     }
     // Newest first, so the cap drops the oldest whole lines.
     const lines = [...recentLines];
@@ -565,7 +565,7 @@ function readRecall(root: string, running: boolean): Recall {
   try {
     return {
       status: "open",
-      nextSteps: running ? memory.latestNextSteps() : null,
+      nextSteps: running && pendingFor(root).length === 0 ? memory.latestNextSteps() : null,
       recentLines: memory.recent(RECENT_MEMORY_ROWS).map(formatLine),
     };
   } catch {

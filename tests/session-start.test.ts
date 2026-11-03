@@ -675,7 +675,13 @@ describe("digests running (black-box)", () => {
   test("next steps come from the newest digest, only when short and not none", () => {
     const { root, home } = memoryProject(true);
     seedMemory(root, titled(2), { nextSteps: "Wire the daemon." });
-    expect(injectIn(root, home)).toContain("## Next steps (last session)\nWire the daemon.");
+    expect(injectIn(root, home)).toContain("## Next steps (last digested session)\nWire the daemon.");
+    // A spool entry for this project means its last session is not digested yet.
+    spoolEntry(home, "pending", root, Date.now());
+    expect(injectIn(root, home)).not.toContain("## Next steps");
+    fs.rmSync(path.join(home, "spool", "pending.json"));
+    spoolEntry(home, "elsewhere", "/elsewhere", Date.now());
+    expect(injectIn(root, home)).toContain("## Next steps (last digested session)\nWire the daemon.");
     seedMemory(root, titled(1), { nextSteps: "None." });
     expect(injectIn(root, home)).not.toContain("## Next steps");
     seedMemory(root, titled(1), { nextSteps: "n".repeat(600) });
@@ -726,7 +732,7 @@ describe("digests running (black-box)", () => {
     const { root, home } = memoryProject(true);
     seedMemory(root, titled(3), { nextSteps: "Wire the daemon." });
     const ctx = injectIn(root, home);
-    const at = ["## Next steps (last session)", "## Recent memory", "## Cerebrum ("].map((h) => ctx.indexOf(h));
+    const at = ["## Next steps (last digested session)", "## Recent memory", "## Cerebrum ("].map((h) => ctx.indexOf(h));
     expect(at.every((i) => i >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
   });

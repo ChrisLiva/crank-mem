@@ -37,10 +37,12 @@ agent effort. The user set the rule for that path:
   stay.
 - **Reads and upkeep are separate switches.** A readable `memory.db` alone controls the
   `## Recent memory` section, the recall pointer to `search`, `timeline` and `get`, and file
-  history (ADR 0009). `## Next steps (last session)` takes the newest digest's next steps in
-  place of the journal's `NEXT:` handoff, so it shows only while the gate is true and the
-  store is readable. `recallApplies(running, status)` also shows the pointer while digests
-  run and no store exists yet, since digests will fill it. A project with digests off but a
+  history (ADR 0009). `## Next steps (last digested session)` takes the newest digest's next
+  steps in place of the journal's `NEXT:` handoff, so it shows only while the gate is true,
+  the store is readable, and no spool entry for this project waits. While one waits, the
+  newest digest belongs to an older session or to another worktree sharing the store.
+  `recallApplies(running, status)` also shows the pointer while digests run and no store
+  exists yet, since digests will fill it. A project with digests off but a
   store still on disk keeps its recall.
 - The protocol text stays byte-identical when the gate is false, so v1 installs see no change.
 
