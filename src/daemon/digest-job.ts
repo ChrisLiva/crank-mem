@@ -75,8 +75,10 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
     }
     return 1;
   }
+  // readEntries validates no fields, so a hand-edited or corrupt entry's cwd may not be a string.
+  const cwd = typeof entry.cwd === "string" ? entry.cwd : entry.projectRoot;
   const outcome = memory.appendDigest({
-    session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot),
+    session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot, cwd),
   });
   if (outcome === "appended") {
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
@@ -97,10 +99,13 @@ async function embedPending(memory: Memory): Promise<void> {
   }
 }
 
-/** The model's output as the store takes it: every string redacted, paths repo-relative and deduped. */
-function stored(output: Digest, root: string) {
+/**
+ * The model's output as the store takes it: every string redacted, paths repo-relative and deduped.
+ * Relative paths resolve against the session's cwd.
+ */
+function stored(output: Digest, root: string, cwd: string) {
   const s = output.summary;
-  const files = (paths: string[]) => memoryPaths(root, root, paths.map(redact));
+  const files = (paths: string[]) => memoryPaths(root, cwd, paths.map(redact));
   return {
     summary: {
       request: redact(s.request), investigated: redact(s.investigated), learned: redact(s.learned),

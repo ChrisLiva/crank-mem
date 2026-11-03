@@ -11,7 +11,10 @@ import { crankHome, ensureCrankHome, readStopState, writeJsonAtomic } from "./us
 // write it; the digest job reads it, and parks an entry it cannot finish
 // under spool/parked/.
 
-export type SpoolEntry = { transcriptPath: string; projectRoot: string; agent: "claude"; ended: boolean; updatedAt: number };
+/** `cwd` is the session's working directory; entries written before it existed lack it. */
+export type SpoolEntry = {
+  transcriptPath: string; projectRoot: string; cwd?: string; agent: "claude"; ended: boolean; updatedAt: number;
+};
 export type SpoolItem = { stem: string; entry: SpoolEntry };
 
 export const DAEMON_FILE = "daemon.json";
@@ -41,12 +44,12 @@ export function transcriptStem(transcriptPath: unknown): string | null {
 }
 
 /** Write the entry for a transcript, replacing any parked copy so the session is digested again. */
-export function writeSignal(transcriptPath: string, projectRoot: string, ended: boolean): void {
+export function writeSignal(transcriptPath: string, projectRoot: string, ended: boolean, cwd: string): void {
   const stem = transcriptStem(transcriptPath);
   if (!stem) return;
   ensureCrankHome();
   deleteParked(stem);
-  const entry: SpoolEntry = { transcriptPath, projectRoot, agent: "claude", ended, updatedAt: Date.now() };
+  const entry: SpoolEntry = { transcriptPath, projectRoot, cwd, agent: "claude", ended, updatedAt: Date.now() };
   writeJsonAtomic(path.join(spoolDir(), stem + EXT), entry);
 }
 
@@ -54,7 +57,7 @@ export function writeSignal(transcriptPath: string, projectRoot: string, ended: 
 export function signalDigest(payload: HookPayload, projectRoot: string, config: CrankConfig, ended: boolean): void {
   if (!config.digest || typeof payload.transcript_path !== "string") return;
   try {
-    writeSignal(payload.transcript_path, projectRoot, ended);
+    writeSignal(payload.transcript_path, projectRoot, ended, typeof payload.cwd === "string" ? payload.cwd : projectRoot);
     if (readStopState() === null) ensureDaemon(config);
   } catch (err) {
     debugEvent("signal-failed", { error: err instanceof Error ? err.message : String(err) });

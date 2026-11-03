@@ -34,7 +34,7 @@ describe("digest signals (black-box)", () => {
     const run = stop(root, home);
     expect(run.status).toBe(0);
     const entry = readEntry(home);
-    expect(entry).toMatchObject({ transcriptPath: TRANSCRIPT, projectRoot: root, agent: "claude", ended: false });
+    expect(entry).toMatchObject({ transcriptPath: TRANSCRIPT, projectRoot: root, cwd: root, agent: "claude", ended: false });
     expect(typeof entry.updatedAt).toBe("number");
     expect(Math.abs(Date.now() - (entry.updatedAt as number))).toBeLessThan(60_000);
   });

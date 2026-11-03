@@ -55,6 +55,7 @@ function journey(
   scenarios: FakeScenario[],
   opts: {
     transcript?: string; env?: Record<string, string>; skipJob?: boolean; timeoutMs?: number | string; home?: string; stem?: string;
+    cwd?: string;
   } = {},
 ): Journey {
   const home = opts.home ?? makeCrankHome();
@@ -67,8 +68,9 @@ function journey(
   else fs.writeFileSync(transcript, opts.transcript);
   const fake = fakeClaude(path.join(tmp, "bin"), scenarios);
   const hookEnv = { ...fake.env, CRANK_HOME: home };
-  expect(runHook("src/hooks/stop.ts", JSON.stringify({ ...claudeStop(root), transcript_path: transcript }), root, hookEnv).status).toBe(0);
-  expect(runHook("src/hooks/session-end.ts", JSON.stringify(claudeSessionEnd(root, transcript)), root, hookEnv).status).toBe(0);
+  const cwd = opts.cwd ?? root;
+  expect(runHook("src/hooks/stop.ts", JSON.stringify({ ...claudeStop(cwd), transcript_path: transcript }), root, hookEnv).status).toBe(0);
+  expect(runHook("src/hooks/session-end.ts", JSON.stringify(claudeSessionEnd(cwd, transcript)), root, hookEnv).status).toBe(0);
   expect(spoolFiles(home)).toEqual([`${stem}.json`]);
   const j = { root, home, stem, transcript, fake };
   const job = opts.skipJob ? { status: -1, stdout: "", stderr: "" } : rerun(j, opts.timeoutMs, opts.env);
@@ -241,6 +243,21 @@ describe("digest job (black-box)", () => {
     expect(lone.fake.calls().length).toBe(1);
     expect(spoolFiles(lone.home)).toEqual([]);
   }, 30_000);
+
+  test("a session started in a subdirectory stores its relative paths under that subdirectory", () => {
+    const root = digestProject({}, temps);
+    fs.mkdirSync(path.join(root, "pkg"));
+    expect(journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], { cwd: path.join(root, "pkg") }).job.status).toBe(0);
+    expect(getOne(root, "scanner")).toContain("files read: pkg/src/a.ts\n");
+
+    // An entry written before entries carried cwd falls back to the project root.
+    const old = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], { skipJob: true });
+    const file = path.join(old.home, "spool", "s1.json");
+    const { cwd: _, ...entry } = JSON.parse(fs.readFileSync(file, "utf8"));
+    fs.writeFileSync(file, JSON.stringify(entry));
+    expect(rerun(old).status).toBe(0);
+    expect(getOne(old.root, "scanner")).toContain("files read: src/a.ts\n");
+  });
 
   test("a job killed before commit stores nothing and the entry reruns", async () => {
     const ok = { lines: okStream(SAMPLE_DIGEST) };
