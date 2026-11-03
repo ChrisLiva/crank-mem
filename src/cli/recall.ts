@@ -1,4 +1,4 @@
-import { EMBED_MODEL, embed } from "../daemon/embedder.ts";
+import { EMBED_MODEL, embed, modelPresent } from "../daemon/embedder.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 import {
   formatLine, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE, OBSERVATION_TYPES,
@@ -80,8 +80,10 @@ export async function search(args: string[]): Promise<number> {
   if (file !== undefined && relFile === null) return 0;
   const host = typeof flags["model-host"] === "string" ? flags["model-host"] : undefined;
   return withMemory(project.root, true, async (memory) => {
+    const embeddable = memory.hasVectors(EMBED_MODEL);
+    if (!embeddable && !modelPresent()) console.error(KEYWORD_ONLY_NOTE);
     const hits = memory.search({
-      text, vector: await queryVector(text, host),
+      text, vector: embeddable ? await queryVector(text, host) : null,
       limit: limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT),
       type: type ?? null, sinceMs, file: relFile,
     });

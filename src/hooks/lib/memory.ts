@@ -54,6 +54,7 @@ export interface Memory {
   recordRejection(session: SessionKey): number;
   unembedded(model: string, limit: number): { id: number; text: string }[];
   putVectors(model: string, rows: { id: number; vector: Float32Array }[]): void;
+  hasVectors(model: string): boolean;
   search(query: SearchQuery): SearchHit[];
   timeline(id: number, depth: number): ObservationLine[] | null;
   get(ids: number[]): Observation[];
@@ -251,6 +252,10 @@ function createMemory(db: sqlite.DatabaseSync): Memory {
     return { uuid: String(row.position_uuid), timestamp: String(row.position_ts) };
   }
 
+  function hasVectors(model: string): boolean {
+    return one("SELECT 1 FROM observation_vectors WHERE model = ? LIMIT 1", model) !== undefined;
+  }
+
   return {
     position,
 
@@ -331,6 +336,8 @@ function createMemory(db: sqlite.DatabaseSync): Memory {
       });
     },
 
+    hasVectors,
+
     search(query) {
       const filters: string[] = [];
       const params: sqlite.SQLInputValue[] = [];
@@ -352,7 +359,7 @@ function createMemory(db: sqlite.DatabaseSync): Memory {
         ).map(toLine);
       };
       const vector = query.vector;
-      if (!vector || !one("SELECT 1 FROM observation_vectors WHERE model = ? LIMIT 1", vector.model)) {
+      if (!vector || !hasVectors(vector.model)) {
         const and = keyword(" ");
         return (and.length > 0 ? and : keyword(" OR ")).slice(0, query.limit);
       }
