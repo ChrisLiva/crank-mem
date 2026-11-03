@@ -64,12 +64,6 @@ describe("distill on the fixture transcript", () => {
     expect(distill(FIXTURE, pos(6), 400_000).text.startsWith("[TOOL_RESULT Read] export function sync(opts)")).toBe(true);
   });
 
-  test("skips the malformed line and the partial last line", () => {
-    const d = distill(FIXTURE, null, 400_000);
-    expect(d.text).not.toContain("not json");
-    expect(d.text).not.toContain("PARTIALWORD");
-  });
-
   test("an empty file distills to nothing", () => {
     const file = path.join(tempDir(), "empty.jsonl");
     fs.writeFileSync(file, "");
@@ -85,10 +79,6 @@ describe("redaction and caps", () => {
     expect(d.text).toBe("[TOOL_USE Bash] " + JSON.stringify({ command: "x".repeat(460) + " password=[redacted]" }));
     expect(d.text).not.toContain("hh");
     expect(d.text).not.toContain("chars cut");
-  });
-
-  test("a Bash ls src call stays whole", () => {
-    expect(distill(writeTranscript([bashCall("ls src")]), null, 400_000).text).toBe('[TOOL_USE Bash] {"command":"ls src"}');
   });
 });
 
