@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { enableDebugConfig, makeCrankProject, readDebugLog, runHook } from "./helpers.ts";
+import { enableDebugConfig, makeCrankProject, readDebugLog, runHook, setMtime } from "./helpers.ts";
 import { claudeSessionStart, claudeStop } from "./fixtures/payloads.ts";
 import { AUDIT_INTERVAL_MS, BACKUP_KEEP, NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
 
@@ -11,9 +11,6 @@ const HOOK = "src/hooks/stop.ts";
 /** Build the initial index (records each file's mtime) as a real session would. */
 function seedIndex(root: string): void {
   runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root)));
-}
-function setMtime(p: string, ms: number): void {
-  fs.utimesSync(p, new Date(ms), new Date(ms));
 }
 function cerebrum(root: string): string {
   return path.join(root, ".crank/cerebrum.md");

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { git, gitCommit, makeCrankProject, runHook } from "./helpers.ts";
+import { git, gitCommit, makeCrankProject, runHook, setMtime } from "./helpers.ts";
 import { claudePostWrite, claudePostEdit, codexApplyPatch, claudeSessionStart } from "./fixtures/payloads.ts";
 import { parseApplyPatch } from "../src/hooks/lib/apply-patch.ts";
 import { loadIndex } from "../src/hooks/lib/store.ts";
@@ -224,7 +224,6 @@ describe("post-write cerebrum nudge (Codex only)", () => {
       Array.from({ length: NUDGE_STEP - 1 }, (_, i) => [`f${i}.ts`, `const x${i} = 1;`])
     ),
   };
-  const setMtime = (p: string, ms: number) => fs.utimesSync(p, new Date(ms), new Date(ms));
   const cerebrum = (root: string) => path.join(root, ".crank/cerebrum.md");
   const nudge = (stdout: string): string | undefined =>
     stdout ? JSON.parse(stdout).hookSpecificOutput.additionalContext : undefined;

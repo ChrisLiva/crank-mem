@@ -3,27 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { REPO_ROOT } from "./helpers.ts";
+import { runCli, type CliRun } from "./helpers.ts";
 
 // Smoke: init into a temp project, check the wiring, uninstall, then expect a
 // byte-identical restore and no crank residue.
 
-const MAIN = path.join(REPO_ROOT, "src/cli/main.ts");
-
-interface CliRun {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
 function cli(cwd: string, codexHome: string, ...args: string[]): CliRun {
-  const res = spawnSync("bun", [MAIN, ...args], {
-    cwd,
-    encoding: "utf-8",
-    timeout: 30_000,
-    env: { ...process.env, CODEX_HOME: codexHome },
-  });
-  return { status: res.status ?? -1, stdout: res.stdout, stderr: res.stderr };
+  return runCli(cwd, args, { CODEX_HOME: codexHome });
 }
 
 function makeProject(extra: Record<string, string> = {}): { root: string; codexHome: string } {

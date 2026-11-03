@@ -59,6 +59,34 @@ export function runHook(
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
+export type CliRun = HookRun;
+
+/** A fresh empty temp directory to stand in for `~/.crank` in a child process. */
+export function makeCrankHome(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "crank-home-"));
+}
+
+/** Run the crank-mem CLI as a child process, with fresh temp CODEX_HOME and CRANK_HOME unless `env` overrides them. */
+export function runCli(cwd: string, args: string[], env?: Record<string, string>): CliRun {
+  const result = spawnSync(process.execPath, [path.join(REPO_ROOT, "src/cli/main.ts"), ...args], {
+    cwd,
+    encoding: "utf-8",
+    timeout: 30_000,
+    env: {
+      ...process.env,
+      CODEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "crank-codexhome-")),
+      CRANK_HOME: makeCrankHome(),
+      ...env,
+    },
+  });
+  return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+}
+
+/** Set a file's atime and mtime to `ms` since the epoch. */
+export function setMtime(p: string, ms: number): void {
+  fs.utimesSync(p, new Date(ms), new Date(ms));
+}
+
 /** Turn on .crank/debug.log for a temp project. */
 export function enableDebugConfig(root: string): void {
   const crankDir = path.join(root, ".crank");
