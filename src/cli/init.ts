@@ -8,7 +8,7 @@ import { vendorHooks, templatePath } from "./vendor.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, isCrankHookCommand,
-  addIgnoreLines, modeIgnoreFile, ensureCodexFeatures, unignoreCerebrum, ensureCrankGitignore,
+  addIgnoreLines, modeIgnoreFile, ensureCodexFeatures, unignoreCerebrum, ensureCrankGitignore, addAllowRule,
 } from "./settings.ts";
 import {
   crankTrust, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
@@ -117,6 +117,7 @@ export async function run(args: string[]): Promise<number> {
 
     // ── Agent wiring ───────────────────────────────────────────────────────
     mergeHooksIntoFile(claudeSettings, crankHooks(runtime, "claude"), backup);
+    addAllowRule(claudeSettings, backup);
     if (duplicateWiring) removeCrankHooksFromFile(otherClaudeSettings, isCrankHookCommand, backup);
     if (codexMode === "merge") {
       mergeHooksIntoFile(codexHooksJson, crankHooks(runtime, "codex"), backup);

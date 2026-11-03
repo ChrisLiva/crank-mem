@@ -305,6 +305,28 @@ describe("upgrade", () => {
     expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(backups);
   });
 
+  test("adds back a deleted Bash(crank-mem *) allow rule, once, keeping the user's other rules", () => {
+    const root = initedProject();
+    const local = path.join(root, ".claude/settings.local.json");
+    const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
+    settings.permissions = { allow: ["Bash(ls:*)"], deny: ["x"] };
+    fs.writeFileSync(local, JSON.stringify(settings, null, 2) + "\n");
+    const backups = fs.readdirSync(path.join(root, ".crank/backups")).length;
+
+    const run = cli(root, "upgrade");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("  added Bash(crank-mem *) to permissions.allow");
+    const after = JSON.parse(fs.readFileSync(local, "utf-8"));
+    expect(after.permissions).toEqual({ allow: ["Bash(ls:*)", "Bash(crank-mem *)"], deny: ["x"] });
+    expect(after.hooks).toEqual(settings.hooks);
+
+    const withRule = fs.readdirSync(path.join(root, ".crank/backups")).length;
+    expect(withRule).toBe(backups + 1);
+    const again = cli(root, "upgrade");
+    expect(again.stdout).not.toContain("added Bash(crank-mem *)");
+    expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(withRule);
+  });
+
   test("adds SubagentStart to an install wired before it existed and keeps the user's edits", () => {
     const root = initedProject();
     const local = path.join(root, ".claude/settings.local.json");

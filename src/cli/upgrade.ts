@@ -9,7 +9,7 @@ import {
 } from "./codex-trust.ts";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, unignoreCerebrum,
-  ensureCrankGitignore, isCrankHookCommand, addIgnoreLines, modeIgnoreFile,
+  ensureCrankGitignore, isCrankHookCommand, addIgnoreLines, modeIgnoreFile, addAllowRule, CRANK_ALLOW_RULE,
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
 import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
@@ -73,6 +73,7 @@ export async function run(_args: string[]): Promise<number> {
     if (mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), backup)) {
       console.log(`  re-wired Claude Code hooks in ${path.relative(root, wired)}`);
     }
+    if (addAllowRule(wired, backup)) console.log(`  added ${CRANK_ALLOW_RULE} to permissions.allow`);
     // Codex wiring was opt-in at init: leave a hooks.json without crank entries alone.
     if (hasCrankHooks(codexHooksJson)) {
       codexRewired = mergeHooksIntoFile(codexHooksJson, crankHooks(config.runtime, "codex"), backup);

@@ -73,6 +73,7 @@ describe("init → uninstall round-trip", () => {
     // wiring
     const settings = JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8"));
     expect(settings.hooks.SessionStart[0].hooks[0].command).toContain(".crank/hooks/session-start.ts");
+    expect(settings.permissions.allow).toEqual(["Bash(crank-mem *)"]);
     const codexHooks = JSON.parse(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf-8"));
     expect(codexHooks.hooks.PostToolUse[0].matcher).toBe("apply_patch");
     expect(fs.readFileSync(path.join(root, ".codex/config.toml"), "utf-8")).toContain("hooks = true");
@@ -106,8 +107,9 @@ describe("init → uninstall round-trip", () => {
   test("commit mode: shared settings.json used, .crank/.gitignore admits only crank-mem's files", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
-    expect(fs.existsSync(path.join(root, ".claude/settings.json"))).toBe(true);
     expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
+    const shared = JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.json"), "utf-8"));
+    expect(shared.permissions.allow).toEqual(["Bash(crank-mem *)"]);
     for (const rel of [".crank/cerebrum.md", ".crank/cerebrum-archive.md", ".crank/journal.md", ".crank/config.json", ".crank/hooks/stop.ts"]) {
       expect(ignored(root, rel)).toBe(false);
     }
@@ -337,6 +339,13 @@ describe("init → uninstall round-trip", () => {
     cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
     expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(true);
     expect(JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8"))).toEqual({});
+  });
+
+  test("surgical uninstall deletes the settings file init created, allow rule and all", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--codex", "skip");
+    expect(cli(root, codexHome, "uninstall", "--yes", "--keep-crank").status).toBe(0);
+    expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
   });
 
   test("upgrade's newer backup does not disable the empty-settings cleanup", () => {

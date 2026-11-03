@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile,
   addIgnoreLines, removeIgnoreLines, ensureCodexFeatures, removeCodexFeatures,
+  addAllowRule, removeAllowRule, CRANK_ALLOW_RULE,
 } from "../src/cli/settings.ts";
 import { vendorHooks } from "../src/cli/vendor.ts";
 import { makeCrankProject } from "./helpers.ts";
@@ -176,6 +177,87 @@ describe("removeCrankHooksFromFile", () => {
     mergeHooksIntoFile(f, crankHooks("bun", "claude"));
     removeCrankHooksFromFile(f);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({});
+  });
+});
+
+/** Write `value` the way settings.ts writes JSON, so byte comparisons hold. */
+function writeSettings(value: unknown): string {
+  const f = tmpFile();
+  fs.writeFileSync(f, JSON.stringify(value, null, 2) + "\n");
+  return f;
+}
+
+describe("addAllowRule", () => {
+  test("appends the rule, keeps other entries and keys, backs up first", () => {
+    const f = writeSettings({ model: "opus", permissions: { allow: ["Bash(ls:*)"], deny: ["x"] } });
+    const backedUp: string[] = [];
+    expect(addAllowRule(f, (file) => backedUp.push(fs.readFileSync(file, "utf-8")))).toBe(true);
+    expect(CRANK_ALLOW_RULE).toBe("Bash(crank-mem *)");
+    const after = JSON.parse(fs.readFileSync(f, "utf-8"));
+    expect(after).toEqual({ model: "opus", permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)"], deny: ["x"] } });
+    expect(backedUp).toHaveLength(1);
+    expect(JSON.parse(backedUp[0]!).permissions.allow).toEqual(["Bash(ls:*)"]);
+  });
+  test("a second call is a no-op with unchanged bytes", () => {
+    const f = writeSettings({ permissions: { allow: ["Bash(ls:*)"], deny: ["x"] } });
+    addAllowRule(f);
+    const bytes = fs.readFileSync(f, "utf-8");
+    let called = false;
+    expect(addAllowRule(f, () => (called = true))).toBe(false);
+    expect(called).toBe(false);
+    expect(fs.readFileSync(f, "utf-8")).toBe(bytes);
+  });
+  test("creates missing permissions and allow keys", () => {
+    const missingFile = tmpFile();
+    expect(addAllowRule(missingFile)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(missingFile, "utf-8"))).toEqual({ permissions: { allow: [CRANK_ALLOW_RULE] } });
+    const noAllow = writeSettings({ permissions: { deny: ["x"] } });
+    expect(addAllowRule(noAllow)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(noAllow, "utf-8"))).toEqual({ permissions: { deny: ["x"], allow: [CRANK_ALLOW_RULE] } });
+  });
+  test("leaves a malformed permissions or allow alone", () => {
+    for (const value of [{ permissions: [] }, { permissions: null }, { permissions: "x" }, { permissions: { allow: "x" } }, { permissions: { allow: {} } }]) {
+      const f = writeSettings(value);
+      const bytes = fs.readFileSync(f, "utf-8");
+      expect(addAllowRule(f)).toBe(false);
+      expect(fs.readFileSync(f, "utf-8")).toBe(bytes);
+    }
+  });
+});
+
+describe("removeAllowRule", () => {
+  test("missing, unparseable, or rule-free files are left alone", () => {
+    expect(removeAllowRule("/nonexistent/settings.json")).toBe(false);
+    const corrupt = tmpFile();
+    fs.writeFileSync(corrupt, "{");
+    expect(removeAllowRule(corrupt)).toBe(false);
+    expect(fs.readFileSync(corrupt, "utf-8")).toBe("{");
+    const empty = tmpFile();
+    fs.writeFileSync(empty, "");
+    expect(removeAllowRule(empty)).toBe(false);
+    expect(fs.readFileSync(empty, "utf-8")).toBe("");
+    const ruleFree = writeSettings({ permissions: { allow: ["Bash(ls:*)"] } });
+    const bytes = fs.readFileSync(ruleFree, "utf-8");
+    expect(removeAllowRule(ruleFree)).toBe(false);
+    expect(fs.readFileSync(ruleFree, "utf-8")).toBe(bytes);
+  });
+  test("add then remove restores the original bytes", () => {
+    const f = writeSettings({ permissions: { allow: ["Bash(ls:*)"] } });
+    const original = fs.readFileSync(f, "utf-8");
+    addAllowRule(f);
+    expect(removeAllowRule(f)).toBe(true);
+    expect(fs.readFileSync(f, "utf-8")).toBe(original);
+  });
+  test("drops an allow array and permissions object the removal emptied", () => {
+    const f = writeSettings({});
+    addAllowRule(f);
+    expect(removeAllowRule(f)).toBe(true);
+    expect(fs.readFileSync(f, "utf-8")).toBe("{}\n");
+  });
+  test("keeps permissions when other keys remain", () => {
+    const f = writeSettings({ permissions: { allow: [CRANK_ALLOW_RULE], deny: ["x"] } });
+    expect(removeAllowRule(f)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({ permissions: { deny: ["x"] } });
   });
 });
 

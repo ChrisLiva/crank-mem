@@ -211,6 +211,58 @@ export function removeCrankHooksFromFile(
   return true;
 }
 
+// ── The permissions.allow rule that lets agents run the crank-mem CLI ─────
+
+export const CRANK_ALLOW_RULE = "Bash(crank-mem *)";
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Append CRANK_ALLOW_RULE to a Claude settings file's permissions.allow,
+ * creating the keys when missing and calling `beforeWrite` first. Leaves the
+ * file alone when the rule is there or permissions/allow has a foreign shape.
+ * Returns whether it wrote.
+ */
+export function addAllowRule(file: string, beforeWrite?: (file: string) => void): boolean {
+  const root: Record<string, unknown> = fs.existsSync(file) ? readJson(file) : {};
+  const permissions = "permissions" in root ? root.permissions : {};
+  if (!isPlainObject(permissions)) return false;
+  const allow = "allow" in permissions ? permissions.allow : [];
+  if (!Array.isArray(allow) || allow.includes(CRANK_ALLOW_RULE)) return false;
+  permissions.allow = [...allow, CRANK_ALLOW_RULE];
+  root.permissions = permissions;
+  beforeWrite?.(file);
+  writeJson(file, root);
+  return true;
+}
+
+/**
+ * Remove CRANK_ALLOW_RULE from permissions.allow, dropping an allow array and
+ * a permissions object the removal emptied. Returns false without writing when
+ * the file is missing, does not parse, or holds no such entry.
+ */
+export function removeAllowRule(file: string): boolean {
+  if (!fs.existsSync(file)) return false;
+  let root: Record<string, unknown>;
+  try {
+    root = readJson(file);
+  } catch {
+    return false;
+  }
+  if (!isPlainObject(root)) return false;
+  const permissions = root.permissions;
+  if (!isPlainObject(permissions) || !Array.isArray(permissions.allow)) return false;
+  const kept = permissions.allow.filter((rule) => rule !== CRANK_ALLOW_RULE);
+  if (kept.length === permissions.allow.length) return false;
+  if (kept.length === 0) delete permissions.allow;
+  else permissions.allow = kept;
+  if (Object.keys(permissions).length === 0) delete root.permissions;
+  writeJson(file, root);
+  return true;
+}
+
 // ── Line-based files (.gitignore, .git/info/exclude, codex config.toml) ─────
 
 export const IGNORE_LINE = ".crank/";
