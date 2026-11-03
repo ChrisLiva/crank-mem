@@ -1,11 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isObj } from "./hook-io.ts";
 
 // .crank/config.json load with defaults, plus the always-on sensitive-file
 // filter (not configurable — never index secrets).
 
 export const CRANK_DIR = ".crank";
 export const CONFIG_FILE = "config.json";
+/** Per-checkout settings, kept out of git by .crank/.gitignore's `/*` line. */
+export const LOCAL_CONFIG_FILE = "config.local.json";
 export const MAX_FILE_SIZE_BYTES = 1024 * 1024;
 
 // Hidden paths (.git, .claude, .codex, .crank itself, …) are excluded by the
@@ -41,7 +44,11 @@ export interface CrankConfig {
   codex_trust_written: boolean;
   /** Write a per-run JSONL trace to .crank/debug.log (off by default). */
   debug: boolean;
-  /** Run background digests of finished sessions through `claude -p` (off by default). */
+  /**
+   * Run background digests of finished sessions through `claude -p` (off by
+   * default). Read only from config.local.json, so a committed config.json
+   * cannot turn digests on for every checkout.
+   */
   digest: boolean;
 }
 
@@ -80,6 +87,7 @@ const RUNTIMES: readonly CrankConfig["runtime"][] = ["bun", "node"];
  */
 export function loadConfig(crankDir: string): CrankConfig {
   const config = defaultConfig();
+  config.digest = loadDigest(crankDir);
   let raw: Record<string, unknown>;
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(crankDir, CONFIG_FILE), "utf-8"));
@@ -90,7 +98,7 @@ export function loadConfig(crankDir: string): CrankConfig {
   }
   for (const key of Object.keys(config) as (keyof CrankConfig)[]) {
     const value = raw[key];
-    if (value === undefined) continue;
+    if (value === undefined || key === "digest") continue;
     if (key === "excludes") {
       if (Array.isArray(value) && value.every((v) => typeof v === "string")) config.excludes = value;
     } else if (key === "git") {
@@ -111,8 +119,21 @@ export function loadConfig(crankDir: string): CrankConfig {
   return config;
 }
 
+function loadDigest(crankDir: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(crankDir, LOCAL_CONFIG_FILE), "utf-8"));
+    return isObj(parsed) && parsed.digest === true;
+  } catch {
+    return false;
+  }
+}
+
 export function saveConfig(crankDir: string, config: CrankConfig): void {
-  fs.writeFileSync(path.join(crankDir, CONFIG_FILE), JSON.stringify(config, null, 2) + "\n");
+  const { digest, ...shared } = config;
+  fs.writeFileSync(path.join(crankDir, CONFIG_FILE), JSON.stringify(shared, null, 2) + "\n");
+  const local = path.join(crankDir, LOCAL_CONFIG_FILE);
+  if (digest) fs.writeFileSync(local, JSON.stringify({ digest: true }, null, 2) + "\n");
+  else fs.rmSync(local, { force: true });
 }
 
 // ── Sensitive filter (always on, regardless of config) ──────────────────────

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  isExcluded, isSensitiveFile, loadConfig, saveConfig, defaultConfig, DEFAULT_EXCLUDES, CONFIG_FILE,
+  isExcluded, isSensitiveFile, loadConfig, saveConfig, defaultConfig, DEFAULT_EXCLUDES, CONFIG_FILE, LOCAL_CONFIG_FILE,
 } from "../src/hooks/lib/config.ts";
 
 function dirWithConfig(json: string): string {
@@ -24,6 +24,14 @@ describe("loadConfig sanitization", () => {
     expect(config.adr_path).toBe("adr");
     expect(config.digest).toBe(false);
     expect(loadConfig(dirWithConfig(JSON.stringify({ digest: "yes" }))).digest).toBe(false);
+    for (const local of ["", "not json", "[true]", "null", `{"digest":"true"}`, `{"digest":1}`]) {
+      const localDir = dirWithConfig("{}");
+      fs.writeFileSync(path.join(localDir, LOCAL_CONFIG_FILE), local);
+      expect(loadConfig(localDir).digest).toBe(false);
+    }
+    const onDir = dirWithConfig("{}");
+    fs.writeFileSync(path.join(onDir, LOCAL_CONFIG_FILE), `{"digest":true}`);
+    expect(loadConfig(onDir).digest).toBe(true);
   });
 
   test("the retired token budget is dropped, not carried through", () => {

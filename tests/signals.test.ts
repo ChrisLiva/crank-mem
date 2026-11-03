@@ -68,6 +68,16 @@ describe("digest signals (black-box)", () => {
     expect(fs.existsSync(path.join(home, "spool"))).toBe(false);
   });
 
+  test("a digest: true committed in config.json alone writes no spool entry", () => {
+    const root = makeCrankProject();
+    const file = path.join(root, ".crank/config.json");
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf-8")), digest: true }, null, 2));
+    const home = makeCrankHome();
+    expect(stop(root, home).status).toBe(0);
+    expect(runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, { CRANK_HOME: home }).status).toBe(0);
+    expect(spoolFiles(home)).toEqual([]);
+  });
+
   test.each([
     ["absent", undefined, 0],
     ["a number", 42, 0],

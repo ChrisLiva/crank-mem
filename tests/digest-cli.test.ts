@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { git, gitCommit, runCli } from "./helpers.ts";
+import { git, gitCommit, makeCrankHome, runCli, runHook, spoolFiles } from "./helpers.ts";
+import { claudeStop } from "./fixtures/payloads.ts";
 import { defaultConfig } from "../src/hooks/lib/config.ts";
 import {
   STOP_FILE, clearStopState, crankHome, digestRunning, ensureCrankHome, readStopState, writeJsonAtomic,
@@ -17,12 +18,17 @@ function readConfig(root: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(root, ".crank/config.json"), "utf-8"));
 }
 
+function localConfigPath(root: string): string {
+  return path.join(root, ".crank/config.local.json");
+}
+
 describe("digest config", () => {
-  test("init writes digest: false", () => {
+  test("init writes no digest key and no local config", () => {
     const root = tempDir("crank-digest-");
     fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
     expect(runCli(root, ["init", "--yes"]).status).toBe(0);
-    expect(readConfig(root).digest).toBe(false);
+    expect("digest" in readConfig(root)).toBe(false);
+    expect(fs.existsSync(localConfigPath(root))).toBe(false);
   });
 });
 
@@ -40,14 +46,17 @@ const USAGE = "Usage: crank-mem digest on|off|resume\n";
 describe("digest on|off", () => {
   test("on and off flip the config from the project root and print the exact line", () => {
     const root = initedProject();
+    const shared = fs.readFileSync(path.join(root, ".crank/config.json"));
     const on = runCli(root, ["digest", "on"]);
     expect(on.status).toBe(0);
     expect(on.stdout).toBe(ON);
-    expect(readConfig(root).digest).toBe(true);
+    expect(JSON.parse(fs.readFileSync(localConfigPath(root), "utf-8"))).toEqual({ digest: true });
+    expect(fs.readFileSync(path.join(root, ".crank/config.json")).equals(shared)).toBe(true);
     const off = runCli(root, ["digest", "off"]);
     expect(off.status).toBe(0);
     expect(off.stdout).toBe(OFF);
-    expect(readConfig(root).digest).toBe(false);
+    expect(fs.existsSync(localConfigPath(root))).toBe(false);
+    expect(fs.readFileSync(path.join(root, ".crank/config.json")).equals(shared)).toBe(true);
   });
 
   test("works from a subdirectory, keeps other config keys and leaves the store untouched", () => {
@@ -59,7 +68,7 @@ describe("digest on|off", () => {
     const bytes = Buffer.from([0, 1, 2, 0xff, 0xfe, 0x53, 0x51, 0x4c]);
     fs.writeFileSync(db, bytes);
     expect(runCli(sub, ["digest", "on"]).stdout).toBe(ON);
-    expect(readConfig(root)).toEqual({ ...before, digest: true });
+    expect(readConfig(root)).toEqual(before);
     expect(fs.existsSync(path.join(sub, ".crank"))).toBe(false);
     expect(runCli(sub, ["digest", "off"]).stdout).toBe(OFF);
     expect(readConfig(root)).toEqual(before);
@@ -80,7 +89,7 @@ describe("digest on|off", () => {
 });
 
 describe("digest in git projects", () => {
-  test("commit mode: digest on is a tracked edit, and a linked worktree keeps its own copy", () => {
+  test("commit mode: digest on leaves git status clean, and a linked worktree stays off", () => {
     const root = tempDir("crank-digest-git-");
     fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
     git(root, "init", "-q");
@@ -89,8 +98,11 @@ describe("digest in git projects", () => {
     const worktree = path.join(tempDir("crank-digest-wt-"), "wt");
     git(root, "worktree", "add", "-q", worktree);
     expect(runCli(root, ["digest", "on"]).status).toBe(0);
-    expect(git(root, "status", "--short")).toBe(" M .crank/config.json\n");
-    expect(readConfig(worktree).digest).toBe(false);
+    expect(git(root, "status", "--short")).toBe("");
+    const home = makeCrankHome();
+    const payload = { ...claudeStop(worktree), transcript_path: "/x/wt-1.jsonl" };
+    expect(runHook("src/hooks/stop.ts", JSON.stringify(payload), worktree, { CRANK_HOME: home }).status).toBe(0);
+    expect(spoolFiles(home)).toEqual([]);
   });
 });
 

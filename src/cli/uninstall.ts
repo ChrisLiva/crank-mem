@@ -9,7 +9,7 @@ import {
 import {
   crankTrust, removeTrustEntries, userCodexConfigPath,
 } from "./codex-trust.ts";
-import { CRANK_DIR, CONFIG_FILE } from "../hooks/lib/config.ts";
+import { CRANK_DIR, CONFIG_FILE, LOCAL_CONFIG_FILE } from "../hooks/lib/config.ts";
 import { INDEX_FILE, ANATOMY_FILE } from "../hooks/lib/store.ts";
 import { LOCK_FILE } from "../hooks/lib/lock.ts";
 import { MARKER_FILE, DEDUP_FILE, CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, isCrankBackup } from "../hooks/lib/cerebrum-nudge.ts";
@@ -166,7 +166,7 @@ function sweepLegacy(root: string): void {
  */
 function deleteOwnedFiles(crankDir: string): string[] {
   const owned = [
-    CONFIG_FILE, INDEX_FILE, ANATOMY_FILE, LOCK_FILE, MARKER_FILE, DEDUP_FILE, JOURNAL_FILE, LOG_FILE,
+    CONFIG_FILE, LOCAL_CONFIG_FILE, INDEX_FILE, ANATOMY_FILE, LOCK_FILE, MARKER_FILE, DEDUP_FILE, JOURNAL_FILE, LOG_FILE,
     CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, "hooks",
     MEMORY_FILE, `${MEMORY_FILE}-wal`, `${MEMORY_FILE}-shm`,
   ];

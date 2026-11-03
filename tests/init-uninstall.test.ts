@@ -267,6 +267,16 @@ describe("init → uninstall round-trip", () => {
     expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
   });
 
+  test("uninstall deletes the local digest switch", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--codex", "skip");
+    expect(cli(root, codexHome, "digest", "on").status).toBe(0);
+    const un = cli(root, codexHome, "uninstall", "--yes", "--delete-crank");
+    expect(un.status).toBe(0);
+    expect(un.stdout).toContain("  deleted .crank/\n");
+    expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
+  });
+
   test("commit-mode init moves crank hooks out of a pre-seeded settings.local.json", () => {
     const local = JSON.stringify({
       permissions: { allow: ["Bash(ls:*)"] },

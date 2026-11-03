@@ -134,7 +134,7 @@ describe("digest on and the embedder", () => {
     const run = runCli(root, ["digest", "on"], { CRANK_HOME: makeCrankHome() });
     expect(run.status).toBe(0);
     expect(run.stderr).toBe(NOT_READY);
-    expect(JSON.parse(fs.readFileSync(path.join(root, ".crank/config.json"), "utf-8")).digest).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(root, ".crank/config.local.json"), "utf-8"))).toEqual({ digest: true });
   });
 
   test("says nothing when the model is in place", () => {

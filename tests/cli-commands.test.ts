@@ -158,8 +158,7 @@ describe("stats: capture health", () => {
   const CAPTURE_ROWS = /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|memory): .*\n)+ {2}embedder: /;
 
   function digestOn(root: string): void {
-    const file = path.join(root, ".crank/config.json");
-    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf-8")), digest: true }, null, 2));
+    expect(runCli(root, ["digest", "on"]).status).toBe(0);
   }
 
   test("reports digest state, daemon, user-wide spool, the store's counts and month cost, and the embedder", () => {

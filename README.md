@@ -49,7 +49,7 @@ search by meaning and loads only when a command needs it.
 
 - `crank-mem init` — wire hooks into `.claude`/`.codex`, add the `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)` and `Bash(crank-mem get *)` allow rules to the Claude settings file so agents run the recall commands without a prompt, seed `.crank/`, first scan; removes crank hooks from the other Claude settings file
 - `crank-mem scan` — full index rebuild
-- `crank-mem digest on|off|resume` — turn background digests on or off for this project; `resume` clears a stop and restarts the daemon
+- `crank-mem digest on|off|resume` — turn background digests on or off for this checkout, a switch kept in the gitignored `.crank/config.local.json`; `resume` clears a stop and restarts the daemon
 - `crank-mem search <query>` — search stored memory by meaning or keyword (`--limit`, `--type`, `--since YYYY-MM-DD`, `--file`); keyword only until `setup` has run
 - `crank-mem timeline <id>` — the observations around one id (`--depth`)
 - `crank-mem get <id...>` — print stored observations in full
@@ -63,7 +63,7 @@ search by meaning and loads only when a command needs it.
 `anatomy-index.json` (data), `anatomy.md` (human/agent view), `cerebrum.md`
 (agent-written semantic memory), `cerebrum-archive.md` (entries a prune moved
 out; never injected), `journal.md` (agent-written session log, last 20 bullets
-kept), `memory.db` (digested memory, kept out of git), `config.json`, `hooks/` (vendored), `backups/` (init/upgrade snapshots,
+kept), `memory.db` (digested memory, kept out of git), `config.json`, `config.local.json` (the per-checkout digest switch, kept out of git), `hooks/` (vendored), `backups/` (init/upgrade snapshots,
 plus `backups/cerebrum/`: the last 5 copies of cerebrum.md, taken before each
 prune nudge).
 
@@ -87,7 +87,9 @@ parent session does not see it. See ADR 0007.
 
 ## Digests
 
-`crank-mem digest on` turns digests on for a project. Claude Code's Stop and
+`crank-mem digest on` turns digests on for a checkout of a project. It writes
+the switch to the gitignored `.crank/config.local.json`, so a teammate's clone
+or a linked worktree stays off until someone runs it there. Claude Code's Stop and
 SessionEnd hooks then drop a signal for the session into a per-user spool under
 `~/.crank` (or `$CRANK_HOME`), which crank-mem creates at mode 0700; a
 directory that already exists keeps its mode. They also start a small detached
