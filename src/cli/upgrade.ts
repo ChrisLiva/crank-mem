@@ -10,7 +10,7 @@ import {
 } from "./codex-trust.ts";
 import {
   crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, unignoreCerebrum,
-  ensureCrankGitignore, isCrankHookCommand, addIgnoreLines, modeIgnoreFile, addAllowRule, CRANK_ALLOW_RULE,
+  ensureCrankGitignore, isCrankHookCommand, addIgnoreLines, modeIgnoreFile, addAllowRule,
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
 import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
@@ -18,11 +18,13 @@ import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
 // Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
 // the hook wiring, the .crank/.gitignore allowlist, and the git mode's ignore
 // state: commit mode loses a stale crank-mem ignore block, ignore and exclude
-// mode regain a missing one. It adds the Bash(crank-mem *) allow rule to the
-// wired Claude settings file and installs the clone's packages (a failed
-// package install costs search by meaning, not the upgrade). Of config.json it
-// updates only vendored_version and clone_root; it never touches cerebrum or
-// the index. Recomputes Codex trusted hashes iff the user opted in at init.
+// mode regain a missing one. It adds the recall rules Bash(crank-mem search *),
+// Bash(crank-mem timeline *) and Bash(crank-mem get *) to the wired Claude
+// settings file, in place of the legacy Bash(crank-mem *) rule, and installs
+// the clone's packages (a failed package install costs search by meaning, not
+// the upgrade). Of config.json it updates only vendored_version and
+// clone_root; it never touches cerebrum or the index. Recomputes Codex
+// trusted hashes iff the user opted in at init.
 
 export async function run(_args: string[]): Promise<number> {
   const project = openProject();
@@ -76,7 +78,7 @@ export async function run(_args: string[]): Promise<number> {
     if (mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), backup)) {
       console.log(`  re-wired Claude Code hooks in ${path.relative(root, wired)}`);
     }
-    if (addAllowRule(wired, backup)) console.log(`  added ${CRANK_ALLOW_RULE} to permissions.allow`);
+    if (addAllowRule(wired, backup)) console.log("  added the crank-mem recall rules to permissions.allow");
     // Codex wiring was opt-in at init: leave a hooks.json without crank entries alone.
     if (hasCrankHooks(codexHooksJson)) {
       codexRewired = mergeHooksIntoFile(codexHooksJson, crankHooks(config.runtime, "codex"), backup);

@@ -4,7 +4,7 @@ import { parseArgs } from "./args.ts";
 import { choose } from "./prompt.ts";
 import {
   removeCrankHooksFromFile, removeIgnoreLines, removeCodexFeatures,
-  isLegacyHookCommand, LEGACY_IGNORE_BLOCK, removeAllowRule, CRANK_ALLOW_RULE,
+  isLegacyHookCommand, LEGACY_IGNORE_BLOCK, removeAllowRule,
 } from "./settings.ts";
 import {
   crankTrust, removeTrustEntries, userCodexConfigPath,
@@ -72,7 +72,7 @@ export async function run(args: string[]): Promise<number> {
     codexHooksJson,
   ]) {
     if (removeCrankHooksFromFile(f)) console.log(`  removed crank hooks from ${path.relative(root, f)}`);
-    if (removeAllowRule(f)) console.log(`  removed ${CRANK_ALLOW_RULE} from ${path.relative(root, f)}`);
+    if (removeAllowRule(f)) console.log(`  removed the crank-mem allow rules from ${path.relative(root, f)}`);
     // Delete a now-empty object only when the manifest proves we created the
     // file — a user's own literal {} must survive.
     if (!absentAtInit(crankDir, f)) continue;

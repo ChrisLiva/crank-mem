@@ -75,7 +75,7 @@ describe("init → uninstall round-trip", () => {
     // wiring
     const settings = JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8"));
     expect(settings.hooks.SessionStart[0].hooks[0].command).toContain(".crank/hooks/session-start.ts");
-    expect(settings.permissions.allow).toEqual(["Bash(crank-mem *)"]);
+    expect(settings.permissions.allow).toEqual(["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"]);
     expect(settings.hooks.SessionEnd[0].hooks[0].command).toContain(".crank/hooks/session-end.ts");
     const fileHistory = settings.hooks.PostToolUse.find((g: { matcher?: string }) => g.matcher === "Read|Bash");
     expect(fileHistory.hooks[0].command).toContain(".crank/hooks/post-read.ts");
@@ -115,7 +115,7 @@ describe("init → uninstall round-trip", () => {
     cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
     expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
     const shared = JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.json"), "utf-8"));
-    expect(shared.permissions.allow).toEqual(["Bash(crank-mem *)"]);
+    expect(shared.permissions.allow).toEqual(["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"]);
     for (const rel of [".crank/cerebrum.md", ".crank/cerebrum-archive.md", ".crank/journal.md", ".crank/config.json", ".crank/hooks/stop.ts"]) {
       expect(ignored(root, rel)).toBe(false);
     }

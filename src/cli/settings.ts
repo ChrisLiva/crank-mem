@@ -217,23 +217,29 @@ export function removeCrankHooksFromFile(
   return true;
 }
 
-// ── The permissions.allow rule that lets agents run the crank-mem CLI ─────
+// ── The permissions.allow rules that let agents run the recall commands ─────
 
-export const CRANK_ALLOW_RULE = "Bash(crank-mem *)";
+export const CRANK_ALLOW_RULES = ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] as const;
+/** The rule earlier releases wrote, which pre-approved every crank-mem subcommand. */
+export const LEGACY_ALLOW_RULE = "Bash(crank-mem *)";
 
 /**
- * Append CRANK_ALLOW_RULE to a Claude settings file's permissions.allow,
- * creating the keys when missing and calling `beforeWrite` first. Leaves the
- * file alone when the rule is there or permissions/allow has a foreign shape.
- * Returns whether it wrote.
+ * Put CRANK_ALLOW_RULES in a Claude settings file's permissions.allow,
+ * creating the keys when missing: drops LEGACY_ALLOW_RULE, keeps every other
+ * entry in place, and appends each missing rule in order. Writes only when the
+ * array changed, calling `beforeWrite` first, and leaves a foreign-shaped
+ * permissions/allow alone. Returns whether it wrote.
  */
 export function addAllowRule(file: string, beforeWrite?: (file: string) => void): boolean {
   const root: Record<string, unknown> = fs.existsSync(file) ? readJson(file) : {};
   const permissions = "permissions" in root ? root.permissions : {};
   if (!isObj(permissions)) return false;
   const allow = "allow" in permissions ? permissions.allow : [];
-  if (!Array.isArray(allow) || allow.includes(CRANK_ALLOW_RULE)) return false;
-  permissions.allow = [...allow, CRANK_ALLOW_RULE];
+  if (!Array.isArray(allow)) return false;
+  const kept = allow.filter((rule) => rule !== LEGACY_ALLOW_RULE);
+  const next = [...kept, ...CRANK_ALLOW_RULES.filter((rule) => !kept.includes(rule))];
+  if (next.length === allow.length && next.every((rule, i) => rule === allow[i])) return false;
+  permissions.allow = next;
   root.permissions = permissions;
   beforeWrite?.(file);
   writeJson(file, root);
@@ -241,9 +247,10 @@ export function addAllowRule(file: string, beforeWrite?: (file: string) => void)
 }
 
 /**
- * Remove CRANK_ALLOW_RULE from permissions.allow, dropping an allow array and
- * a permissions object the removal emptied. Returns false without writing when
- * the file is missing, does not parse, or holds no such entry.
+ * Remove CRANK_ALLOW_RULES and LEGACY_ALLOW_RULE from permissions.allow,
+ * dropping an allow array and a permissions object the removal emptied.
+ * Returns false without writing when the file is missing, does not parse, or
+ * holds no such entry.
  */
 export function removeAllowRule(file: string): boolean {
   if (!fs.existsSync(file)) return false;
@@ -256,7 +263,8 @@ export function removeAllowRule(file: string): boolean {
   if (!isObj(root)) return false;
   const permissions = root.permissions;
   if (!isObj(permissions) || !Array.isArray(permissions.allow)) return false;
-  const kept = permissions.allow.filter((rule) => rule !== CRANK_ALLOW_RULE);
+  const ours: unknown[] = [...CRANK_ALLOW_RULES, LEGACY_ALLOW_RULE];
+  const kept = permissions.allow.filter((rule) => !ours.includes(rule));
   if (kept.length === permissions.allow.length) return false;
   if (kept.length === 0) delete permissions.allow;
   else permissions.allow = kept;

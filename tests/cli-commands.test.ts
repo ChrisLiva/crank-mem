@@ -374,25 +374,28 @@ describe("upgrade", () => {
     expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(backups);
   });
 
-  test("adds back a deleted Bash(crank-mem *) allow rule, once, keeping the user's other rules", () => {
+  test("upgrade swaps the legacy allow rule for the recall rules, once, keeping the user's other rules", () => {
     const root = initedProject();
     const local = path.join(root, ".claude/settings.local.json");
     const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
-    settings.permissions = { allow: ["Bash(ls:*)"], deny: ["x"] };
+    settings.permissions = { allow: ["Bash(ls:*)", "Bash(crank-mem *)"], deny: ["x"] };
     fs.writeFileSync(local, JSON.stringify(settings, null, 2) + "\n");
     const backups = fs.readdirSync(path.join(root, ".crank/backups")).length;
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("  added Bash(crank-mem *) to permissions.allow");
+    expect(run.stdout).toContain("  added the crank-mem recall rules to permissions.allow");
     const after = JSON.parse(fs.readFileSync(local, "utf-8"));
-    expect(after.permissions).toEqual({ allow: ["Bash(ls:*)", "Bash(crank-mem *)"], deny: ["x"] });
+    expect(after.permissions).toEqual({
+      allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"],
+      deny: ["x"],
+    });
     expect(after.hooks).toEqual(settings.hooks);
 
     const withRule = fs.readdirSync(path.join(root, ".crank/backups")).length;
     expect(withRule).toBe(backups + 1);
     const again = cli(root, "upgrade");
-    expect(again.stdout).not.toContain("added Bash(crank-mem *)");
+    expect(again.stdout).not.toContain("recall rules");
     expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(withRule);
   });
 

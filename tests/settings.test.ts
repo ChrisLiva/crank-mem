@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import {
   crankHooks, hookCommand, mergeHooksIntoFile, removeCrankHooksFromFile,
   addIgnoreLines, removeIgnoreLines, ensureCodexFeatures, removeCodexFeatures,
-  addAllowRule, removeAllowRule, CRANK_ALLOW_RULE,
+  addAllowRule, removeAllowRule,
 } from "../src/cli/settings.ts";
 import { vendorHooks } from "../src/cli/vendor.ts";
 import { makeCrankProject } from "./helpers.ts";
@@ -196,13 +196,12 @@ function writeSettings(value: unknown): string {
 }
 
 describe("addAllowRule", () => {
-  test("appends the rule, keeps other entries and keys, backs up first", () => {
+  test("appends the recall rules, keeps other entries and keys, backs up first", () => {
     const f = writeSettings({ model: "opus", permissions: { allow: ["Bash(ls:*)"], deny: ["x"] } });
     const backedUp: string[] = [];
     expect(addAllowRule(f, (file) => backedUp.push(fs.readFileSync(file, "utf-8")))).toBe(true);
-    expect(CRANK_ALLOW_RULE).toBe("Bash(crank-mem *)");
     const after = JSON.parse(fs.readFileSync(f, "utf-8"));
-    expect(after).toEqual({ model: "opus", permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)"], deny: ["x"] } });
+    expect(after).toEqual({ model: "opus", permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"], deny: ["x"] } });
     expect(backedUp).toHaveLength(1);
     expect(JSON.parse(backedUp[0]!).permissions.allow).toEqual(["Bash(ls:*)"]);
   });
@@ -218,10 +217,17 @@ describe("addAllowRule", () => {
   test("creates missing permissions and allow keys", () => {
     const missingFile = tmpFile();
     expect(addAllowRule(missingFile)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(missingFile, "utf-8"))).toEqual({ permissions: { allow: [CRANK_ALLOW_RULE] } });
+    expect(JSON.parse(fs.readFileSync(missingFile, "utf-8"))).toEqual({ permissions: { allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] } });
     const noAllow = writeSettings({ permissions: { deny: ["x"] } });
     expect(addAllowRule(noAllow)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(noAllow, "utf-8"))).toEqual({ permissions: { deny: ["x"], allow: [CRANK_ALLOW_RULE] } });
+    expect(JSON.parse(fs.readFileSync(noAllow, "utf-8"))).toEqual({ permissions: { deny: ["x"], allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] } });
+  });
+  test("replaces the legacy Bash(crank-mem *) rule, keeping the user's other rules in place", () => {
+    const f = writeSettings({ permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)", "Bash(git *)"] } });
+    expect(addAllowRule(f)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({
+      permissions: { allow: ["Bash(ls:*)", "Bash(git *)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] },
+    });
   });
   test("leaves a malformed permissions or allow alone", () => {
     for (const value of [{ permissions: [] }, { permissions: null }, { permissions: "x" }, { permissions: { allow: "x" } }, { permissions: { allow: {} } }]) {
@@ -263,9 +269,14 @@ describe("removeAllowRule", () => {
     expect(fs.readFileSync(f, "utf-8")).toBe("{}\n");
   });
   test("keeps permissions when other keys remain", () => {
-    const f = writeSettings({ permissions: { allow: [CRANK_ALLOW_RULE], deny: ["x"] } });
+    const f = writeSettings({ permissions: { allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"], deny: ["x"] } });
     expect(removeAllowRule(f)).toBe(true);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({ permissions: { deny: ["x"] } });
+  });
+  test("drops the legacy rule alongside the recall rules", () => {
+    const f = writeSettings({ permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] } });
+    expect(removeAllowRule(f)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({ permissions: { allow: ["Bash(ls:*)"] } });
   });
 });
 

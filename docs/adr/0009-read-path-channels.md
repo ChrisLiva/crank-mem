@@ -63,6 +63,18 @@ directory is gitignored local evidence and is not part of this repo.
 8. **The allow rule.** `Bash(crank-mem *)` in `permissions.allow` lets `crank-mem search foo`
    run without a prompt, and does not match a call that names the binary by absolute path
    (`read-probe/d/logs/`, `read-probe/d/run.sh`).
+9. **The narrowed recall rules.** On Claude Code 2.1.317, `Bash(crank-mem search *)`,
+   `Bash(crank-mem timeline *)` and `Bash(crank-mem get *)` match quoted arguments, flags and
+   no arguments, and other subcommands still prompt. With a fake `crank-mem` on `PATH`,
+   `claude -p '<run 6 commands>' --model haiku --settings '{"permissions":{"allow":["Bash(crank-mem search *)","Bash(crank-mem timeline *)","Bash(crank-mem get *)"]}}' --setting-sources "" --strict-mcp-config --no-session-persistence --permission-mode default --output-format json`
+   exited 0 and ran `crank-mem search "auth flow" --limit 3`, `crank-mem timeline 12 --depth 2`,
+   `crank-mem get 12 13` and `crank-mem search`; its `permission_denials` were
+   `crank-mem digest on` and `crank-mem setup`. The probe passes the rules with `--settings`
+   because `claude -p` ignores a project's own `permissions.allow` in an untrusted workspace:
+   the same run with the rules in `.claude/settings.json` printed `Ignoring 3
+   permissions.allow entries from .claude/settings.json: this workspace has not been
+   trusted.` on stderr. The narrowed rules replace the legacy `Bash(crank-mem *)`, which
+   pre-approved every subcommand, including `digest on` and `setup`.
 
 ## Decision
 
@@ -79,8 +91,10 @@ directory is gitignored local evidence and is not part of this repo.
 - SessionEnd and Stop write the session's spool entry (`src/hooks/lib/spool.ts` →
   `signalDigest`), with `timeout: 10` on the SessionEnd wiring. Neither prints anything for
   it. The daemon starts as a detached child with `stdio: "ignore"` and `.unref()` (Finding 7).
-- `init` and `upgrade` add `Bash(crank-mem *)` to the wired Claude settings file's
-  `permissions.allow`, and `uninstall` removes it (Finding 8).
+- `init` and `upgrade` add `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)` and
+  `Bash(crank-mem get *)` to the wired Claude settings file's `permissions.allow`, dropping
+  a legacy `Bash(crank-mem *)` there and keeping the user's other rules in place, and
+  `uninstall` removes all four (Findings 8 and 9).
 
 ## Re-probe method (~10 min when `claude --version` changes minor version)
 
@@ -95,6 +109,8 @@ directory is gitignored local evidence and is not part of this repo.
 3. Record which sentinels it names and `claude --version` in ADR 0001. For the subagent
    reading, rerun `read-probe/a/prompt.txt`, which spawns one `general-purpose` subagent.
 4. For SessionEnd and the detached child, rerun the `hook-probe/` settings and read
-   `hook-probe/logs/*/events.jsonl` and `spawn.log`. For the allow rule, run
-   `read-probe/d/run.sh` with and without the rule.
+   `hook-probe/logs/*/events.jsonl` and `spawn.log`. For the allow rules, put a fake
+   `crank-mem` on `PATH` and run Finding 9's `claude -p` command, which passes the three
+   recall rules through `--settings`; expect the recall calls to run and `digest on` and
+   `setup` in `permission_denials`.
 5. Delete the scratch project afterwards.
