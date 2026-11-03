@@ -18,9 +18,9 @@ const PASSED_ENV = ["HOME", "USER", "PATH", "TMPDIR"] as const;
 
 type Failure = Exclude<ModelResult<unknown>, { kind: "ok" }>;
 type Run = { code: number | null; stdout: string; failure: Failure | null };
-type Obj = Record<string, unknown>;
+export type Obj = Record<string, unknown>;
 
-const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+export const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Only these variables reach `claude`: a denylist misses credential routes (ADR 0008). */
 function claudeEnv(): Record<string, string> {

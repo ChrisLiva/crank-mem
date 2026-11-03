@@ -1,4 +1,5 @@
 import { OBSERVATION_TYPES, type DigestSummary, type ObservationType } from "../hooks/lib/memory.ts";
+import { isObj } from "./gateway.ts";
 
 export type Digest = {
   observations: {
@@ -67,9 +68,6 @@ const SCHEMA = {
   },
 };
 
-type Obj = Record<string, unknown>;
-
-const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === "string");
 
 function isObservation(v: unknown): boolean {
