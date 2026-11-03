@@ -17,17 +17,21 @@ import { crankHome, ensureCrankHome, readStopState, writeJsonAtomic } from "../h
 
 const SWEEP_MS = 30_000;
 const IDLE_MS = 600_000;
+const RETRY_MS = 300_000;
+const RETRY_CAP_MS = 3_600_000;
 /** A session whose transcript has not changed for this long is digested before it ends. */
 const QUIET_MS = 30 * 60_000;
 const SEEN_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 
-type Options = { sweepMs: number; idleMs: number; runTimeoutMs: string | null; once: boolean };
+type Options = { sweepMs: number; idleMs: number; retryMs: number; retryCapMs: number; runTimeoutMs: string | null; once: boolean };
 
 export async function run(args: string[]): Promise<number> {
   const { flags } = parseArgs(args, ["sweep-ms", "idle-ms", "retry-ms", "retry-cap-ms", "run-timeout-ms"]);
   const opts: Options = {
     sweepMs: positive(flags["sweep-ms"], SWEEP_MS),
     idleMs: positive(flags["idle-ms"], IDLE_MS),
+    retryMs: positive(flags["retry-ms"], RETRY_MS),
+    retryCapMs: positive(flags["retry-cap-ms"], RETRY_CAP_MS),
     runTimeoutMs: typeof flags["run-timeout-ms"] === "string" ? flags["run-timeout-ms"] : null,
     once: flags.once === true,
   };
@@ -99,6 +103,8 @@ class Daemon {
   private stopping = false;
   private job: Promise<void> | null = null;
   private busySince = Date.now();
+  /** Stems whose last job failed: no job starts before `untilMs`, and the next failure doubles `delayMs`. Memory only. */
+  private readonly holds = new Map<string, { untilMs: number; delayMs: number }>();
 
   constructor(file: string, startVersion: string, opts: Options) {
     this.file = file;
@@ -143,7 +149,8 @@ class Daemon {
       for (const item of readSpool()) if (!fs.existsSync(item.entry.transcriptPath)) deleteEntry(item.stem);
       // 8–9. Start the oldest eligible entry's job when none is running.
       if (!this.stopping && this.job === null) {
-        const next = eligible(readSpool());
+        const now = Date.now();
+        const next = eligible(readSpool().filter((item) => (this.holds.get(item.stem)?.untilMs ?? 0) <= now));
         if (next) this.startJob(next.stem);
       }
     } catch (err) {
@@ -165,13 +172,28 @@ class Daemon {
     if (this.opts.runTimeoutMs !== null) argv.push("--run-timeout-ms", this.opts.runTimeoutMs);
     const child = spawn(path.join(REPO_ROOT, "bin", "crank-mem"), argv, { cwd: REPO_ROOT, stdio: "ignore" });
     this.job = new Promise<void>((resolve) => {
-      const done = () => {
+      let ended = false;
+      const done = (code: number | null) => {
+        if (ended) return;
+        ended = true;
+        this.settle(stem, code);
         this.job = null;
         resolve();
       };
-      child.once("exit", done);
-      child.once("error", done);
+      child.once("exit", (code) => done(code));
+      child.once("error", () => done(null));
     });
+  }
+
+  /** Exit 0 clears the stem's hold; any other end holds it for --retry-ms, doubling per failure up to --retry-cap-ms. */
+  private settle(stem: string, code: number | null): void {
+    if (code === 0) {
+      this.holds.delete(stem);
+      return;
+    }
+    const prev = this.holds.get(stem);
+    const delayMs = prev ? Math.min(prev.delayMs * 2, this.opts.retryCapMs) : this.opts.retryMs;
+    this.holds.set(stem, { untilMs: Date.now() + delayMs, delayMs });
   }
 }
 

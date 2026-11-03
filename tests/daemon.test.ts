@@ -5,15 +5,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   REPO_ROOT, appendRecords, digestProject, fakeClaude, killDaemon, makeCrankHome, readDaemon, runCli, runHook, setMtime,
-  spoolFiles, startDaemon, userRecord, waitFor, type FakeScenario,
+  spoolFiles, startDaemon, userRecord, waitFor, type FakeCall, type FakeScenario,
 } from "./helpers.ts";
-import { okStream } from "./fixtures/claude-scenarios.ts";
+import { okStream, refusalStream, status500Stream } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
 const FIXTURE = path.join(REPO_ROOT, "tests/fixtures/transcript.jsonl");
 const EXPECTED = fs.readFileSync(path.join(REPO_ROOT, "tests/fixtures/transcript.expected.txt"), "utf8");
 const OK: FakeScenario = { lines: okStream(SAMPLE_DIGEST) };
+const FAIL: FakeScenario = { lines: status500Stream() };
 const MINUTE = 60_000;
 
 // Every crank home and daemon a test starts, so afterEach kills them and afterAll proves none survived.
@@ -296,6 +297,66 @@ describe("daemon sweeps", () => {
     expect(second!.stdin).toContain("marker-B");
     expect(first!.endMs!).toBeLessThanOrEqual(second!.startMs);
   }, 30_000);
+});
+
+describe("daemon retry holds", () => {
+  /** The gap from each call's endMs to the next call's startMs. */
+  function gaps(calls: FakeCall[]): number[] {
+    return calls.slice(1).map((c, k) => c.startMs - calls[k]!.endMs!);
+  }
+
+  test("a failing stem waits --retry-ms, doubling each failure up to --retry-cap-ms", async () => {
+    const e = setup([FAIL]);
+    const root = digestProject({}, temps);
+    plantEntry(e.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
+    daemon(["--sweep-ms", "25", "--retry-ms", "200", "--retry-cap-ms", "800"], e);
+    await waitFor(() => e.fake.calls().length >= 5, 15_000);
+    const [g1, g2, g3, g4] = gaps(e.fake.calls().slice(0, 5));
+    expect(g1!).toBeGreaterThanOrEqual(200);
+    expect(g1!).toBeLessThan(700);
+    expect(g2!).toBeGreaterThanOrEqual(400);
+    expect(g2!).toBeLessThan(900);
+    expect(g3!).toBeGreaterThanOrEqual(800);
+    expect(g3!).toBeLessThan(1_300);
+    expect(g4!).toBeGreaterThanOrEqual(800);
+    expect(g4!).toBeLessThan(1_500);
+  }, 20_000);
+
+  test("a run past --run-timeout-ms is killed and retried, never parked", async () => {
+    const e = setup([{ ...OK, sleepMs: 5_000 }]);
+    const root = digestProject({}, temps);
+    plantEntry(e.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
+    daemon(["--sweep-ms", "25", "--run-timeout-ms", "1000", "--retry-ms", "200"], e);
+    await waitFor(() => e.fake.calls().length >= 3, 6_000);
+    for (const call of e.fake.calls()) expect(call.endMs).toBe(null);
+    expect(spoolFiles(e.home)).toEqual(["s1.json"]);
+  }, 10_000);
+
+  test("a hold belongs to one stem, and exit 0 clears it", async () => {
+    const two = setup([FAIL, OK, FAIL]);
+    const a = digestProject({}, temps);
+    const b = digestProject({}, temps);
+    const now = Date.now();
+    plantEntry(two.home, "sa", { transcriptPath: transcriptCopy("sa", "marker-A"), projectRoot: a, ended: true, updatedAt: now - 2_000 });
+    plantEntry(two.home, "sb", { transcriptPath: transcriptCopy("sb", "marker-B"), projectRoot: b, ended: true, updatedAt: now });
+    daemon(["--sweep-ms", "25", "--retry-ms", "400"], two);
+    await waitFor(() => two.fake.calls().length >= 4, 10_000);
+    const calls = two.fake.calls();
+    expect(calls[0]!.stdin).toContain("marker-A");
+    expect(calls[1]!.stdin).toContain("marker-B");
+    for (const call of calls.slice(2)) expect(call.stdin).toContain("marker-A");
+    expect(search(b, "EEXIST").trim().split("\n").length).toBe(1);
+    expect(spoolFiles(two.home)).toContain("sa.json");
+
+    const one = setup([FAIL, { lines: refusalStream() }, FAIL, FAIL]);
+    const root = digestProject({}, temps);
+    plantEntry(one.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
+    daemon(["--sweep-ms", "25", "--retry-ms", "400"], one);
+    await waitFor(() => one.fake.calls().length >= 4, 10_000);
+    const gap = gaps(one.fake.calls())[2]!;
+    expect(gap).toBeGreaterThanOrEqual(400);
+    expect(gap).toBeLessThan(800);
+  }, 25_000);
 });
 
 describe("daemon exits", () => {
