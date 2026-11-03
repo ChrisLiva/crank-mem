@@ -32,13 +32,8 @@ export async function run(args: string[]): Promise<number> {
   if (!stem || !item) return 0;
   if (readStopState() !== null) return 0;
   const entry = item.entry;
-  const file = entry.transcriptPath;
-  if (!fs.existsSync(file)) {
+  if (!fs.existsSync(entry.transcriptPath)) {
     deleteEntry(stem);
-    return 0;
-  }
-  if (fs.statSync(file).size > PARK_SIZE && distill(file, null, MAX_DELTA_CHARS).records === 0) {
-    parkEntry(stem);
     return 0;
   }
   const { flags } = parseArgs(args.slice(1), ["run-timeout-ms"]);
@@ -57,6 +52,10 @@ export async function run(args: string[]): Promise<number> {
 async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs: number): Promise<number> {
   const pos = memory.position(stem);
   const d = distill(entry.transcriptPath, pos, MAX_DELTA_CHARS);
+  if (pos === null && fs.statSync(entry.transcriptPath).size > PARK_SIZE && d.records === 0) {
+    parkEntry(stem);
+    return 0;
+  }
   if (d.text.length < MIN_DELTA_CHARS || d.next === null) {
     deleteEntry(stem);
     return 0;
