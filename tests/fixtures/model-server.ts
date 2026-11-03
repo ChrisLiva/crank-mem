@@ -26,7 +26,10 @@ const server = http.createServer((req, res) => {
   }
   const body = fs.readFileSync(file);
   res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(body.length) });
-  if (mode === "stall") return;
+  if (mode === "stall") {
+    res.flushHeaders();
+    return;
+  }
   if (mode === "slow") {
     let i = 0;
     const iv = setInterval(() => {

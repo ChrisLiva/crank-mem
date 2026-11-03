@@ -9,8 +9,6 @@ import { REPO_ROOT } from "./version.ts";
 
 export type InstallResult = { ok: true; tool: "bun" | "npm" } | { ok: false; detail: string };
 
-const FETCH_TIMEOUT_MS = 60_000;
-
 function spawnTool(tool: "bun" | "npm", args: string[]): SpawnSyncReturns<string> {
   return spawnSync(tool, args, { cwd: REPO_ROOT, encoding: "utf-8" });
 }
@@ -36,7 +34,7 @@ export async function run(args: string[]): Promise<number> {
   const { flags } = parseArgs(args, ["model-host", "fetch-timeout-ms"]);
   const host = typeof flags["model-host"] === "string" ? flags["model-host"] : undefined;
   const timeoutFlag = typeof flags["fetch-timeout-ms"] === "string" ? Number(flags["fetch-timeout-ms"]) : NaN;
-  const fetchTimeoutMs = Number.isFinite(timeoutFlag) ? timeoutFlag : FETCH_TIMEOUT_MS;
+  const fetchTimeoutMs = Number.isFinite(timeoutFlag) ? timeoutFlag : undefined;
 
   const installed = installPackages();
   if (!installed.ok) {
