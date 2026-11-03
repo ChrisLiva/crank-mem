@@ -33,6 +33,14 @@ describe("search", () => {
     expect(run.stdout).toMatch(/^#1 \d{4}-\d{2}-\d{2} bugfix Lock file writes retry on EEXIST\n$/);
   });
 
+  test("each hit is dated in the local zone", () => {
+    const root = initedProject();
+    seedMemory(root, [{ title: "Gizmo today" }]);
+    for (const TZ of ZONES) {
+      expect(runCli(root, ["search", "gizmo"], { TZ }).stdout).toBe(`#1 ${localDate(0, TZ)} discovery Gizmo today\n`);
+    }
+  });
+
   test("zero hits print nothing and exit 0", () => {
     const root = initedProject();
     seedMemory(root, [{ title: "Lock file writes retry" }]);
