@@ -14,7 +14,6 @@ export function modelsDir(): string {
   return path.join(crankHome(), "models");
 }
 
-/** Every model file is on disk under the models directory. */
 export function modelPresent(): boolean {
   const dir = path.join(modelsDir(), EMBED_MODEL);
   return MODEL_FILES.every((f) => fs.existsSync(path.join(dir, f)));

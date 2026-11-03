@@ -101,10 +101,6 @@ const RECENT_MEMORY_MAX_BYTES = 1536;
 /** Observations read for the recent memory section, before the byte cap. */
 const RECENT_MEMORY_ROWS = 50;
 
-/**
- * The instructions block. While digests run, nothing model-visible points at
- * memory upkeep: the cerebrum, journal and style protocols are left out.
- */
 function instructions(index: AnatomyIndex, codex: boolean, running = false, recall = false): string {
   const lead = running
     ? "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`."
@@ -169,11 +165,11 @@ export interface InjectionSources {
   projectRoot?: string;
   /** Files changed since journal.md's mtime, stated under the journal bullets. */
   journalChanged?: number;
-  /** Digests run for this session: upkeep protocols and the journal are left out. Absent means v1. */
+  /** Digests run for this session: upkeep protocols and the journal are left out. Absent: digests off. */
   running?: boolean;
-  /** What the memory store offers this session. Absent means v1. */
+  /** What the memory store offers this session. Absent: no recall section or pointer. */
   recall?: Recall;
-  /** Capture-health notes, shown italic after the drift note. Absent means v1. */
+  /** Capture-health notes, shown italic after the drift note. */
   captureNotes?: string[];
 }
 
@@ -514,8 +510,7 @@ export function listAdrFilenames(projectRoot: string, adrPath: string): string[]
 /**
  * The on-disk sources of a session-start injection, shared by the hook and
  * `crank-mem stats`, for a Codex session when `codex` is set. The caller adds
- * the staleness, drift and capture notes. While digests run the journal is
- * not read. Never throws.
+ * the staleness, drift and capture notes. Never throws.
  */
 export function injectionSources(
   root: string,

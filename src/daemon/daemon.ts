@@ -123,26 +123,25 @@ class Daemon {
     }
   }
 
-  /** One sweep, steps in order. "exit" ends the daemon at once. */
+  /** One sweep. "exit" ends the daemon at once. */
   private sweep(): "exit" | "continue" {
-    // 1. Another daemon took the file: leave it to that one.
+    // Another daemon took the file: leave it to that one.
     if (!ownedBy(this.file, process.pid)) return "exit";
-    // 2. Heartbeat. A failed write must not end the daemon mid-job; the next sweep retries it.
+    // Heartbeat. A failed write must not end the daemon mid-job; the next sweep retries it.
     try {
       writeJsonAtomic(this.file, state(this.startVersion));
     } catch (err) {
       console.error(`crank-mem daemon: heartbeat failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     try {
-      // 3. The clone was upgraded under us: finish the current job, then let the next start load the new code.
+      // The clone was upgraded under us: finish the current job, then let the next start load the new code.
       if (cliVersion() !== this.startVersion) this.stopping = true;
       pruneSeen();
       pruneProjects();
-      // 6. Digests stopped (credential or login).
+      // Digests stopped (credential or login).
       if (readStopState() !== null) this.stopping = true;
-      // 7. Entries whose transcript is gone have nothing left to digest.
+      // Entries whose transcript is gone have nothing left to digest.
       for (const item of readSpool()) if (!fs.existsSync(item.entry.transcriptPath)) deleteEntry(item.stem);
-      // 8–9. Start the oldest eligible entry's job when none is running.
       if (!this.stopping && this.job === null) {
         const now = Date.now();
         const next = eligible(readSpool().filter((item) => (this.holds.get(item.stem)?.untilMs ?? 0) <= now));
@@ -151,7 +150,6 @@ class Daemon {
     } catch (err) {
       console.error(`crank-mem daemon: sweep failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-    // 10.
     if (this.job !== null) {
       this.busySince = Date.now();
       return "continue";
@@ -192,7 +190,7 @@ class Daemon {
   }
 }
 
-/** 4. Drop files under <crank home>/seen/ older than 7 days. */
+/** Drop files under <crank home>/seen/ older than 7 days. */
 function pruneSeen(): void {
   const dir = path.join(crankHome(), SEEN_DIR);
   let names: string[];
@@ -212,7 +210,7 @@ function pruneSeen(): void {
   }
 }
 
-/** 5. Drop spool and parked entries whose project was removed or turned digests off. */
+/** Drop spool and parked entries whose project was removed or turned digests off. */
 function pruneProjects(): void {
   const wanted = (item: SpoolItem): boolean => {
     const crankDir = path.join(String(item.entry.projectRoot), CRANK_DIR);
@@ -222,7 +220,7 @@ function pruneProjects(): void {
   for (const item of readParked()) if (!wanted(item)) deleteParked(item.stem);
 }
 
-/** 9. The oldest entry that ended, or whose transcript has been quiet for QUIET_MS. */
+/** The oldest entry that ended, or whose transcript has been quiet for QUIET_MS. */
 function eligible(items: SpoolItem[]): SpoolItem | undefined {
   const quietBefore = Date.now() - QUIET_MS;
   const ready = items.filter((item) => {

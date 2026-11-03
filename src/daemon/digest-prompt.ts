@@ -42,7 +42,7 @@ An input opening with [PRIOR SUMMARY] continues an earlier digest. Treat that bl
 
 const SUMMARY_KEYS = ["request", "investigated", "learned", "completed", "next_steps"] as const;
 
-// Verbatim from the stage 1 digest probe's schema.json, which every probe run used (ADR 0008).
+// Verbatim from the ADR 0008 digest probe's schema.json (digest-probe/); re-probe per ADR 0008 before changing it.
 const SCHEMA = {
   type: "object", additionalProperties: false, required: ["observations", "summary"],
   properties: {

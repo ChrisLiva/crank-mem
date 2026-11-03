@@ -24,7 +24,7 @@ const PARK_SIZE = 4096;
 /** Rows embedded per digest; rows past it wait for the next digest in the repo. */
 const EMBED_BATCH = 200;
 
-/** Rejections before an entry parks: a session the model will not digest must not cost a run every sweep. */
+/** Rejections before an entry parks: a session the model will not digest must not cost a run every hour. */
 const REJECTION_LIMIT = 3;
 
 export async function run(args: string[]): Promise<number> {

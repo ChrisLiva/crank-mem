@@ -18,11 +18,9 @@ import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
 // Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
 // the hook wiring, the .crank/.gitignore allowlist, and the git mode's ignore
 // state: commit mode loses a stale crank-mem ignore block, ignore and exclude
-// mode regain a missing one. It adds the recall rules Bash(crank-mem search *),
-// Bash(crank-mem timeline *) and Bash(crank-mem get *) to the wired Claude
-// settings file, in place of the legacy Bash(crank-mem *) rule, and installs
-// the clone's packages (a failed package install costs search by meaning, not
-// the upgrade). Of config.json it updates only vendored_version and
+// mode regain a missing one. It puts CRANK_ALLOW_RULES in the wired Claude
+// settings file in place of LEGACY_ALLOW_RULE, and installs the clone's
+// packages. Of config.json it updates only vendored_version and
 // clone_root; it never touches cerebrum or the index. Recomputes Codex
 // trusted hashes iff the user opted in at init.
 

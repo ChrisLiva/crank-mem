@@ -34,7 +34,6 @@ function readSeen(file: string): string[] {
   }
 }
 
-/** True when the file's mtime is later than `ms`; a file stat cannot read is not. */
 function changedSince(file: string, ms: number): boolean {
   try {
     return fs.statSync(file).mtimeMs > ms;

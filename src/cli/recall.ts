@@ -12,10 +12,7 @@ const KEYWORD_ONLY_NOTE = "crank-mem: keyword search only; run `crank-mem setup`
 
 const STATE_NOTES = { newer: MEMORY_NEWER_NOTE, unreadable: MEMORY_UNREADABLE_NOTE } as const;
 
-/**
- * Runs `fn` on the project's store, closing it after. A missing store is an
- * empty result for search (stdout, exit 0) and an error for the rest.
- */
+/** A missing store is an empty result for search (stdout, exit 0) and an error for the rest. */
 async function withMemory(
   root: string, missingIsEmpty: boolean, fn: (memory: MemoryReader) => number | Promise<number>,
 ): Promise<number> {
