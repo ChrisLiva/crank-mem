@@ -17,6 +17,17 @@ function temp(dir: string): string {
   return dir;
 }
 
+/** Store one vector so `search` embeds its query. */
+function plantVector(root: string, id: number): void {
+  const opened = openMemory(memoryPath(root), "write");
+  if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
+  try {
+    opened.memory.putVectors(EMBED_MODEL, [{ id, vector: new Float32Array(384) }]);
+  } finally {
+    opened.memory.close();
+  }
+}
+
 describe("search by meaning (black-box)", () => {
   test("without the model, search falls back to keywords with one note on stderr; with no store it prints no note", () => {
     const home = temp(makeCrankHome());
@@ -44,13 +55,7 @@ describe("search by meaning (black-box)", () => {
     const [id] = seedMemory(root, [{ title: "alpha beta" }]);
     expect(runCli(root, ["search", "alpha"], { CRANK_HOME: home })).toMatchObject({ status: 0, stderr: "" });
 
-    const opened = openMemory(memoryPath(root), "write");
-    if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
-    try {
-      opened.memory.putVectors(EMBED_MODEL, [{ id: id!, vector: new Float32Array(384) }]);
-    } finally {
-      opened.memory.close();
-    }
+    plantVector(root, id!);
     expect(runCli(root, ["search", "alpha"], { CRANK_HOME: home })).toMatchObject({ status: 0, stderr: `${KEYWORD_ONLY_NOTE}\n` });
   }, 30_000);
 
@@ -58,7 +63,8 @@ describe("search by meaning (black-box)", () => {
     const server = await startModelServer(realModelsDir(), "ok");
     try {
       const root = temp(makeCrankProject());
-      seedMemory(root, [{ title: "Lock file writes retry on EEXIST" }]);
+      const [id] = seedMemory(root, [{ title: "Lock file writes retry on EEXIST" }]);
+      plantVector(root, id!);
       for (const home of [temp(makeCrankHome()), temp(makeModelHome())]) {
         const run = runCli(root, ["search", "EEXIST", "--model-host", server.url], { CRANK_HOME: home });
         expect(run.status).toBe(0);
