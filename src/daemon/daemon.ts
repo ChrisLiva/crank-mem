@@ -8,7 +8,7 @@ import { trySteal } from "../hooks/lib/lock.ts";
 import {
   DAEMON_FILE, daemonAlive, deleteEntry, deleteParked, readParked, readSpool, type DaemonState, type SpoolItem,
 } from "../hooks/lib/spool.ts";
-import { crankHome, ensureCrankHome, readStopState, writeJsonAtomic } from "../hooks/lib/user-state.ts";
+import { SEEN_DIR, crankHome, ensureCrankHome, readStopState, writeJsonAtomic } from "../hooks/lib/user-state.ts";
 
 // `crank-mem daemon`: one per user, owning <crank home>/daemon.json. Each sweep
 // heartbeats, prunes the spool and starts at most one `crank-mem job` child,
@@ -199,7 +199,7 @@ class Daemon {
 
 /** 4. Drop files under <crank home>/seen/ older than 7 days. */
 function pruneSeen(): void {
-  const dir = path.join(crankHome(), "seen");
+  const dir = path.join(crankHome(), SEEN_DIR);
   let names: string[];
   try {
     names = fs.readdirSync(dir);

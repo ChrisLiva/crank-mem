@@ -79,9 +79,14 @@ export function crankHooks(runtime: CrankConfig["runtime"], agent: Agent): Hooks
       { matcher, hooks: [{ type: "command", command: hookCommand(runtime, "post-write.ts", agent), timeout: 10 }] },
     ],
   };
-  // Stop, SessionEnd and SubagentStart are Claude-only; Codex gets the nudge
+  // File history, Stop, SessionEnd and SubagentStart are Claude-only; Codex gets the nudge
   // from post-write (ADR 0004) and has no digests.
   if (agent === "claude") {
+    // After the write group, so PostToolUse[0] stays the write matcher.
+    map.PostToolUse!.push({
+      matcher: "Read|Bash",
+      hooks: [{ type: "command", command: hookCommand(runtime, "post-read.ts", agent), timeout: 10 }],
+    });
     map.Stop = [
       { hooks: [{ type: "command", command: hookCommand(runtime, "stop.ts", agent), timeout: 10 }] },
     ];

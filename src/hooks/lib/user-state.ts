@@ -6,6 +6,8 @@ import type { CrankConfig } from "./config.ts";
 // Per-user state under <crank home>: $CRANK_HOME when set, otherwise ~/.crank.
 
 export const STOP_FILE = "digest-state.json";
+/** Per-session markers of the file histories each agent has already seen. */
+export const SEEN_DIR = "seen";
 
 export type StopState = { reason: "credential" | "login"; atMs: number; detail: string };
 

@@ -101,3 +101,34 @@ export function claudeSessionEnd(cwd: string, transcriptPath: string): object {
     reason: "prompt_input_exit",
   };
 }
+
+// Live-probed 2026-11-02, Claude Code 2.1.316 (ADR 0009).
+export function claudePostRead(cwd: string, filePath: string, transcriptPath: string, agentId?: string): object {
+  return {
+    session_id: "551be959-1111-2222-3333-444455556666",
+    transcript_path: transcriptPath,
+    cwd,
+    permission_mode: "default",
+    ...(agentId !== undefined && { agent_id: agentId, agent_type: "general-purpose" }),
+    hook_event_name: "PostToolUse",
+    tool_name: "Read",
+    tool_input: { file_path: filePath },
+    tool_response: { type: "text", file: { filePath, content: "" } },
+    tool_use_id: "toolu_01BBBB",
+  };
+}
+
+// Live-probed 2026-11-02, Claude Code 2.1.316 (ADR 0009).
+export function claudePostBash(cwd: string, command: string, transcriptPath: string): object {
+  return {
+    session_id: "551be959-1111-2222-3333-444455556666",
+    transcript_path: transcriptPath,
+    cwd,
+    permission_mode: "default",
+    hook_event_name: "PostToolUse",
+    tool_name: "Bash",
+    tool_input: { command, description: "" },
+    tool_response: { interrupted: false, isImage: false, noOutputExpected: false, stderr: "", stdout: "" },
+    tool_use_id: "toolu_01CCCC",
+  };
+}

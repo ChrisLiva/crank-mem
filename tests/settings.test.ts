@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile,
+  crankHooks, hookCommand, mergeHooksIntoFile, removeCrankHooksFromFile,
   addIgnoreLines, removeIgnoreLines, ensureCodexFeatures, removeCodexFeatures,
   addAllowRule, removeAllowRule, CRANK_ALLOW_RULE,
 } from "../src/cli/settings.ts";
@@ -38,6 +38,14 @@ describe("mergeHooksIntoFile", () => {
     for (const type of ["general-purpose", "Explore", "Plan", "workflow-subagent"]) expect(matcher.test(type)).toBe(true);
     for (const type of ["my-reviewer", "Explorer", "general-purpose-2"]) expect(matcher.test(type)).toBe(false);
     expect(crankHooks("bun", "codex").SubagentStart).toBeUndefined();
+  });
+
+  test("file history is wired after the write group for Claude only", () => {
+    const [write, read] = crankHooks("bun", "claude").PostToolUse!;
+    expect(write!.matcher).toBe("Write|Edit|MultiEdit");
+    expect(read!.matcher).toBe("Read|Bash");
+    expect(read!.hooks).toEqual([{ type: "command", command: hookCommand("bun", "post-read.ts", "claude"), timeout: 10 }]);
+    expect(crankHooks("bun", "codex").PostToolUse).toHaveLength(1);
   });
 
   test("SessionEnd is wired for Claude only, with a 10 s timeout", () => {
@@ -149,8 +157,8 @@ describe("wired commands", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-clean-checkout-"));
     for (const runtime of ["bun", "node"] as const) {
       for (const agent of ["claude", "codex"] as const) {
-        for (const groups of Object.values(crankHooks(runtime, agent))) {
-          const run = runWired(groups[0]!.hooks[0]!.command, root);
+        for (const group of Object.values(crankHooks(runtime, agent)).flat()) {
+          const run = runWired(group.hooks[0]!.command, root);
           expect(run.status).toBe(0);
           expect(run.stdout).toBe("");
         }
