@@ -16,7 +16,8 @@ export const RUN_TIMEOUT_MS = 300_000;
 
 const PASSED_ENV = ["HOME", "USER", "PATH", "TMPDIR"] as const;
 
-type Run = { code: number | null; stdout: string; detail: string | null };
+type Failure = Exclude<ModelResult<unknown>, { kind: "ok" }>;
+type Run = { code: number | null; stdout: string; failure: Failure | null };
 type Obj = Record<string, unknown>;
 
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -32,26 +33,44 @@ function claudeEnv(): Record<string, string> {
   return env;
 }
 
-function runClaude(args: string[], input: string | null, cwd: string, timeoutMs: number): Promise<Run> {
+/**
+ * Run `claude` to its close. `watchKey` kills the run at the first stream line naming an
+ * `apiKeySource` other than "none": the call is already off the claude.ai login.
+ */
+function runClaude(args: string[], input: string | null, cwd: string, timeoutMs: number, watchKey = false): Promise<Run> {
   return new Promise((resolve) => {
     let stdout = "";
-    let detail: string | null = null;
+    let pending = "";
+    let failure: Failure | null = null;
     const child = spawn("claude", args, { cwd, env: claudeEnv(), stdio: ["pipe", "pipe", "ignore"] });
-    const timer = setTimeout(() => {
-      detail ??= `claude ${args[0]} ran past ${timeoutMs} ms`;
+    const fail = (f: Failure) => {
+      failure ??= f;
       child.kill("SIGKILL");
-    }, timeoutMs);
+    };
+    const timer = setTimeout(() => fail({ kind: "retry", detail: `claude ${args[0]} ran past ${timeoutMs} ms` }), timeoutMs);
     child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      if (!watchKey) return;
+      const lines = (pending + chunk).split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        const parsed = parseJson(line);
+        if (isObj(parsed) && "apiKeySource" in parsed && parsed.apiKeySource !== "none") {
+          fail({ kind: "stopped", reason: "credential", detail: `claude -p ran on apiKeySource ${String(parsed.apiKeySource)}, not the claude.ai login` });
+        }
+      }
+    });
     child.stdin.on("error", () => {});
     child.stdin.end(input ?? "");
-    child.on("error", (err) => {
+    child.on("error", (err: NodeJS.ErrnoException) => {
       clearTimeout(timer);
-      resolve({ code: null, stdout, detail: `claude did not start: ${err.message}` });
+      const detail = err.code === "ENOENT" ? "claude not found" : `claude did not start: ${err.message}`;
+      resolve({ code: null, stdout, failure: failure ?? { kind: "retry", detail } });
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({ code, stdout, detail });
+      resolve({ code, stdout, failure });
     });
   });
 }
@@ -92,19 +111,46 @@ export async function askClaude<T>(
   fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
 
   const auth = await runClaude(["auth", "status"], null, cwd, timeoutMs);
-  if (auth.detail) return { kind: "retry", detail: auth.detail };
+  if (auth.failure) return auth.failure;
   const status = parseJson(auth.stdout);
-  if (!isObj(status) || status.loggedIn !== true || status.authMethod !== "claude.ai" || status.apiProvider !== "firstParty") {
-    return { kind: "retry", detail: `claude auth status did not show a claude.ai login (exit ${auth.code})` };
+  if (!isObj(status)) return { kind: "retry", detail: `claude auth status printed no JSON (exit ${auth.code})` };
+  if (status.loggedIn === false) return { kind: "stopped", reason: "login", detail: "claude auth status: not logged in" };
+  if (status.loggedIn !== true || status.authMethod !== "claude.ai" || status.apiProvider !== "firstParty") {
+    return {
+      kind: "stopped", reason: "credential",
+      detail: `claude auth status: authMethod ${String(status.authMethod)}, apiProvider ${String(status.apiProvider)}; digests run only on a claude.ai login`,
+    };
   }
 
-  const run = await runClaude(callArgs(req.system, req.schema), req.input, cwd, timeoutMs);
-  if (run.detail) return { kind: "retry", detail: run.detail };
+  const run = await runClaude(callArgs(req.system, req.schema), req.input, cwd, timeoutMs, true);
+  if (run.failure) return run.failure;
+  return classify(run, req.validate);
+}
+
+/** Settle a finished `-p` run. Credential failures also read `subtype: "success"` (exp/c1), so `subtype` alone decides nothing. */
+function classify<T>(run: Run, validate: (value: unknown) => value is T): ModelResult<T> {
   const result = lastResult(run.stdout);
-  if (!result) return { kind: "retry", detail: `claude -p printed no result line (exit ${run.code})` };
-  const model = isObj(result.modelUsage) ? Object.keys(result.modelUsage)[0] : undefined;
-  if (result.is_error !== false || model === undefined || typeof result.total_cost_usd !== "number" || !req.validate(result.structured_output)) {
-    return { kind: "retry", detail: `claude -p ended without valid output (exit ${run.code})` };
+  const modelUsage = isObj(result?.modelUsage) ? result.modelUsage : {};
+  const providers = Object.values(modelUsage).filter(isObj).map((u) => u.provider).filter((p) => p !== undefined);
+  const other = providers.find((p) => p !== "firstParty");
+  if (other !== undefined) return { kind: "stopped", reason: "credential", detail: `claude -p ran on provider ${String(other)}` };
+  // Raw stdout covers both the plain-text form (exp/d.out) and the result line's `result` string.
+  if (run.stdout.includes("Not logged in")) {
+    return { kind: "stopped", reason: "login", detail: "claude -p: not logged in" };
   }
-  return { kind: "ok", output: result.structured_output, model, costUsd: result.total_cost_usd };
+  if (result?.api_error_status === 401 || result?.api_error_status === 403) {
+    return { kind: "stopped", reason: "login", detail: `claude -p: HTTP ${result.api_error_status}` };
+  }
+  if (!result) return { kind: "retry", detail: `claude -p printed no result line (exit ${run.code})` };
+  if (result.is_error === true) {
+    if (result.subtype === "error_max_turns") return { kind: "rejected", detail: "claude -p hit max turns without structured output" };
+    return { kind: "retry", detail: `claude -p ended in an error (api_error_status ${String(result.api_error_status)}, exit ${run.code})` };
+  }
+  if (result.structured_output === undefined || result.structured_output === null) {
+    return { kind: "rejected", detail: "claude -p returned no structured output" };
+  }
+  if (!validate(result.structured_output)) return { kind: "rejected", detail: "claude -p structured output failed the schema" };
+  if (providers.length === 0) return { kind: "stopped", reason: "credential", detail: "claude -p result named no provider" };
+  const costUsd = typeof result.total_cost_usd === "number" ? result.total_cost_usd : 0;
+  return { kind: "ok", output: result.structured_output, model: Object.keys(modelUsage)[0]!, costUsd };
 }

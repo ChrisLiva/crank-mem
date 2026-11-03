@@ -3,7 +3,7 @@ import { parseArgs } from "../cli/args.ts";
 import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
 import { deleteEntry, parkEntry, readSpool, type SpoolEntry } from "../hooks/lib/spool.ts";
-import { readStopState } from "../hooks/lib/user-state.ts";
+import { readStopState, writeStopState } from "../hooks/lib/user-state.ts";
 import { digestRequest, type Digest } from "./digest-prompt.ts";
 import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
 import { redact } from "./redact.ts";
@@ -18,6 +18,9 @@ export const MIN_DELTA_CHARS = 2_000;
 
 /** A file this small can hold a short session; a larger one with no conversation record is not a transcript. */
 const PARK_SIZE = 4096;
+
+/** Rejections before an entry parks: a session the model will not digest must not cost a run every sweep. */
+const REJECTION_LIMIT = 3;
 
 export async function run(args: string[]): Promise<number> {
   const stem = args[0];
@@ -55,8 +58,16 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
     return 0;
   }
   const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem)), { timeoutMs });
-  if (r.kind !== "ok") return 1;
+  if (r.kind === "retry") return 1;
+  if (r.kind === "stopped") {
+    writeStopState({ reason: r.reason, atMs: Date.now(), detail: r.detail });
+    return 0;
+  }
   const session: SessionKey = { id: stem, agent: "claude", transcriptPath: entry.transcriptPath };
+  if (r.kind === "rejected") {
+    if (memory.recordRejection(session) >= REJECTION_LIMIT) parkEntry(stem);
+    return 0;
+  }
   const outcome = memory.appendDigest({
     session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot),
   });

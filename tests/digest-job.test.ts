@@ -5,9 +5,14 @@ import * as path from "node:path";
 import { digestRequest, type Digest } from "../src/daemon/digest-prompt.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import {
-  REPO_ROOT, fakeClaude, git, gitCommit, makeCrankHome, makeCrankProject, runCli, runHook, type CliRun, type FakeScenario,
+  REPO_ROOT, fakeClaude, git, gitCommit, makeCrankHome, makeCrankProject, plantMemory, runCli, runHook, type CliRun,
+  type FakeScenario,
 } from "./helpers.ts";
-import { okStream } from "./fixtures/claude-scenarios.ts";
+import {
+  AUTH_API_KEY, AUTH_LOGGED_OUT, AUTH_OAUTH_TOKEN, AUTH_THIRD_PARTY, NOT_LOGGED_IN_RAW, badKeyStream, invalidOutputStream,
+  maxTurnsStream, noProviderStream, notLoggedInStream, okStream, otherProviderStream, refusalStream, status401Stream,
+  status403Stream, status500Stream,
+} from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
@@ -36,7 +41,9 @@ function digestProject(extraConfig: Record<string, unknown> = {}): string {
   return root;
 }
 
-type Journey = { root: string; home: string; fake: ReturnType<typeof fakeClaude>; job: CliRun; spool: string[] };
+type Journey = {
+  root: string; home: string; transcript: string; fake: ReturnType<typeof fakeClaude>; job: CliRun; spool: string[];
+};
 
 /**
  * Write the s1 spool entry through the Stop and SessionEnd hooks, then run `job s1`.
@@ -45,7 +52,7 @@ type Journey = { root: string; home: string; fake: ReturnType<typeof fakeClaude>
 function journey(
   root: string,
   scenarios: FakeScenario[],
-  opts: { transcript?: string; env?: Record<string, string>; skipJob?: boolean } = {},
+  opts: { transcript?: string; env?: Record<string, string>; skipJob?: boolean; timeoutMs?: number } = {},
 ): Journey {
   const home = makeCrankHome();
   temps.push(home);
@@ -59,8 +66,32 @@ function journey(
   expect(runHook("src/hooks/stop.ts", JSON.stringify({ ...claudeStop(root), transcript_path: transcript }), root, hookEnv).status).toBe(0);
   expect(runHook("src/hooks/session-end.ts", JSON.stringify(claudeSessionEnd(root, transcript)), root, hookEnv).status).toBe(0);
   expect(spoolFiles(home)).toEqual(["s1.json"]);
-  const job = opts.skipJob ? { status: -1, stdout: "", stderr: "" } : runCli(root, ["job", "s1"], { ...hookEnv, ...opts.env });
-  return { root, home, fake, job, spool: spoolFiles(home) };
+  const j = { root, home, transcript, fake };
+  const job = opts.skipJob ? { status: -1, stdout: "", stderr: "" } : rerun(j, opts.timeoutMs, opts.env);
+  return { ...j, job, spool: spoolFiles(home) };
+}
+
+/** Run `job s1` again on a journey's project, home and fake. */
+function rerun(
+  j: Pick<Journey, "root" | "home" | "fake">, timeoutMs = 10_000, env: Record<string, string> = {},
+): CliRun {
+  return runCli(j.root, ["job", "s1", "--run-timeout-ms", String(timeoutMs)], { ...j.fake.env, CRANK_HOME: j.home, ...env });
+}
+
+/** The recorded stop state under a crank home, or null when digests are not stopped. */
+function stopState(home: string): { reason: string; atMs: unknown; detail: unknown } | null {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(home, "digest-state.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function expectStopped(home: string, reason: "credential" | "login"): void {
+  const state = stopState(home);
+  expect(state?.reason).toBe(reason);
+  expect(typeof state?.atMs).toBe("number");
+  expect(typeof state?.detail === "string" && state.detail.length > 0).toBe(true);
 }
 
 function spoolFiles(home: string): string[] {
@@ -198,6 +229,143 @@ describe("digest job (black-box)", () => {
     expect(spoolFiles(gone.home)).toEqual([]);
 
     for (const j of [stopped, short, junk, gone]) expect(j.fake.calls()).toEqual([]);
+  });
+});
+
+describe("digest job failure classes (black-box)", () => {
+  const ok = () => ({ lines: okStream(SAMPLE_DIGEST) });
+
+  test.each([
+    ["logged out", AUTH_LOGGED_OUT, "login"],
+    ["an oauth token", AUTH_OAUTH_TOKEN, "credential"],
+    ["an API key", AUTH_API_KEY, "credential"],
+    ["a third-party provider", AUTH_THIRD_PARTY, "credential"],
+  ] as const)("auth status showing %s stops digests before any -p call", (_, auth, reason) => {
+    const { home, fake, job } = journey(digestProject(), [{ ...ok(), auth }]);
+    expect(job.status).toBe(0);
+    expect(fake.calls()).toEqual([]);
+    expectStopped(home, reason);
+  });
+
+  test.each([
+    ["hangs", "hang" as const, 1500],
+    ["prints no JSON", { stdout: "garbage", exit: 0 }, 10_000],
+  ])("auth status that %s retries without a -p call or stop file", (_, auth, timeoutMs) => {
+    const { home, fake, job } = journey(digestProject(), [{ ...ok(), auth }], { timeoutMs });
+    expect(job.status).toBe(1);
+    expect(fake.calls()).toEqual([]);
+    expect(stopState(home)).toBeNull();
+  });
+
+  test("no claude on PATH retries without a stop file", () => {
+    const j = journey(digestProject(), [ok()], { skipJob: true });
+    expect(rerun(j, 10_000, { PATH: tempDir("crank-nopath-") }).status).toBe(1);
+    expect(stopState(j.home)).toBeNull();
+  });
+
+  test("an init line on an API key kills the run at once and stops digests with reason credential", () => {
+    const { home, job } = journey(digestProject(), [{ lines: badKeyStream(), exit: 1 }]);
+    expect(job.status).toBe(0);
+    expectStopped(home, "credential");
+
+    const slow = journey(digestProject(), [{ lines: badKeyStream(), exit: 1, pauseAfterFirstMs: 5_000 }], { skipJob: true });
+    const start = Date.now();
+    expect(rerun(slow).status).toBe(0);
+    expect(Date.now() - start).toBeLessThan(2_000);
+    expectStopped(slow.home, "credential");
+  }, 20_000);
+
+  test.each([
+    ["another provider", otherProviderStream(SAMPLE_DIGEST)],
+    ["no provider", noProviderStream(SAMPLE_DIGEST)],
+  ])("a result on %s discards the output and stops digests with reason credential", (_, lines) => {
+    const { root, home, job } = journey(digestProject(), [{ lines }]);
+    expect(job.status).toBe(0);
+    expectStopped(home, "credential");
+    expect(search(root, "EEXIST")).toBe("");
+  });
+
+  test.each([
+    ["a Not logged in stream", { lines: notLoggedInStream(), exit: 1 }],
+    ["plain Not logged in text", { raw: NOT_LOGGED_IN_RAW, exit: 1 }],
+    ["a 401", { lines: status401Stream(), exit: 1 }],
+    ["a 403", { lines: status403Stream(), exit: 1 }],
+  ])("%s stops digests with reason login", (_, scenario) => {
+    const { home, job } = journey(digestProject(), [scenario]);
+    expect(job.status).toBe(0);
+    expectStopped(home, "login");
+  });
+
+  test.each([
+    ["output that fails the schema", { lines: invalidOutputStream() }],
+    ["hitting max turns", { lines: maxTurnsStream(), exit: 1 }],
+  ])("a rejection by %s stores nothing and keeps the entry", (_, scenario) => {
+    const { root, home, job, spool } = journey(digestProject(), [scenario]);
+    expect(job.status).toBe(0);
+    expect(stopState(home)).toBeNull();
+    expect(search(root, "EEXIST")).toBe("");
+    expect(spool).toEqual(["s1.json"]);
+  });
+
+  test("a refusal stores nothing, and the third in a row parks the entry", () => {
+    const j = journey(digestProject(), [{ lines: refusalStream() }]);
+    expect(j.job.status).toBe(0);
+    expect(stopState(j.home)).toBeNull();
+    expect(search(j.root, "EEXIST")).toBe("");
+    expect(j.spool).toEqual(["s1.json"]);
+    expect(rerun(j).status).toBe(0);
+    expect(spoolFiles(j.home)).toEqual(["s1.json"]);
+    expect(rerun(j).status).toBe(0);
+    expect(spoolFiles(j.home)).toEqual(["parked"]);
+    expect(fs.readdirSync(path.join(j.home, "spool/parked"))).toEqual(["s1.json"]);
+  }, 20_000);
+
+  test("a stored digest resets the rejection count", () => {
+    const refusal = { lines: refusalStream() };
+    const j = journey(digestProject(), [refusal, refusal, ok(), refusal]);
+    expect(rerun(j).status).toBe(0);
+    expect(rerun(j).status).toBe(0);
+    expect(spoolFiles(j.home)).toEqual([]);
+
+    const records = [1, 2, 3].map((n) => JSON.stringify({
+      type: "user", uuid: `later-${n}`, timestamp: `2026-01-03T00:00:0${n}.000Z`,
+      message: { role: "user", content: `${n}`.repeat(800) },
+    }));
+    fs.appendFileSync(j.transcript, "\n" + records.join("\n") + "\n");
+    const stop = JSON.stringify({ ...claudeStop(j.root), transcript_path: j.transcript });
+    expect(runHook("src/hooks/stop.ts", stop, j.root, { ...j.fake.env, CRANK_HOME: j.home }).status).toBe(0);
+    expect(rerun(j).status).toBe(0);
+    expect(rerun(j).status).toBe(0);
+    expect(j.fake.calls().length).toBe(5);
+    expect(spoolFiles(j.home)).toEqual(["s1.json"]);
+  }, 30_000);
+
+  test("a run past the timer is killed and retried, never counted as a rejection", () => {
+    const j = journey(digestProject(), [{ ...ok(), sleepMs: 5_000 }], { skipJob: true });
+    for (let i = 0; i < 3; i++) {
+      const start = Date.now();
+      expect(rerun(j, 1500).status).toBe(1);
+      expect(Date.now() - start).toBeLessThan(3_000);
+      if (i === 0) expect(j.fake.calls().map((c) => c.endMs)).toEqual([null]);
+    }
+    expect(stopState(j.home)).toBeNull();
+    expect(spoolFiles(j.home)).toEqual(["s1.json"]);
+  }, 30_000);
+
+  test("an API error retries every time, never counted as a rejection", () => {
+    const j = journey(digestProject(), [{ lines: status500Stream(), exit: 1 }]);
+    expect(j.job.status).toBe(1);
+    expect(rerun(j).status).toBe(1);
+    expect(rerun(j).status).toBe(1);
+    expect(stopState(j.home)).toBeNull();
+    expect(spoolFiles(j.home)).toEqual(["s1.json"]);
+  }, 20_000);
+
+  test.each(["newer", "unreadable"] as const)("a store planted %s retries without a -p call", (state) => {
+    const j = journey(digestProject(), [ok()], { skipJob: true });
+    plantMemory(j.root, state);
+    expect(rerun(j).status).toBe(1);
+    expect(j.fake.calls()).toEqual([]);
   });
 });
 
