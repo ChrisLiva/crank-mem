@@ -6,6 +6,10 @@ import { flushDebug } from "./debug.ts";
 // Hook I/O helpers. Hooks are advisory-only: they must never fail the tool
 // call, so payload parsing degrades to null and callers exit 0.
 
+export type Obj = Record<string, unknown>;
+
+export const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+
 /** Read all of stdin (hooks receive one JSON payload then EOF). */
 export async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import type { CrankConfig } from "../hooks/lib/config.ts";
+import { isObj } from "../hooks/lib/hook-io.ts";
 
 // Additive wiring of hook entries into agent settings files, and its exact
 // inverse. Merge adds missing entries and refreshes only command forms
@@ -220,10 +221,6 @@ export function removeCrankHooksFromFile(
 
 export const CRANK_ALLOW_RULE = "Bash(crank-mem *)";
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * Append CRANK_ALLOW_RULE to a Claude settings file's permissions.allow,
  * creating the keys when missing and calling `beforeWrite` first. Leaves the
@@ -233,7 +230,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 export function addAllowRule(file: string, beforeWrite?: (file: string) => void): boolean {
   const root: Record<string, unknown> = fs.existsSync(file) ? readJson(file) : {};
   const permissions = "permissions" in root ? root.permissions : {};
-  if (!isPlainObject(permissions)) return false;
+  if (!isObj(permissions)) return false;
   const allow = "allow" in permissions ? permissions.allow : [];
   if (!Array.isArray(allow) || allow.includes(CRANK_ALLOW_RULE)) return false;
   permissions.allow = [...allow, CRANK_ALLOW_RULE];
@@ -256,9 +253,9 @@ export function removeAllowRule(file: string): boolean {
   } catch {
     return false;
   }
-  if (!isPlainObject(root)) return false;
+  if (!isObj(root)) return false;
   const permissions = root.permissions;
-  if (!isPlainObject(permissions) || !Array.isArray(permissions.allow)) return false;
+  if (!isObj(permissions) || !Array.isArray(permissions.allow)) return false;
   const kept = permissions.allow.filter((rule) => rule !== CRANK_ALLOW_RULE);
   if (kept.length === permissions.allow.length) return false;
   if (kept.length === 0) delete permissions.allow;

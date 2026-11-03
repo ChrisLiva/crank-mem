@@ -1,5 +1,5 @@
 import { OBSERVATION_TYPES, type DigestSummary, type ObservationType } from "../hooks/lib/memory.ts";
-import { isObj } from "./gateway.ts";
+import { isObj } from "../hooks/lib/hook-io.ts";
 
 export type Digest = {
   observations: {

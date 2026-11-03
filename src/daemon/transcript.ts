@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isSensitiveFile } from "../hooks/lib/config.ts";
+import { isObj } from "../hooks/lib/hook-io.ts";
 import type { Position } from "../hooks/lib/memory.ts";
 import { redact, stripBlocks } from "./redact.ts";
 
@@ -61,7 +62,7 @@ function readRecords(file: string): Rec[] {
   for (const line of fs.readFileSync(file, "utf8").split("\n")) {
     try {
       const r: unknown = JSON.parse(line);
-      if (r && typeof r === "object" && !Array.isArray(r)) out.push(r as Rec);
+      if (isObj(r)) out.push(r);
     } catch {
       // a malformed, empty or partial (still being written) line is skipped
     }
