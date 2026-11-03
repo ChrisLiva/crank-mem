@@ -79,10 +79,14 @@ export function crankHooks(runtime: CrankConfig["runtime"], agent: Agent): Hooks
       { matcher, hooks: [{ type: "command", command: hookCommand(runtime, "post-write.ts", agent), timeout: 10 }] },
     ],
   };
-  // Stop is Claude-only; Codex gets the nudge from post-write (ADR 0004).
+  // Stop, SessionEnd and SubagentStart are Claude-only; Codex gets the nudge
+  // from post-write (ADR 0004) and has no digests.
   if (agent === "claude") {
     map.Stop = [
       { hooks: [{ type: "command", command: hookCommand(runtime, "stop.ts", agent), timeout: 10 }] },
+    ];
+    map.SessionEnd = [
+      { hooks: [{ type: "command", command: hookCommand(runtime, "session-end.ts", agent), timeout: 10 }] },
     ];
     map.SubagentStart = [
       {

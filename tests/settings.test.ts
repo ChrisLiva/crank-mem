@@ -39,6 +39,13 @@ describe("mergeHooksIntoFile", () => {
     expect(crankHooks("bun", "codex").SubagentStart).toBeUndefined();
   });
 
+  test("SessionEnd is wired for Claude only, with a 10 s timeout", () => {
+    const [hook] = crankHooks("bun", "claude").SessionEnd![0]!.hooks;
+    expect(hook!.timeout).toBe(10);
+    expect(hook!.command).toEndWith("session-end.ts");
+    expect(crankHooks("bun", "codex").SessionEnd).toBeUndefined();
+  });
+
   test("preserves pre-existing settings byte-identical apart from appended entries", () => {
     const f = tmpFile();
     // UserPromptSubmit is an event crank never wires, so it must survive untouched.

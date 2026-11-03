@@ -88,3 +88,16 @@ export function claudeSubagentStart(cwd: string, agentType = "general-purpose"):
     hook_event_name: "SubagentStart",
   };
 }
+
+// Live-probed 2026-11-02, Claude Code 2.1.316 (ADR 0009).
+export function claudeSessionEnd(cwd: string, transcriptPath: string): object {
+  return {
+    session_id: "7c2e9f14-1111-2222-3333-444455556666",
+    transcript_path: transcriptPath,
+    cwd,
+    scratchpad_dir: "/private/tmp/claude-501/-proj/7c2e9f14-1111-2222-3333-444455556666/scratchpad",
+    prompt_id: "b81d3a52-1111-2222-3333-444455556666",
+    hook_event_name: "SessionEnd",
+    reason: "prompt_input_exit",
+  };
+}
