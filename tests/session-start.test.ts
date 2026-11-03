@@ -814,7 +814,7 @@ describe("digests off, stopped, or Codex (black-box)", () => {
     expect([...at].sort((a, b) => a - b)).toEqual(at);
   });
 
-  test("a Codex session keeps the protocols and journal with digests on, and adds recall", () => {
+  test("a Codex session keeps the protocols and journal with digests on, adds recall, and shows the capture notes", () => {
     const { root, home } = memoryProject(true);
     seedMemory(root, titled(3));
     writeJournal(root, ["2026-07-01: did a thing"]);
@@ -822,5 +822,10 @@ describe("digests off, stopped, or Codex (black-box)", () => {
     for (const kept of ["Cerebrum protocol", "Journal protocol", "## Journal", RECALL_BULLET, "## Recent memory"]) {
       expect(ctx).toContain(kept);
     }
+    spoolEntry(home, "old", root, Date.now() - 3 * 3_600_000);
+    stopDigests(home);
+    const noted = injectIn(root, home, codexSessionStart(root));
+    expect(count(noted, NOTE_WAITED)).toBe(1);
+    expect(noted.split("\n").filter((l) => l === NOTE_STOPPED)).toHaveLength(1);
   });
 });
