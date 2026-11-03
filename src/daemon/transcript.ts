@@ -88,12 +88,12 @@ function isConversation(r: Rec): boolean {
 
 function contentOf(r: Rec): unknown {
   const message = r.message;
-  return message && typeof message === "object" ? (message as Rec).content : undefined;
+  return isObj(message) ? message.content : undefined;
 }
 
 function blocksOf(r: Rec): Block[] {
   const content = contentOf(r);
-  return Array.isArray(content) ? content.filter((b): b is Block => !!b && typeof b === "object") : [];
+  return Array.isArray(content) ? content.filter(isObj) : [];
 }
 
 /** Every tool_use id in the file, so a result in a delta keeps its call's name and treatment. */
@@ -110,8 +110,8 @@ function indexCalls(all: Rec[]): Map<string, Call> {
 }
 
 function touchesSensitiveFile(name: string, input: unknown): boolean {
-  if (!input || typeof input !== "object") return false;
-  const { file_path, path: p, command } = input as Rec;
+  if (!isObj(input)) return false;
+  const { file_path, path: p, command } = input;
   const candidates = [file_path, p].filter((v): v is string => typeof v === "string");
   if (name === "Bash" && typeof command === "string") {
     candidates.push(...command.split(/\s+/).map((t) => t.replace(/["']/g, "")));
@@ -160,7 +160,7 @@ function resultText(content: unknown): string {
   if (!Array.isArray(content)) return "";
   return content
     .map((b: unknown) => {
-      const block = (b && typeof b === "object" ? b : {}) as Block;
+      const block: Block = isObj(b) ? b : {};
       return block.type === "text" && typeof block.text === "string" ? block.text : `[${String(block.type)}]`;
     })
     .join("\n");

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, memoryPaths,
+  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, memoryPaths, type HookPayload,
 } from "./lib/hook-io.ts";
 import { CRANK_DIR, loadConfig } from "./lib/config.ts";
 import { debugEvent, enableDebug, safePath } from "./lib/debug.ts";
@@ -18,8 +18,8 @@ const HISTORY_LINES = 5;
 const MAX_BYTES = 1536;
 const SEP = "\n\n";
 
-function readPaths(payload: Record<string, unknown>): string[] {
-  const input = (payload.tool_input ?? {}) as Record<string, unknown>;
+function readPaths(payload: HookPayload): string[] {
+  const input = payload.tool_input ?? {};
   if (payload.tool_name === "Read") return typeof input.file_path === "string" ? [input.file_path] : [];
   if (payload.tool_name === "Bash") return typeof input.command === "string" ? shellReadPaths(input.command) : [];
   return [];
