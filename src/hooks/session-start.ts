@@ -15,9 +15,7 @@ import { enableDebug, debugEvent } from "./lib/debug.ts";
 // SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
 // included; compact only skips the journal trim. Refreshes the index under
 // lock, then emits the injection via hookSpecificOutput.additionalContext.
-// injectionSources applies the digestRunning gate: while it is true the
-// injection drops the upkeep protocols and the journal (ADR 0010), and a
-// readable memory.db adds its recent memory either way.
+// injectionSources applies the digest gate (ADR 0010).
 // Advisory-only: every path exits 0.
 
 const REFRESH_BUDGET_MS = 2_000;
@@ -69,7 +67,7 @@ async function main(): Promise<void> {
       ...sources,
       stalenessNote,
       driftNote: drift ?? undefined,
-      captureNotes: captureNotes(root, config, sources.recall.status),
+      captureNotes: captureNotes(sources.gate, sources.recall.status),
     },
     config.injection_budget_bytes
   ).text;

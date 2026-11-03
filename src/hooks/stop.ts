@@ -5,16 +5,14 @@ import {
 import { CRANK_DIR, loadConfig } from "./lib/config.ts";
 import { cerebrumNudge, cerebrumOverlaps } from "./lib/cerebrum-nudge.ts";
 import { enableDebug } from "./lib/debug.ts";
-import { digestRunning, signalDigest } from "./lib/spool.ts";
+import { digestGate, signalDigest } from "./lib/spool.ts";
 
 // Stop hook, Claude Code only. At turn end it emits cerebrumNudge and
 // cerebrumOverlaps as additionalContext, which Claude wraps in a system
 // reminder without forcing the agent to keep running, so the nudge stays
-// advisory. With `digest` on it first writes the session's spool entry, the
-// digest signal, before the stop_hook_active return, and starts the daemon
-// unless digests are stopped. While digestRunning is true it emits nothing,
-// since digests keep the memory (ADR 0010). Codex gets the nudge from
-// post-write instead (ADR 0004). Every path exits 0.
+// advisory. With `digest` on it writes the session's spool entry; while the
+// digest gate is running it emits nothing (ADR 0010). Codex gets the nudge
+// from post-write instead (ADR 0004). Every path exits 0.
 
 async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());
@@ -32,7 +30,7 @@ async function main(): Promise<void> {
   if (payload.stop_hook_active === true) return;
 
   const codex = isCodexPayload(payload);
-  const msg = digestRunning(config, codex, root)
+  const msg = digestGate(config, codex, root).running
     ? ""
     : [cerebrumNudge(crankDir, codex), cerebrumOverlaps(crankDir)].filter(Boolean).join("\n");
   if (!msg) return;

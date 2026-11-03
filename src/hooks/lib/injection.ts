@@ -9,8 +9,7 @@ import { symbolsSupported } from "./symbols.ts";
 import { countChangedSince } from "./changes.ts";
 import { CEREBRUM_FILE } from "./cerebrum-nudge.ts";
 import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "./memory.ts";
-import { captureStalled, digestRunning, pendingFor } from "./spool.ts";
-import { readStopState } from "./user-state.ts";
+import { digestGate, type DigestGate } from "./spool.ts";
 import type { CrankConfig } from "./config.ts";
 import type { AnatomyIndex } from "./store.ts";
 
@@ -18,7 +17,7 @@ import type { AnatomyIndex } from "./store.ts";
 // file map, and the recall pointer when recallApplies) → staleness/drift/
 // capture notes → the recall sections from memory.db (next steps, only while
 // digests run, then recent memory) → recent journal bullets → cerebrum
-// excerpt → ADR filenames. The running variants (digestRunning true) leave
+// excerpt → ADR filenames. The running variants (digestGate's `running` true) leave
 // out the upkeep protocols and the journal and label the excerpt's sections
 // by name alone, so nothing asks the agent to keep memory (ADR 0010).
 //
@@ -188,12 +187,11 @@ export function recallApplies(running: boolean, status: Recall["status"]): boole
 }
 
 /** Notes on the health of memory capture for this project, most urgent first. Never throws. */
-export function captureNotes(root: string, config: CrankConfig, status: Recall["status"]): string[] {
+export function captureNotes(gate: DigestGate, status: Recall["status"]): string[] {
   const notes: string[] = [];
-  const stop = config.digest ? readStopState() : null;
-  if (stop) notes.push(`crank-mem digests stopped (${stop.reason}): run \`crank-mem digest resume\` once that is fixed.`);
+  if (gate.stop) notes.push(`crank-mem digests stopped (${gate.stop.reason}): run \`crank-mem digest resume\` once that is fixed.`);
   if (status === "newer") notes.push(MEMORY_NEWER_NOTE);
-  if (config.digest && captureStalled(root)) {
+  if (gate.stalled) {
     notes.push("crank-mem: a session here has waited over 2 hours for its digest, so memory upkeep is back on; see `crank-mem stats`.");
   }
   return notes;
@@ -525,14 +523,15 @@ export function injectionSources(
   config: CrankConfig,
   index: AnatomyIndex,
   codex: boolean,
-): InjectionSources & { journalBullets: string[]; codex: boolean; running: boolean; recall: Recall } {
+): InjectionSources & { journalBullets: string[]; codex: boolean; running: boolean; recall: Recall; gate: DigestGate } {
   let cerebrumMd: string | null = null;
   try {
     cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
   } catch {}
 
-  const running = digestRunning(config, codex, root);
-  const recall = readRecall(root, running);
+  const gate = digestGate(config, codex, root);
+  const running = gate.running;
+  const recall = readRecall(root, gate);
 
   const journalBullets = running ? [] : recentJournalBullets(crankDir);
   // How stale the handoff is: files changed since the last entry, from git
@@ -555,17 +554,18 @@ export function injectionSources(
     codex,
     running,
     recall,
+    gate,
   };
 }
 
-function readRecall(root: string, running: boolean): Recall {
+function readRecall(root: string, gate: DigestGate): Recall {
   const opened = openMemory(memoryPath(root), "read");
   if (opened.status !== "open") return { status: opened.status };
   const { memory } = opened;
   try {
     return {
       status: "open",
-      nextSteps: running && pendingFor(root).length === 0 ? memory.latestNextSteps() : null,
+      nextSteps: gate.running && gate.drained ? memory.latestNextSteps() : null,
       recentLines: memory.recent(RECENT_MEMORY_ROWS).map(formatLine),
     };
   } catch {

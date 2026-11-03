@@ -9,7 +9,7 @@ import {
   STOP_FILE, clearStopState, crankHome, ensureCrankHome, readStopState, writeJsonAtomic,
   writeStopState, type StopState,
 } from "../src/hooks/lib/user-state.ts";
-import { digestRunning } from "../src/hooks/lib/spool.ts";
+import { digestGate } from "../src/hooks/lib/spool.ts";
 
 function tempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -139,23 +139,23 @@ describe("user state under the crank home", () => {
     expect(crankHome()).toBe(path.join(os.homedir(), ".crank"));
   });
 
-  test("digestRunning needs digest on, a Claude session and no stop file", () => {
+  test("the digest gate runs only with digest on, a Claude session and no stop file", () => {
     const on = { ...defaultConfig(), digest: true };
     const root = "/project";
-    expect(digestRunning({ ...defaultConfig(), digest: false }, false, root)).toBe(false);
-    expect(digestRunning(on, true, root)).toBe(false);
-    expect(digestRunning(on, false, root)).toBe(true);
+    expect(digestGate({ ...defaultConfig(), digest: false }, false, root).running).toBe(false);
+    expect(digestGate(on, true, root).running).toBe(false);
+    expect(digestGate(on, false, root).running).toBe(true);
     const stop: StopState = { reason: "login", atMs: 1_730_000_000_123.456, detail: "Not logged in · ünïcode" };
     writeStopState(stop);
     expect(readStopState()).toEqual(stop);
-    expect(digestRunning(on, false, root)).toBe(false);
+    expect(digestGate(on, false, root).running).toBe(false);
     clearStopState();
-    expect(digestRunning(on, false, root)).toBe(true);
+    expect(digestGate(on, false, root).running).toBe(true);
     writeStopState(stop);
     fs.writeFileSync(path.join(home, STOP_FILE), "not json");
-    expect(digestRunning(on, false, root)).toBe(true);
+    expect(digestGate(on, false, root).running).toBe(true);
     fs.writeFileSync(path.join(home, STOP_FILE), "");
-    expect(digestRunning(on, false, root)).toBe(true);
+    expect(digestGate(on, false, root).running).toBe(true);
   });
 
   test("ensureCrankHome and writeJsonAtomic create a 0700 home and leave no temp file", () => {

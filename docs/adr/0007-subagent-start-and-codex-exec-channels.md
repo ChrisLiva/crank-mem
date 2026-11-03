@@ -304,7 +304,7 @@ trust_level = "trusted"
   keeps the preference-first order.
 - Codex: no change.
 
-Amended 2026-11-03: while digestRunning is true, ADR 0010 governs SubagentStart:
+Amended 2026-11-03: while the digest gate's `running` is true, ADR 0010 governs SubagentStart:
 `src/hooks/subagent-start.ts` drops the pointer to `journal.md`, describes the excerpt as
 "this project's memory" rather than "agent-kept memory", and `excerptOf` labels the excerpt's
 sections by name alone, without "append at its end" or the "consolidate" line. The hook adds

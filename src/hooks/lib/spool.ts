@@ -4,7 +4,7 @@ import * as path from "node:path";
 import type { CrankConfig } from "./config.ts";
 import { debugEvent } from "./debug.ts";
 import type { HookPayload } from "./hook-io.ts";
-import { crankHome, ensureCrankHome, readStopState, writeJsonAtomic } from "./user-state.ts";
+import { crankHome, ensureCrankHome, readStopState, writeJsonAtomic, type StopState } from "./user-state.ts";
 
 // The digest spool: one <crank home>/spool/<stem>.json per Claude session that
 // has work to digest, keyed by the transcript's basename. Stop and SessionEnd
@@ -132,21 +132,22 @@ export function readSpool(): SpoolItem[] {
   return readEntries(spoolDir());
 }
 
-/** This project's spool entries; parked entries are not among them. */
-export function pendingFor(root: string): SpoolEntry[] {
-  return readSpool()
-    .map(({ entry }) => entry)
-    .filter((entry) => entry.projectRoot === root);
-}
-
 /**
- * True when an entry for this project has been quiet past CAPTURE_STALL_MS.
- * The transcript's mtime counts too: Stop fires only at turn end, so a long
- * turn keeps an old updatedAt while its transcript grows.
+ * The digest gate for one session, read once. `running`: digests run for this
+ * Claude session, since the project turned them on, nothing stopped them, and
+ * its capture drains. `stalled`: an entry for this project has been quiet past
+ * CAPTURE_STALL_MS; the transcript's mtime counts too, because Stop fires only
+ * at turn end, so a long turn keeps an old updatedAt while its transcript
+ * grows. `drained`: no entry for this project waits (parked ones do not count).
  */
-export function captureStalled(root: string): boolean {
+export type DigestGate = { running: boolean; stop: StopState | null; stalled: boolean; drained: boolean };
+
+export function digestGate(config: CrankConfig, codex: boolean, root: string): DigestGate {
+  if (!config.digest) return { running: false, stop: null, stalled: false, drained: true };
+  const stop = readStopState();
+  const pending = readSpool().map(({ entry }) => entry).filter((entry) => entry.projectRoot === root);
   const cutoff = Date.now() - CAPTURE_STALL_MS;
-  return pendingFor(root).some((entry) => {
+  const stalled = pending.some((entry) => {
     if (!(entry.updatedAt < cutoff)) return false;
     try {
       return fs.statSync(entry.transcriptPath).mtimeMs < cutoff;
@@ -154,11 +155,7 @@ export function captureStalled(root: string): boolean {
       return true;
     }
   });
-}
-
-/** Digests run for Claude sessions when the project turned them on, nothing stopped them, and its capture drains. */
-export function digestRunning(config: CrankConfig, codex: boolean, root: string): boolean {
-  return config.digest && !codex && readStopState() === null && !captureStalled(root);
+  return { running: !codex && stop === null && !stalled, stop, stalled, drained: pending.length === 0 };
 }
 
 export function readParked(): SpoolItem[] {

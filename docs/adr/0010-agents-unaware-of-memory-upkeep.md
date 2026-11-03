@@ -15,7 +15,7 @@ agent effort. The user set the rule for that path:
 
 ## Decision
 
-- **One gate.** `digestRunning(config, codex, root)` in `src/hooks/lib/spool.ts` is true when
+- **One gate.** `digestGate(config, codex, root)` in `src/hooks/lib/spool.ts` returns `running: true` when
   `config.digest` is true, `<crank home>/digest-state.json` holds no stop state, the
   session is not Codex, and no spool entry for this project has an `updatedAt` and a
   transcript mtime that both lie more than `CAPTURE_STALL_MS` (2 hours) back.
