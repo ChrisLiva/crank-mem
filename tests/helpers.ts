@@ -6,6 +6,7 @@ import type * as sqlite from "node:sqlite";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { memoryPath, openMemory, type NewObservation } from "../src/hooks/lib/memory.ts";
 import { DAEMON_FILE, type DaemonState } from "../src/hooks/lib/spool.ts";
+import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");
 
@@ -301,4 +302,59 @@ export function killDaemon(crankHome: string): void {
   } catch {
     // No such group: the daemon already exited.
   }
+}
+
+/** The model `crank-mem setup` put in the real ~/.crank/models; read only, and it throws when the model is absent. */
+export function realModelsDir(): string {
+  const dir = path.join(os.homedir(), ".crank", "models");
+  const missing = MODEL_FILES.filter((f) => !fs.existsSync(path.join(dir, EMBED_MODEL, f)));
+  if (missing.length > 0) {
+    throw new Error(`the local search model is missing ${missing.join(", ")} under ${dir}; run \`crank-mem setup\` once`);
+  }
+  return dir;
+}
+
+/** A temp CRANK_HOME whose models entry is a symlink to realModelsDir(). */
+export function makeModelHome(): string {
+  const home = makeCrankHome();
+  fs.symlinkSync(realModelsDir(), path.join(home, "models"));
+  return home;
+}
+
+/** Start tests/fixtures/model-server.ts as a child serving `dir`; `requests()` lists the paths it was asked for. */
+export async function startModelServer(
+  dir: string, mode: "ok" | "stall" | "slow",
+): Promise<{ url: string; requests(): string[]; stop(): void }> {
+  const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crank-modelsrv-")), "requests.log");
+  fs.writeFileSync(log, "");
+  const proc = spawn(process.execPath, [path.join(REPO_ROOT, "tests/fixtures/model-server.ts"), "--dir", dir, "--mode", mode, "--log", log], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  const stop = () => {
+    proc.kill("SIGKILL");
+  };
+  const port = await new Promise<number>((resolve, reject) => {
+    let out = "";
+    const timer = setTimeout(() => reject(new Error("model server did not print its port")), 10_000);
+    proc.stdout!.on("data", (chunk: Buffer) => {
+      out += chunk.toString();
+      const m = /^PORT (\d+)\n/.exec(out);
+      if (m) {
+        clearTimeout(timer);
+        resolve(Number(m[1]));
+      }
+    });
+    proc.once("exit", () => {
+      clearTimeout(timer);
+      reject(new Error("model server exited before printing its port"));
+    });
+  }).catch((err) => {
+    stop();
+    throw err;
+  });
+  return {
+    url: `http://127.0.0.1:${port}`,
+    requests: () => fs.readFileSync(log, "utf-8").split("\n").filter(Boolean),
+    stop,
+  };
 }

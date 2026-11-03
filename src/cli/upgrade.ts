@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { cliVersion, REPO_ROOT } from "./version.ts";
+import { installPackages } from "./setup.ts";
 import { vendorHooks, templatePath } from "./vendor.ts";
 import { openProject } from "./project.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
@@ -119,6 +120,11 @@ export async function run(_args: string[]): Promise<number> {
       console.error(`crank-mem: could not write ${path.relative(root, ignoreFile)} (${err instanceof Error ? err.message : String(err)})`);
     }
   }
+
+  // A pull can change package.json at the same version; an install failure
+  // costs search by meaning, not the upgrade.
+  const installed = installPackages();
+  if (!installed.ok) console.error(`crank-mem: could not install packages (${installed.detail})`);
 
   const versionChanged = config.vendored_version !== current;
   if (config.codex_trust_written && (versionChanged || codexRewired)) {

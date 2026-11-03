@@ -11,6 +11,7 @@ Commands:
   search     Search stored memory by keyword
   timeline   Show the observations around one id
   get        Print stored observations in full
+  setup      Install packages and download the local search model
   stats      Index coverage, memory health and Codex hook status
   upgrade    Re-vendor hooks and repair their wiring after a git pull
   uninstall  Remove all wiring, offer backup restore
@@ -35,6 +36,8 @@ async function main(): Promise<number> {
       return (await import("../daemon/digest-job.ts")).run(rest);
     case "daemon":
       return (await import("../daemon/daemon.ts")).run(rest);
+    case "setup":
+      return (await import("./setup.ts")).run(rest);
     case "stats":
       return (await import("./stats.ts")).run(rest);
     case "upgrade":

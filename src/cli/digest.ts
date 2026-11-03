@@ -3,6 +3,7 @@ import { ensureDaemon } from "../hooks/lib/spool.ts";
 import { clearStopState } from "../hooks/lib/user-state.ts";
 import { openNearestProject } from "./project.ts";
 import { REPO_ROOT } from "./version.ts";
+import { embedderReady } from "../daemon/embedder.ts";
 
 export async function run(args: string[]): Promise<number> {
   const sub = args[0];
@@ -24,5 +25,8 @@ export async function run(args: string[]): Promise<number> {
       ? "crank-mem: digests on. They run on your Claude login through `claude -p`."
       : "crank-mem: digests off. Stored memory stays readable."
   );
+  if (sub === "on" && !(await embedderReady())) {
+    console.error("crank-mem: warning: search by meaning is not ready; run `crank-mem setup`.");
+  }
   return 0;
 }
