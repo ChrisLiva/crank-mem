@@ -41,6 +41,8 @@ export interface CrankConfig {
   codex_trust_written: boolean;
   /** Write a per-run JSONL trace to .crank/debug.log (off by default). */
   debug: boolean;
+  /** Run background digests of finished sessions through `claude -p` (off by default). */
+  digest: boolean;
 }
 
 export function defaultConfig(): CrankConfig {
@@ -57,6 +59,7 @@ export function defaultConfig(): CrankConfig {
     clone_root: "",
     codex_trust_written: false,
     debug: false,
+    digest: false,
   };
 }
 

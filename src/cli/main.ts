@@ -7,6 +7,7 @@ Usage: crank-mem <command> [flags]
 Commands:
   init       Wire hooks into this project and run the first scan
   scan       Full index rebuild
+  digest     Turn background digests on or off
   stats      Index coverage, memory health and Codex hook status
   upgrade    Re-vendor hooks and repair their wiring after a git pull
   uninstall  Remove all wiring, offer backup restore
@@ -19,6 +20,8 @@ async function main(): Promise<number> {
       return (await import("./init.ts")).run(rest);
     case "scan":
       return (await import("./scan.ts")).run(rest);
+    case "digest":
+      return (await import("./digest.ts")).run(rest);
     case "stats":
       return (await import("./stats.ts")).run(rest);
     case "upgrade":

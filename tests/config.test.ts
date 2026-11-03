@@ -22,6 +22,8 @@ describe("loadConfig sanitization", () => {
     expect(config.max_files).toBe(defaultConfig().max_files);
     expect(config.injection_budget_bytes).toBe(2000);
     expect(config.adr_path).toBe("adr");
+    expect(config.digest).toBe(false);
+    expect(loadConfig(dirWithConfig(JSON.stringify({ digest: "yes" }))).digest).toBe(false);
   });
 
   test("the retired token budget is dropped, not carried through", () => {
