@@ -42,3 +42,7 @@ The shared core is `src/hooks/lib/`: `scanner.ts` (index refresh with time budge
 ## Testing conventions
 
 Tests are black-box: hooks and CLI commands are executed as real child processes with agent-like stdin payloads via `runHook` and `runCli` in `tests/helpers.ts`, with `fakeClaude` standing in for the `claude` binary and `startDaemon` running the real daemon under a temp `CRANK_HOME` (no test runs the real `claude`), against temp projects built by `makeCrankProject`. Agent payload fixtures live in `tests/fixtures/payloads.ts`. Prefer this style over importing hook internals — assertions should hold against exit status, stdout JSON, and on-disk `.crank/` state.
+
+`bun test` runs the test process in UTC with `TZ` unset, while `runCli` and `runHook` children run in the system zone, so an in-process local-date assertion passes against UTC getters too. Pin local dates through a CLI child with `TZ` in its env, in zones on both sides of UTC (`tests/recall-cli.test.ts` → `ZONES`).
+
+`runCli`'s `spawnSync` timeout (`tests/helpers.ts:79`) kills only the CLI child; a grandchild that hangs, such as `fakeClaude` with `auth: "hang"`, keeps running at ppid 1. After a RED run that hit the timeout, find leftover fake `claude` processes with `ps` and kill them.
