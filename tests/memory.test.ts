@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  formatLine,
   MEMORY_FILE,
   memoryStatus,
   openMemory,
@@ -10,6 +11,7 @@ import {
   type Memory,
   type NewObservation,
   type Position,
+  type SearchQuery,
 } from "../src/hooks/lib/memory.ts";
 
 const open: { close(): void }[] = [];
@@ -105,12 +107,6 @@ describe("openMemory", () => {
     } finally {
       process.getBuiltinModule = original;
     }
-  });
-
-  test("search is a stub until it is built", () => {
-    const memory = writable();
-    expect(() => memory.search({ text: "x", vector: null, limit: 5, type: null, sinceMs: null, file: null }))
-      .toThrow("search: not built");
   });
 });
 
@@ -278,5 +274,126 @@ describe("read methods", () => {
     memory.putVectors("m2", [{ id: 1, vector }]);
     expect(ids(memory.unembedded("m1", 10))).toEqual([1, 2, 3, 4]);
     expect(ids(memory.unembedded("m2", 10))).toEqual([2, 3, 4]);
+  });
+});
+
+describe("formatLine", () => {
+  test("renders id, local date, type and title", () => {
+    const createdAtMs = new Date(2026, 0, 2, 3, 4).getTime();
+    expect(formatLine({ id: 7, createdAtMs, type: "bugfix", title: "X" })).toBe("#7 2026-01-02 bugfix X");
+  });
+});
+
+describe("search", () => {
+  const P = { uuid: "u", timestamp: "2026-11-02T10:00:00.000Z" };
+  let digests = 0;
+
+  /** Appends one digest holding these observations and returns their ids in order. */
+  function seed(memory: Memory, observations: NewObservation[]): number[] {
+    const before = memory.recent(1)[0]?.id ?? 0;
+    const sessionId = `seed-${++digests}`;
+    memory.appendDigest(digest(sessionId, null, P, { observations }));
+    return memory.recent(observations.length).map((r) => r.id).filter((id) => id > before).reverse();
+  }
+
+  function query(over: Partial<SearchQuery> & { text: string }): SearchQuery {
+    return { vector: null, limit: 10, type: null, sinceMs: null, file: null, ...over };
+  }
+
+  const vec = (...values: number[]) => new Float32Array(values);
+  const ids = (hits: { id: number }[]) => hits.map((h) => h.id);
+
+  function abc(memory: Memory) {
+    const [a, b, c] = seed(memory, [
+      obs({ title: "first row", narrative: "plain" }),
+      obs({ title: "zebra row", narrative: "plain" }),
+      obs({ title: "third row", narrative: "plain" }),
+    ]) as [number, number, number];
+    memory.putVectors("m1", [{ id: a, vector: vec(1, 0, 0) }, { id: b, vector: vec(0.8, 0.6, 0) }, { id: c, vector: vec(0, 1, 0) }]);
+    return { a, b, c };
+  }
+
+  test("fuses the keyword and vector lists by reciprocal rank", () => {
+    const memory = writable();
+    const { a, b, c } = abc(memory);
+    const hits = memory.search(query({ text: "zebra", vector: { model: "m1", values: vec(1, 0, 0) } }));
+    expect(ids(hits)).toEqual([b, a, c]);
+    expect(hits[0]).toEqual(memory.recent(10).find((r) => r.id === b)!);
+  });
+
+  test("an equal fused score goes to the newest row", () => {
+    const memory = writable();
+    const [x, y] = seed(memory, [obs({ title: "older row", narrative: "n" }), obs({ title: "zebra row", narrative: "n" })]) as [number, number];
+    memory.putVectors("m1", [{ id: x, vector: vec(1, 0, 0) }]);
+    expect(ids(memory.search(query({ text: "zebra", vector: { model: "m1", values: vec(1, 0, 0) } })))).toEqual([y, x]);
+  });
+
+  test("an empty keyword list leaves vector order, and each list stops at 50", () => {
+    const memory = writable();
+    const { a, b, c } = abc(memory);
+    const near = { model: "m1", values: vec(1, 0, 0) };
+    expect(ids(memory.search(query({ text: "qqqq", vector: near })))).toEqual([a, b, c]);
+    const many = seed(memory, Array.from({ length: 57 }, (_, i) => obs({ title: `bulk ${i}`, narrative: "n" })));
+    memory.putVectors("m1", many.map((id, i) => ({ id, vector: vec(1, i, 0) })));
+    expect(memory.search(query({ text: "qqqq", vector: near, limit: 100 })).length).toBe(50);
+  });
+
+  test("without a usable vector, keyword search runs AND, then OR when AND finds nothing", () => {
+    const memory = writable();
+    const [first, second] = seed(memory, [obs({ title: "alpha beta", narrative: "n" }), obs({ title: "beta gamma", narrative: "n" })]) as [number, number];
+    expect(ids(memory.search(query({ text: "alpha delta" })))).toEqual([first]);
+    memory.putVectors("m1", [{ id: first, vector: vec(1, 0, 0) }]);
+    const hits = memory.search(query({ text: "beta", vector: { model: "other", values: vec(1, 0, 0) } }));
+    expect(ids(hits).sort()).toEqual([first, second].sort());
+  });
+
+  test("type, since and file filter both lists, and limit caps the result", async () => {
+    const memory = writable();
+    const [r1] = seed(memory, [obs({ type: "bugfix", title: "kiwi one", narrative: "n", filesRead: ["src/a.ts"] })]) as [number];
+    await sleep(2);
+    const t2 = Date.now();
+    const [r2, r3] = seed(memory, [
+      obs({ type: "feature", title: "kiwi two", narrative: "n", filesModified: ["src/b.ts"] }),
+      obs({ type: "bugfix", title: "plain three", narrative: "n", filesRead: ["src/b.ts"] }),
+    ]) as [number, number];
+    memory.putVectors("m1", [{ id: r1, vector: vec(1, 0, 0) }, { id: r2, vector: vec(0, 1, 0) }, { id: r3, vector: vec(1, 0, 0) }]);
+    const hybrid = (over: Partial<SearchQuery>) =>
+      ids(memory.search(query({ text: "kiwi", vector: { model: "m1", values: vec(1, 0, 0) }, ...over }))).sort();
+    expect(hybrid({})).toEqual([r1, r2, r3].sort());
+    expect(hybrid({ type: "bugfix" })).toEqual([r1, r3].sort());
+    expect(hybrid({ type: "feature" })).toEqual([r2]);
+    expect(hybrid({ sinceMs: t2 })).toEqual([r2, r3].sort());
+    expect(hybrid({ file: "src/b.ts" })).toEqual([r2, r3].sort());
+    expect(hybrid({ file: "src/a.ts" })).toEqual([r1]);
+    expect(hybrid({ limit: 2 }).length).toBe(2);
+    expect(ids(memory.search(query({ text: "kiwi", type: "feature" })))).toEqual([r2]);
+  });
+
+  test("raw query text never parses as FTS5 syntax", () => {
+    const memory = writable();
+    const [and, near, maxTurns, lock] = seed(memory, [
+      obs({ title: "this and that", narrative: "n" }),
+      obs({ title: "near the end", narrative: "n" }),
+      obs({ title: "max turns flag", narrative: "n" }),
+      obs({ title: "lock file writes", narrative: "n" }),
+    ]) as [number, number, number, number];
+    const keyword = (text: string) => ids(memory.search(query({ text })));
+    expect(keyword('"')).toEqual([]);
+    expect(keyword("*")).toEqual([]);
+    expect(keyword("-")).toEqual([]);
+    expect(keyword("AND")).toEqual([and]);
+    expect(keyword("NEAR(")).toEqual([near]);
+    expect(keyword("--max-turns")).toEqual([maxTurns]);
+    expect(keyword("lock *")).toEqual([lock]);
+  });
+
+  test("keyword search orders by bm25, with equal scores to the newest", () => {
+    const memory = writable();
+    const [strong, older, newer] = seed(memory, [
+      obs({ title: "beta beta", narrative: "n" }),
+      obs({ title: "beta one", narrative: "n" }),
+      obs({ title: "beta two", narrative: "n" }),
+    ]) as [number, number, number];
+    expect(ids(memory.search(query({ text: "beta" })))).toEqual([strong, newer, older]);
   });
 });

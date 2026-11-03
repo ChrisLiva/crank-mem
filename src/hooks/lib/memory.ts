@@ -171,6 +171,33 @@ function toLine(row: Row): ObservationLine {
   return { id: Number(row.id), createdAtMs: Number(row.created_at), type: row.type as ObservationType, title: String(row.title) };
 }
 
+/** The one renderer of `#<id> <YYYY-MM-DD> <type> <title>`, dated in local time. */
+export function formatLine(line: ObservationLine): string {
+  const d = new Date(line.createdAtMs);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `#${line.id} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${line.type} ${line.title}`;
+}
+
+// Search fuses a keyword list and a vector list by reciprocal rank (k = RRF_K),
+// each list cut at LIST_DEPTH rows; equal scores go to the newest row.
+const RRF_K = 60;
+const LIST_DEPTH = 50;
+
+function newestFirst(a: ObservationLine, b: ObservationLine): number {
+  return b.createdAtMs - a.createdAtMs || b.id - a.id;
+}
+
+/** Quotes every whitespace-separated term so raw input never parses as FTS5 syntax; "" when there are none. */
+function ftsQuery(text: string, joiner: " " | " OR "): string {
+  return text.split(/\s+/).filter(Boolean).map((term) => `"${term.replaceAll('"', '""')}"`).join(joiner);
+}
+
+function dot(a: Float32Array, b: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) sum += a[i]! * b[i]!;
+  return Number.isNaN(sum) ? -Infinity : sum;
+}
+
 /** The dedupe key: sha256 hex of the case- and whitespace-normalized title and narrative. */
 function contentHash(title: string, narrative: string): string {
   const normalized = (title + "\n" + narrative).toLowerCase().replace(/\s+/g, " ").trim();
@@ -283,7 +310,53 @@ function createMemory(db: sqlite.DatabaseSync): Memory {
       });
     },
 
-    search: () => { throw new Error("search: not built"); },
+    search(query) {
+      const filters: string[] = [];
+      const params: sqlite.SQLInputValue[] = [];
+      if (query.type !== null) { filters.push("o.type = ?"); params.push(query.type); }
+      if (query.sinceMs !== null) { filters.push("o.created_at >= ?"); params.push(query.sinceMs); }
+      if (query.file !== null) {
+        filters.push("o.id IN (SELECT observation_id FROM observation_files WHERE path = ?)");
+        params.push(query.file);
+      }
+      const where = filters.map((f) => ` AND ${f}`).join("");
+      const keyword = (joiner: " " | " OR "): ObservationLine[] => {
+        const match = ftsQuery(query.text, joiner);
+        if (!match) return [];
+        return all(
+          `SELECT ${LINE_COLUMNS} FROM observations_fts JOIN observations o ON o.id = observations_fts.rowid
+           WHERE observations_fts MATCH ?${where}
+           ORDER BY bm25(observations_fts), o.created_at DESC, o.id DESC LIMIT ?`,
+          match, ...params, LIST_DEPTH,
+        ).map(toLine);
+      };
+      const vector = query.vector;
+      if (!vector || !one("SELECT 1 FROM observation_vectors WHERE model = ? LIMIT 1", vector.model)) {
+        const and = keyword(" ");
+        return (and.length > 0 ? and : keyword(" OR ")).slice(0, query.limit);
+      }
+      const byVector = all(
+        `SELECT ${LINE_COLUMNS}, v.vector FROM observation_vectors v JOIN observations o ON o.id = v.observation_id
+         WHERE v.model = ?${where}`,
+        vector.model, ...params,
+      ).map((row) => {
+        const bytes = row.vector as Uint8Array;
+        const stored = new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+        return { line: toLine(row), score: dot(stored, vector.values) };
+      }).sort((x, y) => y.score - x.score || newestFirst(x.line, y.line)).slice(0, LIST_DEPTH).map((s) => s.line);
+      const fused = new Map<number, { line: ObservationLine; score: number }>();
+      for (const list of [keyword(" "), byVector]) {
+        list.forEach((line, i) => {
+          const entry = fused.get(line.id) ?? { line, score: 0 };
+          entry.score += 1 / (RRF_K + i + 1);
+          fused.set(line.id, entry);
+        });
+      }
+      return [...fused.values()]
+        .sort((x, y) => y.score - x.score || newestFirst(x.line, y.line))
+        .slice(0, query.limit)
+        .map((entry) => entry.line);
+    },
 
     timeline(id, depth) {
       const anchor = one(`SELECT ${LINE_COLUMNS} FROM observations o WHERE o.id = ?`, id);
