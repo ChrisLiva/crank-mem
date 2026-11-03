@@ -51,6 +51,12 @@ filtered by mtime (`lib/changes.ts`), and from the index outside a git root.
 Updating cerebrum resets both signals. The advisory-only invariant is
 preserved — no `decision:"block"` anywhere.
 
+Amended 2026-11-03: while digestRunning is true, ADR 0010 governs Claude's Stop hook:
+`src/hooks/stop.ts` drops the cerebrum nudge (including its prune and audit lines) and the
+cerebrum overlap note, and emits no `additionalContext` at all; it only writes the session's
+digest spool entry. Codex sessions never satisfy `digestRunning`, so the post-write nudge
+above is unchanged, as is Claude's Stop nudge in a project with digests off or stopped.
+
 ## Re-verification 2026-07-19
 
 - Claude Code 2.1.215, live probe: Stop `additionalContext` sentinel read

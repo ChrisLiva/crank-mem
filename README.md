@@ -1,21 +1,27 @@
 # crank-mem
 
-Zero-runtime-dependency project memory for coding agents (Claude Code +
-Codex). Maintains a token-annotated file anatomy index, an agent-written
-cerebrum, and a session journal, injected at session start; Claude Code
-subagents get a 2 KB cerebrum excerpt; re-indexes on writes. Advisory-only — hooks always exit 0.
+Project memory for coding agents (Claude Code + Codex). Maintains a
+token-annotated file anatomy index, an agent-written cerebrum, and a session
+journal, injected at session start; Claude Code subagents get a 2 KB cerebrum
+excerpt; re-indexes on writes. With digests on, finished Claude Code sessions
+are digested automatically into a per-project store, `.crank/memory.db`, that
+agents search with `crank-mem search`, `timeline` and `get`, and that shows up
+at session start and when an agent reads a file it covers. Advisory-only —
+hooks always exit 0.
 
 ## Install
 
 ```sh
 git clone <this repo> ~/GitHub/crank-mem
 ln -s ~/GitHub/crank-mem/bin/crank-mem ~/.local/bin/crank-mem
+crank-mem setup          # once per machine: packages and the local search model
 cd <your project> && crank-mem init
 ```
 
 Upgrade = `git pull` in the clone, then `crank-mem upgrade` in each project.
-It re-vendors the hooks copied into `.crank/hooks/`, adds hook wiring the
-install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
+It re-vendors the hooks copied into `.crank/hooks/`, installs the clone's
+packages, adds the `Bash(crank-mem *)` allow rule to the wired Claude settings
+file, adds hook wiring the install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
 wrote to the current form, and removes crank hooks from the Claude settings
 file the git mode does not use, since wiring in both runs every hook twice.
 A hook command you edited stays as written. It replaces a `.crank/.gitignore`
@@ -35,22 +41,29 @@ Codex ask once for a hooks review: open codex in the project and accept it.
 An install made with `--codex-trust write` skips that, because upgrade
 recomputes the trusted hashes.
 
-Requires bun, or node >= 23.6 (runs TypeScript directly; no build step).
+Requires bun, or node >= 23.6 (runs TypeScript directly; no build step). Hooks
+import only `node:` modules; the one package, `@huggingface/transformers`, serves
+search by meaning and loads only when a command needs it.
 
 ## Commands
 
-- `crank-mem init` — wire hooks into `.claude`/`.codex`, seed `.crank/`, first scan; removes crank hooks from the other Claude settings file
+- `crank-mem init` — wire hooks into `.claude`/`.codex`, add the `Bash(crank-mem *)` allow rule to the Claude settings file so agents run `crank-mem search` without a prompt, seed `.crank/`, first scan; removes crank hooks from the other Claude settings file
 - `crank-mem scan` — full index rebuild
-- `crank-mem stats` — index report; memory health (cerebrum bullets injected against total, the oldest one left out, cited paths that still exist, overlapping bullet pairs, journal entries without `NEXT:`, days since the last audit, nudge counts from `debug.log`); whether Codex threads got the injection and whether its hook trust is current
+- `crank-mem digest on|off|resume` — turn background digests on or off for this project; `resume` clears a stop and restarts the daemon
+- `crank-mem search <query>` — search stored memory by meaning or keyword (`--limit`, `--type`, `--since YYYY-MM-DD`, `--file`); keyword only until `setup` has run
+- `crank-mem timeline <id>` — the observations around one id (`--depth`)
+- `crank-mem get <id...>` — print stored observations in full
+- `crank-mem setup` — install the clone's packages and download the local search model into `~/.crank/models`
+- `crank-mem stats` — index report; memory health (cerebrum bullets injected against total, the oldest one left out, cited paths that still exist, overlapping bullet pairs, journal entries without `NEXT:`, days since the last audit, nudge counts from `debug.log`); capture health (digest on, off or stopped, daemon, spool waiting and parked, store counts, last digest, the month's cost at list price, embedder); whether Codex threads got the injection and whether its hook trust is current
 - `crank-mem upgrade` — re-vendor hooks and repair their wiring after a `git pull`
-- `crank-mem uninstall` — remove all wiring, offer backup restore; `--delete-crank` deletes only the files crank-mem writes in `.crank/`, and removes the directory only when nothing else is left in it
+- `crank-mem uninstall` — remove all wiring, offer backup restore; `--delete-crank` deletes only the files crank-mem writes in `.crank/`, `memory.db` and its `-wal` and `-shm` files included, and removes the directory only when nothing else is left in it
 
 ## Layout under `.crank/`
 
 `anatomy-index.json` (data), `anatomy.md` (human/agent view), `cerebrum.md`
 (agent-written semantic memory), `cerebrum-archive.md` (entries a prune moved
 out; never injected), `journal.md` (agent-written session log, last 20 bullets
-kept), `config.json`, `hooks/` (vendored), `backups/` (init/upgrade snapshots,
+kept), `memory.db` (digested memory, kept out of git), `config.json`, `hooks/` (vendored), `backups/` (init/upgrade snapshots,
 plus `backups/cerebrum/`: the last 5 copies of cerebrum.md, taken before each
 prune nudge).
 
@@ -66,9 +79,32 @@ before replacing it.
 Claude Code fires `SessionStart` only in the main session, so crank-mem wires
 `SubagentStart` too. Each `general-purpose`, `Explore`, `Plan` and
 `workflow-subagent` subagent gets a 2,048-byte cerebrum excerpt, split between
-preferences and the newest memory bullets, and a pointer to `cerebrum.md` and
-`journal.md`; custom and plugin agents get nothing. The
+preferences and the newest memory bullets, a pointer to `cerebrum.md` and
+`journal.md`, and, when the project has a readable `memory.db` or digests are
+running, a recall pointer to `crank-mem search`, `timeline` and `get`; custom and plugin agents get nothing.
+While digests run, the journal pointer drops. The
 parent session does not see it. See ADR 0007.
+
+## Digests
+
+`crank-mem digest on` turns digests on for a project. Claude Code's Stop and
+SessionEnd hooks then drop a signal for the session into a per-user spool under
+`~/.crank` (or `$CRANK_HOME`), which crank-mem creates at mode 0700; a
+directory that already exists keeps its mode. They also start a small detached
+daemon, one per user, which runs one digest job at a time across all projects
+and exits when idle. A job reads the session's new transcript records, removes
+`<private>` and `<system-reminder>` blocks, redacts secrets (always on, with no
+setting to turn it off), asks Haiku for typed observations and a summary,
+stores them in `.crank/memory.db`, and embeds them locally for search by
+meaning.
+
+Digests run the unmodified `claude` binary on your own Claude login; any other credential stops them until `crank-mem digest resume`.
+The run gets only `HOME`, `USER`, `PATH`, `TMPDIR` and
+`CLAUDE_CODE_MAX_RETRIES=0` from the environment, and no tools, hooks or MCP
+servers (ADR 0008). `crank-mem stats` shows the month's digest cost at list
+price. While digests run, nothing asks the agent to keep memory: Stop sends no
+nudge and session start leaves out the cerebrum and journal protocols (ADR
+0010). Codex sessions are not digested.
 
 ## What gets indexed
 
@@ -111,7 +147,8 @@ at the project root recording the source and content hash; update installed
 copies with `npx skills update` (`crank-mem upgrade` never touches them).
 
 Invocation is user-only: `/crank-mem-audit` in Claude Code, `$crank-mem-audit`
-in Codex. When the skill is installed, a cerebrum or journal nudge that is
+in Codex. Cerebrum and journal nudges stop in Claude sessions while digests run
+(see Digests). When the skill is installed, a cerebrum or journal nudge that is
 already due also asks the agent to suggest an audit to you, at most once every
 7 days and not within 7 days of the last audit, or of install when the project
 was never audited. An audit is dated by its backup directory under

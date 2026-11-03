@@ -27,6 +27,8 @@ channel and has Codex's PostToolUse hook, model-visible per the Findings above,
 emit the cerebrum nudge; both carry it as additionalContext. ADR 0007 adds
 SubagentStart, which carries a cerebrum excerpt to Claude subagents.
 
+Amended 2026-11-03: Claude's PostToolUse also carries file history on Read and Bash calls, from src/hooks/post-read.ts (ADR 0009).
+
 ## Re-verification 2026-07-19
 
 - Claude Code 2.1.215, live probe: SessionStart/PreToolUse/PostToolUse
@@ -37,6 +39,14 @@ SubagentStart, which carries a cerebrum excerpt to Claude subagents.
   PostToolUse `additional_contexts` become developer-role conversation
   messages, non-blocking (`core/src/hook_runtime.rs`). Other Codex events not
   re-probed; the 2026-07-16 probe stands.
+
+## Re-verification 2026-11-03
+
+- Claude Code 2.1.317 (`claude --version`), live probe in a scratch project run as
+  `claude -p --model haiku` through a wrapper that strips the parent session's variables:
+  the model named all four `additionalContext` sentinels, from SessionStart, PreToolUse
+  `Read`, PostToolUse `Read` and PostToolUse `Bash` (one Read and one `cat` in the
+  session). Codex not re-probed.
 
 ## Re-probe method (~5 min when agent versions drift)
 

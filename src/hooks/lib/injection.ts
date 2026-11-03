@@ -15,8 +15,12 @@ import type { CrankConfig } from "./config.ts";
 import type { AnatomyIndex } from "./store.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
-// file map) → staleness/drift/capture notes → next steps → recent memory →
-// recent journal bullets → cerebrum excerpt → ADR filenames.
+// file map, and the recall pointer when recallApplies) → staleness/drift/
+// capture notes → the recall sections from memory.db (next steps, only while
+// digests run, then recent memory) → recent journal bullets → cerebrum
+// excerpt → ADR filenames. The running variants (digestRunning true) leave
+// out the upkeep protocols and the journal and label the excerpt's sections
+// by name alone, so nothing asks the agent to keep memory (ADR 0010).
 //
 // The map is not injected, only a one-line pointer to it. Inlining the map
 // cost 74% of the injection; ADR 0005 records the measurement.

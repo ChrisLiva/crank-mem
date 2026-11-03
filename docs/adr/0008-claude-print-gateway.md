@@ -125,6 +125,33 @@ Both runs met the bar the plan set: kind `ok`, `apiKeySource` `"none"`, provider
 - crank-mem does not use `--max-budget-usd` or the thinking flags, because neither does what
   its name says (Findings 9 and 10).
 
+Amended 2026-11-03: Task 11 split the non-ok outcomes. `askClaude` in
+`src/daemon/gateway.ts` now returns one of four kinds, and this supersedes "Every other
+outcome is `retry` for now" above:
+
+- `stopped` with reason `credential`: `auth status` shows a login other than the claude.ai
+  first-party one (`authMethod` not `claude.ai` or `apiProvider` not `firstParty`); a stream
+  line names an `apiKeySource` other than `none`, which kills the run at once; or
+  `result.modelUsage` names a `provider` other than `firstParty`, or names none on an
+  otherwise valid run.
+- `stopped` with reason `login`: `auth status` shows `loggedIn: false`; a stdout line that
+  does not parse as JSON, or the `result` text of a result with `is_error: true`, contains
+  "Not logged in"; or `api_error_status` is 401 or 403. Raw stdout as a whole is never
+  searched, because its JSON lines carry the digest's own text (user decision, 2026-11-03).
+- `rejected`: a refusal (no `structured_output`, absent or `null`), a result with
+  `is_error: true` and `subtype: "error_max_turns"`, or `structured_output` that fails
+  `validate`. `src/daemon/digest-job.ts` counts each in the store, and the third rejection
+  (`REJECTION_LIMIT`) parks the spool entry. `error_max_turns` counts as one rejection rather
+  than a retry, so a session the model will not digest cannot cost a run every hour (user
+  decision, 2026-11-02).
+- `retry` for everything else: a run past its timer, `claude` missing or failing to start,
+  `auth status` without JSON, no result line, or any other error result. The job exits 1,
+  and the daemon holds that session for `--retry-ms` (300,000 ms by default), doubling per
+  failure up to `--retry-cap-ms` (3,600,000 ms).
+
+A `stopped` outcome writes `<crank home>/digest-state.json`, and no job runs until
+`crank-mem digest resume` clears it.
+
 ## Re-probe method
 
 Re-run this reading whenever `claude --version` changes minor version, or a digest starts

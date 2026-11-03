@@ -11,9 +11,11 @@ import { digestRunning } from "./lib/user-state.ts";
 // Stop hook, Claude Code only. At turn end it emits cerebrumNudge and
 // cerebrumOverlaps as additionalContext, which Claude wraps in a system
 // reminder without forcing the agent to keep running, so the nudge stays
-// advisory. With digests on it also writes the session's spool entry, and
-// while they run it stays silent, since digests keep the memory. Codex gets
-// the nudge from post-write instead (ADR 0004). Every path exits 0.
+// advisory. With `digest` on it first writes the session's spool entry, the
+// digest signal, before the stop_hook_active return, and starts the daemon
+// unless digests are stopped. While digestRunning is true it emits nothing,
+// since digests keep the memory (ADR 0010). Codex gets the nudge from
+// post-write instead (ADR 0004). Every path exits 0.
 
 async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());
