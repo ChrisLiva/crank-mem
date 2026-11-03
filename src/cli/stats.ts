@@ -14,6 +14,10 @@ import {
 import { hasCrankHooks } from "./settings.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
 import { codexHome, codexTrustStatus, userCodexConfigPath, CODEX_REVIEW_HINT } from "./codex-trust.ts";
+import { readStopState } from "../hooks/lib/user-state.ts";
+import { daemonAlive, readParked, readSpool } from "../hooks/lib/spool.ts";
+import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
+import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
 
 function age(iso: string | null): string {
   if (!iso) return "never";
@@ -128,6 +132,41 @@ function nudgeCounts(crankDir: string): string {
   return since === null ? parts : `${parts} since ${since}`;
 }
 
+const MEMORY_STATE = {
+  missing: "none yet",
+  newer: "newer than this version; run crank-mem upgrade",
+  unreadable: "unreadable",
+} as const;
+
+/** Whether digests run, what waits for them user-wide, what the store holds, and whether search by meaning works. */
+async function captureLines(root: string, config: CrankConfig): Promise<string[]> {
+  const stop = readStopState();
+  const lines = [
+    row("digest", !config.digest ? "off" : stop ? `stopped (${stop.reason})` : "on"),
+    row("daemon", daemonAlive() ? "alive" : "not running"),
+    row("spool", `${readSpool().length} waiting, ${readParked().length} parked`),
+  ];
+  const opened = openMemory(memoryPath(root), "read");
+  if (opened.status === "open") {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    let s;
+    try {
+      s = opened.memory.stats(EMBED_MODEL, monthStart);
+    } finally {
+      opened.memory.close();
+    }
+    lines.push(row("observations", String(s.observations)));
+    lines.push(row("unembedded", String(s.unembedded)));
+    lines.push(row("last digest", s.lastDigestMs === null ? "never" : ageOf(s.lastDigestMs)));
+    lines.push(row("month cost", `$${s.costUsdSince.toFixed(2)} (list price)`));
+  } else {
+    lines.push(row("memory", MEMORY_STATE[opened.status]));
+  }
+  lines.push(row("embedder", (await embedderReady()) ? "ready" : "not ready (run crank-mem setup)"));
+  return lines;
+}
+
 export async function run(_args: string[]): Promise<number> {
   const project = openProject();
   if (!project) return 1;
@@ -151,6 +190,7 @@ export async function run(_args: string[]): Promise<number> {
   console.log(`  runtime:          ${config.runtime} (vendored ${config.vendored_version})`);
   console.log(`  injection budget: ${config.injection_budget_bytes} bytes`);
   for (const line of memoryLines(root, crankDir, config, index)) console.log(line);
+  for (const line of await captureLines(root, config)) console.log(line);
 
   const codexHooks = path.join(root, ".codex", "hooks.json");
   if (!hasCrankHooks(codexHooks)) {

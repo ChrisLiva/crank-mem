@@ -5,11 +5,11 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   REPO_ROOT, enableDebugConfig, git, gitCommit, makeCrankHome, makeCrankProject, plantMemory, readDebugLog, runHook, seedMemory,
+  spoolEntry, stopDigests,
 } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
-import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { claudeSessionStart, codexSessionStart } from "./fixtures/payloads.ts";
 
 const HOOK = "src/hooks/session-start.ts";
@@ -626,14 +626,6 @@ function injectIn(root: string, home: string, payload: object = claudeSessionSta
   const run = runHook(HOOK, JSON.stringify(payload), root, { CRANK_HOME: home, TZ: "UTC" });
   expect(run.status).toBe(0);
   return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-}
-function stopDigests(home: string): void {
-  fs.writeFileSync(path.join(home, STOP_FILE), JSON.stringify({ reason: "login", atMs: Date.now(), detail: "x" }));
-}
-function spoolEntry(home: string, stem: string, projectRoot: string, updatedAt: number): void {
-  fs.mkdirSync(path.join(home, "spool"), { recursive: true });
-  const entry = { transcriptPath: `/t/${stem}.jsonl`, projectRoot, agent: "claude", ended: true, updatedAt };
-  fs.writeFileSync(path.join(home, "spool", `${stem}.json`), JSON.stringify(entry));
 }
 function sectionOf(ctx: string, heading: string): string | undefined {
   return ctx.split("\n\n").find((s) => s.startsWith(heading));

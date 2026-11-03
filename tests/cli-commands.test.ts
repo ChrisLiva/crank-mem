@@ -3,7 +3,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { runCli, type CliRun } from "./helpers.ts";
+import {
+  makeCrankHome, makeModelHome, plantMemory, runCli, seedMemory, spoolEntry, stopDigests, type CliRun,
+} from "./helpers.ts";
 import { crankHooks } from "../src/cli/settings.ts";
 import { crankTrust } from "../src/cli/codex-trust.ts";
 
@@ -150,6 +152,70 @@ describe("stats: memory health", () => {
   });
 });
 
+describe("stats: capture health", () => {
+  // The capture rows in their order, each label padded to the value column.
+  const CAPTURE_ROWS = /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|memory): .*\n)+ {2}embedder: /;
+
+  function digestOn(root: string): void {
+    const file = path.join(root, ".crank/config.json");
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf-8")), digest: true }, null, 2));
+  }
+
+  test("reports digest state, daemon, user-wide spool, the store's counts and month cost, and the embedder", () => {
+    const root = initedProject();
+    digestOn(root);
+    seedMemory(root, [{ title: "first a" }, { title: "first b" }], { costUsd: 0.01 });
+    seedMemory(root, [{ title: "second a" }], { costUsd: 0.02 });
+    const home = makeCrankHome();
+    stopDigests(home);
+    spoolEntry(home, "waiting", "/elsewhere", Date.now());
+    spoolEntry(home, "stuck", root, Date.now(), true);
+
+    const run = runCli(root, ["stats"], { CRANK_HOME: home });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toMatch(CAPTURE_ROWS);
+    expect(run.stdout).toContain("  digest:           stopped (login)\n");
+    expect(run.stdout).toContain("  daemon:           not running\n");
+    expect(run.stdout).toContain("  spool:            1 waiting, 1 parked\n");
+    expect(run.stdout).toContain("  observations:     3\n");
+    // Seeded rows carry no vector.
+    expect(run.stdout).toContain("  unembedded:       3\n");
+    expect(run.stdout).toMatch(/ {2}last digest: {6}\d+s ago\n/);
+    expect(run.stdout).toContain("  month cost:       $0.03 (list price)\n");
+    expect(run.stdout).toContain("  embedder:         not ready (run crank-mem setup)\n");
+
+    fs.writeFileSync(
+      path.join(home, "daemon.json"),
+      JSON.stringify({ pid: process.pid, version: "0.8.0", heartbeatMs: Date.now() }),
+    );
+    expect(runCli(root, ["stats"], { CRANK_HOME: home }).stdout).toContain("  daemon:           alive\n");
+
+    const ready = runCli(root, ["stats"], { CRANK_HOME: makeModelHome() }).stdout;
+    expect(ready).toContain("  embedder:         ready\n");
+    expect(ready).toContain("  digest:           on\n");
+    expect(ready).toContain("  spool:            0 waiting, 0 parked\n");
+  });
+
+  test("digest off by default, and one memory row stands in for a store that is missing, newer or unreadable", () => {
+    const root = initedProject();
+    const fresh = cli(root, "stats").stdout;
+    expect(fresh).toMatch(CAPTURE_ROWS);
+    expect(fresh).toContain("  digest:           off\n");
+    expect(fresh).toContain("  memory:           none yet\n");
+    expect(fresh).not.toContain("observations:");
+    expect(fresh).not.toContain("month cost:");
+
+    plantMemory(root, "newer");
+    expect(cli(root, "stats").stdout).toContain("  memory:           newer than this version; run crank-mem upgrade\n");
+
+    fs.rmSync(path.join(root, ".crank/memory.db"));
+    plantMemory(root, "unreadable");
+    const bad = cli(root, "stats");
+    expect(bad.status).toBe(0);
+    expect(bad.stdout).toContain("  memory:           unreadable\n");
+  });
+});
+
 describe("stats: codex wiring", () => {
   // A rollout file as Codex writes it: session_meta first, then the thread's records (ADR 0006).
   function rollout(codexHome: string, name: string, meta: Record<string, unknown>, records: object[]): void {
@@ -188,6 +254,7 @@ describe("stats: codex wiring", () => {
     const run = cliWithCodexHome(codexHome, root, "stats");
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("codex sessions:   1 of 2 root threads since install got no injection");
+    expect(run.stdout).toMatch(/\n {2}embedder: .*\n(?:.*\n)* {2}codex sessions: /);
   });
 
   test("reports stale and missing hook hashes with the review remediation", () => {
@@ -231,6 +298,7 @@ describe("stats: codex wiring", () => {
     const run = cli(initedProject(), "stats");
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("codex:            not wired");
+    expect(run.stdout).toMatch(/\n {2}embedder: .*\n {2}codex: {12}not wired/);
     expect(run.stdout).not.toContain("codex sessions:");
   });
 });

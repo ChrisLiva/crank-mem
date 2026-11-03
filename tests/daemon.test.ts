@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   REPO_ROOT, appendRecords, digestProject, fakeClaude, killDaemon, makeCrankHome, readDaemon, runCli, runHook, setMtime,
-  spoolFiles, startDaemon, userRecord, waitFor, type FakeCall, type FakeScenario,
+  spoolFiles, startDaemon, stopDigests, userRecord, waitFor, type FakeCall, type FakeScenario,
 } from "./helpers.ts";
 import { okStream, refusalStream, status500Stream } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
@@ -141,10 +141,6 @@ function expectOneRow(root: string, query: string): void {
   const lines = search(root, query).trim().split("\n");
   expect(lines.length).toBe(1);
   expect(lines[0]).toMatch(/^#\d+ /);
-}
-
-function writeStopFile(home: string): void {
-  fs.writeFileSync(path.join(home, "digest-state.json"), JSON.stringify({ reason: "login", atMs: Date.now(), detail: "Not logged in" }));
 }
 
 describe("daemon ownership (real processes)", () => {
@@ -386,7 +382,7 @@ describe("daemon exits", () => {
     const e = setup();
     const d = daemon(["--sweep-ms", "50"], e);
     await waitFor(() => daemonPid(e.home) === d.proc.pid, 3_000);
-    writeStopFile(e.home);
+    stopDigests(e.home);
     expect(await within(d.exited, 1_000)).toBe(0);
   }, 10_000);
 
@@ -396,7 +392,7 @@ describe("daemon exits", () => {
     plantEntry(e.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
     const d = daemon(["--sweep-ms", "50"], e);
     await waitFor(() => e.fake.calls().length === 1, 10_000);
-    writeStopFile(e.home);
+    stopDigests(e.home);
     expect(await within(d.exited, 5_000)).toBe(0);
     expect(e.fake.calls()[0]!.endMs).not.toBe(null);
     expectOneRow(root, "EEXIST");
@@ -445,7 +441,7 @@ describe("daemon recovery", () => {
   test("digest resume clears the stop file from any directory and the stopped entry drains", async () => {
     const root = digestProject({}, temps);
     const e = setup();
-    writeStopFile(e.home);
+    stopDigests(e.home);
     plantEntry(e.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
     expect(runCli(root, ["daemon", "--once"], e.env).status).toBe(0);
     expect(e.fake.calls().length).toBe(0);

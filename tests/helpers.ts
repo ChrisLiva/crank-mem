@@ -6,6 +6,7 @@ import type * as sqlite from "node:sqlite";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { memoryPath, openMemory, type NewObservation } from "../src/hooks/lib/memory.ts";
 import { DAEMON_FILE, type DaemonState } from "../src/hooks/lib/spool.ts";
+import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");
@@ -251,6 +252,19 @@ export function spoolFiles(home: string): string[] {
   } catch {
     return [];
   }
+}
+
+/** Record a `login` stop under a crank home, as the daemon does when claude is logged out. */
+export function stopDigests(home: string): void {
+  fs.writeFileSync(path.join(home, STOP_FILE), JSON.stringify({ reason: "login", atMs: Date.now(), detail: "Not logged in" }));
+}
+
+/** Write a spool entry under a crank home, or under spool/parked/ when `parked`. */
+export function spoolEntry(home: string, stem: string, projectRoot: string, updatedAt: number, parked = false): void {
+  const dir = parked ? path.join(home, "spool", "parked") : path.join(home, "spool");
+  fs.mkdirSync(dir, { recursive: true });
+  const entry = { transcriptPath: `/t/${stem}.jsonl`, projectRoot, agent: "claude", ended: true, updatedAt };
+  fs.writeFileSync(path.join(dir, `${stem}.json`), JSON.stringify(entry));
 }
 
 /** Poll `cond` every 20 ms until it holds, or throw after `timeoutMs`. */
