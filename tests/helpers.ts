@@ -161,3 +161,71 @@ export function plantMemory(root: string, state: "newer" | "unreadable"): void {
   db.exec("PRAGMA user_version = 2");
   db.close();
 }
+
+export type FakeScenario = {
+  auth?: { stdout: string; exit: number } | "hang"; // default: the logged-in claude.ai stdout, exit 0
+  lines?: string[];       // stream-json lines printed on a -p run
+  raw?: string;           // printed instead of lines
+  exit?: number;          // default 0
+  sleepMs?: number;       // wait before printing
+  pauseAfterFirstMs?: number; // wait after printing the first line, before the rest
+};
+export type FakeCall = { argv: string[]; env: Record<string, string>; stdin: string; cwd: string; startMs: number; endMs: number | null };
+
+// The gating keys of live `claude auth status` at 2.1.316, without its account and path fields.
+const AUTH_LOGGED_IN = {
+  stdout: JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty" }, null, 2),
+  exit: 0,
+};
+
+// A bun script, not /bin/sh: sh adds `_`, `PWD` and `SHLVL` to the environment it records.
+const FAKE_CLAUDE = `#!/usr/bin/env bun
+import * as fs from "node:fs";
+import * as path from "node:path";
+const dir = import.meta.dir;
+const scenarios = JSON.parse(fs.readFileSync(path.join(dir, "scenarios.json"), "utf8"));
+const callsFile = path.join(dir, "calls.jsonl");
+const n = fs.existsSync(callsFile) ? fs.readFileSync(callsFile, "utf8").split("\\n").filter(Boolean).length : 0;
+const s = scenarios[Math.min(n, scenarios.length - 1)] ?? {};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const argv = process.argv.slice(2);
+if (argv[0] === "auth" && argv[1] === "status") {
+  const auth = s.auth ?? ${JSON.stringify(AUTH_LOGGED_IN)};
+  if (auth === "hang") { setInterval(() => {}, 1 << 30); await new Promise(() => {}); }
+  process.stdout.write(auth.stdout + "\\n");
+  process.exit(auth.exit);
+}
+const startMs = Date.now();
+const stdin = await new Response(Bun.stdin.stream()).text();
+fs.appendFileSync(callsFile, JSON.stringify({ argv, env: process.env, stdin, cwd: process.cwd(), startMs }) + "\\n");
+if (s.sleepMs) await sleep(s.sleepMs);
+if (s.raw !== undefined) process.stdout.write(s.raw);
+else for (const [i, line] of (s.lines ?? []).entries()) {
+  process.stdout.write(line + "\\n");
+  if (i === 0 && s.pauseAfterFirstMs) await sleep(s.pauseAfterFirstMs);
+}
+fs.appendFileSync(path.join(dir, "ends.jsonl"), JSON.stringify({ n, endMs: Date.now() }) + "\\n");
+process.exit(s.exit ?? 0);
+`;
+
+function readJsonl(file: string): any[] {
+  try {
+    return fs.readFileSync(file, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+}
+
+/** A fake `claude` on PATH: the n-th `-p` call plays `scenarios[n]` (the last repeats) and records its argv, env, stdin and cwd. */
+export function fakeClaude(dir: string, scenarios: FakeScenario[]): { env: Record<string, string>; calls(): FakeCall[] } {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "claude"), FAKE_CLAUDE, { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, "scenarios.json"), JSON.stringify(scenarios));
+  return {
+    env: { PATH: `${dir}:${process.env.PATH}` },
+    calls() {
+      const ends = new Map<number, number>(readJsonl(path.join(dir, "ends.jsonl")).map((e) => [e.n, e.endMs]));
+      return readJsonl(path.join(dir, "calls.jsonl")).map((c, n) => ({ ...c, endMs: ends.get(n) ?? null }));
+    },
+  };
+}

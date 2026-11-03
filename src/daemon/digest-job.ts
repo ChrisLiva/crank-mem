@@ -1,0 +1,87 @@
+import * as fs from "node:fs";
+import { parseArgs } from "../cli/args.ts";
+import { memoryPaths } from "../hooks/lib/hook-io.ts";
+import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
+import { deleteEntry, parkEntry, readSpool, type SpoolEntry } from "../hooks/lib/spool.ts";
+import { readStopState } from "../hooks/lib/user-state.ts";
+import { digestRequest, type Digest } from "./digest-prompt.ts";
+import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
+import { redact } from "./redact.ts";
+import { distill } from "./transcript.ts";
+
+// `crank-mem job <stem>`: digest one spool entry's new transcript records into
+// its project's store. Exit 0 settles the entry for this sweep; exit 1 asks
+// for a retry.
+
+export const MAX_DELTA_CHARS = 400_000;
+export const MIN_DELTA_CHARS = 2_000;
+
+/** A file this small can hold a short session; a larger one with no conversation record is not a transcript. */
+const PARK_SIZE = 4096;
+
+export async function run(args: string[]): Promise<number> {
+  const stem = args[0];
+  const item = readSpool().find((i) => i.stem === stem);
+  if (!stem || !item) return 0;
+  if (readStopState() !== null) return 0;
+  const entry = item.entry;
+  const file = entry.transcriptPath;
+  if (!fs.existsSync(file)) {
+    deleteEntry(stem);
+    return 0;
+  }
+  if (fs.statSync(file).size > PARK_SIZE && distill(file, null, MAX_DELTA_CHARS).records === 0) {
+    parkEntry(stem);
+    return 0;
+  }
+  const { flags } = parseArgs(args.slice(1), ["run-timeout-ms"]);
+  const timeoutMs = typeof flags["run-timeout-ms"] === "string" ? Number(flags["run-timeout-ms"]) : RUN_TIMEOUT_MS;
+
+  const opened = openMemory(memoryPath(entry.projectRoot), "write");
+  if (opened.status !== "open") return 1;
+  const memory = opened.memory;
+  try {
+    return await digest(memory, stem, entry, timeoutMs);
+  } finally {
+    memory.close();
+  }
+}
+
+async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs: number): Promise<number> {
+  const pos = memory.position(stem);
+  const d = distill(entry.transcriptPath, pos, MAX_DELTA_CHARS);
+  if (d.text.length < MIN_DELTA_CHARS || d.next === null) {
+    deleteEntry(stem);
+    return 0;
+  }
+  const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem)), { timeoutMs });
+  if (r.kind !== "ok") return 1;
+  const session: SessionKey = { id: stem, agent: "claude", transcriptPath: entry.transcriptPath };
+  const outcome = memory.appendDigest({
+    session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot),
+  });
+  if (outcome === "appended" && !d.truncated && !touchedSince(stem, entry)) deleteEntry(stem);
+  return 0;
+}
+
+/** The model's output as the store takes it: every string redacted, paths repo-relative and deduped. */
+function stored(output: Digest, root: string) {
+  const s = output.summary;
+  const files = (paths: string[]) => memoryPaths(root, root, paths.map(redact));
+  return {
+    summary: {
+      request: redact(s.request), investigated: redact(s.investigated), learned: redact(s.learned),
+      completed: redact(s.completed), next_steps: redact(s.next_steps),
+    },
+    observations: output.observations.map((o) => ({
+      type: o.type, title: redact(o.title), narrative: redact(o.narrative), facts: o.facts.map(redact),
+      filesRead: files(o.files_read), filesModified: files(o.files_modified),
+    })),
+  };
+}
+
+/** A hook rewrote the entry while the job ran, so the session has more to digest. */
+function touchedSince(stem: string, entry: SpoolEntry): boolean {
+  const now = readSpool().find((i) => i.stem === stem);
+  return now !== undefined && now.entry.updatedAt !== entry.updatedAt;
+}
