@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { enableDebugConfig, makeCrankProject, readDebugLog, runHook, setMtime } from "./helpers.ts";
+import { enableDebugConfig, makeCrankHome, makeCrankProject, readDebugLog, runHook, setMtime } from "./helpers.ts";
+import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { claudeSessionStart, claudeStop } from "./fixtures/payloads.ts";
 import { AUDIT_INTERVAL_MS, BACKUP_KEEP, NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
 
@@ -68,6 +70,24 @@ describe("stop hook (black-box)", () => {
     expect(ctx).toContain("cerebrum");
     expect(ctx).toContain(`${NUDGE_STEP} file`);
     expect(fs.existsSync(markerPath(root))).toBe(true);
+  });
+
+  test("stays silent while digests run, and nudges again once they stop", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    setMtime(cerebrum(root), STALE);
+    // After seedIndex: with digest off it reads nothing under the crank home.
+    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), digest: true });
+    const home = makeCrankHome();
+
+    const running = runHook(HOOK, JSON.stringify(claudeStop(root)), root, { CRANK_HOME: home });
+    expect(running.status).toBe(0);
+    expect(running.stdout).toBe("");
+
+    fs.writeFileSync(path.join(home, STOP_FILE), JSON.stringify({ reason: "login", atMs: Date.now(), detail: "x" }));
+    const stopped = runHook(HOOK, JSON.stringify(claudeStop(root)), root, { CRANK_HOME: home });
+    expect(stopped.status).toBe(0);
+    expect(nudge(stopped.stdout)).toContain(`${NUDGE_STEP} file`);
   });
 
   test("stays quiet when cerebrum is fresher than every file", () => {

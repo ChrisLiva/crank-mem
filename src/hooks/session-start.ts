@@ -6,7 +6,7 @@ import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex, commitIndex } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
-import { composeInjection, injectionSources } from "./lib/injection.ts";
+import { captureNotes, composeInjection, injectionSources } from "./lib/injection.ts";
 import { driftNote } from "./lib/drift.ts";
 import { trimJournal } from "./lib/journal.ts";
 import { estimateProseTokens } from "./lib/tokens.ts";
@@ -59,14 +59,14 @@ async function main(): Promise<void> {
   // that start a turn. Reading for the injection is always safe.
   const source = typeof payload.source === "string" ? payload.source : null;
   if (source !== "compact") trimJournal(crankDir);
-  const sources = injectionSources(root, crankDir, config, index);
+  const sources = injectionSources(root, crankDir, config, index, isCodexPayload(payload));
   const drift = driftNote(config);
   const context = composeInjection(
     {
       ...sources,
       stalenessNote,
       driftNote: drift ?? undefined,
-      codex: isCodexPayload(payload),
+      captureNotes: captureNotes(root, config, sources.recall.status),
     },
     config.injection_budget_bytes
   ).text;

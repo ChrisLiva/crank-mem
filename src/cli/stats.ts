@@ -43,7 +43,7 @@ function readText(file: string): string | null {
  */
 function memoryLines(root: string, crankDir: string, config: CrankConfig, index: AnatomyIndex): string[] {
   const lines: string[] = [];
-  const sources = injectionSources(root, crankDir, config, index);
+  const sources = injectionSources(root, crankDir, config, index, false);
   const { cerebrumMd } = sources;
   const journalMd = readText(path.join(crankDir, JOURNAL_FILE));
 

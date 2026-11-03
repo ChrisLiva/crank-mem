@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { git, gitCommit, makeCrankProject, runHook, setMtime } from "./helpers.ts";
+import { git, gitCommit, makeCrankHome, makeCrankProject, runHook, setMtime } from "./helpers.ts";
 import { claudePostWrite, claudePostEdit, codexApplyPatch, claudeSessionStart } from "./fixtures/payloads.ts";
 import { parseApplyPatch } from "../src/hooks/lib/apply-patch.ts";
 import { loadIndex } from "../src/hooks/lib/store.ts";
@@ -238,6 +238,16 @@ describe("post-write cerebrum nudge (Codex only)", () => {
     const ctx = nudge(run.stdout);
     expect(ctx).toContain("crank-mem");
     expect(ctx).toContain("cerebrum");
+  });
+
+  test("apply_patch still nudges with digests on: Codex sessions are never digested", () => {
+    const root = makeCrankProject(ENOUGH);
+    seedIndex(root);
+    setMtime(cerebrum(root), STALE);
+    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), digest: true });
+    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)), root, { CRANK_HOME: makeCrankHome() });
+    expect(run.status).toBe(0);
+    expect(nudge(run.stdout)).toContain("cerebrum");
   });
 
   test("Claude Edit never nudges here (Stop hook owns Claude's nudge)", () => {

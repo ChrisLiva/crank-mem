@@ -3,8 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { REPO_ROOT, enableDebugConfig, git, gitCommit, makeCrankProject, readDebugLog, runHook } from "./helpers.ts";
+import {
+  REPO_ROOT, enableDebugConfig, git, gitCommit, makeCrankHome, makeCrankProject, plantMemory, readDebugLog, runHook, seedMemory,
+} from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
+import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
+import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { claudeSessionStart, codexSessionStart } from "./fixtures/payloads.ts";
 
 const HOOK = "src/hooks/session-start.ts";
@@ -597,5 +602,205 @@ describe("journal (black-box)", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     fs.mkdirSync(path.join(root, ".crank/journal.md"));
     expect(inject(root)).not.toContain("## Journal");
+  });
+});
+
+// Digest-era injection. Every run passes one temp CRANK_HOME per project, so a
+// planted stop file or spool entry is the one the hook reads.
+const PAST_WORK = "- Past work: `crank-mem search <query>`";
+const NOTE_STOPPED =
+  "_Note: crank-mem digests stopped (login): run `crank-mem digest resume` once that is fixed._";
+const NOTE_WAITED =
+  "_Note: crank-mem: a session here has waited over 24 hours for its digest; see `crank-mem stats`._";
+
+function memoryProject(digest: boolean): { root: string; home: string } {
+  const root = makeCrankProject({ "a.ts": "const a = 1;" });
+  saveConfig(path.join(root, ".crank"), { ...defaultConfig(), digest });
+  fs.writeFileSync(
+    path.join(root, ".crank/cerebrum.md"),
+    "# Cerebrum\n\n## User Preferences\n\n- Always use tabs\n\n## Memory\n\n- **Fact**: a memory bullet\n"
+  );
+  return { root, home: makeCrankHome() };
+}
+function injectIn(root: string, home: string, payload: object = claudeSessionStart(root)): string {
+  const run = runHook(HOOK, JSON.stringify(payload), root, { CRANK_HOME: home, TZ: "UTC" });
+  expect(run.status).toBe(0);
+  return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+}
+function stopDigests(home: string): void {
+  fs.writeFileSync(path.join(home, STOP_FILE), JSON.stringify({ reason: "login", atMs: Date.now(), detail: "x" }));
+}
+function spoolEntry(home: string, stem: string, projectRoot: string, updatedAt: number): void {
+  fs.mkdirSync(path.join(home, "spool"), { recursive: true });
+  const entry = { transcriptPath: `/t/${stem}.jsonl`, projectRoot, agent: "claude", ended: true, updatedAt };
+  fs.writeFileSync(path.join(home, "spool", `${stem}.json`), JSON.stringify(entry));
+}
+function sectionOf(ctx: string, heading: string): string | undefined {
+  return ctx.split("\n\n").find((s) => s.startsWith(heading));
+}
+let seeded = 0;
+/** n observations with distinct 60-character titles (the store dedupes on content). */
+const titled = (n: number) =>
+  Array.from({ length: n }, () => ({ title: `T${String(seeded++).padStart(4, "0")} ${"t".repeat(54)}` }));
+function count(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
+describe("digests running (black-box)", () => {
+  test("the instructions drop every upkeep protocol and still point at past work", () => {
+    const { root, home } = memoryProject(true);
+    writeJournal(root, ["2026-07-01: did a thing; NEXT: other thing"]);
+    const ctx = injectIn(root, home);
+    for (const upkeep of ["Cerebrum protocol", "Journal protocol", "telegram-style", "agent-maintained"]) {
+      expect(ctx).not.toContain(upkeep);
+    }
+    expect(ctx).toContain(
+      "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`."
+    );
+    expect(ctx).toContain("- Memory is not proof of current behavior");
+    expect(ctx).toContain("- ADR protocol:");
+    // No store yet: the bullet still names the commands digests will feed.
+    expect(count(ctx, RECALL_BULLET)).toBe(1);
+    expect(ctx).not.toContain("## Journal");
+    expect(ctx).not.toContain("## Recent memory");
+  });
+
+  test("the excerpt labels name the sections, with no editing hints", () => {
+    const { root, home } = memoryProject(true);
+    const prefs = Array.from({ length: 40 }, (_, i) => `- pref ${i} ${"p".repeat(80)}`).join("\n");
+    fs.writeFileSync(
+      path.join(root, ".crank/cerebrum.md"),
+      `# Cerebrum\n\n## User Preferences\n\n${prefs}\n\n## Memory\n\n- **Fact**: a memory bullet\n`
+    );
+    const ctx = injectIn(root, home);
+    expect(ctx).toContain("### User Preferences\n");
+    expect(ctx).toContain("### Memory\n");
+    expect(ctx).toContain("### Not shown (");
+    expect(ctx).not.toContain("append at its end");
+    expect(ctx).not.toContain("consolidate");
+  });
+
+  test("next steps come from the newest digest, only when short and not none", () => {
+    const { root, home } = memoryProject(true);
+    seedMemory(root, titled(2), { nextSteps: "Wire the daemon." });
+    expect(injectIn(root, home)).toContain("## Next steps (last session)\nWire the daemon.");
+    seedMemory(root, titled(1), { nextSteps: "None." });
+    expect(injectIn(root, home)).not.toContain("## Next steps");
+    seedMemory(root, titled(1), { nextSteps: "n".repeat(600) });
+    expect(injectIn(root, home)).not.toContain("## Next steps");
+  });
+
+  test("recent memory lists whole lines, newest first, under its byte cap", () => {
+    const { root, home } = memoryProject(true);
+    // An open store with no rows: no section, but the bullet.
+    const empty = openMemory(memoryPath(root), "write");
+    if (empty.status === "open") empty.memory.close();
+    const before = injectIn(root, home);
+    expect(before).not.toContain("## Recent memory");
+    expect(count(before, RECALL_BULLET)).toBe(1);
+
+    seedMemory(root, titled(60));
+    const section = sectionOf(injectIn(root, home), "## Recent memory\n")!;
+    expect(Buffer.byteLength(section, "utf-8")).toBeLessThanOrEqual(1536);
+    const opened = openMemory(memoryPath(root), "read");
+    if (opened.status !== "open") throw new Error(opened.status);
+    const all = opened.memory.recent(60).map(formatLine);
+    opened.memory.close();
+    const lines = section.split("\n").slice(1);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines).toEqual(all.slice(0, lines.length));
+    // Whole lines are dropped only while needed: one more would overflow.
+    expect(Buffer.byteLength([section, all[lines.length]].join("\n"), "utf-8")).toBeGreaterThan(1536);
+  });
+
+  test("the whole injection stays in budget, and a tiny budget keeps only the instructions", () => {
+    const { root, home } = memoryProject(true);
+    seedMemory(root, titled(60), { nextSteps: "Wire the daemon." });
+    writeJournal(root, ["2026-07-01: a", "2026-07-02: b", "2026-07-03: c"]);
+    const bullets = Array.from({ length: 40 }, (_, i) => `- **Fact ${i}**: ${"m".repeat(120)} (2026-07-01)`).join("\n");
+    fs.writeFileSync(path.join(root, ".crank/cerebrum.md"), `# Cerebrum\n\n## User Preferences\n\n## Memory\n\n${bullets}\n`);
+    expect(Buffer.byteLength(injectIn(root, home), "utf-8")).toBeLessThanOrEqual(8192);
+
+    const configPath = path.join(root, ".crank/config.json");
+    fs.writeFileSync(configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(configPath, "utf-8")), injection_budget_bytes: 100 }));
+    const ctx = injectIn(root, home);
+    expect(ctx.startsWith("## crank-mem (project memory)\n\n")).toBe(true);
+    expect(ctx.endsWith("Existing ADRs are settled — don't relitigate them.")).toBe(true);
+    expect(ctx.split("\n").filter((l) => l.startsWith("## "))).toEqual(["## crank-mem (project memory)"]);
+    expect(count(ctx, RECALL_BULLET)).toBe(1);
+  });
+
+  test("next steps lead, then recent memory, then the cerebrum", () => {
+    const { root, home } = memoryProject(true);
+    seedMemory(root, titled(3), { nextSteps: "Wire the daemon." });
+    const ctx = injectIn(root, home);
+    const at = ["## Next steps (last session)", "## Recent memory", "## Cerebrum ("].map((h) => ctx.indexOf(h));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  test("a newer store says to upgrade and shows no recall", () => {
+    const { root, home } = memoryProject(true);
+    plantMemory(root, "newer");
+    const ctx = injectIn(root, home);
+    expect(ctx).toContain(`_Note: ${MEMORY_NEWER_NOTE}_`);
+    for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET]) expect(ctx).not.toContain(absent);
+  });
+
+  test("a store that is not a database injects without recall", () => {
+    const { root, home } = memoryProject(true);
+    plantMemory(root, "unreadable");
+    const ctx = injectIn(root, home);
+    for (const absent of ["## Recent memory", "## Next steps", PAST_WORK]) expect(ctx).not.toContain(absent);
+  });
+
+  test("a session waiting over a day for its digest is noted, for this project only", () => {
+    const { root, home } = memoryProject(true);
+    spoolEntry(home, "other", "/elsewhere", Date.now() - 25 * 3_600_000);
+    spoolEntry(home, "fresh", root, Date.now());
+    expect(injectIn(root, home)).not.toContain(NOTE_WAITED);
+    spoolEntry(home, "old", root, Date.now() - 25 * 3_600_000);
+    expect(count(injectIn(root, home), NOTE_WAITED)).toBe(1);
+  });
+});
+
+describe("digests off, stopped, or Codex (black-box)", () => {
+  test("digests off keep v1's protocols and journal, and add recall", () => {
+    const { root, home } = memoryProject(false);
+    seedMemory(root, titled(3), { nextSteps: "Wire the daemon." });
+    writeJournal(root, ["2026-07-01: did a thing"]);
+    const ctx = injectIn(root, home);
+    for (const kept of ["Cerebrum protocol", "## Journal", RECALL_BULLET, "## Recent memory", "append at its end"]) {
+      expect(ctx).toContain(kept);
+    }
+    expect(ctx).not.toContain("## Next steps");
+  });
+
+  test("stopped digests keep v1's protocols, say why, and order the sections", () => {
+    const { root, home } = memoryProject(true);
+    stopDigests(home);
+    seedMemory(root, titled(3), { nextSteps: "Wire the daemon." });
+    writeJournal(root, ["2026-07-01: did a thing"]);
+    fs.mkdirSync(path.join(root, "docs/adr"), { recursive: true });
+    fs.writeFileSync(path.join(root, "docs/adr/0001-x.md"), "# x");
+    const ctx = injectIn(root, home);
+    for (const kept of ["Cerebrum protocol", "## Journal", RECALL_BULLET, "## Recent memory", "append at its end"]) {
+      expect(ctx).toContain(kept);
+    }
+    expect(ctx).not.toContain("## Next steps");
+    expect(ctx.split("\n").filter((l) => l === NOTE_STOPPED)).toHaveLength(1);
+    const at = [NOTE_STOPPED, "## Recent memory", "## Journal (", "## Cerebrum (", "## ADRs ("].map((h) => ctx.indexOf(h));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  test("a Codex session keeps the protocols and journal with digests on, and adds recall", () => {
+    const { root, home } = memoryProject(true);
+    seedMemory(root, titled(3));
+    writeJournal(root, ["2026-07-01: did a thing"]);
+    const ctx = injectIn(root, home, codexSessionStart(root));
+    for (const kept of ["Cerebrum protocol", "Journal protocol", "## Journal", RECALL_BULLET, "## Recent memory"]) {
+      expect(ctx).toContain(kept);
+    }
   });
 });
