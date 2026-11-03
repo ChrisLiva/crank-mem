@@ -136,6 +136,13 @@ function search(root: string, query: string): string {
   return run.stdout;
 }
 
+/** Asserts `search` prints exactly one stored row: one line carrying the `#<id> ` prefix. */
+function expectOneRow(root: string, query: string): void {
+  const lines = search(root, query).trim().split("\n");
+  expect(lines.length).toBe(1);
+  expect(lines[0]).toMatch(/^#\d+ /);
+}
+
 function writeStopFile(home: string): void {
   fs.writeFileSync(path.join(home, "digest-state.json"), JSON.stringify({ reason: "login", atMs: Date.now(), detail: "Not logged in" }));
 }
@@ -222,7 +229,7 @@ describe("daemon sweeps", () => {
     expect(spoolFiles(e.home)).toEqual([]);
     expect(fs.existsSync(path.join(e.home, "daemon.json"))).toBe(false);
 
-    expect(search(root, "EEXIST").trim().split("\n").length).toBe(1);
+    expectOneRow(root, "EEXIST");
     const id = /^#(\d+) /.exec(search(root, "credentials"))?.[1];
     expect(id).toBeDefined();
     const got = runCli(root, ["get", id!]);
@@ -345,7 +352,7 @@ describe("daemon retry holds", () => {
     expect(calls[0]!.stdin).toContain("marker-A");
     expect(calls[1]!.stdin).toContain("marker-B");
     for (const call of calls.slice(2)) expect(call.stdin).toContain("marker-A");
-    expect(search(b, "EEXIST").trim().split("\n").length).toBe(1);
+    expectOneRow(b, "EEXIST");
     expect(spoolFiles(two.home)).toContain("sa.json");
 
     const one = setup([FAIL, { lines: refusalStream() }, FAIL, FAIL]);
@@ -392,7 +399,7 @@ describe("daemon exits", () => {
     writeStopFile(e.home);
     expect(await within(d.exited, 5_000)).toBe(0);
     expect(e.fake.calls()[0]!.endMs).not.toBe(null);
-    expect(search(root, "EEXIST").trim().split("\n").length).toBe(1);
+    expectOneRow(root, "EEXIST");
   }, 20_000);
 
   test("after its current job when package.json's version changes, starting no other job", async () => {
@@ -409,7 +416,7 @@ describe("daemon exits", () => {
     fs.writeFileSync(pkg, JSON.stringify({ ...JSON.parse(fs.readFileSync(pkg, "utf8")), version: "9.9.9" }));
     expect(await within(d.exited, 5_000)).toBe(0);
     expect(e.fake.calls().length).toBe(1);
-    expect(search(root, "EEXIST").trim().split("\n").length).toBe(1);
+    expectOneRow(root, "EEXIST");
     expect(spoolFiles(e.home)).toEqual(["s2.json"]);
   }, 20_000);
 });
@@ -432,7 +439,7 @@ describe("daemon recovery", () => {
     expect(stop().status).toBe(0);
     await waitFor(() => { const pid = daemonPid(e.home); return pid !== undefined && pid !== killed; }, 3_000);
     await waitFor(() => spoolFiles(e.home).length === 0, 5_000);
-    expect(search(root, "EEXIST").trim().split("\n").length).toBe(1);
+    expectOneRow(root, "EEXIST");
   }, 20_000);
 
   test("digest resume clears the stop file from any directory and the stopped entry drains", async () => {
@@ -449,6 +456,6 @@ describe("daemon recovery", () => {
     expect(fs.existsSync(path.join(e.home, "digest-state.json"))).toBe(false);
     await waitFor(() => spoolFiles(e.home).length === 0, 5_000);
     daemonPid(e.home);
-    expect(search(root, "EEXIST").trim().split("\n").length).toBe(1);
+    expectOneRow(root, "EEXIST");
   }, 20_000);
 });
