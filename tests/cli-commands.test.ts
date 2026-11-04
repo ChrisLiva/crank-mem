@@ -95,7 +95,7 @@ describe("stats: memory health", () => {
     return root;
   }
 
-  test("reports what the excerpt leaves out, cited paths, overlaps and unhanded journal entries", () => {
+  test("reports what the excerpt leaves out and cited paths", () => {
     const run = cli(memoryProject(), "stats");
     expect(run.status).toBe(0);
     // 15 bullets: the 1 preference and the 7 newest memory bullets shown, 7 left to the index.
@@ -103,8 +103,9 @@ describe("stats: memory health", () => {
     expect(run.stdout).toContain("prefs dropped:    0 of 1\n");
     expect(run.stdout).toMatch(/oldest hidden: {4}2026-09-10 \(\d+d ago\), 1 undated\n/);
     expect(run.stdout).toContain("cited paths:      1 of 2 exist\n");
-    expect(run.stdout).toContain("overlaps:         1 bullet pair(s) share 2+ identifiers\n");
-    expect(run.stdout).toContain("journal no NEXT:  1 of 3 entries\n");
+    // No upkeep rows: nothing writes the journal, flags overlaps or nudges any more.
+    expect(run.stdout).not.toMatch(/^ {2}(?:journal|overlaps:|nudges:)/m);
+    expect(run.stdout).toContain("  last audit:");
   });
 
   test("a hidden bullet whose only date does not parse counts as undated", () => {
@@ -114,7 +115,6 @@ describe("stats: memory health", () => {
     const run = cli(root, "stats");
     expect(run.status).toBe(0);
     expect(run.stdout).toMatch(/oldest hidden: {4}2026-09-10 \(\d+d ago\), 1 undated\n/);
-    expect(run.stdout).toContain("nudges:");
   });
 
   test("dates the last audit by its manifest-less backup dir and says when the skill is missing", () => {
@@ -126,30 +126,11 @@ describe("stats: memory health", () => {
     fs.mkdirSync(audit);
     fs.writeFileSync(path.join(audit, "cerebrum.md"), CEREBRUM);
     fs.utimesSync(audit, new Date(Date.now() - 3 * DAY), new Date(Date.now() - 3 * DAY));
-    // Newer, but not audits: the prune nudge's copies.
+    // Newer, but not an audit: backups/cerebrum/ holds timestamped cerebrum copies.
     fs.mkdirSync(path.join(root, ".crank/backups/cerebrum"));
     fs.mkdirSync(path.join(root, ".claude/skills/crank-mem-audit"), { recursive: true });
     fs.writeFileSync(path.join(root, ".claude/skills/crank-mem-audit/SKILL.md"), "");
     expect(cli(root, "stats").stdout).toContain("last audit:       3d ago\n");
-  });
-
-  test("counts nudge parts from debug.log, and says n/a with debug off", () => {
-    const root = memoryProject();
-    expect(cli(root, "stats").stdout).toContain("nudges:           n/a (debug off)\n");
-
-    const record = (events: object[]) => JSON.stringify({ ts: "2026-09-01T10:00:00.000Z", hook: "stop", events });
-    fs.writeFileSync(
-      path.join(root, ".crank/debug.log"),
-      [
-        record([{ event: "nudge-emitted", recordDue: true, journalDue: true, pruneDue: false, auditDue: true }]),
-        record([{ event: "nudge-skipped" }, { event: "overlap-checked", added: 1, pairs: 1 }]),
-        record([{ event: "nudge-emitted", recordDue: false, journalDue: false, pruneDue: true }]),
-        "not json",
-      ].join("\n"),
-    );
-    expect(cli(root, "stats").stdout).toContain(
-      "nudges:           record 1, journal 1, prune 1, audit 1, overlap 1 since 2026-09-01\n",
-    );
   });
 });
 

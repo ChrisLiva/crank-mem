@@ -13,7 +13,7 @@ import {
   ensureCrankGitignore, isCrankHookCommand, addIgnoreLines, modeIgnoreFile, addAllowRule,
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
-import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
+import { JOURNAL_FILE } from "../hooks/lib/cerebrum-files.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
 // the hook wiring, the .crank/.gitignore allowlist, and the git mode's ignore

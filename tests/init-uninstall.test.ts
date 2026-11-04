@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { runCli, type CliRun } from "./helpers.ts";
+import { makeCrankHome, runCli, runHook, setMtime, type CliRun } from "./helpers.ts";
+import { claudeSessionStart, claudeStop, codexApplyPatch } from "./fixtures/payloads.ts";
 
 // Smoke: init into a temp project, check the wiring, uninstall, then expect a
 // byte-identical restore and no crank residue.
@@ -252,6 +253,38 @@ describe("init → uninstall round-trip", () => {
     expect(fs.readdirSync(crank).sort()).toEqual([".gitignore", "backups", "efforts"]);
     expect(fs.readdirSync(path.join(crank, "backups")).sort()).toEqual(["plugin-note.md", "plugin-run"]);
     expect(fs.readFileSync(path.join(crank, "efforts/e1/plan.md"), "utf-8")).toBe("plan\n");
+  });
+
+  test("hooks leave the old upkeep files untouched, and --delete-crank still removes them", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--codex", "skip");
+    const crank = path.join(root, ".crank");
+    const old = {
+      "journal.md": "# Journal\n\n- 2026-10-01: did a; NEXT: do b\n",
+      "cerebrum-nudge.json": JSON.stringify({ cerebrumMtimeMs: 1, nudgedAtChanged: 0 }),
+      "cerebrum-dedup.json": JSON.stringify({ cerebrumMtimeMs: 1, bulletHashes: [] }),
+    };
+    const ONE_DAY_AGO = Date.now() - 86_400_000;
+    for (const [name, text] of Object.entries(old)) {
+      fs.writeFileSync(path.join(crank, name), text);
+      setMtime(path.join(crank, name), ONE_DAY_AGO);
+    }
+    const before = Object.keys(old).map((name) => fs.statSync(path.join(crank, name)).mtimeMs);
+
+    const env = { CRANK_HOME: makeCrankHome() };
+    const patch = "*** Begin Patch\n*** Update File: app.ts\n+x\n*** End Patch";
+    for (const [hook, payload] of [
+      ["session-start", claudeSessionStart(root)],
+      ["stop", claudeStop(root)],
+      ["post-write", codexApplyPatch(root, patch)],
+    ] as const) {
+      expect(runHook(`src/hooks/${hook}.ts`, JSON.stringify(payload), root, env).status).toBe(0);
+    }
+    for (const [name, text] of Object.entries(old)) expect(fs.readFileSync(path.join(crank, name), "utf-8")).toBe(text);
+    expect(Object.keys(old).map((name) => fs.statSync(path.join(crank, name)).mtimeMs)).toEqual(before);
+
+    expect(cli(root, codexHome, "uninstall", "--yes", "--delete-crank").status).toBe(0);
+    for (const name of Object.keys(old)) expect(fs.existsSync(path.join(crank, name))).toBe(false);
   });
 
   test("--delete-crank removes .crank/ when only crank-mem's audit backup is left", () => {

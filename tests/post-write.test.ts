@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { git, gitCommit, makeCrankHome, makeCrankProject, runHook, setMtime } from "./helpers.ts";
+import { git, gitCommit, makeCrankProject, runHook, setMtime } from "./helpers.ts";
 import { claudePostWrite, claudePostEdit, codexApplyPatch, claudeSessionStart } from "./fixtures/payloads.ts";
 import { parseApplyPatch } from "../src/hooks/lib/apply-patch.ts";
 import { loadIndex } from "../src/hooks/lib/store.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
-import { NUDGE_STEP } from "../src/hooks/lib/cerebrum-nudge.ts";
 
 const HOOK = "src/hooks/post-write.ts";
 
@@ -132,6 +131,40 @@ describe("post-write hook (black-box)", () => {
     expect(index.files["gone.ts"]).toBeUndefined();
   });
 
+  test("Codex apply_patch emits nothing, even with a stale cerebrum, and still re-indexes", () => {
+    const files = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`f${i}.ts`, `const x${i} = 1;`]));
+    const root = makeCrankProject(files);
+    seedIndex(root);
+    const cerebrum = path.join(root, ".crank/cerebrum.md");
+    const memory = (...bullets: string[]) => ["# Cerebrum", "", "## Memory", ...bullets].join("\n");
+    const OLD = "- Fresh build dir fails: `OpenGL.framework` hits `-Werror=unguarded-availability-new` (2026-09-27).";
+    const NEW = "- GUI compile fails: OpenGL.framework, -Werror=unguarded-availability-new; use CMAKE_PROJECT_INCLUDE.";
+    fs.writeFileSync(cerebrum, memory(OLD));
+    setMtime(cerebrum, 1000);
+    fs.mkdirSync(path.join(root, "src"));
+    fs.writeFileSync(path.join(root, "src/a.ts"), "/** Added by codex. */\nexport const a = 1;\n");
+
+    const both = [
+      "*** Begin Patch",
+      "*** Add File: src/a.ts",
+      "+x",
+      "*** Update File: .crank/cerebrum.md",
+      "+x",
+      "*** End Patch",
+    ].join("\n");
+    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, both)));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
+    expect(loadIndex(path.join(root, ".crank")).files["src/a.ts"]!.description).toBe("Added by codex.");
+
+    // A new bullet that overlaps an older one, written by a cerebrum-only patch.
+    fs.writeFileSync(cerebrum, memory(OLD, NEW));
+    const only = "*** Begin Patch\n*** Update File: .crank/cerebrum.md\n+x\n*** End Patch";
+    const second = runHook(HOOK, JSON.stringify(codexApplyPatch(root, only)));
+    expect(second.status).toBe(0);
+    expect(second.stdout).toBe("");
+  });
+
   test("crank-internal and sensitive files are not indexed", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     seedIndex(root);
@@ -210,171 +243,5 @@ describe("post-write hook (black-box)", () => {
 
   test("empty stdin: exit 0", () => {
     expect(runHook(HOOK, "").status).toBe(0);
-  });
-});
-
-describe("post-write cerebrum nudge (Codex only)", () => {
-  const STALE = 1000; // epoch before the files existed → every file is "changed"
-  const FRESH = Date.now() + 1_000_000_000;
-  // NUDGE_STEP files, so a stale cerebrum is over the threshold. a.ts is the
-  // one UPDATE_A patches.
-  const ENOUGH = {
-    "a.ts": "const a = 1;",
-    ...Object.fromEntries(
-      Array.from({ length: NUDGE_STEP - 1 }, (_, i) => [`f${i}.ts`, `const x${i} = 1;`])
-    ),
-  };
-  const cerebrum = (root: string) => path.join(root, ".crank/cerebrum.md");
-  const nudge = (stdout: string): string | undefined =>
-    stdout ? JSON.parse(stdout).hookSpecificOutput.additionalContext : undefined;
-  const UPDATE_A = "*** Begin Patch\n*** Update File: a.ts\n+x\n*** End Patch";
-
-  test("apply_patch nudges when files changed since cerebrum was updated", () => {
-    const root = makeCrankProject(ENOUGH);
-    seedIndex(root);
-    setMtime(cerebrum(root), STALE);
-    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
-    expect(run.status).toBe(0);
-    const ctx = nudge(run.stdout);
-    expect(ctx).toContain("crank-mem");
-    expect(ctx).toContain("cerebrum");
-  });
-
-  test("apply_patch still nudges with digests on: Codex sessions are never digested", () => {
-    const root = makeCrankProject(ENOUGH);
-    seedIndex(root);
-    setMtime(cerebrum(root), STALE);
-    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), digest: true });
-    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)), root, { CRANK_HOME: makeCrankHome() });
-    expect(run.status).toBe(0);
-    expect(nudge(run.stdout)).toContain("cerebrum");
-  });
-
-  test("Claude Edit never nudges here (Stop hook owns Claude's nudge)", () => {
-    const root = makeCrankProject(ENOUGH);
-    seedIndex(root);
-    setMtime(cerebrum(root), STALE); // stale, but still silent for Claude
-    const run = runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "a.ts"))));
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
-  });
-
-  test("apply_patch stays silent when cerebrum is fresher than every file", () => {
-    const root = makeCrankProject(ENOUGH);
-    seedIndex(root);
-    setMtime(cerebrum(root), FRESH);
-    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
-  });
-
-  test("apply_patch debounces: a second write with no new changes is silent", () => {
-    const root = makeCrankProject(ENOUGH);
-    seedIndex(root);
-    setMtime(cerebrum(root), STALE);
-    expect(nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout)).toContain("crank-mem");
-    const second = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
-    expect(second.status).toBe(0);
-    expect(second.stdout).toBe("");
-  });
-
-  // A nudge that fires while cerebrum is under both limits must not stamp a
-  // prune floor: a later regrowth with fewer tokens would read as a prune.
-  test("a record nudge under the limits leaves no prune floor behind", () => {
-    const root = makeCrankProject(ENOUGH);
-    seedIndex(root);
-    const lines = (n: number, pad: string) =>
-      Array.from({ length: n }, (_, i) => `- entry ${i} ${pad}`).join("\n");
-    fs.writeFileSync(cerebrum(root), lines(103, "x".repeat(60))); // ~1850 tokens
-    setMtime(cerebrum(root), STALE);
-    const record = nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout);
-    expect(record).toContain("file(s) have changed");
-    expect(record).not.toContain("Prune");
-
-    // Regrowth past the line limit with fewer tokens than at the record nudge.
-    fs.writeFileSync(cerebrum(root), lines(157, ""));
-    setMtime(cerebrum(root), FRESH);
-    const regrown = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
-    expect(regrown.status).toBe(0);
-    expect(nudge(regrown.stdout)).toContain("157 lines");
-  });
-
-  test("apply_patch prune nudge backs cerebrum up and names the copy", () => {
-    const root = makeCrankProject(ENOUGH);
-    seedIndex(root);
-    const body = Array.from({ length: 160 }, (_, i) => `- entry ${i}`).join("\n");
-    fs.writeFileSync(cerebrum(root), body);
-    setMtime(cerebrum(root), FRESH);
-    const ctx = nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout);
-    const dir = path.join(root, ".crank/backups/cerebrum");
-    const [copy] = fs.readdirSync(dir);
-    expect(fs.readFileSync(path.join(dir, copy!), "utf-8")).toBe(body);
-    expect(ctx).toContain(`.crank/backups/cerebrum/${copy}`);
-    expect(ctx).toContain(".crank/cerebrum-archive.md");
-    // Codex reads AGENTS.md, not CLAUDE.md.
-    expect(ctx).toContain("delete only what AGENTS.md or the code already states");
-    expect(ctx).not.toContain("CLAUDE.md");
-  });
-
-  test("apply_patch prune nudge exits 0 when backups cannot be written", () => {
-    const root = makeCrankProject(ENOUGH);
-    seedIndex(root);
-    fs.writeFileSync(path.join(root, ".crank/backups"), "not a directory");
-    fs.writeFileSync(cerebrum(root), Array.from({ length: 160 }, (_, i) => `- entry ${i}`).join("\n"));
-    setMtime(cerebrum(root), FRESH);
-    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A)));
-    expect(run.status).toBe(0);
-    expect(nudge(run.stdout)).toContain("160 lines");
-    expect(nudge(run.stdout)).not.toContain("A copy of the current file");
-  });
-
-  // Codex reads skills from .agents/skills/ and invokes them with `$`.
-  test("apply_patch nudge suggests the audit when the skill is in .agents/skills", () => {
-    const root = makeCrankProject(ENOUGH);
-    seedIndex(root);
-    setMtime(cerebrum(root), STALE);
-    fs.mkdirSync(path.join(root, ".claude/skills/crank-mem-audit"), { recursive: true });
-    fs.writeFileSync(path.join(root, ".claude/skills/crank-mem-audit/SKILL.md"), "");
-    expect(nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout)).not.toContain("crank-mem-audit");
-
-    fs.mkdirSync(path.join(root, ".agents/skills/crank-mem-audit"), { recursive: true });
-    fs.writeFileSync(path.join(root, ".agents/skills/crank-mem-audit/SKILL.md"), "");
-    setMtime(cerebrum(root), STALE - 1); // a new cerebrum version re-arms the record part
-    const ctx = nudge(runHook(HOOK, JSON.stringify(codexApplyPatch(root, UPDATE_A))).stdout);
-    expect(ctx).toContain("Suggest the user run the crank-mem-audit skill (`$crank-mem-audit`)");
-  });
-
-  // Codex appends to cerebrum with a patch that touches nothing else, and that
-  // patch takes the early return for .crank/-only writes.
-  const CEREBRUM_PATCH = "*** Begin Patch\n*** Update File: .crank/cerebrum.md\n+x\n*** End Patch";
-  const OLD = "- Fresh build dir fails: `OpenGL.framework` hits `-Werror=unguarded-availability-new` (2026-09-27).";
-  const NEW = "- GUI compile fails: OpenGL.framework, -Werror=unguarded-availability-new; use CMAKE_PROJECT_INCLUDE.";
-  const memory = (...bullets: string[]) => ["# Cerebrum", "", "## Memory", ...bullets].join("\n");
-
-  test("a cerebrum-only apply_patch flags an overlapping new bullet after a silent seed", () => {
-    const root = makeCrankProject();
-    fs.writeFileSync(cerebrum(root), memory(OLD));
-    setMtime(cerebrum(root), FRESH);
-    const seed = runHook(HOOK, JSON.stringify(codexApplyPatch(root, CEREBRUM_PATCH)));
-    expect(seed.status).toBe(0);
-    expect(seed.stdout).toBe("");
-
-    fs.writeFileSync(cerebrum(root), memory(OLD, NEW));
-    setMtime(cerebrum(root), FRESH + 5000);
-    const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, CEREBRUM_PATCH)));
-    expect(run.status).toBe(0);
-    expect(nudge(run.stdout)).toContain("bullet at line 5 overlaps line 4");
-  });
-
-  test("Claude writes to cerebrum never run the overlap check here", () => {
-    const root = makeCrankProject();
-    for (const [text, ms] of [[memory(OLD), FRESH], [memory(OLD, NEW), FRESH + 5000]] as const) {
-      fs.writeFileSync(cerebrum(root), text);
-      setMtime(cerebrum(root), ms);
-      const run = runHook(HOOK, JSON.stringify(claudePostEdit(root, cerebrum(root))));
-      expect(run.status).toBe(0);
-      expect(run.stdout).toBe("");
-    }
-    expect(fs.existsSync(path.join(root, ".crank/cerebrum-dedup.json"))).toBe(false);
   });
 });

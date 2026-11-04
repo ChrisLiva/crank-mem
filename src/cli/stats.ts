@@ -5,12 +5,7 @@ import { loadIndex, INDEX_FILE, type AnatomyIndex } from "../hooks/lib/store.ts"
 import { walkProject } from "../hooks/lib/scanner.ts";
 import type { CrankConfig } from "../hooks/lib/config.ts";
 import { composeInjection, fileCitations, injectionSources } from "../hooks/lib/injection.ts";
-import { JOURNAL_FILE, NEXT_MARKER } from "../hooks/lib/journal.ts";
-import { parseBullets } from "../hooks/lib/bullets.ts";
-import { LOG_FILE } from "../hooks/lib/debug.ts";
-import {
-  auditSkillInstalled, installedAtMs, lastAuditMs, overlapPairCount, OVERLAP_MIN_SHARED,
-} from "../hooks/lib/cerebrum-nudge.ts";
+import { auditSkillInstalled, installedAtMs, lastAuditMs } from "../hooks/lib/cerebrum-files.ts";
 import { hasCrankHooks } from "./settings.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
 import { codexHome, codexTrustStatus, userCodexConfigPath, CODEX_REVIEW_HINT } from "./codex-trust.ts";
@@ -31,25 +26,17 @@ function age(iso: string | null): string {
 const row = (label: string, value: string): string => `  ${(label + ":").padEnd(18)}${value}`;
 const ageOf = (ms: number): string => age(new Date(ms).toISOString());
 
-function readText(file: string): string | null {
-  try {
-    return fs.readFileSync(file, "utf-8");
-  } catch {
-    return null;
-  }
-}
-
 /**
- * How much of the memory reaches a session and how current it is. The excerpt
- * counts come from composing the injection a Claude session start would get,
- * minus the occasional staleness and drift notes, so the budget that cuts
- * bullets is the real one.
+ * How much of cerebrum reaches a session, whether the paths it cites still
+ * exist, and when the audit skill last ran. The excerpt counts come from
+ * composing the injection a Claude session start would get, minus the
+ * occasional staleness and drift notes, so the budget that cuts bullets is the
+ * real one.
  */
 function memoryLines(root: string, crankDir: string, config: CrankConfig, index: AnatomyIndex): string[] {
   const lines: string[] = [];
   const sources = injectionSources(root, crankDir, config, index, false);
   const { cerebrumMd } = sources;
-  const journalMd = readText(path.join(crankDir, JOURNAL_FILE));
 
   if (!cerebrumMd) {
     lines.push(row("cerebrum", cerebrumMd === null ? "missing" : "empty"));
@@ -80,14 +67,6 @@ function memoryLines(root: string, crankDir: string, config: CrankConfig, index:
     const cited = [...new Set(fileCitations(cerebrumMd).filter((rel) => rel.includes("/")))];
     const existing = cited.filter((rel) => fs.existsSync(path.join(root, rel))).length;
     lines.push(row("cited paths", cited.length ? `${existing} of ${cited.length} exist` : "none cited"));
-    lines.push(row("overlaps", `${overlapPairCount(cerebrumMd)} bullet pair(s) share ${OVERLAP_MIN_SHARED}+ identifiers`));
-  }
-
-  if (journalMd === null) {
-    lines.push(row("journal", "missing"));
-  } else {
-    const entries = parseBullets(journalMd.split("\n"));
-    lines.push(row("journal no NEXT", `${entries.filter((b) => !b.includes(NEXT_MARKER)).length} of ${entries.length} entries`));
   }
 
   const audited = lastAuditMs(crankDir);
@@ -99,37 +78,7 @@ function memoryLines(root: string, crankDir: string, config: CrankConfig, index:
       (audited !== null ? ageOf(audited) : installed !== null ? `never (installed ${ageOf(installed)})` : "never") + skill,
     ),
   );
-  lines.push(row("nudges", nudgeCounts(crankDir)));
   return lines;
-}
-
-/** Nudge parts emitted and overlap flags raised, as recorded in debug.log. */
-function nudgeCounts(crankDir: string): string {
-  const log = readText(path.join(crankDir, LOG_FILE));
-  if (log === null) return "n/a (debug off)";
-  const counts = { record: 0, journal: 0, prune: 0, audit: 0, overlap: 0 };
-  let since: string | null = null;
-  for (const line of log.split("\n")) {
-    let rec: { ts?: unknown; events?: unknown };
-    try {
-      rec = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (since === null && typeof rec.ts === "string") since = rec.ts.slice(0, 10);
-    for (const e of Array.isArray(rec.events) ? rec.events : []) {
-      if (e?.event === "nudge-emitted") {
-        if (e.recordDue) counts.record++;
-        if (e.journalDue) counts.journal++;
-        if (e.pruneDue) counts.prune++;
-        if (e.auditDue) counts.audit++;
-      } else if (e?.event === "overlap-checked" && e.pairs > 0) {
-        counts.overlap++;
-      }
-    }
-  }
-  const parts = Object.entries(counts).map(([k, n]) => `${k} ${n}`).join(", ");
-  return since === null ? parts : `${parts} since ${since}`;
 }
 
 const MEMORY_STATE = {

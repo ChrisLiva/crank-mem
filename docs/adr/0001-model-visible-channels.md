@@ -29,6 +29,10 @@ SubagentStart, which carries a cerebrum excerpt to Claude subagents.
 
 Amended 2026-11-03: Claude's PostToolUse also carries file history on Read and Bash calls, from src/hooks/post-read.ts (ADR 0009).
 
+Amended 2026-11-04: Claude's Stop hook and Codex's post-write hook no longer emit
+`additionalContext`, since crank-mem stage 2 removes the cerebrum nudge they carried
+(ADR 0004). The channel findings above stand.
+
 ## Re-verification 2026-07-19
 
 - Claude Code 2.1.215, live probe: SessionStart/PreToolUse/PostToolUse

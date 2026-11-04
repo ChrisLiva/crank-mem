@@ -13,8 +13,9 @@ import {
 import { CRANK_DIR, CONFIG_FILE, LOCAL_CONFIG_FILE } from "../hooks/lib/config.ts";
 import { INDEX_FILE, ANATOMY_FILE } from "../hooks/lib/store.ts";
 import { LOCK_FILE } from "../hooks/lib/lock.ts";
-import { MARKER_FILE, DEDUP_FILE, CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, isCrankBackup } from "../hooks/lib/cerebrum-nudge.ts";
-import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
+import {
+  MARKER_FILE, DEDUP_FILE, CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, isCrankBackup, JOURNAL_FILE,
+} from "../hooks/lib/cerebrum-files.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
 import { MEMORY_FILE } from "../hooks/lib/memory.ts";
 import { openProject } from "./project.ts";

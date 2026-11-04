@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { manifestDirs } from "../hooks/lib/cerebrum-nudge.ts";
+import { manifestDirs } from "../hooks/lib/cerebrum-files.ts";
 
 // Backups of every file init/upgrade is about to modify, with a manifest
 // mapping backup names to original absolute paths so uninstall can restore

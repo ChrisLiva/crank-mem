@@ -4,7 +4,7 @@ import { estimateProseTokens } from "./tokens.ts";
 import { parseBullets } from "./bullets.ts";
 import { SOURCE_EXTENSIONS } from "./scanner.ts";
 import { symbolsSupported } from "./symbols.ts";
-import { CEREBRUM_FILE } from "./cerebrum-nudge.ts";
+import { CEREBRUM_FILE } from "./cerebrum-files.ts";
 import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "./memory.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
 import type { CrankConfig } from "./config.ts";
@@ -20,10 +20,7 @@ import type { AnatomyIndex } from "./store.ts";
 // The map is not injected, only a one-line pointer to it. Inlining the map
 // cost 74% of the injection; ADR 0005 records the measurement.
 
-/**
- * Ceiling on the whole excerpt, set to catch a runaway file. The prune nudge at
- * PRUNE_LINE_LIMIT bounds the file in normal use.
- */
+/** Ceiling on the whole excerpt, set to catch a runaway file. */
 export const CEREBRUM_INJECT_TOKEN_CAP = 1500;
 /** Sub-cap on User Preferences, so prefs can't crowd memory out of the excerpt. */
 export const PREFS_TOKEN_CAP = 400;

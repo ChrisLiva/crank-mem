@@ -46,14 +46,6 @@ export function isCodexPayload(payload: HookPayload): boolean {
 }
 
 /**
- * The agent instructions files to name in model-visible text. Codex reads
- * AGENTS.md; any payload without a Codex marker gets both names.
- */
-export function instructionFiles(codex: boolean): string {
-  return codex ? "AGENTS.md" : "CLAUDE.md, AGENTS.md";
-}
-
-/**
  * Locate the project root, the dir holding `.crank/config.json`, by walking up from
  * `cwd`. Returns null when crank-mem isn't installed here.
  */

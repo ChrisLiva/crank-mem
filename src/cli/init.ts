@@ -18,8 +18,7 @@ import { defaultConfig, saveConfig, CRANK_DIR, type CrankConfig } from "../hooks
 import { fullScan } from "../hooks/lib/scanner.ts";
 import { commitIndex } from "../hooks/lib/store.ts";
 import { CLI_LOCK_BUDGET_MS } from "../hooks/lib/lock.ts";
-import { CEREBRUM_FILE } from "../hooks/lib/cerebrum-nudge.ts";
-import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
+import { CEREBRUM_FILE, JOURNAL_FILE } from "../hooks/lib/cerebrum-files.ts";
 
 function detectRuntime(): CrankConfig["runtime"] | null {
   if (spawnSync("bun", ["--version"], { stdio: "ignore" }).status === 0) return "bun";

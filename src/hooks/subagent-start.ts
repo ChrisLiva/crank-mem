@@ -4,7 +4,7 @@ import { readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdv
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex } from "./lib/store.ts";
 import { excerptOf, INJECTION_HEADING, RECALL_BULLET, recallApplies } from "./lib/injection.ts";
-import { CEREBRUM_FILE } from "./lib/cerebrum-nudge.ts";
+import { CEREBRUM_FILE } from "./lib/cerebrum-files.ts";
 import { enableDebug } from "./lib/debug.ts";
 import { digestGate } from "./lib/spool.ts";
 import { memoryPath, memoryStatus } from "./lib/memory.ts";

@@ -1,13 +1,12 @@
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload, repoRelative, type HookPayload,
+  readStdin, parsePayload, findProjectRoot, runAdvisoryHook, repoRelative, type HookPayload,
 } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { commitIndex } from "./lib/store.ts";
 import { indexFile } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { parseApplyPatch } from "./lib/apply-patch.ts";
-import { cerebrumNudge, cerebrumOverlaps } from "./lib/cerebrum-nudge.ts";
 import { enableDebug, debugEvent, safePath } from "./lib/debug.ts";
 
 // PostToolUse hook: re-index of written files. Claude matcher is
@@ -89,15 +88,11 @@ async function main(): Promise<void> {
   enableDebug(crankDir, config.debug);
 
   const { ops, skip } = toWriteOps(payload, root, cwd);
-  // Codex's cerebrum overlap check, like its nudge below. Run before the early
-  // return: a patch that touches only .crank/cerebrum.md is the write it checks.
-  const overlaps = payload.tool_name === "apply_patch" ? cerebrumOverlaps(crankDir) : null;
   if (ops.length === 0) {
     debugEvent("no-write-ops", {
       tool: typeof payload.tool_name === "string" ? payload.tool_name : null,
       ...skip,
     });
-    if (overlaps) emitAdditionalContext("PostToolUse", overlaps);
     return;
   }
 
@@ -142,15 +137,6 @@ async function main(): Promise<void> {
     committed: committed !== null,
     fileCount: committed?.meta.fileCount ?? null,
   });
-
-  // Codex delivers writes as apply_patch and has no usable end-of-turn hook, so
-  // its cerebrum nudge rides here (PostToolUse additionalContext is model-visible
-  // on Codex — ADR 0001). Claude gets the same nudge at turn end via the Stop
-  // hook, so it is skipped here to avoid double-nudging.
-  if (payload.tool_name === "apply_patch") {
-    const msg = [cerebrumNudge(crankDir, isCodexPayload(payload)), overlaps].filter(Boolean).join("\n");
-    if (msg) emitAdditionalContext("PostToolUse", msg);
-  }
 }
 
 await runAdvisoryHook("post-write", main);
