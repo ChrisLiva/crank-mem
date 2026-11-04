@@ -1,7 +1,7 @@
 import { EMBED_MODEL, embed, modelPresent } from "../daemon/embedder.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 import {
-  formatLine, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE, OBSERVATION_TYPES,
+  formatLine, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_OLDER_NOTE, MEMORY_UNREADABLE_NOTE, OBSERVATION_TYPES,
   type MemoryReader, type Observation, type ObservationType, type SearchQuery,
 } from "../hooks/lib/memory.ts";
 import { parseArgs } from "./args.ts";
@@ -11,7 +11,7 @@ import { openNearestProject } from "./project.ts";
 export const NO_MEMORY_NOTE = "crank-mem: no memory exists yet.";
 const KEYWORD_ONLY_NOTE = "crank-mem: keyword search only; run `crank-mem setup` for search by meaning.";
 
-const STATE_NOTES = { newer: MEMORY_NEWER_NOTE, unreadable: MEMORY_UNREADABLE_NOTE } as const;
+const STATE_NOTES = { older: MEMORY_OLDER_NOTE, newer: MEMORY_NEWER_NOTE, unreadable: MEMORY_UNREADABLE_NOTE } as const;
 
 /** A missing store is an empty result for search (stdout, exit 0) and an error for the rest. */
 async function withMemory(

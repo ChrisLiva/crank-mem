@@ -83,6 +83,7 @@ function memoryLines(root: string, crankDir: string, config: CrankConfig, index:
 
 const MEMORY_STATE = {
   missing: "none yet",
+  older: "older than this version; run crank-mem upgrade",
   newer: "newer than this version; run crank-mem upgrade",
   unreadable: "unreadable",
 } as const;

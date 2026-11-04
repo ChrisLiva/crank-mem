@@ -5,7 +5,7 @@ import { parseBullets } from "./bullets.ts";
 import { SOURCE_EXTENSIONS } from "./scanner.ts";
 import { symbolsSupported } from "./symbols.ts";
 import { CEREBRUM_FILE } from "./cerebrum-files.ts";
-import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "./memory.ts";
+import { MEMORY_NEWER_NOTE, MEMORY_OLDER_NOTE, formatLine, memoryPath, openMemory } from "./memory.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
 import type { CrankConfig } from "./config.ts";
 import type { AnatomyIndex } from "./store.ts";
@@ -130,7 +130,7 @@ export interface InjectionSources {
 
 export type Recall =
   | { status: "open"; nextSteps: string | null; recentLines: string[] }
-  | { status: "missing" | "newer" | "unreadable" };
+  | { status: "missing" | "older" | "newer" | "unreadable" };
 
 /** The recall bullet shows with a readable store, and while digests run with none yet, since they will fill it. */
 export function recallApplies(running: boolean, status: Recall["status"]): boolean {
@@ -142,6 +142,7 @@ export function captureNotes(gate: DigestGate, status: Recall["status"]): string
   const notes: string[] = [];
   if (gate.stop) notes.push(`crank-mem digests stopped (${gate.stop.reason}): run \`crank-mem digest resume\` once that is fixed.`);
   if (status === "newer") notes.push(MEMORY_NEWER_NOTE);
+  if (status === "older") notes.push(MEMORY_OLDER_NOTE);
   if (gate.stalled) {
     notes.push("crank-mem: a session here has waited over 2 hours for its digest; see `crank-mem stats`.");
   }

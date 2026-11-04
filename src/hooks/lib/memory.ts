@@ -10,17 +10,22 @@ import { runGit } from "./scanner.ts";
 // process.getBuiltinModule on each open, so a runtime without it degrades to
 // "unreadable" instead of failing at import time.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const MEMORY_FILE = "memory.db";
+/** Snapshots of the store, relative to the folder that holds it. */
+export const SNAPSHOT_DIR = path.join("backups", "memory");
+export const MEMORY_OLDER_NOTE = "crank-mem: memory.db predates this version; run `crank-mem upgrade`.";
 export const MEMORY_NEWER_NOTE = "crank-mem: memory.db is newer than this version; run `crank-mem upgrade`.";
 export const MEMORY_UNREADABLE_NOTE = "crank-mem: .crank/memory.db is not a readable database.";
 export type MemoryReader = Omit<Memory, "appendDigest" | "recordRejection" | "putVectors">;
 export type MemoryRead =
   | { status: "open"; memory: MemoryReader }
-  | { status: "missing" | "newer" | "unreadable" };
+  | { status: "missing" | "older" | "newer" | "unreadable" };
+/** migratedFrom: the version the open migrated from (0 for a fresh store), null when it applied no step. */
 export type MemoryWrite =
-  | { status: "open"; memory: Memory }
-  | { status: "newer" | "unreadable" };
+  | { status: "open"; memory: Memory; migratedFrom: number | null }
+  | { status: "newer" | "unreadable" }
+  | { status: "unmigrated"; detail: string };
 
 /** SCHEMA_V1's observations.type CHECK repeats this list as a literal; schema v1 freezes it. */
 export const OBSERVATION_TYPES = ["bugfix", "feature", "refactor", "change", "discovery", "decision"] as const;
@@ -98,8 +103,26 @@ CREATE TRIGGER observations_ad AFTER DELETE ON observations BEGIN
 END;
 `;
 
+const SCHEMA_V2 = `
+ALTER TABLE observations ADD COLUMN stale_at INTEGER;
+ALTER TABLE observations ADD COLUMN stale_reason TEXT CHECK ((stale_at IS NULL) = (stale_reason IS NULL));
+ALTER TABLE observations ADD COLUMN stale_reviewed INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX observations_stale_at ON observations(stale_at) WHERE stale_at IS NOT NULL;
+CREATE TABLE proposals (
+  id INTEGER PRIMARY KEY, digest_id INTEGER NOT NULL REFERENCES digests(id),
+  kind TEXT NOT NULL CHECK (kind IN ('preference','memory')),
+  bullet TEXT NOT NULL, bullet_hash TEXT NOT NULL UNIQUE,
+  state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','accepted','rejected','expired')),
+  attempts INTEGER NOT NULL DEFAULT 0, reason TEXT,
+  created_at INTEGER NOT NULL, decided_at INTEGER);
+CREATE TABLE consolidations (
+  id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, finished_at INTEGER NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ok','conflict','rejected','retry','stopped')),
+  model TEXT, cost_usd REAL NOT NULL DEFAULT 0);
+`;
+
 /** STEPS[v] migrates a store at user_version v to v + 1. */
-const STEPS: readonly string[] = [SCHEMA_V1];
+const STEPS: readonly string[] = [SCHEMA_V1, SCHEMA_V2];
 
 /**
  * The store for the project at `root`. A linked worktree (`.git` is a file)
@@ -136,18 +159,35 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
       db.close();
       return { status: "newer" };
     }
-    if (v < SCHEMA_VERSION) {
-      if (read) {
+    if (read) {
+      if (v < SCHEMA_VERSION) {
         db.close();
-        return { status: "missing" };
+        return { status: v === 0 ? "missing" : "older" };
       }
-      if (v === 0) db.exec("PRAGMA journal_mode=WAL");
-      if (!migrate(db)) {
+      return { status: "open", memory: createMemory(db, file) };
+    }
+    let migratedFrom: number | null = null;
+    if (v < SCHEMA_VERSION) {
+      if (v === 0) {
+        db.exec("PRAGMA journal_mode=WAL");
+      } else {
+        // VACUUM INTO cannot run inside migrate's transaction, so the snapshot comes first.
+        try {
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+          writeSnapshot(db, path.join(path.dirname(file), SNAPSHOT_DIR), `${stamp}-v${v}.db`);
+        } catch (err) {
+          db.close();
+          return { status: "unmigrated", detail: err instanceof Error ? err.message : String(err) };
+        }
+      }
+      const from = migrate(db);
+      if (from === "newer") {
         db.close();
         return { status: "newer" };
       }
+      migratedFrom = from;
     }
-    return { status: "open", memory: createMemory(db) };
+    return { status: "open", memory: createMemory(db, file), migratedFrom };
   } catch {
     try { db?.close(); } catch { /* already closed or never opened */ }
     return { status: "unreadable" };
@@ -164,19 +204,40 @@ function userVersion(db: sqlite.DatabaseSync): number {
   return Number((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);
 }
 
-/** Applies the forward steps under a write lock; false when another process moved the store past this version. */
-function migrate(db: sqlite.DatabaseSync): boolean {
+let snapshotCount = 0;
+
+/** Writes a copy of the store to `<dir>/<name>` through a unique .tmp file; throws on failure, leaving no .tmp behind. */
+function writeSnapshot(db: sqlite.DatabaseSync, dir: string, name: string): string {
+  fs.mkdirSync(dir, { recursive: true });
+  const final = path.join(dir, name);
+  const tmp = `${final}.${process.pid}.${snapshotCount++}.tmp`;
+  try {
+    db.prepare("VACUUM INTO ?").run(tmp);
+    fs.renameSync(tmp, final);
+    return final;
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
+/**
+ * Applies the forward steps under a write lock. Returns the version it found when it
+ * applied a step, null when another process had already migrated the store, and
+ * "newer" when another process moved it past this version.
+ */
+function migrate(db: sqlite.DatabaseSync): number | null | "newer" {
   db.exec("BEGIN IMMEDIATE");
   try {
     const v = userVersion(db);
-    if (v > SCHEMA_VERSION) {
+    if (v >= SCHEMA_VERSION) {
       db.exec("ROLLBACK");
-      return false;
+      return v > SCHEMA_VERSION ? "newer" : null;
     }
     for (let step = v; step < SCHEMA_VERSION; step++) db.exec(STEPS[step]!);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec("COMMIT");
-    return true;
+    return v;
   } catch (err) {
     try { db.exec("ROLLBACK"); } catch { /* no open transaction */ }
     throw err;
@@ -230,7 +291,7 @@ function samePosition(a: Position | null, b: Position | null): boolean {
   return a === null || b === null ? a === b : a.uuid === b.uuid && a.timestamp === b.timestamp;
 }
 
-function createMemory(db: sqlite.DatabaseSync): Memory {
+function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
   const one = (sql: string, ...params: sqlite.SQLInputValue[]) => db.prepare(sql).get(...params) as Row | undefined;
   const all = (sql: string, ...params: sqlite.SQLInputValue[]) => db.prepare(sql).all(...params) as Row[];
 

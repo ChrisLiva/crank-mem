@@ -14,6 +14,7 @@ import {
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
 import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
+import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
 // the hook wiring, the .crank/.gitignore allowlist, and the git mode's ignore
@@ -133,6 +134,8 @@ export async function run(_args: string[]): Promise<number> {
   const installed = installPackages();
   if (!installed.ok) console.error(`crank-mem: could not install packages (${installed.detail})`);
 
+  migrateStore(memoryPath(root));
+
   const versionChanged = config.vendored_version !== current;
   if (config.codex_trust_written && (versionChanged || codexRewired)) {
     const t = crankTrust(codexHooksJson);
@@ -157,4 +160,21 @@ export async function run(_args: string[]): Promise<number> {
 
   console.log(`crank-mem: upgraded vendored hooks ${prev} → ${current}`);
   return 0;
+}
+
+/**
+ * Brings an existing store to the current schema, snapshotting a version-1 store
+ * first. It never creates a store, and a store it cannot migrate stays as it was.
+ */
+export function migrateStore(storeFile: string): void {
+  if (!fs.existsSync(storeFile)) return;
+  const opened = openMemory(storeFile, "write");
+  if (opened.status === "open") {
+    if (opened.migratedFrom === 1) console.log("  migrated memory.db v1 → v2");
+    opened.memory.close();
+  } else if (opened.status === "unmigrated") {
+    console.error(`crank-mem: could not migrate memory.db (${opened.detail})`);
+  } else if (opened.status === "unreadable") {
+    console.error("crank-mem: could not migrate memory.db (unreadable)");
+  }
 }

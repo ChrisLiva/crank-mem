@@ -13,6 +13,7 @@ import {
   type Position,
   type SearchQuery,
 } from "../src/hooks/lib/memory.ts";
+import { V1_DDL } from "./fixtures/schema-v1.ts";
 
 const open: { close(): void }[] = [];
 
@@ -46,6 +47,17 @@ function digest(sessionId: string, expected: Position | null, next: Position, ov
     observations: [],
     ...over,
   };
+}
+
+/** A store built from the frozen version-1 schema, at user_version 1. */
+function v1File(): string {
+  const file = tmpFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const raw = new (process.getBuiltinModule("node:sqlite").DatabaseSync)(file);
+  raw.exec(V1_DDL);
+  raw.exec("PRAGMA user_version = 1");
+  raw.close();
+  return file;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -90,10 +102,39 @@ describe("openMemory", () => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const sqlite = process.getBuiltinModule("node:sqlite");
     const raw = new sqlite.DatabaseSync(file);
-    raw.exec("PRAGMA user_version=2");
+    raw.exec("PRAGMA user_version=3");
     raw.close();
     expect(openMemory(file, "read").status).toBe("newer");
     expect(openMemory(file, "write").status).toBe("newer");
+  });
+
+  test("a version-1 store reads as older", () => {
+    const file = v1File();
+    expect(openMemory(file, "read").status).toBe("older");
+    expect(memoryStatus(file)).toBe("older");
+  });
+
+  test("a writer reports the version it migrated from, and snapshots only a version-1 store", () => {
+    const SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-v1\.db$/;
+    const fresh = tmpFile();
+    const created = openMemory(fresh, "write");
+    expect(created.status === "open" && created.migratedFrom).toBe(0);
+    if (created.status === "open") created.memory.close();
+    expect(fs.existsSync(path.join(path.dirname(fresh), "backups/memory"))).toBe(false);
+    const reopened = openMemory(fresh, "write");
+    expect(reopened.status === "open" && reopened.migratedFrom).toBeNull();
+    if (reopened.status === "open") reopened.memory.close();
+
+    const file = v1File();
+    const migrated = openMemory(file, "write");
+    expect(migrated.status === "open" && migrated.migratedFrom).toBe(1);
+    if (migrated.status === "open") migrated.memory.close();
+    const dir = path.join(path.dirname(file), "backups/memory");
+    const names = fs.readdirSync(dir);
+    expect(names).toHaveLength(1);
+    expect(names[0]).toMatch(SNAPSHOT_NAME);
+    expect(openMemory(path.join(dir, names[0]!), "read").status).toBe("older");
+    expect(fs.readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
   });
 
   test("a runtime without node:sqlite is unreadable", () => {

@@ -163,7 +163,7 @@ export function plantMemory(root: string, state: "newer" | "unreadable"): void {
   }
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
   const db = new mod.DatabaseSync(file);
-  db.exec("PRAGMA user_version = 2");
+  db.exec("PRAGMA user_version = 3");
   db.close();
 }
 
