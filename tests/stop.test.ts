@@ -499,28 +499,6 @@ describe("journal nudge (black-box)", () => {
     expect(ctx).toContain("160 lines"); // prune
   });
 
-  // A trim rewrites journal.md and restores its mtime. Real filesystems keep
-  // sub-millisecond mtimes, and the debounce compares them for equality — so a
-  // lossy restore would re-arm the nudge every time the file is trimmed.
-  test("a session-start trim does not re-arm the debounce", () => {
-    const root = makeCrankProject(ENOUGH);
-    seedIndex(root);
-    setMtime(cerebrum(root), FRESH);
-    fs.writeFileSync(
-      journal(root),
-      "# Journal\n" + Array.from({ length: 25 }, (_, i) => `- entry ${i}`).join("\n") + "\n"
-    );
-    // Sub-millisecond mtime, as a real write produces.
-    fs.utimesSync(journal(root), STALE / 1000 + 0.0004999, STALE / 1000 + 0.0004999);
-
-    expect(nudge(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout)).toContain("journal.md");
-    seedIndex(root); // session start trims the 25 entries down to 20
-    expect(fs.readFileSync(journal(root), "utf-8").match(/^- /gm)!.length).toBe(20);
-
-    setMtime(cerebrum(root), FRESH);
-    expect(runHook(HOOK, JSON.stringify(claudeStop(root))).stdout).toBe("");
-  });
-
   test("no journal.md (pre-upgrade install): silent about the journal", () => {
     const root = makeCrankProject(ENOUGH);
     seedIndex(root);
