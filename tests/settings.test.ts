@@ -26,7 +26,7 @@ describe("mergeHooksIntoFile", () => {
     expect(parsed.hooks.Stop[0].hooks[0].command).toContain(".crank/hooks/stop.ts");
   });
 
-  test("Stop nudge is wired for Claude but not Codex", () => {
+  test("Stop is wired for Claude but not Codex", () => {
     expect(crankHooks("bun", "claude").Stop![0]!.hooks[0]!.command).toContain(".crank/hooks/stop.ts");
     expect(crankHooks("node", "codex").Stop).toBeUndefined();
   });

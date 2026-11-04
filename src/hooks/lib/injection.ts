@@ -43,8 +43,8 @@ export const RECALL_BULLET =
 
 /**
  * Cerebrum sections read as semantic memory, lowercased. `## Memory` is the
- * canonical heading; the other two are read for the installs that predate it,
- * which converge naturally as agents prune. No file is ever rewritten.
+ * canonical heading; the other two are read for the installs that predate it.
+ * Legacy headings are read as-is: consolidation edits bullets, never headings.
  */
 const MEMORY_HEADINGS = new Set(["memory", "key learnings", "do-not-repeat"]);
 const PREFS_HEADING = "user preferences";
