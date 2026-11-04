@@ -61,3 +61,15 @@ agent effort. The user set the rule for that path:
   spool drains, and the session-start note says so.
 - `src/templates/cerebrum.md` and `src/templates/journal.md` keep their protocol text: an
   agent sees it only by opening the seeded file.
+
+Amended 2026-11-04: crank-mem stage 2 removes every upkeep prompt in every state. Session start
+injects no cerebrum or journal protocol, Stop and post-write emit no nudge, and SubagentStart
+never injects a journal pointer, so the gate no longer decides any of them. The gate still
+decides the next-steps section and recall with no store yet. Consolidation has shipped
+(ADR 0011): after a digest, `src/daemon/consolidate.ts` → `consolidate` checks the pending
+proposals and stale flags against the code and edits `cerebrum.md`. This supersedes every
+Consequence bullet above. `cerebrum.md` gets new bullets again, from consolidation after a
+digest, and `src/hooks/lib/journal.ts` is deleted, so nothing trims or reads
+`journal.md`, which stays on disk unread. A stopped digest or a stalled capture brings no
+protocol or nudge back. `src/templates/journal.md` is deleted, and `src/templates/cerebrum.md`
+holds only its headings, with no protocol text.

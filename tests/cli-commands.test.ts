@@ -464,7 +464,7 @@ describe("upgrade", () => {
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("upgraded vendored hooks 0.7.0 → 0.8.1");
+    expect(run.stdout).toContain("upgraded vendored hooks 0.7.0 → 0.9.0");
     const after = JSON.parse(fs.readFileSync(local, "utf-8")).hooks;
     const wired = crankHooks("bun", "claude");
     expect(after.SessionEnd).toHaveLength(1);
