@@ -4,10 +4,10 @@ import * as path from "node:path";
 import { consolidationRequest } from "../src/daemon/consolidate.ts";
 import { isSensitiveFile } from "../src/hooks/lib/config.ts";
 import {
-  TOKEN, appendRecords, cleanup, digestProject, git, gitCommit, journey, laterRecords, readRecord, rerun, runCli, search, seedMemory,
-  setMtime, stop, temps, userRecord,
+  FIXTURE, TOKEN, appendRecords, cleanup, digestProject, expectStopped, git, gitCommit, journey, laterRecords, readRecord, rerun, runCli,
+  search, seedMemory, setMtime, spawnJob, stop, temps, userRecord, waitFor, type FakeScenario, type Journey,
 } from "./helpers.ts";
-import { okStreamOf } from "./fixtures/claude-scenarios.ts";
+import { okStreamOf, status401Stream, status500Stream } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 
 afterEach(cleanup);
@@ -279,5 +279,218 @@ describe("an accepted verdict with no edit", () => {
     expect(fs.readFileSync(cerebrum, "utf8")).toBe(CEREBRUM);
     expect(fs.existsSync(path.join(root, ".crank/backups/cerebrum"))
       ? fs.readdirSync(path.join(root, ".crank/backups/cerebrum")) : []).toEqual([]);
+  }, 30_000);
+});
+
+describe("consolidation edge outcomes", () => {
+  const B1 = "- **Plain**: the bullet cites no file (2026-10-01)";
+  const START = `# Cerebrum\n\n## User Preferences\n\n## Memory\n\n${B1}\n`;
+  const P = "**P**: `src/p.ts` → `p`";
+  const EVERY_MS_1 = ["--consolidate-every-ms", "1"];
+  const laterDigest = (): FakeScenario => ({ lines: okStreamOf(digestOf([])) });
+  const addP = (proposalId = 1) => okStreamOf({
+    edits: [{ op: "add", heading: "Memory", bullet: P, proposal: proposalId }],
+    proposals: [{ id: proposalId, verdict: "accepted", reason: "r" }], stale: [],
+  });
+
+  /** The shared setup: `src/p.ts`, a cerebrum (none when null) whose one bullet cites no file, and row A reading `src/p.ts`. */
+  function project(cerebrum: string | null = START): { root: string; a: number; file: string } {
+    const root = digestProject({}, temps);
+    fs.mkdirSync(path.join(root, "src"));
+    fs.writeFileSync(path.join(root, "src/p.ts"), "export const p = 1;\n");
+    const file = path.join(root, ".crank/cerebrum.md");
+    if (cerebrum === null) fs.rmSync(file);
+    else fs.writeFileSync(file, cerebrum);
+    const [a] = seedMemory(root, [{ title: "Probe row alpha", narrative: "Alpha reads p.", filesRead: ["src/p.ts"] }]);
+    return { root, a: a!, file };
+  }
+
+  /** The first job reads `src/p.ts`, flags A and proposes P; `rest` holds every later `-p` call's scenario in order. */
+  function run(root: string, a: number, rest: FakeScenario[], opts: { skipJob?: boolean; env?: Record<string, string>; args?: string[] } = {}):
+    Journey {
+    const transcript = fs.readFileSync(FIXTURE, "utf8") + "\n" +
+      readRecord("p-read", "2026-01-02T03:04:31.000Z", path.join(root, "src/p.ts")) + "\n";
+    const first = { lines: okStreamOf({ ...SAMPLE_DIGEST, proposals: [{ kind: "memory", bullet: P }], stale: [{ id: a, reason: "a moved" }] }) };
+    const j = journey(root, [first, ...rest], { transcript, ...opts });
+    if (!opts.skipJob) expect(j.job.status).toBe(0);
+    return j;
+  }
+
+  /** Run one more job on a fresh delta, with a 1 ms consolidation window. */
+  function next(j: Journey, tag: string): void {
+    appendRecords(j.transcript, laterRecords(tag).records);
+    stop(j);
+    expect(rerun(j, 10_000, {}, EVERY_MS_1).status).toBe(0);
+  }
+
+  const statsOf = (j: Journey) => runCli(j.root, ["stats"], { CRANK_HOME: j.home }).stdout;
+  const backupNames = (root: string) => {
+    const dir = path.join(root, ".crank/backups/cerebrum");
+    return fs.existsSync(dir) ? fs.readdirSync(dir).sort() : [];
+  };
+
+  test("with no cerebrum.md, nothing is called or written", () => {
+    const { root, a, file } = project(null);
+    const j = run(root, a, [{ lines: addP() }]);
+    expect(j.fake.calls().length).toBe(1);
+    expect(fs.existsSync(file)).toBe(false);
+    expect(statsOf(j)).toContain("\n  proposals:        1\n");
+    expect(j.job.stderr).not.toContain("consolidation");
+  }, 30_000);
+
+  test("an add past the limits leaves its proposal pending", () => {
+    const full = "## Memory\n" + Array.from({ length: 148 }, (_, i) => `- b${i}\n`).join("") + "\n";
+    expect(full.split("\n").length - 1).toBe(150);
+    const { root, a, file } = project(full);
+    const j = run(root, a, [{ lines: addP() }]);
+    expect(j.fake.calls().length).toBe(2);
+    expect(fs.readFileSync(file, "utf8")).toBe(full);
+    expect(backupNames(root)).toEqual([]);
+    const stats = statsOf(j);
+    expect(stats).toContain("\n  proposals:        1\n");
+    expect(stats).toMatch(/^  consolidation:    .*\(ok\)$/m);
+  }, 30_000);
+
+  test("a cerebrum edited mid-run is left alone, and the next run sends the same work", async () => {
+    const { root, a, file } = project();
+    const wouldChange = okStreamOf({
+      edits: [{ op: "add", heading: "Memory", bullet: P, proposal: 1 }, { op: "remove", bullet_id: 1, reason: "gone" }],
+      proposals: [{ id: 1, verdict: "accepted", reason: "r" }],
+      stale: [{ id: a, verdict: "confirmed" }],
+    });
+    const j = run(root, a, [{ lines: wouldChange, sleepMs: 1500 }, laterDigest(), { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) }],
+      { skipJob: true });
+    const exited = spawnJob(j);
+    await waitFor(() => j.fake.calls().length === 2);
+    const hand = "# Cerebrum\n\n## Memory\n\n- **Edited**: by hand (2026-11-04)\n";
+    fs.writeFileSync(file, hand);
+    expect(await exited).toBe(0);
+
+    expect(fs.readFileSync(file, "utf8")).toBe(hand);
+    expect(fs.existsSync(path.join(root, ".crank/cerebrum-archive.md"))).toBe(false);
+    const stats = statsOf(j);
+    expect(stats).toMatch(/^  consolidation:    .*\(conflict\)$/m);
+    expect(stats).toContain("\n  proposals:        1\n");
+    expect(stats).toContain("\n  month cost:       $0.02 (list price)\n");
+
+    next(j, "c2");
+    const calls = j.fake.calls();
+    expect(calls.length).toBe(4);
+    expect(calls[3]!.stdin).toContain("\n[P1] (memory) ");
+    expect(calls[3]!.stdin).toContain(`\n[O${a}] Probe row alpha: `);
+  }, 30_000);
+
+  test("three runs that leave a proposal pending expire it, and it is never sent again", () => {
+    const { root, a } = project();
+    const empty = { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) };
+    const j = run(root, a, [
+      empty,
+      laterDigest(), { lines: status500Stream(), exit: 1 },
+      laterDigest(), { lines: okStreamOf({ edits: [] }) },
+      laterDigest(), empty,
+    ], { args: EVERY_MS_1 });
+    next(j, "e2");
+    next(j, "e3");
+    expect(j.fake.calls().length).toBe(6);
+    expect(statsOf(j)).toContain("\n  proposals:        0\n");
+    next(j, "e4");
+    const calls = j.fake.calls();
+    expect(calls.length).toBe(8);
+    expect(calls[7]!.stdin).not.toContain("[PROPOSALS]");
+    expect(calls[7]!.stdin).toContain(`\n[O${a}] `);
+  }, 60_000);
+
+  test.each([
+    ["stopped", { lines: status401Stream(), exit: 1 }],
+    ["retry", { lines: status500Stream(), exit: 1 }],
+    ["rejected", { lines: okStreamOf({ edits: [] }) }],
+  ] as const)("a %s result applies nothing", (outcome, scenario) => {
+    const { root, a, file } = project();
+    const j = run(root, a, [scenario]);
+    expect(j.fake.calls().length).toBe(2);
+    if (outcome === "stopped") expectStopped(j.home, "login");
+    expect(fs.readFileSync(file, "utf8")).toBe(START);
+    expect(backupNames(root)).toEqual([]);
+    const stats = statsOf(j);
+    expect(stats).toMatch(new RegExp(`^  consolidation:    .*\\(${outcome}\\)$`, "m"));
+    expect(stats).toContain("\n  proposals:        1\n");
+  }, 30_000);
+
+  test("a failed backup writes nothing", () => {
+    const { root, a, file } = project();
+    const dir = path.join(root, ".crank/backups/cerebrum");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.chmodSync(dir, 0o555);
+    try {
+      const j = run(root, a, [{ lines: addP() }]);
+      expect(fs.readFileSync(file, "utf8")).toBe(START);
+      const stats = statsOf(j);
+      expect(stats).toMatch(/^  consolidation:    .*\(retry\)$/m);
+      expect(stats).toContain("\n  proposals:        1\n");
+    } finally {
+      fs.chmodSync(dir, 0o755);
+    }
+  }, 30_000);
+
+  test("a consolidation that throws prints one line and changes nothing else", () => {
+    const { root, a, file } = project(null);
+    fs.mkdirSync(file);
+    const j = run(root, a, [{ lines: addP() }]);
+    const calls = j.fake.calls();
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.stdin).not.toContain("[CEREBRUM]");
+    const lines = j.job.stderr.split("\n").filter((l) => l.includes("consolidation"));
+    expect(lines.length).toBe(1);
+    expect(lines[0]!.startsWith("crank-mem: consolidation skipped (")).toBe(true);
+    const stats = statsOf(j);
+    expect(stats).toContain("\n  consolidation:    never\n");
+    expect(stats).toContain(`\n  observations:     ${SAMPLE_DIGEST.observations.length + 1}\n`);
+  }, 30_000);
+
+  test("the backup keeps the newest 5 copies", () => {
+    const { root, a, file } = project();
+    const dir = path.join(root, ".crank/backups/cerebrum");
+    fs.mkdirSync(dir, { recursive: true });
+    const planted = [1, 2, 3, 4, 5].map((d) => `2026-01-0${d}T00-00-00-000Z.md`);
+    planted.forEach((name, i) => fs.writeFileSync(path.join(dir, name), `old ${i + 1}`));
+    run(root, a, [{ lines: addP() }]);
+    expect(fs.readFileSync(file, "utf8")).not.toBe(START);
+    const names = backupNames(root);
+    expect(names.length).toBe(5);
+    expect(names.slice(0, 4)).toEqual(planted.slice(1));
+    expect(planted).not.toContain(names[4]!);
+    expect(fs.readFileSync(path.join(dir, names[4]!), "utf8")).toBe(START);
+  }, 30_000);
+
+  test("each block sends the oldest 20, and a verdict for an unsent id is skipped", () => {
+    const { root, a } = project();
+    seedMemory(root, [], { proposals: Array.from({ length: 20 }, (_, i) => ({ kind: "memory" as const, bullet: `**Q${i}**: q${i}` })) });
+    const cap = seedMemory(root, Array.from({ length: 20 }, (_, i) => ({ title: `Cap row ${i}`, narrative: `cap ${i}` })));
+    seedMemory(root, [], { stale: cap.map((id) => ({ id, reason: "cap" })) });
+    const j = run(root, a, [{
+      lines: okStreamOf({ edits: [], proposals: [{ id: 21, verdict: "rejected", reason: "unsent" }], stale: [{ id: a, verdict: "cleared" }] }),
+    }]);
+    const stdin = j.fake.calls()[1]!.stdin;
+    const proposals = stdin.slice(stdin.indexOf("[PROPOSALS]\n"), stdin.indexOf("[STALE]\n"));
+    expect(proposals.split("\n").filter((l) => /^\[P\d/.test(l)).map((l) => /^\[P(?<id>\d+)\]/.exec(l)!.groups!.id))
+      .toEqual(Array.from({ length: 20 }, (_, i) => String(i + 1)));
+    const stale = stdin.slice(stdin.indexOf("[STALE]\n")).split("\n").filter((l) => l.startsWith("[O"));
+    expect(stale.map((l) => /^\[O(?<id>\d+)\] (?<title>[^:]+):/.exec(l)!.groups!.title))
+      .toEqual(Array.from({ length: 20 }, (_, i) => `Cap row ${i}`));
+    expect(stdin).not.toContain(`[O${a}]`);
+    const stats = statsOf(j);
+    expect(stats).toContain("\n  proposals:        21\n");
+    expect(stats).toContain("\n  stale:            21\n");
+  }, 30_000);
+
+  test("an existing archive is appended to, never rewritten", () => {
+    const { root, a } = project();
+    const archive = path.join(root, ".crank/cerebrum-archive.md");
+    const planted = "# Cerebrum archive\n\n- **Old**: archived earlier\n  - archived 2026-10-01: old\n";
+    fs.writeFileSync(archive, planted);
+    run(root, a, [{ lines: okStreamOf({ edits: [{ op: "remove", bullet_id: 1, reason: "gone" }], proposals: [], stale: [] }) }],
+      { env: { TZ: "UTC" } });
+    const today = new Date().toISOString().slice(0, 10);
+    expect(fs.readFileSync(archive, "utf8")).toBe(`${planted}${B1}\n  - archived ${today}: gone\n`);
   }, 30_000);
 });

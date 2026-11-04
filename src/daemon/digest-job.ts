@@ -95,7 +95,11 @@ async function digest(
   if (outcome === "appended") {
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
     await embedPending(memory);
-    await consolidate(entry.projectRoot, memory, opts);
+    try {
+      await consolidate(entry.projectRoot, memory, opts);
+    } catch (err) {
+      process.stderr.write(`crank-mem: consolidation skipped (${err instanceof Error ? err.message : String(err)})\n`);
+    }
   }
   return 0;
 }

@@ -6,7 +6,7 @@ import { isObj } from "../hooks/lib/hook-io.ts";
 import { basenameIndex, citationStatus } from "../hooks/lib/injection.ts";
 import { localDate, type ConsolidationOutcome, type Memory, type PendingWork } from "../hooks/lib/memory.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
-import { writeTextAtomic } from "../hooks/lib/user-state.ts";
+import { writeStopState, writeTextAtomic } from "../hooks/lib/user-state.ts";
 import { applyEdits, numberBullets, type CerebrumEdit } from "./cerebrum-edit.ts";
 import { askClaude } from "./gateway.ts";
 import { redact } from "./redact.ts";
@@ -139,9 +139,13 @@ export async function consolidate(root: string, memory: Memory, opts: { everyMs:
 
   const startedMs = Date.now();
   const r = await askClaude(consolidationRequest(md, work, due), { timeoutMs: opts.timeoutMs, project: root });
-  if (r.kind !== "ok") return r.kind;
-
   const sentProposals = new Set(work.proposals.map((p) => p.id));
+  if (r.kind !== "ok") {
+    if (r.kind === "stopped") writeStopState({ reason: r.reason, atMs: Date.now(), detail: r.detail });
+    memory.recordConsolidation({ outcome: r.kind, startedMs, model: null, costUsd: 0, sent: [...sentProposals] });
+    return r.kind;
+  }
+
   const sentStale = new Set(work.stale.map((s) => s.id));
   const edits: CerebrumEdit[] = [];
   const failed = new Set<number>();
@@ -153,9 +157,16 @@ export async function consolidate(root: string, memory: Memory, opts: { everyMs:
   const { md: next, archived, skipped } = applyEdits(md, edits, localDate(Date.now()));
   for (const e of skipped) if (e.op !== "remove" && e.proposal !== null) failed.add(e.proposal);
 
+  const run = { startedMs, model: r.model, costUsd: r.costUsd };
   if (next !== md) {
-    backupCerebrum(crankDir, md);
-    if (!writeTextAtomic(file, next, md)) return "conflict";
+    if (backupCerebrum(crankDir, md) === null) {
+      memory.recordConsolidation({ ...run, outcome: "retry", sent: [...sentProposals] });
+      return "retry";
+    }
+    if (!writeTextAtomic(file, next, md)) {
+      memory.recordConsolidation({ ...run, outcome: "conflict" });
+      return "conflict";
+    }
     if (archived.length > 0) {
       const archive = path.join(crankDir, ARCHIVE_FILE);
       const head = fs.existsSync(archive) ? "" : ARCHIVE_HEADER;
@@ -163,7 +174,7 @@ export async function consolidate(root: string, memory: Memory, opts: { everyMs:
     }
   }
   memory.recordConsolidation({
-    outcome: "ok", startedMs, model: r.model, costUsd: r.costUsd, sent: [...sentProposals],
+    ...run, outcome: "ok", sent: [...sentProposals],
     decided: r.output.proposals
       .filter((p) => sentProposals.has(p.id) && !(p.verdict === "accepted" && failed.has(p.id)))
       .map((p) => ({ id: p.id, state: p.verdict, reason: redact(p.reason) })),
