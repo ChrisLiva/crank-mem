@@ -47,6 +47,6 @@ Tests are black-box: hooks and CLI commands are executed as real child processes
 
 The `spawnSync` timeout in `tests/helpers.ts` → `runCli` kills only the CLI child; a grandchild that hangs, such as `fakeClaude` with `auth: "hang"`, keeps running at ppid 1. After a RED run that hit the timeout, find leftover fake `claude` processes with `ps` and kill them.
 
-`tests/daemon.test.ts` → `a hold belongs to one stem, a refusal holds like a failure, and exit 0 clears it` asserts a retry gap under 800 ms and fails under machine load: it failed 3 of 3 at `1a8eba3` with load average about 2.5, and passed alone on retry. Rerun it alone before treating its failure as a regression.
+`tests/daemon.test.ts` → `a hold belongs to one stem, a refusal holds like a failure, and exit 0 clears it` asserts a retry gap under 800 ms, and spawn overhead under machine load pushes the gap past it. At load average about 2.5 it failed 5 of 6 solo runs (2 of 3 at `b7336dc`, 3 of 3 at `1a8eba3`), with gaps of 1,023 to 1,489 ms. A failure showing a gap just over 800 ms predates stage 2 and is not by itself a regression; a solo rerun does not tell the two apart.
 
 To probe an fs failure path (such as `src/hooks/lib/spool.ts` → `settleEntry`'s non-`EEXIST` link fallback), run the probe under node: assigning `fs.linkSync` on the default `node:fs` import and calling `syncBuiltinESMExports()` reaches a module's `import * as fs` namespace under node 26 (the call threw the mock's `EPERM`) but not under bun 1.4 (it threw the real `ENOENT`).
