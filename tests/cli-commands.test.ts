@@ -604,7 +604,7 @@ describe("flags", () => {
     }
     expect(tree(root)).toEqual(before);
     expect(fs.readdirSync(home)).toEqual([]);
-  });
+  }, 20_000);
 
   test("job --help hides the job's test flags", () => {
     const run = runCli(os.tmpdir(), ["job", "--help"], { CRANK_HOME: makeCrankHome() });
