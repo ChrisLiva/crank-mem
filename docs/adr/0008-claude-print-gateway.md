@@ -152,6 +152,20 @@ outcome is `retry` for now" above:
 A `stopped` outcome writes `<crank home>/digest-state.json`, and no job runs until
 `crank-mem digest resume` clears it.
 
+Amended 2026-11-04: the digest now also proposes cerebrum bullets and flags stale rows, and
+one live run checked the stage-2 schema and prompt before `src/daemon/digest-prompt.ts`
+took them. The run used Claude Code 2.1.318, bun 1.4.4, node v26.13.0 and macOS
+Darwin 27.0.0. It sent the gateway argv with stage 1's schema plus the required `proposals`
+and `stale` arrays, stage 1's system prompt plus the three paragraphs on `[CEREBRUM]`,
+`[EXISTING OBSERVATIONS]`, `proposals` and `stale`, and an input of `[CEREBRUM]`,
+`[EXISTING OBSERVATIONS]` and `[TRANSCRIPT]` blocks over
+`tests/fixtures/transcript.expected.txt`. The init line listed tools `[StructuredOutput]`
+and `apiKeySource` `none`, and the provider was `firstParty`. The result was `success` in
+2 turns, at $0.0018 and 7.7 seconds, with a valid `structured_output` holding one
+observation, `proposals` `[]` and `stale` `[]`. The Decision's "fixed argv from Finding 1"
+and the empty `<crank home>/run/` cwd now govern the digest call only. ADR 0011 governs the
+consolidation call's tools, max turns, deny settings and project cwd.
+
 ## Re-probe method
 
 Re-run this reading whenever `claude --version` changes minor version, or a digest starts

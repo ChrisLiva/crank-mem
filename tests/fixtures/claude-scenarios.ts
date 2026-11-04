@@ -68,10 +68,15 @@ const usage = (costUSD: number, extra: Line = { provider: "firstParty" }) => ({
 
 /** A compliant run: the line types and order of ADR 0008 probe plan/live.jsonl. */
 export function okStream(digest: Digest): string[] {
-  return lines(okLines(digest));
+  return okStreamOf(digest);
 }
 
-function okLines(digest: Digest, result: Line = {}): Line[] {
+/** okStream carrying any structured output, so a test can send one the digest schema rejects. */
+export function okStreamOf(output: object, result?: Line): string[] {
+  return lines(okLines(output, result));
+}
+
+function okLines(output: object, result: Line = {}): Line[] {
   return [
     init("none", ["StructuredOutput"]),
     {
@@ -79,7 +84,7 @@ function okLines(digest: Digest, result: Line = {}): Line[] {
       session_id: SESSION, uuid: uuid(2),
     },
     assistant([{ type: "thinking", thinking: "", signature: "c2lnbmF0dXJl" }], 3),
-    assistant([{ type: "tool_use", id: TOOL_USE, name: "StructuredOutput", input: digest }], 4),
+    assistant([{ type: "tool_use", id: TOOL_USE, name: "StructuredOutput", input: output }], 4),
     {
       type: "user",
       message: { role: "user", content: [{ tool_use_id: TOOL_USE, type: "tool_result", content: "Structured output provided successfully" }] },
@@ -89,8 +94,8 @@ function okLines(digest: Digest, result: Line = {}): Line[] {
     rateLimit(6),
     {
       type: "result", subtype: "success", is_error: false, api_error_status: null, num_turns: 2,
-      result: JSON.stringify(digest), stop_reason: "tool_use", session_id: SESSION, terminal_reason: "completed",
-      total_cost_usd: 0.0123, structured_output: digest, modelUsage: usage(0.0123), uuid: uuid(7), ...result,
+      result: JSON.stringify(output), stop_reason: "tool_use", session_id: SESSION, terminal_reason: "completed",
+      total_cost_usd: 0.0123, structured_output: output, modelUsage: usage(0.0123), uuid: uuid(7), ...result,
     },
   ];
 }
@@ -180,7 +185,7 @@ export function maxTurnsStream(): string[] {
 
 /** okStream whose structured_output fails the digest schema. */
 export function invalidOutputStream(): string[] {
-  return lines(okLines({ observations: "x" } as unknown as Digest, { structured_output: { observations: "x" } }));
+  return okStreamOf({ observations: "x" }, { structured_output: { observations: "x" } });
 }
 
 /** okStream on a provider other than firstParty. */

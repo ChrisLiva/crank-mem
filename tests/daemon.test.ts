@@ -220,7 +220,7 @@ describe("daemon sweeps", () => {
     expect(run.status).toBe(0);
     expect(e.fake.calls().length).toBe(1);
     const call = e.fake.calls()[0]!;
-    expect(call.stdin).toBe(EXPECTED);
+    expect(call.stdin).toBe("[CEREBRUM]\n## User Preferences\n\n## Memory\n\n[TRANSCRIPT]\n" + EXPECTED);
     expect(Object.keys(call.env).sort()).toEqual(["CLAUDE_CODE_MAX_RETRIES", "HOME", "PATH", "TMPDIR", "USER"]);
     expect(spoolFiles(e.home)).toEqual([]);
     expect(fs.existsSync(path.join(e.home, "daemon.json"))).toBe(false);

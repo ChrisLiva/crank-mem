@@ -1,11 +1,13 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { parseArgs, positive } from "../cli/args.ts";
 import { COMMANDS } from "../cli/commands.ts";
+import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
 import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
 import { deleteEntry, readSpool, settleEntry, type SpoolEntry } from "../hooks/lib/spool.ts";
 import { readStopState, writeStopState } from "../hooks/lib/user-state.ts";
-import { digestRequest, type Digest } from "./digest-prompt.ts";
+import { digestRequest, type Digest, type DigestContext } from "./digest-prompt.ts";
 import { EMBED_MODEL, embed } from "./embedder.ts";
 import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
 import { redact } from "./redact.ts";
@@ -24,6 +26,10 @@ const PARK_SIZE = 4096;
 
 /** Rows embedded per digest; rows past it wait for the next digest in the repo. */
 const EMBED_BATCH = 200;
+
+/** Earlier rows shown per touched file, and in all, under [EXISTING OBSERVATIONS]. */
+const HISTORY_PER_FILE = 5;
+const HISTORY_TOTAL = 30;
 
 /** Rejections before an entry parks: a session the model will not digest must not cost a run every hour. */
 const REJECTION_LIMIT = 3;
@@ -62,7 +68,8 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
     settleEntry(stem, entry.updatedAt, "delete");
     return 0;
   }
-  const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem)), { timeoutMs });
+  const context = digestContext(memory, entry, d.paths);
+  const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem), context), { timeoutMs });
   if (r.kind === "retry") return 1;
   if (r.kind === "stopped") {
     writeStopState({ reason: r.reason, atMs: Date.now(), detail: r.detail });
@@ -77,14 +84,37 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
     return 1;
   }
   const outcome = memory.appendDigest({
-    session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot, entry.cwd),
-    proposals: [], stale: [],
+    session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd,
+    ...stored(r.output, entry.projectRoot, entry.cwd, context.existing.map((o) => o.id)),
   });
   if (outcome === "appended") {
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
     await embedPending(memory);
   }
   return 0;
+}
+
+/**
+ * Cerebrum's body (null when the file is missing or has no `## ` heading), and the newest non-stale rows
+ * about the delta's files: HISTORY_PER_FILE per file in first-touched order, each row once, HISTORY_TOTAL in all.
+ */
+function digestContext(memory: Memory, entry: SpoolEntry, paths: string[]): DigestContext {
+  let cerebrum: string | null = null;
+  try {
+    cerebrum = splitPreamble(fs.readFileSync(path.join(entry.projectRoot, ".crank", CEREBRUM_FILE), "utf8")).body?.trimEnd() ?? null;
+  } catch {
+    // no cerebrum: the digest runs on the transcript and history alone
+  }
+  const ids = new Set<number>();
+  for (const file of memoryPaths(entry.projectRoot, entry.cwd, paths)) {
+    for (const line of memory.fileHistory(file, HISTORY_PER_FILE)) {
+      if (ids.size === HISTORY_TOTAL) break;
+      ids.add(line.id);
+    }
+    if (ids.size === HISTORY_TOTAL) break;
+  }
+  const existing = memory.get([...ids]).map(({ id, type, title, narrative }) => ({ id, type, title, narrative }));
+  return { cerebrum, existing };
 }
 
 /** Store vectors for rows that lack one; a failure leaves them for the next digest and never changes the exit code. */
@@ -101,9 +131,10 @@ async function embedPending(memory: Memory): Promise<void> {
 
 /**
  * The model's output as the store takes it: every string redacted, paths repo-relative and deduped.
- * Relative paths resolve against the session's cwd.
+ * Relative paths resolve against the session's cwd. A stale flag stands only for a row the input showed,
+ * and a proposal only with a non-blank bullet.
  */
-function stored(output: Digest, root: string, cwd: string) {
+function stored(output: Digest, root: string, cwd: string, shownIds: number[]) {
   const s = output.summary;
   const files = (paths: string[]) => memoryPaths(root, cwd, paths.map(redact));
   return {
@@ -115,5 +146,9 @@ function stored(output: Digest, root: string, cwd: string) {
       type: o.type, title: redact(o.title), narrative: redact(o.narrative), facts: o.facts.map(redact),
       filesRead: files(o.files_read), filesModified: files(o.files_modified),
     })),
+    proposals: output.proposals
+      .map((p) => ({ kind: p.kind, bullet: redact(p.bullet).trim() }))
+      .filter((p) => p.bullet !== ""),
+    stale: output.stale.filter((f) => shownIds.includes(f.id)).map((f) => ({ id: f.id, reason: redact(f.reason) })),
   };
 }

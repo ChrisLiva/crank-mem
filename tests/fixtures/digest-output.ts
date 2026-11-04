@@ -34,4 +34,6 @@ export const SAMPLE_DIGEST: Digest = {
     completed: "Lock writes retry on EEXIST.",
     next_steps: "Wire the daemon.",
   },
+  proposals: [],
+  stale: [],
 };

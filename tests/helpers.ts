@@ -285,6 +285,14 @@ export function userRecord(uuid: string, timestamp: string, content: string): st
   return JSON.stringify({ type: "user", uuid, timestamp, message: { role: "user", content } });
 }
 
+/** An `assistant` transcript record holding one `Read` call of `filePath`, as one JSONL line. */
+export function readRecord(uuid: string, timestamp: string, filePath: string): string {
+  return JSON.stringify({
+    type: "assistant", uuid, timestamp,
+    message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_" + uuid, name: "Read", input: { file_path: filePath } }] },
+  });
+}
+
 /** Append records to a transcript; the leading newline ends the fixture's partial last line. */
 export function appendRecords(transcript: string, records: string[]): void {
   fs.appendFileSync(transcript, "\n" + records.join("\n") + "\n");
