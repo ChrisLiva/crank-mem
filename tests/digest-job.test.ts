@@ -1,15 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { digestRequest, type Digest } from "../src/daemon/digest-prompt.ts";
 import { EMBED_MODEL } from "../src/daemon/embedder.ts";
 import { redact } from "../src/daemon/redact.ts";
 import { memoryPath, openMemory, type Position } from "../src/hooks/lib/memory.ts";
 import {
-  REPO_ROOT, appendRecords, digestProject, fakeClaude, git, gitCommit, makeCrankHome, makeModelHome, plantMemory, runCli,
-  runHook, seedMemory, spoolFiles, userRecord, waitFor, type CliRun, type FakeScenario,
+  FIXTURE, REPO_ROOT, appendRecords, children, cleanup, digestProject, expectStopped, getOne, git, gitCommit, journey,
+  laterRecords, makeCrankHome, makeModelHome, plantMemory, rerun, runCli, search, seedMemory, spawnJob, spoolFiles, stop,
+  stopState, tempDir, temps, userRecord, waitFor,
 } from "./helpers.ts";
 import {
   AUTH_API_KEY, AUTH_LOGGED_OUT, AUTH_OAUTH_TOKEN, AUTH_THIRD_PARTY, NOT_LOGGED_IN_RAW, badKeyStream, invalidOutputStream,
@@ -17,107 +16,10 @@ import {
   status403Stream, status500Stream,
 } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
-import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
-const FIXTURE = path.join(REPO_ROOT, "tests/fixtures/transcript.jsonl");
 const EXPECTED = fs.readFileSync(path.join(REPO_ROOT, "tests/fixtures/transcript.expected.txt"), "utf8");
-const TOKEN = "ghp_" + "a1".repeat(18);
 
-const temps: string[] = [];
-const children: ChildProcess[] = [];
-afterEach(async () => {
-  for (const child of children.splice(0)) {
-    if (child.exitCode === null && child.signalCode === null) {
-      const exited = new Promise((resolve) => child.once("exit", resolve));
-      process.kill(-child.pid!, "SIGKILL");
-      await exited;
-    }
-  }
-  for (const dir of temps.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-});
-function tempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  temps.push(dir);
-  return dir;
-}
-
-
-type Journey = {
-  root: string; home: string; stem: string; transcript: string; fake: ReturnType<typeof fakeClaude>; job: CliRun; spool: string[];
-};
-
-/**
- * Write the `stem` (default s1) spool entry through the Stop and SessionEnd hooks, then run `job <stem>`.
- * `transcript` replaces the fixture's text; `env` adds to the job's environment; `home` replaces the empty crank home.
- */
-function journey(
-  root: string,
-  scenarios: FakeScenario[],
-  opts: {
-    transcript?: string; env?: Record<string, string>; skipJob?: boolean; timeoutMs?: number | string; home?: string; stem?: string;
-    cwd?: string;
-  } = {},
-): Journey {
-  const home = opts.home ?? makeCrankHome();
-  const stem = opts.stem ?? "s1";
-  temps.push(home);
-  const tmp = tempDir("crank-job-");
-  const transcript = path.join(tmp, `t/${stem}.jsonl`);
-  fs.mkdirSync(path.dirname(transcript));
-  if (opts.transcript === undefined) fs.copyFileSync(FIXTURE, transcript);
-  else fs.writeFileSync(transcript, opts.transcript);
-  const fake = fakeClaude(path.join(tmp, "bin"), scenarios);
-  const hookEnv = { ...fake.env, CRANK_HOME: home };
-  const cwd = opts.cwd ?? root;
-  expect(runHook("src/hooks/stop.ts", JSON.stringify({ ...claudeStop(cwd), transcript_path: transcript }), root, hookEnv).status).toBe(0);
-  expect(runHook("src/hooks/session-end.ts", JSON.stringify(claudeSessionEnd(cwd, transcript)), root, hookEnv).status).toBe(0);
-  expect(spoolFiles(home)).toEqual([`${stem}.json`]);
-  const j = { root, home, stem, transcript, fake };
-  const job = opts.skipJob ? { status: -1, stdout: "", stderr: "" } : rerun(j, opts.timeoutMs, opts.env);
-  return { ...j, job, spool: spoolFiles(home) };
-}
-
-/** Run `job <stem>` again on a journey's project, home and fake. */
-function rerun(
-  j: Pick<Journey, "root" | "home" | "fake"> & { stem?: string }, timeoutMs: number | string = 10_000, env: Record<string, string> = {},
-): CliRun {
-  const args = ["job", j.stem ?? "s1", "--run-timeout-ms", String(timeoutMs)];
-  return runCli(j.root, args, { ...j.fake.env, CRANK_HOME: j.home, ...env });
-}
-
-/** The recorded stop state under a crank home, or null when digests are not stopped. */
-function stopState(home: string): { reason: string; atMs: unknown; detail: unknown } | null {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(home, "digest-state.json"), "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function expectStopped(home: string, reason: "credential" | "login"): void {
-  const state = stopState(home);
-  expect(state?.reason).toBe(reason);
-  expect(typeof state?.atMs).toBe("number");
-  expect(typeof state?.detail === "string" && state.detail.length > 0).toBe(true);
-}
-
-
-
-
-/** Three 800-character `user` records dated after the fixture, and their distilled text. */
-function laterRecords(): { records: string[]; text: string } {
-  const contents = ["alpha", "bravo", "delta"].map((w) => `${w} `.repeat(200).slice(0, 800));
-  return {
-    records: contents.map((c, i) => userRecord(`later-${i}`, `2026-01-03T00:00:0${i}.000Z`, c)),
-    text: contents.map((c) => `[USER]\n${c}`).join("\n\n"),
-  };
-}
-
-/** Send the Stop hook for a journey's transcript, rewriting its spool entry. */
-function stop(j: Pick<Journey, "root" | "home" | "fake" | "transcript">): void {
-  const payload = JSON.stringify({ ...claudeStop(j.root), transcript_path: j.transcript });
-  expect(runHook("src/hooks/stop.ts", payload, j.root, { ...j.fake.env, CRANK_HOME: j.home }).status).toBe(0);
-}
+afterEach(cleanup);
 
 /** The saved transcript position of session s1, read through the Memory seam. */
 function savedPosition(root: string): Position | null {
@@ -128,32 +30,6 @@ function savedPosition(root: string): Position | null {
   } finally {
     opened.memory.close();
   }
-}
-
-/** Start `job s1` in its own process group, so a kill takes its claude child with it. */
-function spawnJob(j: Pick<Journey, "root" | "home" | "fake">): Promise<number | null> {
-  const child = spawn(process.execPath, [path.join(REPO_ROOT, "src/cli/main.ts"), "job", "s1", "--run-timeout-ms", "10000"], {
-    cwd: j.root, env: { ...process.env, ...j.fake.env, CRANK_HOME: j.home }, detached: true, stdio: "ignore",
-  });
-  children.push(child);
-  return new Promise((resolve) => child.once("exit", (code) => resolve(code)));
-}
-
-
-/** `crank-mem search` stdout; `home` is the CRANK_HOME it reads the model from (none by default). */
-function search(root: string, query: string, home?: string): string {
-  const run = runCli(root, ["search", query], home === undefined ? undefined : { CRANK_HOME: home });
-  expect(run.status).toBe(0);
-  return run.stdout;
-}
-
-/** `crank-mem get` on the one observation a search finds. */
-function getOne(root: string, query: string): string {
-  const id = /^#(\d+) /.exec(search(root, query))?.[1];
-  expect(id).toBeDefined();
-  const run = runCli(root, ["get", id!]);
-  expect(run.status).toBe(0);
-  return run.stdout;
 }
 
 describe("digest job (black-box)", () => {
@@ -424,6 +300,17 @@ describe("digest job failure classes (black-box)", () => {
     const j = journey(digestProject({}, temps), [ok()], { skipJob: true });
     expect(rerun(j, 10_000, { PATH: tempDir("crank-nopath-") }).status).toBe(1);
     expect(stopState(j.home)).toBeNull();
+  });
+
+  test("rerun, spawnJob and journey pass extra flags to the job, which rejects an unknown one before digesting", async () => {
+    const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], { skipJob: true });
+    const run = rerun(j, 10_000, {}, ["--x"]);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toBe("crank-mem: unknown flag --x\nUsage: crank-mem job <stem> (internal: the daemon runs it)\n");
+    expect(await spawnJob(j, ["--x"])).toBe(1);
+    expect(journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], { args: ["--x"] }).job.status).toBe(1);
+    expect(j.fake.calls()).toEqual([]);
+    expect(spoolFiles(j.home)).toEqual(["s1.json"]);
   });
 
   test("an init line on an API key kills the run at once and stops digests with reason credential", () => {

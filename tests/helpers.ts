@@ -1,3 +1,4 @@
+import { expect } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -8,6 +9,7 @@ import { memoryPath, openMemory, type NewObservation } from "../src/hooks/lib/me
 import { DAEMON_FILE, type DaemonState } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
+import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");
 
@@ -371,4 +373,125 @@ export async function startModelServer(
     requests: () => fs.readFileSync(log, "utf-8").split("\n").filter(Boolean),
     stop,
   };
+}
+
+export const FIXTURE = path.join(REPO_ROOT, "tests/fixtures/transcript.jsonl");
+export const TOKEN = "ghp_" + "a1".repeat(18);
+
+export const temps: string[] = [];
+export const children: ChildProcess[] = [];
+export async function cleanup(): Promise<void> {
+  for (const child of children.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((resolve) => child.once("exit", resolve));
+      process.kill(-child.pid!, "SIGKILL");
+      await exited;
+    }
+  }
+  for (const dir of temps.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+}
+export function tempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  temps.push(dir);
+  return dir;
+}
+
+export type Journey = {
+  root: string; home: string; stem: string; transcript: string; fake: ReturnType<typeof fakeClaude>; job: CliRun; spool: string[];
+};
+
+/**
+ * Write the `stem` (default s1) spool entry through the Stop and SessionEnd hooks, then run `job <stem>`.
+ * `transcript` replaces the fixture's text; `env` adds to the job's environment; `home` replaces the empty crank home.
+ */
+export function journey(
+  root: string,
+  scenarios: FakeScenario[],
+  opts: {
+    transcript?: string; env?: Record<string, string>; skipJob?: boolean; timeoutMs?: number | string; home?: string; stem?: string;
+    cwd?: string; args?: string[];
+  } = {},
+): Journey {
+  const home = opts.home ?? makeCrankHome();
+  const stem = opts.stem ?? "s1";
+  temps.push(home);
+  const tmp = tempDir("crank-job-");
+  const transcript = path.join(tmp, `t/${stem}.jsonl`);
+  fs.mkdirSync(path.dirname(transcript));
+  if (opts.transcript === undefined) fs.copyFileSync(FIXTURE, transcript);
+  else fs.writeFileSync(transcript, opts.transcript);
+  const fake = fakeClaude(path.join(tmp, "bin"), scenarios);
+  const hookEnv = { ...fake.env, CRANK_HOME: home };
+  const cwd = opts.cwd ?? root;
+  expect(runHook("src/hooks/stop.ts", JSON.stringify({ ...claudeStop(cwd), transcript_path: transcript }), root, hookEnv).status).toBe(0);
+  expect(runHook("src/hooks/session-end.ts", JSON.stringify(claudeSessionEnd(cwd, transcript)), root, hookEnv).status).toBe(0);
+  expect(spoolFiles(home)).toEqual([`${stem}.json`]);
+  const j = { root, home, stem, transcript, fake };
+  const job = opts.skipJob ? { status: -1, stdout: "", stderr: "" } : rerun(j, opts.timeoutMs, opts.env, opts.args);
+  return { ...j, job, spool: spoolFiles(home) };
+}
+
+/** Run `job <stem>` again on a journey's project, home and fake. */
+export function rerun(
+  j: Pick<Journey, "root" | "home" | "fake"> & { stem?: string }, timeoutMs: number | string = 10_000, env: Record<string, string> = {},
+  args: string[] = [],
+): CliRun {
+  const argv = ["job", j.stem ?? "s1", "--run-timeout-ms", String(timeoutMs), ...args];
+  return runCli(j.root, argv, { ...j.fake.env, CRANK_HOME: j.home, ...env });
+}
+
+/** The recorded stop state under a crank home, or null when digests are not stopped. */
+export function stopState(home: string): { reason: string; atMs: unknown; detail: unknown } | null {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(home, "digest-state.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function expectStopped(home: string, reason: "credential" | "login"): void {
+  const state = stopState(home);
+  expect(state?.reason).toBe(reason);
+  expect(typeof state?.atMs).toBe("number");
+  expect(typeof state?.detail === "string" && state.detail.length > 0).toBe(true);
+}
+
+/** Three 800-character `user` records dated after the fixture, and their distilled text. */
+export function laterRecords(): { records: string[]; text: string } {
+  const contents = ["alpha", "bravo", "delta"].map((w) => `${w} `.repeat(200).slice(0, 800));
+  return {
+    records: contents.map((c, i) => userRecord(`later-${i}`, `2026-01-03T00:00:0${i}.000Z`, c)),
+    text: contents.map((c) => `[USER]\n${c}`).join("\n\n"),
+  };
+}
+
+/** Send the Stop hook for a journey's transcript, rewriting its spool entry. */
+export function stop(j: Pick<Journey, "root" | "home" | "fake" | "transcript">): void {
+  const payload = JSON.stringify({ ...claudeStop(j.root), transcript_path: j.transcript });
+  expect(runHook("src/hooks/stop.ts", payload, j.root, { ...j.fake.env, CRANK_HOME: j.home }).status).toBe(0);
+}
+
+/** Start `job s1` in its own process group, so a kill takes its claude child with it. */
+export function spawnJob(j: Pick<Journey, "root" | "home" | "fake">, args: string[] = []): Promise<number | null> {
+  const child = spawn(process.execPath, [path.join(REPO_ROOT, "src/cli/main.ts"), "job", "s1", "--run-timeout-ms", "10000", ...args], {
+    cwd: j.root, env: { ...process.env, ...j.fake.env, CRANK_HOME: j.home }, detached: true, stdio: "ignore",
+  });
+  children.push(child);
+  return new Promise((resolve) => child.once("exit", (code) => resolve(code)));
+}
+
+/** `crank-mem search` stdout; `home` is the CRANK_HOME it reads the model from (none by default). */
+export function search(root: string, query: string, home?: string): string {
+  const run = runCli(root, ["search", query], home === undefined ? undefined : { CRANK_HOME: home });
+  expect(run.status).toBe(0);
+  return run.stdout;
+}
+
+/** `crank-mem get` on the one observation a search finds. */
+export function getOne(root: string, query: string): string {
+  const id = /^#(\d+) /.exec(search(root, query))?.[1];
+  expect(id).toBeDefined();
+  const run = runCli(root, ["get", id!]);
+  expect(run.status).toBe(0);
+  return run.stdout;
 }
