@@ -60,7 +60,7 @@ describe("digest feeds consolidation", () => {
         { kind: "memory", bullet: "**Lock constant**: `src/lock.ts` → `LOCK_RETRY_MS` holds the retry window (2026-11-01)" },
         { kind: "memory", bullet: "   " },
       ],
-      [{ id: a!, reason: "the session changed the retry to 5 s; token " + TOKEN }, { id: 999, reason: "unlisted" }],
+      [{ id: a!, reason: "the session changed  the retry to 5 s; token " + TOKEN }, { id: 999, reason: "unlisted" }],
     );
     const consolidation1 = okStreamOf({
       edits: [
@@ -168,4 +168,24 @@ describe("digest feeds consolidation", () => {
     expect(rerun(j, 10_000, {}, ["--consolidate-every-ms", "1"]).status).toBe(0);
     expect(fake.calls().length).toBe(6);
   }, 60_000);
+});
+
+describe("an accepted verdict with no edit", () => {
+  test("is recorded decided and leaves cerebrum.md untouched", () => {
+    const root = digestProject({}, temps);
+    const cerebrum = path.join(root, ".crank/cerebrum.md");
+    fs.writeFileSync(cerebrum, CEREBRUM);
+    const transcript = userRecord("c-0", "2026-01-02T00:00:00.000Z", "change the lock retry window ".repeat(80)) + "\n";
+    const scenarios = [
+      { lines: okStreamOf(digestOf([{ kind: "memory", bullet: "**Lock retry**: `src/lock.ts` → `withLock` retries EEXIST" }])) },
+      { lines: okStreamOf({ edits: [], proposals: [{ id: 1, verdict: "accepted", reason: "already covered" }], stale: [] }) },
+    ];
+    const { home, fake, job } = journey(root, scenarios, { transcript });
+    expect(job.status).toBe(0);
+    expect(fake.calls().length).toBe(2);
+    expect(runCli(root, ["stats"], { CRANK_HOME: home }).stdout).toContain("\n  proposals:        0\n");
+    expect(fs.readFileSync(cerebrum, "utf8")).toBe(CEREBRUM);
+    expect(fs.existsSync(path.join(root, ".crank/backups/cerebrum"))
+      ? fs.readdirSync(path.join(root, ".crank/backups/cerebrum")) : []).toEqual([]);
+  }, 30_000);
 });
