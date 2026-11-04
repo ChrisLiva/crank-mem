@@ -23,17 +23,39 @@ export function ensureCrankHome(): string {
 
 let tmpCounter = 0;
 
-/** Write JSON through a unique temp file and a rename, so a reader never sees a partial file. */
-export function writeJsonAtomic(file: string, value: unknown): void {
+/**
+ * Write text through a unique temp file and a rename, so a reader never sees a partial file.
+ * With `unchangedFrom`, rename only while the file still holds exactly those bytes: a file
+ * that changed or vanished since the caller read it is left alone, and the call returns false.
+ */
+export function writeTextAtomic(file: string, text: string, unchangedFrom: string | null): boolean {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.${tmpCounter++}.tmp`;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(value));
+    fs.writeFileSync(tmp, text);
+    if (unchangedFrom !== null && !holds(file, unchangedFrom)) {
+      fs.rmSync(tmp, { force: true });
+      return false;
+    }
     fs.renameSync(tmp, file);
+    return true;
   } catch (err) {
     fs.rmSync(tmp, { force: true });
     throw err;
   }
+}
+
+function holds(file: string, text: string): boolean {
+  try {
+    return fs.readFileSync(file, "utf-8") === text;
+  } catch {
+    return false;
+  }
+}
+
+/** Write JSON through a unique temp file and a rename, so a reader never sees a partial file. */
+export function writeJsonAtomic(file: string, value: unknown): void {
+  writeTextAtomic(file, JSON.stringify(value), null);
 }
 
 /** The recorded reason digests stopped, or null when none is recorded or the file is unreadable. */

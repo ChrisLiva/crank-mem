@@ -6,7 +6,7 @@ import { git, gitCommit, makeCrankHome, runCli, runHook, spoolFiles } from "./he
 import { claudeStop } from "./fixtures/payloads.ts";
 import { defaultConfig } from "../src/hooks/lib/config.ts";
 import {
-  STOP_FILE, clearStopState, crankHome, ensureCrankHome, readStopState, writeJsonAtomic,
+  STOP_FILE, clearStopState, crankHome, ensureCrankHome, readStopState, writeJsonAtomic, writeTextAtomic,
   writeStopState, type StopState,
 } from "../src/hooks/lib/user-state.ts";
 import { digestGate } from "../src/hooks/lib/spool.ts";
@@ -170,6 +170,27 @@ describe("user state under the crank home", () => {
     expect(fs.statSync(other).mode & 0o777).toBe(0o700);
     expect(JSON.parse(fs.readFileSync(target, "utf-8"))).toEqual(value);
     expect(fs.readdirSync(other).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+
+  test("writeTextAtomic writes atomically and refuses a file that changed", () => {
+    const dir = path.join(tempDir("crank-text-"), "d");
+    const file = path.join(dir, "cerebrum.md");
+    const temps = () => fs.readdirSync(dir).filter((f) => f.endsWith(".tmp"));
+    expect(writeTextAtomic(file, "a", null)).toBe(true);
+    expect(fs.readFileSync(file, "utf8")).toBe("a");
+    expect(temps()).toEqual([]);
+    expect(writeTextAtomic(file, "b", "a")).toBe(true);
+    expect(fs.readFileSync(file, "utf8")).toBe("b");
+    expect(writeTextAtomic(file, "c", "zzz")).toBe(false);
+    expect(fs.readFileSync(file, "utf8")).toBe("b");
+    expect(temps()).toEqual([]);
+    expect(writeTextAtomic(file, "ünïcode — ✓\n", "b")).toBe(true);
+    expect(fs.readFileSync(file, "utf8")).toBe("ünïcode — ✓\n");
+
+    const missing = path.join(dir, "gone.md");
+    expect(writeTextAtomic(missing, "x", "a")).toBe(false);
+    expect(fs.existsSync(missing)).toBe(false);
+    expect(fs.readdirSync(dir).sort()).toEqual(["cerebrum.md"]);
   });
 });
 
