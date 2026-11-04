@@ -23,9 +23,11 @@ const RETRY_MS = 300_000;
 const RETRY_CAP_MS = 3_600_000;
 /** A session whose transcript has not changed for this long is digested before it ends. */
 const QUIET_MS = 30 * 60_000;
+/** A live session is digested this long after the daemon first saw it, then this long after each digest that exited 0. */
+export const MID_SESSION_MS = 2 * 3_600_000;
 const SEEN_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 
-type Options = { sweepMs: number; idleMs: number; retryMs: number; retryCapMs: number; runTimeoutMs: number | null; once: boolean };
+type Options = { sweepMs: number; idleMs: number; retryMs: number; retryCapMs: number; runTimeoutMs: number | null; midSessionMs: number; once: boolean };
 
 export async function run(args: string[]): Promise<number> {
   const { flags } = parseArgs(args, COMMANDS.daemon.value);
@@ -35,6 +37,7 @@ export async function run(args: string[]): Promise<number> {
     retryMs: positive(flags["retry-ms"], RETRY_MS),
     retryCapMs: positive(flags["retry-cap-ms"], RETRY_CAP_MS),
     runTimeoutMs: flags["run-timeout-ms"] === undefined ? null : positive(flags["run-timeout-ms"], RUN_TIMEOUT_MS),
+    midSessionMs: positive(flags["mid-session-ms"], MID_SESSION_MS),
     once: flags.once === true,
   };
   ensureCrankHome();
@@ -101,6 +104,8 @@ class Daemon {
   private busySince = Date.now();
   /** Stems whose last job failed: no job starts before `untilMs`, and the next failure doubles `delayMs`. Memory only. */
   private readonly holds = new Map<string, { untilMs: number; delayMs: number }>();
+  /** When each stem's mid-session window opened: the first sweep that saw it, then each exit 0. Memory only, never pruned. */
+  private readonly midSessionFromMs = new Map<string, number>();
 
   constructor(file: string, startVersion: string, opts: Options) {
     this.file = file;
@@ -142,10 +147,15 @@ class Daemon {
       // Digests stopped (credential or login).
       if (readStopState() !== null) this.stopping = true;
       // Entries whose transcript is gone have nothing left to digest.
-      for (const item of readSpool()) if (!fs.existsSync(item.entry.transcriptPath)) deleteEntry(item.stem);
+      const seenMs = Date.now();
+      for (const item of readSpool()) {
+        if (!fs.existsSync(item.entry.transcriptPath)) deleteEntry(item.stem);
+        else if (!this.midSessionFromMs.has(item.stem)) this.midSessionFromMs.set(item.stem, seenMs);
+      }
       if (!this.stopping && this.job === null) {
         const now = Date.now();
-        const next = eligible(readSpool().filter((item) => (this.holds.get(item.stem)?.untilMs ?? 0) <= now));
+        const unheld = readSpool().filter((item) => (this.holds.get(item.stem)?.untilMs ?? 0) <= now);
+        const next = eligible(unheld, { fromMs: this.midSessionFromMs, everyMs: this.opts.midSessionMs }, now);
         if (next) this.startJob(next.stem);
       }
     } catch (err) {
@@ -179,10 +189,11 @@ class Daemon {
     });
   }
 
-  /** Exit 0 clears the stem's hold; any other end holds it for --retry-ms, doubling per failure up to --retry-cap-ms. */
+  /** Exit 0 clears the stem's hold and restarts its mid-session window; any other end holds it for --retry-ms, doubling per failure up to --retry-cap-ms. */
   private settle(stem: string, code: number | null): void {
     if (code === 0) {
       this.holds.delete(stem);
+      this.midSessionFromMs.set(stem, Date.now());
       return;
     }
     const prev = this.holds.get(stem);
@@ -221,16 +232,20 @@ function pruneProjects(): void {
   for (const item of readParked()) if (!wanted(item)) deleteParked(item.stem);
 }
 
-/** The oldest entry that ended, or whose transcript has been quiet for QUIET_MS. */
-function eligible(items: SpoolItem[]): SpoolItem | undefined {
-  const quietBefore = Date.now() - QUIET_MS;
+/** The oldest entry that ended, whose transcript has been quiet for QUIET_MS, or whose mid-session window has passed. */
+function eligible(
+  items: SpoolItem[], midSession: { fromMs: Map<string, number>; everyMs: number }, now: number,
+): SpoolItem | undefined {
+  const quietBefore = now - QUIET_MS;
   const ready = items.filter((item) => {
     if (item.entry.ended === true) return true;
+    let mtimeMs: number;
     try {
-      return fs.statSync(item.entry.transcriptPath).mtimeMs < quietBefore;
+      mtimeMs = fs.statSync(item.entry.transcriptPath).mtimeMs;
     } catch {
       return false;
     }
+    return mtimeMs < quietBefore || now - (midSession.fromMs.get(item.stem) ?? now) >= midSession.everyMs;
   });
   return ready.sort((a, b) => a.entry.updatedAt - b.entry.updatedAt)[0];
 }

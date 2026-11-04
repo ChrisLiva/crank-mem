@@ -4,9 +4,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  REPO_ROOT, appendRecords, digestProject, fakeClaude, killDaemon, makeCrankHome, readDaemon, runCli, runHook, setMtime,
-  spoolFiles, startDaemon, stopDigests, userRecord, waitFor, type FakeCall, type FakeScenario,
+  REPO_ROOT, appendRecords, digestProject, fakeClaude, killDaemon, laterRecords, makeCrankHome, readDaemon, runCli, runHook,
+  setMtime, spoolFiles, startDaemon, stopDigests, userRecord, waitFor, type FakeCall, type FakeScenario,
 } from "./helpers.ts";
+import { digestRequest } from "../src/daemon/digest-prompt.ts";
 import { okStream, refusalStream, status500Stream } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
@@ -455,5 +456,54 @@ describe("daemon recovery", () => {
     await waitFor(() => spoolFiles(e.home).length === 0, 5_000);
     daemonPid(e.home);
     expectOneRow(root, "EEXIST");
+  }, 20_000);
+});
+
+describe("mid-session digests", () => {
+  const MID = ["--sweep-ms", "50", "--idle-ms", "60000", "--mid-session-ms", "1500"];
+
+  test("a live session is digested once per window, the first one window after the first sweep that saw it", async () => {
+    const e = setup();
+    const root = digestProject({}, temps);
+    const transcript = transcriptCopy("mid", "marker-A");
+    plantEntry(e.home, "mid", { transcriptPath: transcript, projectRoot: root, ended: false });
+    const t0 = Date.now();
+    daemon(MID, e);
+
+    await sleepMs(1_000);
+    expect(e.fake.calls()).toEqual([]);
+    await waitFor(() => e.fake.calls().length === 1, 10_000);
+    const first = e.fake.calls()[0]!;
+    expect(first.startMs - t0).toBeGreaterThanOrEqual(1_500);
+    expect(first.stdin).toContain("marker-A");
+
+    await waitFor(() => e.fake.calls()[0]!.endMs !== null, 10_000);
+    await waitFor(() => spoolFiles(e.home).length === 0, 10_000);
+    const firstEndMs = e.fake.calls()[0]!.endMs!;
+    const later = laterRecords();
+    appendRecords(transcript, later.records);
+    plantEntry(e.home, "mid", { transcriptPath: transcript, projectRoot: root, ended: false, updatedAt: Date.now() });
+    await waitFor(() => e.fake.calls().length === 2, 10_000);
+    const second = e.fake.calls()[1]!;
+    expect(second.startMs - firstEndMs).toBeGreaterThanOrEqual(1_500);
+    expect(second.stdin).toBe(
+      digestRequest(later.text, SAMPLE_DIGEST.summary, { cerebrum: "## User Preferences\n\n## Memory", existing: [] }).input,
+    );
+  }, 30_000);
+
+  test("a restarted daemon opens the window again at its first sweep", async () => {
+    const e = setup();
+    const root = digestProject({}, temps);
+    plantEntry(e.home, "mid", { transcriptPath: transcriptCopy("mid", "marker-A"), projectRoot: root, ended: false });
+    const first = daemon(MID, e);
+    await sleepMs(800);
+    killDaemon(e.home);
+    await first.exited;
+    fs.writeFileSync(path.join(e.home, "daemon.json"), JSON.stringify({ ...readDaemon(e.home), heartbeatMs: Date.now() - 120_000 }));
+
+    const t1 = Date.now();
+    daemon(MID, e);
+    await waitFor(() => e.fake.calls().length === 1, 10_000);
+    expect(e.fake.calls()[0]!.startMs - t1).toBeGreaterThanOrEqual(1_500);
   }, 20_000);
 });

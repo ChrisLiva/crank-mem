@@ -67,7 +67,7 @@ export const COMMANDS = {
   },
   daemon: {
     usage: "Usage: crank-mem daemon (internal: Stop and SessionEnd start it)",
-    value: ["sweep-ms", "idle-ms", "retry-ms", "retry-cap-ms", "run-timeout-ms"],
+    value: ["sweep-ms", "idle-ms", "retry-ms", "retry-cap-ms", "run-timeout-ms", "mid-session-ms"],
     bool: ["once"],
   },
   job: {
