@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { consolidationRequest } from "../src/daemon/consolidate.ts";
 import { isSensitiveFile } from "../src/hooks/lib/config.ts";
 import {
-  TOKEN, appendRecords, cleanup, digestProject, journey, laterRecords, readRecord, rerun, runCli, search, seedMemory, stop, temps,
-  userRecord,
+  TOKEN, appendRecords, cleanup, digestProject, git, gitCommit, journey, laterRecords, readRecord, rerun, runCli, search, seedMemory,
+  setMtime, stop, temps, userRecord,
 } from "./helpers.ts";
 import { okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
@@ -43,10 +43,13 @@ const flagValue = (argv: string[], flag: string): string => argv[argv.indexOf(fl
 
 describe("digest feeds consolidation", () => {
   test("the first job stores a proposal and a flag that its consolidation reviews, and later jobs consolidate only when due", () => {
-    const root = digestProject({}, temps);
+    const root = digestProject({ git: "commit" }, temps);
     fs.mkdirSync(path.join(root, "src"));
     fs.writeFileSync(path.join(root, "src/lock.ts"), "export const LOCK_RETRY_MS = 5000;\n");
+    fs.writeFileSync(path.join(root, "src/scan.ts"), "export function walk() {}\n");
     fs.writeFileSync(path.join(root, ".crank/cerebrum.md"), CEREBRUM);
+    git(root, "init", "-q");
+    gitCommit(root, "init");
     const [a, b] = seedMemory(root, [
       { title: "Lock retry is two seconds", narrative: "withLock retries EEXIST for 2 seconds.", filesRead: ["src/lock.ts"] },
       { title: "Lock writes are atomic", narrative: "The index is written to a temp file and renamed.", filesRead: ["src/lock.ts"] },
@@ -78,6 +81,26 @@ describe("digest feeds consolidation", () => {
       { lines: okStreamOf(digestOf([])) },
       { lines: okStreamOf({ edits: [], proposals: [{ id: 2, verdict: "rejected", reason: "already said" }], stale: [] }) },
       { lines: okStreamOf(digestOf([])) },
+      {
+        lines: okStreamOf(digestOf(
+          [
+            { kind: "memory", bullet: "**Lock constant**: `src/lock.ts` → `LOCK_RETRY_MS` holds the retry window (2026-11-04)" },
+            { kind: "memory", bullet: "**Token rule**: never log " + TOKEN },
+          ],
+          [{ id: b!, reason: "first reason" }, { id: b!, reason: "second reason" }, { id: 999, reason: "unlisted" }],
+        )),
+      },
+      {
+        lines: okStreamOf({
+          edits: [
+            { op: "replace", bullet_id: 1, bullet: "**Lock retry**: `src/lock.ts` → `withLock` retries EEXIST for 5 seconds", reason: "retry is 5 s now" },
+            { op: "remove", bullet_id: 2, reason: "scanner rewritten" },
+            { op: "remove", bullet_id: 42, reason: "unknown" },
+          ],
+          proposals: [],
+          stale: [{ id: b, verdict: "cleared" }, { id: a, verdict: "cleared" }],
+        }),
+      },
     ];
     const j = journey(root, scenarios, { transcript, env: { TZ: "UTC" } });
     const { home, fake, job } = j;
@@ -167,7 +190,76 @@ describe("digest feeds consolidation", () => {
     stop(j);
     expect(rerun(j, 10_000, {}, ["--consolidate-every-ms", "1"]).status).toBe(0);
     expect(fake.calls().length).toBe(6);
-  }, 60_000);
+
+    // Step 4: a scan sees src/lock.ts changed after the last ok run, so the bullets citing it are re-checked.
+    setMtime(path.join(root, "src/lock.ts"), Date.now());
+    setMtime(path.join(root, "src/scan.ts"), Date.parse("2026-01-01"));
+    expect(runCli(root, ["scan"]).status).toBe(0);
+    appendRecords(j.transcript, [
+      ...laterRecords("s4").records, readRecord("s4-read", "2026-01-03T00:00:03.000Z", path.join(root, "src/lock.ts")),
+    ]);
+    stop(j);
+    expect(rerun(j, 10_000, { TZ: "UTC" }, ["--consolidate-every-ms", "1"]).status).toBe(0);
+    expect(fake.calls().length).toBe(8);
+    const step4 = fake.calls()[7]!.stdin;
+    expect(step4.split("\n").filter((l) => l.startsWith("[B"))).toEqual([
+      "[B1] RECHECK **Lock retry**: `src/lock.ts` → `withLock` retries EEXIST for 2 seconds (2026-10-01)",
+      "[B2] **Scanner**: `src/scan.ts` → `walk` skips symlinks (2026-10-01)",
+      `[B3] RECHECK **Lock constant**: \`src/lock.ts\` → \`LOCK_RETRY_MS\` holds the retry window (${today})`,
+    ]);
+    expect(step4).toContain("\n\n[PROPOSALS]\n[P3] (memory) **Token rule**: never log [redacted]\n\n[STALE]\n");
+    const staleLines = step4.slice(step4.indexOf("[STALE]\n")).split("\n").filter((l) => l.startsWith("[O"));
+    expect(staleLines.length).toBe(1);
+    expect(staleLines[0]!.startsWith(`[O${b}] `)).toBe(true);
+    expect(staleLines[0]!.endsWith("| flagged: first reason")).toBe(true);
+
+    const step4Stats = statsOf();
+    expect(step4Stats).toContain("\n  proposals:        1\n");
+    expect(step4Stats).toContain("\n  stale:            1\n");
+    expect(search(root, "Lock writes")).toContain(`#${b} `);
+    expect(search(root, "Lock retry")).not.toContain(`#${a} `);
+    expect(fs.readFileSync(path.join(root, ".crank/cerebrum-archive.md"), "utf8")).toBe(
+      "# Cerebrum archive\n\n" +
+      "- **Lock retry**: `src/lock.ts` → `withLock` retries EEXIST for 2 seconds (2026-10-01)\n" +
+      `  - archived ${today}: retry is 5 s now\n` +
+      "- **Scanner**: `src/scan.ts` → `walk` skips symlinks (2026-10-01)\n" +
+      `  - archived ${today}: scanner rewritten\n`,
+    );
+    const memoryBullets = fs.readFileSync(cerebrum, "utf8").split("## Memory\n")[1]!.split("\n").filter((l) => l.startsWith("- "));
+    expect(memoryBullets).toEqual([
+      `- **Lock retry**: \`src/lock.ts\` → \`withLock\` retries EEXIST for 5 seconds (${today})`,
+      `- **Lock constant**: \`src/lock.ts\` → \`LOCK_RETRY_MS\` holds the retry window (${today})`,
+    ]);
+    expect(git(root, "status", "--short", "--", ".crank/cerebrum.md")).toBe(" M .crank/cerebrum.md\n");
+    expect(git(root, "diff", "--cached", "--name-only")).toBe("");
+    expect(git(root, "rev-list", "--count", "HEAD")).toBe("1\n");
+  }, 90_000);
+});
+
+describe("bullets whose cited files changed", () => {
+  test("before any ok run, the bullet's own date decides, and a due bullet alone triggers the run", () => {
+    const root = digestProject({}, temps);
+    fs.mkdirSync(path.join(root, "src"));
+    fs.writeFileSync(path.join(root, "src/a.ts"), "export const a = 1;\n");
+    expect(runCli(root, ["scan"]).status).toBe(0);
+    fs.writeFileSync(path.join(root, ".crank/cerebrum.md"), "# Cerebrum\n\n## User Preferences\n\n## Memory\n\n" +
+      "- **A**: `src/a.ts` → `a` holds one (2026-01-01)\n" +
+      "- **Gone**: `src/gone.ts` → `g` was removed (2026-11-04)\n");
+    const transcript = userRecord("c-0", "2026-01-02T00:00:00.000Z", "check the a module ".repeat(120)) + "\n";
+    const scenarios = [
+      { lines: okStreamOf(digestOf([])) },
+      { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) },
+    ];
+    const { fake, job } = journey(root, scenarios, { transcript });
+    expect(job.status).toBe(0);
+    const calls = fake.calls();
+    expect(calls.length).toBe(2);
+    expect(calls[1]!.stdin).toBe(
+      "[CEREBRUM]\n## User Preferences\n## Memory\n" +
+      "[B1] RECHECK **A**: `src/a.ts` → `a` holds one (2026-01-01)\n" +
+      "[B2] RECHECK **Gone**: `src/gone.ts` → `g` was removed (2026-11-04)\n",
+    );
+  }, 30_000);
 });
 
 describe("an accepted verdict with no edit", () => {

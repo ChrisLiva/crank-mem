@@ -3,7 +3,9 @@ import * as path from "node:path";
 import { ARCHIVE_FILE, CEREBRUM_FILE, backupCerebrum } from "../hooks/lib/cerebrum-files.ts";
 import { CRANK_DIR } from "../hooks/lib/config.ts";
 import { isObj } from "../hooks/lib/hook-io.ts";
+import { basenameIndex, citationStatus } from "../hooks/lib/injection.ts";
 import { localDate, type ConsolidationOutcome, type Memory, type PendingWork } from "../hooks/lib/memory.ts";
+import { loadIndex } from "../hooks/lib/store.ts";
 import { writeTextAtomic } from "../hooks/lib/user-state.ts";
 import { applyEdits, numberBullets, type CerebrumEdit } from "./cerebrum-edit.ts";
 import { askClaude } from "./gateway.ts";
@@ -74,7 +76,7 @@ const oneLine = (text: string) => text.replace(/\s+/g, " ");
 /** A titled input block, or "" when it has no lines. */
 const block = (title: string, lines: string[]) => (lines.length === 0 ? "" : `[${title}]\n${lines.join("\n")}\n`);
 
-export function consolidationRequest(md: string, work: Pick<PendingWork, "proposals" | "stale">): {
+export function consolidationRequest(md: string, work: Pick<PendingWork, "proposals" | "stale">, due = new Set<number>()): {
   system: string; input: string; schema: object; validate: (value: unknown) => value is Consolidation;
 } {
   const { headings, bullets } = numberBullets(md);
@@ -83,7 +85,8 @@ export function consolidationRequest(md: string, work: Pick<PendingWork, "propos
   for (const heading of headings) {
     cerebrum.push(`## ${heading}`);
     for (; next < bullets.length && bullets[next]!.heading === heading; next++) {
-      cerebrum.push(`[B${bullets[next]!.id}] ${bullets[next]!.text}`);
+      const { id, text } = bullets[next]!;
+      cerebrum.push(`[B${id}] ${due.has(id) ? "RECHECK " : ""}${text}`);
     }
   }
   const input = [
@@ -106,23 +109,36 @@ function narrow(e: OutputEdit, sent: Set<number>): CerebrumEdit | null {
   return e.bullet !== undefined ? { op: "replace", bulletId: e.bullet_id, bullet: e.bullet, reason: e.reason, proposal } : null;
 }
 
+/** The ids of the bullets citing a file that is missing or modified since the last ok run (or the bullet's date, before one). */
+function dueBullets(root: string, crankDir: string, md: string, sinceMs: number | null): Set<number> {
+  const index = loadIndex(crankDir);
+  const byName = basenameIndex(index);
+  const due = new Set<number>();
+  for (const { id, text } of numberBullets(md).bullets) {
+    const { missing, modified } = citationStatus(text, { index, root }, byName, sinceMs);
+    if (missing.length > 0 || modified.length > 0) due.add(id);
+  }
+  return due;
+}
+
 /**
- * Review the project's pending proposals and stale flags against its code, and apply the checked
- * edits to cerebrum.md. "not-due" when the project has no cerebrum, nothing waits, or the last run
- * started less than `everyMs` ago.
+ * Review the project's pending proposals, stale flags and due bullets against its code, and apply
+ * the checked edits to cerebrum.md. "not-due" when the project has no cerebrum, nothing waits, or
+ * the last run started less than `everyMs` ago.
  */
 export async function consolidate(root: string, memory: Memory, opts: { everyMs: number; timeoutMs: number }):
   Promise<ConsolidationOutcome | "not-due"> {
   const crankDir = path.join(root, CRANK_DIR);
   const file = path.join(crankDir, CEREBRUM_FILE);
   if (!fs.existsSync(file)) return "not-due";
-  const work = memory.pending(PENDING_LIMIT);
-  if (work.proposals.length === 0 && work.stale.length === 0) return "not-due";
-  if (work.lastStartMs !== null && Date.now() - work.lastStartMs < opts.everyMs) return "not-due";
   const md = fs.readFileSync(file, "utf8");
+  const work = memory.pending(PENDING_LIMIT);
+  const due = dueBullets(root, crankDir, md, work.lastOkStartMs);
+  if (work.proposals.length === 0 && work.stale.length === 0 && due.size === 0) return "not-due";
+  if (work.lastStartMs !== null && Date.now() - work.lastStartMs < opts.everyMs) return "not-due";
 
   const startedMs = Date.now();
-  const r = await askClaude(consolidationRequest(md, work), { timeoutMs: opts.timeoutMs, project: root });
+  const r = await askClaude(consolidationRequest(md, work, due), { timeoutMs: opts.timeoutMs, project: root });
   if (r.kind !== "ok") return r.kind;
 
   const sentProposals = new Set(work.proposals.map((p) => p.id));
