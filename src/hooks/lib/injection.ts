@@ -221,11 +221,7 @@ export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles, b
   }
   const memoryIndex = memory.splice(0, Math.max(0, memory.length - MEMORY_RECENT_COUNT)).map(indexEntry);
   if (cited) {
-    const byName = new Map<string, string[]>();
-    for (const rel of Object.keys(cited.index.files)) {
-      const name = path.posix.basename(rel);
-      byName.set(name, [...(byName.get(name) ?? []), rel]);
-    }
+    const byName = basenameIndex(cited.index);
     for (const list of [prefs, memory]) list.forEach((b, i) => (list[i] = b + citationTags(b, cited, byName)));
   }
 
@@ -273,23 +269,39 @@ export interface CitedFiles {
 /** A backticked file citation: a path or basename with an extension, then an optional `:line`. */
 const FILE_CITATION = /^([^\s*=:]+\.[A-Za-z]\w*)(?::\d+(?:-\d+)?)?$/;
 
+/** The index's files grouped by basename, for resolving a cited basename. */
+export function basenameIndex(index: AnatomyIndex): Map<string, string[]> {
+  const byName = new Map<string, string[]>();
+  for (const rel of Object.keys(index.files)) {
+    const name = path.posix.basename(rel);
+    byName.set(name, [...(byName.get(name) ?? []), rel]);
+  }
+  return byName;
+}
+
 /**
- * Tags for the files a bullet cites in backticks: ` [cited file missing: …]`
- * for a path that is neither indexed nor on disk, and ` [cited file modified
- * after this note; check: …]` for an indexed file whose mtime is past the end
- * of the bullet's latest date. Empty when nothing is flagged.
+ * The files a bullet cites in backticks that are missing or modified, each
+ * listed once. Missing: a path that is neither indexed nor on disk. Modified:
+ * an indexed file whose mtime is past `sinceMs`, or, with `sinceMs` null, past
+ * the end of the bullet's latest date; an undated bullet then has none.
  *
  * A basename resolves by a unique suffix match against the index, because
  * agents cite `geometry.py` far more often than its full path. An unresolved
  * basename is never called missing: the index omits files past max_files and
  * unindexable ones, and a dotted symbol such as `fs.statSync` reads the same.
- * An undated bullet gets no modified tag; a checkout resets mtimes, hence "check".
  */
-function citationTags(bullet: string, cited: CitedFiles, byName: Map<string, string[]>): string {
-  let noteEndMs: number | null = null;
-  for (const [, y, m, d] of bullet.matchAll(ISO_DATE)) {
-    const end = new Date(Number(y), Number(m) - 1, Number(d) + 1).getTime();
-    if (noteEndMs === null || end > noteEndMs) noteEndMs = end;
+export function citationStatus(
+  bullet: string,
+  cited: CitedFiles,
+  byName: Map<string, string[]>,
+  sinceMs: number | null,
+): { missing: string[]; modified: string[] } {
+  let cutoffMs = sinceMs;
+  if (cutoffMs === null) {
+    for (const [, y, m, d] of bullet.matchAll(ISO_DATE)) {
+      const end = new Date(Number(y), Number(m) - 1, Number(d) + 1).getTime();
+      if (cutoffMs === null || end > cutoffMs) cutoffMs = end;
+    }
   }
   const missing = new Set<string>();
   const modified = new Set<string>();
@@ -298,14 +310,24 @@ function citationTags(bullet: string, cited: CitedFiles, byName: Map<string, str
       ? [rel]
       : (byName.get(path.posix.basename(rel)) ?? []).filter((c) => c.endsWith("/" + rel));
     if (hits.length === 1) {
-      if (noteEndMs !== null && cited.index.files[hits[0]!]!.mtimeMs > noteEndMs) modified.add(rel);
+      if (cutoffMs !== null && cited.index.files[hits[0]!]!.mtimeMs > cutoffMs) modified.add(rel);
     } else if (!hits.length && rel.includes("/") && !fs.existsSync(path.join(cited.root, rel))) {
       missing.add(rel);
     }
   }
+  return { missing: [...missing], modified: [...modified] };
+}
+
+/**
+ * Tags for a bullet's flagged citations: ` [cited file missing: …]` and
+ * ` [cited file modified after this note; check: …]`, empty when nothing is
+ * flagged. A checkout resets mtimes, hence "check".
+ */
+function citationTags(bullet: string, cited: CitedFiles, byName: Map<string, string[]>): string {
+  const { missing, modified } = citationStatus(bullet, cited, byName, null);
   return (
-    (missing.size ? ` [cited file missing: ${[...missing].join(", ")}]` : "") +
-    (modified.size ? ` [cited file modified after this note; check: ${[...modified].join(", ")}]` : "")
+    (missing.length ? ` [cited file missing: ${missing.join(", ")}]` : "") +
+    (modified.length ? ` [cited file modified after this note; check: ${modified.join(", ")}]` : "")
   );
 }
 
