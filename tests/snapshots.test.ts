@@ -7,9 +7,10 @@ import { LOCAL_CONFIG_FILE } from "../src/hooks/lib/config.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import { MEMORY_OLDER_NOTE, memoryPath } from "../src/hooks/lib/memory.ts";
 import {
-  cleanup, journey, makeCrankHome, makeCrankProject, plantMemory, runCli, runHook, temps,
+  appendRecords, cleanup, digestProject, journey, laterRecords, makeCrankHome, makeCrankProject, plantMemory, rerun, runCli,
+  runHook, seedMemory, stop, temps,
 } from "./helpers.ts";
-import { okStream } from "./fixtures/claude-scenarios.ts";
+import { okStream, okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import { claudePostRead, claudeSessionStart, claudeSubagentStart } from "./fixtures/payloads.ts";
 import { V1_DDL } from "./fixtures/schema-v1.ts";
@@ -179,5 +180,137 @@ describe("older stores", () => {
     const sub = runHook("src/hooks/subagent-start.ts", JSON.stringify(claudeSubagentStart(root)), root, env);
     expect(sub.status).toBe(0);
     expect(sub.stdout).not.toContain(RECALL_BULLET);
+  });
+});
+
+describe("maintenance", () => {
+  const DAILY = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
+  const records = (tag: string) => laterRecords(tag).records;
+  const staleSearch = (root: string) => runCli(root, ["search", "Retention", "--stale"]).stdout;
+
+  /** A digest project whose cerebrum.md is gone, so consolidation makes no model call. */
+  function maintained(): string {
+    const root = digestProject({}, temps);
+    fs.rmSync(path.join(root, ".crank/cerebrum.md"));
+    return root;
+  }
+
+  function backups(root: string): string {
+    return path.join(root, ".crank/backups/memory");
+  }
+
+  /** Seeds rows A and B, then flags A stale and adds one pending proposal. */
+  function seedRetention(root: string): { a: number; b: number } {
+    const [a, b] = seedMemory(root, [{ title: "Retention canary alpha" }, { title: "Retention canary bravo" }]) as [number, number];
+    seedMemory(root, [], {
+      stale: [{ id: a, reason: "replaced" }],
+      proposals: [{ kind: "memory", bullet: "**Keep**: proposals survive retention" }],
+    });
+    return { a, b };
+  }
+
+  test("the pass waits a day, snapshots before it deletes, and deletes only long-stale rows", () => {
+    const root = maintained();
+    const j = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]);
+    expect(j.job.status).toBe(0);
+    expect(snapshots(root)).toHaveLength(1);
+    expect(snapshots(root)[0]).toMatch(DAILY);
+    expect(runCli(root, ["stats"]).stdout).toMatch(/\n  last snapshot:    \d+s ago\n  embedder: /);
+
+    const { a, b } = seedRetention(root);
+
+    // Job 2: not due, so the flagged row survives a 1 ms keep window.
+    appendRecords(j.transcript, records("r2"));
+    stop(j);
+    expect(rerun(j, 10_000, {}, ["--stale-keep-ms", "1"]).status).toBe(0);
+    expect(snapshots(root)).toHaveLength(1);
+    expect(staleSearch(root)).toContain(`#${a} `);
+
+    // Job 3: due, so it snapshots, then deletes A and nothing else.
+    appendRecords(j.transcript, records("r3"));
+    stop(j);
+    expect(rerun(j, 10_000, {}, ["--maintain-every-ms", "1", "--stale-keep-ms", "1"]).status).toBe(0);
+    const names = snapshots(root);
+    expect(names).toHaveLength(2);
+    expect(names.every((n) => DAILY.test(n))).toBe(true);
+    const after = staleSearch(root);
+    expect(after).toContain(`#${b} `);
+    expect(after).toContain("Retention canary bravo");
+    expect(after).not.toContain(`#${a} `);
+    expect(runCli(root, ["get", String(a)]).status).toBe(1);
+    expect(runCli(root, ["stats"]).stdout.split("\n")).toContain("  proposals:        1");
+
+    // Job 4: the session's digests and position survived, so the next digest continues from r3.
+    appendRecords(j.transcript, records("r4"));
+    stop(j);
+    expect(rerun(j).status).toBe(0);
+    const last = j.fake.calls().at(-1)!.stdin;
+    expect(last.startsWith("[PRIOR SUMMARY]\n")).toBe(true);
+    expect(last).toContain("r4 r4");
+    expect(last).not.toContain("r3 r3");
+  });
+
+  test("the trim keeps the newest 7 daily snapshots and every -v1.db, and removes stray temp files", () => {
+    const root = maintained();
+    const dir = backups(root);
+    fs.mkdirSync(dir, { recursive: true });
+    const days = [1, 2, 3, 4, 5, 6, 7].map((d) => `2026-01-0${d}T00-00-00-000Z.db`);
+    for (const name of [...days, "2026-01-01T00-00-00-000Z-v1.db", "memory.db.123.1.tmp"]) {
+      fs.writeFileSync(path.join(dir, name), "");
+    }
+
+    expect(journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], { args: ["--maintain-every-ms", "1"] }).job.status).toBe(0);
+    const names = snapshots(root).sort();
+    expect(names.slice(0, -1)).toEqual(["2026-01-01T00-00-00-000Z-v1.db", ...days.slice(1)]);
+    expect(names).toHaveLength(8);
+    expect(names.at(-1)).toMatch(DAILY);
+    expect(names.at(-1)! > days.at(-1)!).toBe(true);
+  });
+
+  test("a failed snapshot deletes nothing, consolidation still runs, and the next job tries again", () => {
+    const root = digestProject({}, temps);
+    fs.mkdirSync(path.join(root, ".crank/backups"), { recursive: true });
+    fs.writeFileSync(backups(root), "x");
+    const { a } = seedRetention(root);
+
+    const j = journey(
+      root,
+      [
+        { lines: okStream(SAMPLE_DIGEST) },
+        { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) },
+        { lines: okStream(SAMPLE_DIGEST) },
+      ],
+      { args: ["--stale-keep-ms", "1"] },
+    );
+    expect(j.job.status).toBe(0);
+    expect(j.job.stderr.split("\n").filter((l) => l.startsWith("crank-mem: maintenance skipped ("))).toHaveLength(1);
+    expect(staleSearch(root)).toContain(`#${a} `);
+    expect(j.fake.calls().length).toBe(2);
+    expect(runCli(root, ["stats"]).stdout).toMatch(/^  consolidation:    \d+s ago \(ok\)$/m);
+
+    fs.rmSync(backups(root));
+    appendRecords(j.transcript, records("r2"));
+    stop(j);
+    expect(rerun(j, 10_000, {}, ["--stale-keep-ms", "1"]).status).toBe(0);
+    const names = snapshots(root);
+    expect(names).toHaveLength(1);
+    expect(names[0]).toMatch(DAILY);
+    expect(staleSearch(root)).not.toContain(`#${a} `);
+  });
+
+  test("the due check counts a -v1.db snapshot and skips a .tmp file", () => {
+    const planted = (name: string): string => {
+      const root = maintained();
+      fs.mkdirSync(backups(root), { recursive: true });
+      fs.writeFileSync(path.join(backups(root), name), "");
+      expect(journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]).job.status).toBe(0);
+      return root;
+    };
+
+    expect(snapshots(planted("2026-01-01T00-00-00-000Z-v1.db"))).toEqual(["2026-01-01T00-00-00-000Z-v1.db"]);
+
+    const names = snapshots(planted("memory.db.1.1.tmp"));
+    expect(names).toHaveLength(1);
+    expect(names[0]).toMatch(DAILY);
   });
 });

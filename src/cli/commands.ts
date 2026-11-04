@@ -69,7 +69,11 @@ export const COMMANDS = {
     value: ["sweep-ms", "idle-ms", "retry-ms", "retry-cap-ms", "run-timeout-ms"],
     bool: ["once"],
   },
-  job: { usage: "Usage: crank-mem job <stem> (internal: the daemon runs it)", value: ["run-timeout-ms", "consolidate-every-ms"], bool: [] },
+  job: {
+    usage: "Usage: crank-mem job <stem> (internal: the daemon runs it)",
+    value: ["run-timeout-ms", "consolidate-every-ms", "maintain-every-ms", "stale-keep-ms"],
+    bool: [],
+  },
 } satisfies Record<string, CommandSpec>;
 
 export function commandSpec(name: string): CommandSpec | undefined {

@@ -11,7 +11,7 @@ import { codexInjectionGaps } from "./codex-sessions.ts";
 import { codexHome, codexTrustStatus, userCodexConfigPath, CODEX_REVIEW_HINT } from "./codex-trust.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
 import { daemonAlive, readParked, readSpool } from "../hooks/lib/spool.ts";
-import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
+import { latestSnapshot, memoryPath, openMemory } from "../hooks/lib/memory.ts";
 import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
 
 function age(iso: string | null): string {
@@ -101,7 +101,8 @@ async function captureLines(root: string, config: CrankConfig): Promise<string[]
     row("daemon", daemonAlive() ? "alive" : "not running"),
     row("spool", `${readSpool().length} waiting, ${readParked().length} parked`),
   ];
-  const opened = openMemory(memoryPath(root), "read");
+  const store = memoryPath(root);
+  const opened = openMemory(store, "read");
   if (opened.status === "open") {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
@@ -122,6 +123,8 @@ async function captureLines(root: string, config: CrankConfig): Promise<string[]
   } else {
     lines.push(row("memory", MEMORY_STATE[opened.status]));
   }
+  const latest = latestSnapshot(store);
+  lines.push(row("last snapshot", latest === null ? "never" : ageOf(latest.atMs)));
   lines.push(row("embedder", (await embedderReady()) ? "ready" : "not ready (run crank-mem setup)"));
   return lines;
 }

@@ -18,7 +18,7 @@ export const SNAPSHOT_DIR = path.join("backups", "memory");
 export const MEMORY_OLDER_NOTE = "crank-mem: memory.db predates this version; run `crank-mem upgrade`.";
 export const MEMORY_NEWER_NOTE = "crank-mem: memory.db is newer than this version; run `crank-mem upgrade`.";
 export const MEMORY_UNREADABLE_NOTE = "crank-mem: .crank/memory.db is not a readable database.";
-export type MemoryReader = Omit<Memory, "appendDigest" | "recordRejection" | "putVectors" | "recordConsolidation">;
+export type MemoryReader = Omit<Memory, "appendDigest" | "recordRejection" | "putVectors" | "recordConsolidation" | "maintain">;
 export type MemoryRead =
   | { status: "open"; memory: MemoryReader }
   | { status: "missing" | "older" | "newer" | "unreadable" };
@@ -96,6 +96,12 @@ export interface Memory {
   /** Pending proposals and unreviewed stale rows, oldest first; `limit` caps each list. */
   pending(limit: number): PendingWork;
   recordConsolidation(run: ConsolidationRecord): void;
+  /**
+   * When the newest snapshot is older than `everyMs` (or there is none): snapshots the store, deletes rows
+   * flagged stale more than `staleKeepMs` ago, and trims the snapshot folder. Null when not due; throws,
+   * before any delete, when the snapshot fails.
+   */
+  maintain(opts: { everyMs: number; staleKeepMs: number }): { snapshot: string; deleted: number } | null;
   close(): void;
 }
 
@@ -202,8 +208,7 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
       } else {
         // VACUUM INTO cannot run inside migrate's transaction, so the snapshot comes first.
         try {
-          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-          writeSnapshot(db, path.join(path.dirname(file), SNAPSHOT_DIR), `${stamp}-v${v}.db`);
+          writeSnapshot(db, path.join(path.dirname(file), SNAPSHOT_DIR), `${snapshotStamp()}-v${v}.db`);
         } catch (err) {
           db.close();
           return { status: "unmigrated", detail: err instanceof Error ? err.message : String(err) };
@@ -234,6 +239,28 @@ function userVersion(db: sqlite.DatabaseSync): number {
 }
 
 let snapshotCount = 0;
+
+/** Daily snapshots the maintenance pass writes and trims; the pre-migration `-v<n>.db` copies never match. */
+const DAILY_SNAPSHOT = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
+const DAILY_KEEP = 7;
+
+/** The one snapshot-name stamp: an ISO time with `:` and `.` made filename-safe. */
+function snapshotStamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+/** The snapshot of `storeFile` whose `.db` name sorts last, with its mtime; null when the folder is missing, unreadable or empty. */
+export function latestSnapshot(storeFile: string): { file: string; atMs: number } | null {
+  const dir = path.join(path.dirname(storeFile), SNAPSHOT_DIR);
+  try {
+    const name = fs.readdirSync(dir).filter((n) => n.endsWith(".db")).sort().at(-1);
+    if (name === undefined) return null;
+    const file = path.join(dir, name);
+    return { file, atMs: fs.statSync(file).mtimeMs };
+  } catch {
+    return null;
+  }
+}
 
 /** Writes a copy of the store to `<dir>/<name>` through a unique .tmp file; throws on failure, leaving no .tmp behind. */
 function writeSnapshot(db: sqlite.DatabaseSync, dir: string, name: string): string {
@@ -636,6 +663,26 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
         );
         for (const id of run.sent) expire.run(now, id, MAX_ATTEMPTS);
       });
+    },
+
+    maintain({ everyMs, staleKeepMs }) {
+      const latest = latestSnapshot(file);
+      if (latest !== null && Date.now() - latest.atMs <= everyMs) return null;
+      const dir = path.join(path.dirname(file), SNAPSHOT_DIR);
+      const snapshot = writeSnapshot(db, dir, `${snapshotStamp()}.db`);
+      const deleted = transaction(() => {
+        const cutoff = Date.now() - staleKeepMs;
+        const expired = "SELECT id FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?";
+        db.prepare(`DELETE FROM observation_files WHERE observation_id IN (${expired})`).run(cutoff);
+        db.prepare(`DELETE FROM observation_vectors WHERE observation_id IN (${expired})`).run(cutoff);
+        return Number(db.prepare("DELETE FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?").run(cutoff).changes);
+      });
+      const names = fs.readdirSync(dir);
+      const daily = names.filter((n) => DAILY_SNAPSHOT.test(n)).sort();
+      for (const n of [...daily.slice(0, -DAILY_KEEP), ...names.filter((n) => n.endsWith(".tmp"))]) {
+        fs.rmSync(path.join(dir, n), { force: true });
+      }
+      return { snapshot, deleted };
     },
 
     close: () => db.close(),

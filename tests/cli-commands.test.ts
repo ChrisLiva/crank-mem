@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  makeCrankHome, makeModelHome, plantMemory, runCli, seedMemory, spoolEntry, stopDigests, type CliRun,
+  digestProject, makeCrankHome, makeModelHome, plantMemory, runCli, seedMemory, spoolEntry, stopDigests, type CliRun,
 } from "./helpers.ts";
 import { crankHooks } from "../src/cli/settings.ts";
 import { crankTrust } from "../src/cli/codex-trust.ts";
@@ -137,7 +137,7 @@ describe("stats: memory health", () => {
 
 describe("stats: capture health", () => {
   // The capture rows in their order, each label padded to the value column.
-  const CAPTURE_ROWS = /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|proposals|stale|consolidation|memory): .*\n)+ {2}embedder: /;
+  const CAPTURE_ROWS = /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|proposals|stale|consolidation|memory|last snapshot): .*\n)+ {2}embedder: /;
 
   function digestOn(root: string): void {
     expect(runCli(root, ["digest", "on"]).status).toBe(0);
@@ -180,6 +180,13 @@ describe("stats: capture health", () => {
     expect(ready).toContain("  spool:            0 waiting, 0 parked\n");
   });
 
+  test("shows no snapshot and no store rows when the store does not exist yet", () => {
+    const root = digestProject();
+    const out = runCli(root, ["stats"]).stdout;
+    expect(out).toMatch(CAPTURE_ROWS);
+    expect(out).toContain("\n  memory:           none yet\n  last snapshot:    never\n");
+  });
+
   test("counts pending proposals and stale rows after the month cost", () => {
     const root = initedProject();
     const [a] = seedMemory(root, [{ title: "Lock retry is two seconds" }, { title: "Lock files live in .crank" }]) as [number];
@@ -187,7 +194,7 @@ describe("stats: capture health", () => {
     seedMemory(root, [], { proposals: [{ kind: "memory", bullet: "- **P**: x" }] });
     const out = cli(root, "stats").stdout;
     expect(out).toMatch(CAPTURE_ROWS);
-    expect(out).toMatch(/\n {2}month cost: .*\n {2}proposals: {8}1\n {2}stale: {12}1\n {2}consolidation: {4}never\n {2}embedder: /);
+    expect(out).toMatch(/\n {2}month cost: .*\n {2}proposals: {8}1\n {2}stale: {12}1\n {2}consolidation: {4}never\n {2}last snapshot: {4}never\n {2}embedder: /);
   });
 
   test("shows the last consolidation after the stale row, and counts its cost in the month", () => {
@@ -604,6 +611,8 @@ describe("flags", () => {
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("Usage: crank-mem job <stem> (internal: the daemon runs it)");
     expect(run.stdout).not.toContain("consolidate");
+    expect(run.stdout).not.toContain("maintain");
+    expect(run.stdout).not.toContain("stale");
   });
 
   test("init --help in a fresh directory installs nothing", () => {
@@ -624,7 +633,7 @@ describe("flags", () => {
 
     const root = initedProject();
     const before = tree(root);
-    for (const args of [["uninstall", "--yes", "--force"], ["upgrade", "--dry-run"], ["scan", "--full"], ["init", "--git=commit"]]) {
+    for (const args of [["uninstall", "--yes", "--force"], ["upgrade", "--dry-run"], ["scan", "--full"], ["init", "--git=commit"], ["job", "s1", "--bogus"]]) {
       const run = cli(root, ...args);
       expect([args, run.status]).toEqual([args, 1]);
       expect(run.stderr).toContain(`unknown flag ${args.at(-1)}`);
