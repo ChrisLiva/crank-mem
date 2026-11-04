@@ -8,14 +8,13 @@ import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { captureNotes, composeInjection, injectionSources } from "./lib/injection.ts";
 import { driftNote } from "./lib/drift.ts";
-import { trimJournal } from "./lib/journal.ts";
 import { estimateProseTokens } from "./lib/tokens.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
 
 // SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
-// included; compact only skips the journal trim. Refreshes the index under
-// lock, then emits the injection via hookSpecificOutput.additionalContext.
-// injectionSources applies the digest gate (ADR 0010).
+// included. Refreshes the index under lock, then emits the injection via
+// hookSpecificOutput.additionalContext. injectionSources applies the digest
+// gate (ADR 0010); no state carries an upkeep prompt, and journal.md is never read.
 // Advisory-only: every path exits 0.
 
 const REFRESH_BUDGET_MS = 2_000;
@@ -55,11 +54,7 @@ async function main(): Promise<void> {
       "index refresh ran out of time before covering every file — the file map may be slightly stale";
   }
 
-  // `compact` fires mid-turn, while the agent may be appending an entry, and
-  // the trim is an unlocked read-modify-write — so trim only on the sources
-  // that start a turn. Reading for the injection is always safe.
   const source = typeof payload.source === "string" ? payload.source : null;
-  if (source !== "compact") trimJournal(crankDir);
   const sources = injectionSources(root, crankDir, config, index, isCodexPayload(payload));
   const drift = driftNote(config);
   const context = composeInjection(
@@ -82,8 +77,6 @@ async function main(): Promise<void> {
     budgetBytes: config.injection_budget_bytes,
     hasCerebrum: sources.cerebrumMd !== null,
     drift: drift !== null,
-    journalBullets: sources.journalBullets.length,
-    journalChanged: sources.journalChanged ?? null,
     adrCount: sources.adrFilenames.length,
     stale: stalenessNote !== undefined,
   });

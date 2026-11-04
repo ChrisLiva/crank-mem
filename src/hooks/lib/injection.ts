@@ -2,11 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { estimateProseTokens } from "./tokens.ts";
 import { parseBullets } from "./bullets.ts";
-import { JOURNAL_FILE, recentJournalBullets } from "./journal.ts";
-import { instructionFiles } from "./hook-io.ts";
 import { SOURCE_EXTENSIONS } from "./scanner.ts";
 import { symbolsSupported } from "./symbols.ts";
-import { countChangedSince } from "./changes.ts";
 import { CEREBRUM_FILE } from "./cerebrum-nudge.ts";
 import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "./memory.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
@@ -16,10 +13,9 @@ import type { AnatomyIndex } from "./store.ts";
 // Session-start injection: instructions (carrying a one-line pointer to the
 // file map, and the recall pointer when recallApplies) → staleness/drift/
 // capture notes → the recall sections from memory.db (next steps, only while
-// digests run, then recent memory) → recent journal bullets → cerebrum
-// excerpt → ADR filenames. The running variants (digestGate's `running` true) leave
-// out the upkeep protocols and the journal and label the excerpt's sections
-// by name alone, so nothing asks the agent to keep memory (ADR 0010).
+// digests run, then recent memory) → cerebrum excerpt → ADR filenames. No
+// digest state asks the agent to keep memory: the instructions carry no upkeep
+// protocol and the excerpt labels its sections by name alone.
 //
 // The map is not injected, only a one-line pointer to it. Inlining the map
 // cost 74% of the injection; ADR 0005 records the measurement.
@@ -101,46 +97,12 @@ const RECENT_MEMORY_MAX_BYTES = 1536;
 /** Observations read for the recent memory section, before the byte cap. */
 const RECENT_MEMORY_ROWS = 50;
 
-function instructions(index: AnatomyIndex, codex: boolean, running = false, recall = false): string {
-  const lead = running
-    ? "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`."
-    : `This project keeps a token-annotated file index in \`.crank/anatomy.md\`, an
-agent-maintained memory in \`.crank/cerebrum.md\`, and a session log in
-\`.crank/${JOURNAL_FILE}\`.`;
-  const bullets = [
-    anatomyPointer(index, codex),
-    ...(recall ? [RECALL_BULLET] : []),
-    ...(running ? [] : [upkeepProtocols(codex)]),
-    PROOF_AND_ADR_BULLETS,
-  ];
+function instructions(index: AnatomyIndex, codex: boolean, recall: boolean): string {
+  const lead =
+    "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`.";
+  const bullets = [anatomyPointer(index, codex), ...(recall ? [RECALL_BULLET] : []), PROOF_AND_ADR_BULLETS];
   return `${INJECTION_HEADING}\n\n${lead}\n\n${bullets.join("\n")}`;
 }
-
-const upkeepProtocols = (codex: boolean): string => `- Cerebrum protocol: keep \`.crank/cerebrum.md\` current as you work. The bar is
-  low — a one-line bullet is enough. Check for an existing bullet first and
-  update it rather than add a near-copy; when replacing, write (supersedes
-  YYYY-MM-DD: old claim). Record it the moment you learn it, not at the end of
-  the task, and append new bullets at the end of the section, newest last:
-  - the user corrects you or states a preference → \`## User Preferences\`;
-  - anything else worth keeping → \`## Memory\`: a non-obvious project
-    convention, a framework/dependency quirk, surprising API behavior, or a
-    gotcha that would trip up a fresh session.
-  Do NOT record: anything ${instructionFiles(codex)}, the README, or the code already states; a
-  narration of what you just did (that is the journal); a one-time fix that is
-  finished. Respect existing entries; consolidate or prune a section when it
-  grows bloated or stale.
-- Journal protocol: \`.crank/${JOURNAL_FILE}\` is the episodic counterpart — where you
-  left off, not what is true. Append one dated bullet
-  (\`- YYYY-MM-DD: what you did; where you left off; NEXT: next step\`) at the end
-  of a chunk of work; newest last, oldest entries trimmed automatically. The
-  next session is shown what the last three entries did, plus the newest one's
-  \`NEXT:\` clause — put the handoff there, last.
-- Write cerebrum entries and journal bullets telegram-style: drop articles and
-  hedges; keep paths, identifiers, and error strings verbatim. Keep each
-  cerebrum bullet to about 200 characters at most, and start it with a short
-  **subject**: bullets the excerpt leaves out are listed by their first words.
-  End each cerebrum bullet with its date, \`(YYYY-MM-DD)\`, and cite code by
-  backticked repo path and symbol name, not by line number, which drifts.`;
 
 const PROOF_AND_ADR_BULLETS = `- Memory is not proof of current behavior; verify a consequential claim
   against the cited file before relying on it.
@@ -150,8 +112,6 @@ const PROOF_AND_ADR_BULLETS = `- Memory is not proof of current behavior; verify
 
 export interface InjectionSources {
   cerebrumMd: string | null;
-  /** Most recent journal bullets, oldest first (see lib/journal.ts). */
-  journalBullets?: string[];
   adrFilenames: string[];
   index: AnatomyIndex;
   /** Shown as an italic note near the top when a refresh was skipped or partial. */
@@ -163,9 +123,7 @@ export interface InjectionSources {
   codex?: boolean;
   /** Project root; when set, the excerpt tags cited files that vanished or changed. */
   projectRoot?: string;
-  /** Files changed since journal.md's mtime, stated under the journal bullets. */
-  journalChanged?: number;
-  /** Digests run for this session: upkeep protocols and the journal are left out. Absent: digests off. */
+  /** Digests run for this session: next steps show and recall applies with no store yet. Absent: digests off. */
   running?: boolean;
   /** What the memory store offers this session. Absent: no recall section or pointer. */
   recall?: Recall;
@@ -188,7 +146,7 @@ export function captureNotes(gate: DigestGate, status: Recall["status"]): string
   if (gate.stop) notes.push(`crank-mem digests stopped (${gate.stop.reason}): run \`crank-mem digest resume\` once that is fixed.`);
   if (status === "newer") notes.push(MEMORY_NEWER_NOTE);
   if (gate.stalled) {
-    notes.push("crank-mem: a session here has waited over 2 hours for its digest, so memory upkeep is back on; see `crank-mem stats`.");
+    notes.push("crank-mem: a session here has waited over 2 hours for its digest; see `crank-mem stats`.");
   }
   return notes;
 }
@@ -221,11 +179,7 @@ export interface Excerpt {
  * Bullets arrive whole — wrapped prose, sub-bullets and all (see lib/bullets.ts)
  * — because the first physical line of an agent-written bullet is usually a
  * fragment, and half a learning is worse than none. The file's own headings
- * never appear inside a bucket. Each bucket's label instead names the file's
- * literal heading, the last one of its kind, because agents anchor edits on
- * the label and a label naming a heading the file lacks made those edits miss.
- * Appending under that last heading keeps the newest bullet last, where the
- * recency slice below looks for it.
+ * never appear inside a bucket; each bucket is labelled by its name alone.
  *
  * Every bullet left out, older memory or preferences over PREFS_TOKEN_CAP, is
  * listed after the excerpt by its first INDEX_ENTRY_CHARS characters, so an
@@ -243,29 +197,16 @@ export interface Excerpt {
  * `balanced` drops both index lists first, then the oldest bullet of whichever
  * kind takes more bytes, so a 2,048-byte budget still carries a memory bullet
  * when preferences alone would fill it. ADR 0007 records the measurements.
- *
- * `running` (digests keep the file) labels the buckets by name alone and drops
- * the consolidate line, so the excerpt asks for no edits.
  */
-export function excerptOf(
-  md: string,
-  budgetBytes: number,
-  cited?: CitedFiles,
-  balanced = false,
-  running = false,
-): Excerpt {
+export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles, balanced = false): Excerpt {
   const prefsLines: string[] = [];
   const memoryLines: string[] = [];
-  let prefsHeading = "## User Preferences";
-  let memoryHeading = "## Memory";
   let bucket: string[] | null = null;
   for (const line of md.split("\n")) {
     if (line.startsWith("## ")) {
       const heading = line.slice(3).trim().toLowerCase();
       bucket =
         heading === PREFS_HEADING ? prefsLines : MEMORY_HEADINGS.has(heading) ? memoryLines : null;
-      if (bucket === prefsLines) prefsHeading = line.trimEnd();
-      if (bucket === memoryLines) memoryHeading = line.trimEnd();
     }
     bucket?.push(line);
   }
@@ -280,7 +221,6 @@ export function excerptOf(
   while (prefs.length && estimateProseTokens(prefs.join("\n")) > PREFS_TOKEN_CAP) {
     prefsIndex.push(indexEntry(prefs.shift()!));
   }
-  const prefsOverCap = prefsIndex.length > 0;
   const memoryIndex = memory.splice(0, Math.max(0, memory.length - MEMORY_RECENT_COUNT)).map(indexEntry);
   if (cited) {
     const byName = new Map<string, string[]>();
@@ -294,13 +234,10 @@ export function excerptOf(
   const render = (): string => {
     if (!prefs.length && !memory.length && !prefsIndex.length && !memoryIndex.length) return "";
     const parts: string[] = [CEREBRUM_HEADER];
-    const label = (name: string, heading: string) =>
-      running ? `### ${name}` : `### ${name} (in file: ${heading}, append at its end)`;
-    if (prefs.length) parts.push(label("User Preferences", prefsHeading), ...prefs);
-    if (memory.length) parts.push(label("Memory", memoryHeading), ...memory);
+    if (prefs.length) parts.push("### User Preferences", ...prefs);
+    if (memory.length) parts.push("### Memory", ...memory);
     const hidden = total - prefs.length - memory.length;
     if (hidden) parts.push(`### Not shown (${hidden} of ${total}; grep .crank/cerebrum.md)`);
-    if (prefsOverCap && !running) parts.push(`prefs: ${prefs.length} of ${prefsTotal} shown, consolidate`);
     parts.push(...prefsIndex, ...memoryIndex);
     return parts.join("\n");
   };
@@ -412,7 +349,7 @@ function indexEntry(bullet: string): string {
  * natural bound — is trimmed to what remains instead of quietly evicting the
  * ADRs behind it.
  *
- * The instructions are exempt: they carry the cerebrum and ADR protocols, so a
+ * The instructions are exempt: they carry the file-map pointer and the ADR protocol, so a
  * budget too small to hold them is a misconfiguration, not a reason to inject a
  * headless fragment. Consequence: the result can exceed `budgetBytes`, but only
  * by the fixed size of the instructions.
@@ -427,7 +364,7 @@ export function composeInjection(
   const running = sources.running ?? false;
   const recall = sources.recall;
   const parts: string[] = [
-    instructions(sources.index, sources.codex ?? false, running, recall ? recallApplies(running, recall.status) : false),
+    instructions(sources.index, sources.codex ?? false, recall ? recallApplies(running, recall.status) : false),
   ];
   let used = bytes(parts[0]!);
 
@@ -455,17 +392,6 @@ export function composeInjection(
     if (lines.length) fit(section());
   }
 
-  // Where the last session left off, before the semantic memory: it orients,
-  // and a fixed count of length-capped bullets (see journal.ts) keeps it from
-  // crowding out the cerebrum excerpt behind it.
-  if (sources.journalBullets?.length) {
-    const changed =
-      sources.journalChanged === undefined
-        ? []
-        : [`${sources.journalChanged} file(s) changed since the last journal entry.`];
-    fit([`## Journal (recent — .crank/${JOURNAL_FILE})`, ...sources.journalBullets, ...changed].join("\n"));
-  }
-
   const adrSection = sources.adrFilenames.length
     ? [
         `## ADRs (${sources.adrPath}/ — settled decisions)`,
@@ -484,8 +410,6 @@ export function composeInjection(
       sources.cerebrumMd,
       budgetBytes - used - adrReserve - bytes(SEP),
       sources.projectRoot ? { index: sources.index, root: sources.projectRoot } : undefined,
-      false,
-      running,
     );
     if (excerpt.text) fit(excerpt.text);
   }
@@ -518,7 +442,7 @@ export function injectionSources(
   config: CrankConfig,
   index: AnatomyIndex,
   codex: boolean,
-): InjectionSources & { journalBullets: string[]; codex: boolean; running: boolean; recall: Recall; gate: DigestGate } {
+): InjectionSources & { codex: boolean; running: boolean; recall: Recall; gate: DigestGate } {
   let cerebrumMd: string | null = null;
   try {
     cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
@@ -528,24 +452,12 @@ export function injectionSources(
   const running = gate.running;
   const recall = readRecall(root, gate);
 
-  const journalBullets = running ? [] : recentJournalBullets(crankDir);
-  // How stale the handoff is: files changed since the last entry, from git
-  // (which sees Bash writes), else from the index the refresh just wrote.
-  let journalChanged: number | undefined;
-  if (journalBullets.length) {
-    try {
-      journalChanged = countChangedSince(root, config, index, fs.statSync(path.join(crankDir, JOURNAL_FILE)).mtimeMs);
-    } catch {}
-  }
-
   return {
     cerebrumMd,
-    journalBullets,
     adrFilenames: listAdrFilenames(root, config.adr_path),
     index,
     adrPath: config.adr_path,
     projectRoot: root,
-    journalChanged,
     codex,
     running,
     recall,

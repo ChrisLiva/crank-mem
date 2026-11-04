@@ -312,6 +312,10 @@ the recall pointer to `crank-mem search`, `timeline` and `get` whenever `recallA
 and with no excerpt it emits only the heading and that pointer. With the gate false, the
 2,048-byte excerpt and both pointers above stand.
 
+Amended 2026-11-04: SubagentStart injects the excerpt labelled by section name, plus the recall
+pointer where `recallApplies` holds. It never injects a journal pointer, whatever the digest
+state (crank-mem stage 2).
+
 ## Re-probe method (~15 min)
 
 - Claude: rerun the two `claude -p` runs above against a temp project. Then grep the parent transcript and the subagent transcripts for each sentinel.

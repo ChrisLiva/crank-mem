@@ -98,8 +98,3 @@ export function changeTimesSince(
     ? { times: files.map((f) => f.changedMs), source: "git" }
     : { times: Object.values(index().files).map((e) => e.mtimeMs), source: "index" };
 }
-
-/** Files changed after sinceMs, from git, else from the index's mtimes. Never throws. */
-export function countChangedSince(rootDir: string, config: CrankConfig, index: AnatomyIndex, sinceMs: number): number {
-  return changeTimesSince(rootDir, config, sinceMs, () => index).times.filter((t) => t > sinceMs).length;
-}

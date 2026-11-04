@@ -32,27 +32,36 @@ function context(root: string): string {
 }
 
 describe("subagent-start hook (black-box)", () => {
-  test("injects the cerebrum excerpt and points at cerebrum.md and journal.md", () => {
+  test("injects the cerebrum excerpt labelled by section, with recall only where it applies", () => {
     const root = makeCrankProject({ "src/app.ts": "export const app = 1;\n" });
     writeCerebrum(
       root,
       ["- **Tabs**: user wants tabs, not spaces (2026-10-01)."],
       ["- **Build**: `make -j8` OOMs on CI; use `-j4` (2026-10-02)."],
     );
-    const ctx = context(root);
-    expect(ctx).toContain("## crank-mem (project memory)");
-    expect(ctx).toContain("- Excerpt of `.crank/cerebrum.md`");
-    expect(ctx).toContain("- Where the last session left off: `.crank/journal.md`.");
-    expect(ctx).toContain("- **Tabs**: user wants tabs");
-    expect(ctx).toContain("- **Build**: `make -j8` OOMs on CI");
+    const shape = (ctx: string): string[] => {
+      const lines = ctx.split("\n");
+      expect(lines[0]).toBe(INJECTION_HEADING);
+      expect(lines[1]).toBe(
+        "- Excerpt of `.crank/cerebrum.md`, this project's memory; grep it for more. Memory is not proof: verify a claim against the cited file before relying on it.",
+      );
+      expect(lines.filter((l) => l.startsWith("### "))).toEqual(["### User Preferences", "### Memory"]);
+      for (const dropped of ["journal.md", "agent-kept", "append at its end", "consolidate"]) expect(ctx).not.toContain(dropped);
+      expect(ctx).toContain("- **Tabs**: user wants tabs");
+      expect(ctx).toContain("- **Build**: `make -j8` OOMs on CI");
+      return lines;
+    };
+
+    // Digests off, no store: no recall pointer.
+    const off = context(root);
+    shape(off);
+    expect(off).not.toContain(RECALL_BULLET);
     // Read-only: a subagent spawn does not refresh the index.
     expect(fs.existsSync(path.join(root, ".crank/anatomy-index.json"))).toBe(false);
 
-    // Digests off with a readable store: the same text gains the recall pointer.
-    expect(ctx).not.toContain(RECALL_BULLET);
-    seedMemory(root, [{ title: "a stored observation" }]);
-    const journalLine = "- Where the last session left off: `.crank/journal.md`.";
-    expect(context(root)).toBe(ctx.replace(journalLine, `${journalLine}\n${RECALL_BULLET}`));
+    // Digests on, no store: the recall pointer is the third line.
+    setDigest(root, true);
+    expect(shape(context(root))[2]).toBe(RECALL_BULLET);
   });
 
   // At 2 KB the session-start order, preferences before memory, leaves no room

@@ -4,7 +4,6 @@ import { readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdv
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex } from "./lib/store.ts";
 import { excerptOf, INJECTION_HEADING, RECALL_BULLET, recallApplies } from "./lib/injection.ts";
-import { JOURNAL_FILE } from "./lib/journal.ts";
 import { CEREBRUM_FILE } from "./lib/cerebrum-nudge.ts";
 import { enableDebug } from "./lib/debug.ts";
 import { digestGate } from "./lib/spool.ts";
@@ -13,9 +12,9 @@ import { memoryPath, memoryStatus } from "./lib/memory.ts";
 // SubagentStart hook (Claude Code only). SessionStart never fires inside a
 // subagent, and this channel reaches the subagent but not its parent (ADR
 // 0007), so it is the only way memory reaches the agents doing most of the
-// tool calls. Read-only: a compact cerebrum excerpt plus a pointer to the full
-// files, with no index refresh. The wiring's agent_type matcher picks which
-// subagents get it. Every path exits 0.
+// tool calls. Read-only, with no index refresh: a compact cerebrum excerpt
+// labelled by section name, plus the recall pointer where recallApplies. The
+// wiring's agent_type matcher picks which subagents get it. Every path exits 0.
 
 /** Excerpt budget per spawn: a quarter of the session injection, paid per subagent. */
 const SUBAGENT_EXCERPT_BYTES = 2048;
@@ -42,17 +41,12 @@ async function main(): Promise<void> {
   }
   // Balanced: at this budget the session-start order leaves no room for memory.
   const excerpt = md
-    ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, { index: loadIndex(crankDir), root }, true, running).text
+    ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, { index: loadIndex(crankDir), root }, true).text
     : "";
   if (!excerpt && !recall) return;
 
   const lines = [INJECTION_HEADING];
-  if (excerpt && !running) {
-    lines.push(
-      `- Excerpt of \`.crank/cerebrum.md\`, this project's agent-kept memory; grep it for more. Memory is not proof: verify a claim against the cited file before relying on it.`,
-      `- Where the last session left off: \`.crank/${JOURNAL_FILE}\`.`,
-    );
-  } else if (excerpt) {
+  if (excerpt) {
     lines.push(
       `- Excerpt of \`.crank/cerebrum.md\`, this project's memory; grep it for more. Memory is not proof: verify a claim against the cited file before relying on it.`,
     );

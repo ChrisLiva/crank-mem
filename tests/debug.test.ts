@@ -72,6 +72,8 @@ describe("debug logging (black-box)", () => {
     expect(injected.fileCount).toBe(2);
     expect(injected.source).toBe("startup");
     expect(injected.injectionTokens).toBeGreaterThan(0);
+    // Session start never reads journal.md, so the event carries no journal counts.
+    expect(Object.keys(injected).filter((k) => k.startsWith("journal"))).toEqual([]);
   });
 
   test("sensitive paths are redacted, never written to the log", () => {

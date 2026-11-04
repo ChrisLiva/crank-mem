@@ -133,24 +133,12 @@ describe("excerptOf", () => {
     expect(ex).toContain("The API rate-limits at 100 rps");
     expect(ex).toContain("Never force-push main");
     expect(ex).toContain("Appended after the rename");
-    // The label names the last memory heading, where an append lands newest-last.
-    expect(ex).toContain("### Memory (in file: ## Memory, append at its end)");
+    expect(ex.split("\n")).toContain("### Memory");
     expect(ex).not.toContain("### Key Learnings");
     expect(ex).not.toContain("### Do-Not-Repeat");
     // Document order: an agent appending a fresh `## Memory` at the bottom of
     // an unmigrated file must not have its newest bullets sorted to the front.
     expect(ex.indexOf("rate-limits")).toBeLessThan(ex.indexOf("Appended after the rename"));
-  });
-
-  test("labels name the file's literal headings, not the canonical ones", () => {
-    const ex = excerpt(
-      "# Cerebrum\n\n## user preferences\n\n- Prefers pnpm\n\n" +
-        "## Key Learnings\n\n- The API rate-limits at 100 rps\n\n" +
-        "## Do-Not-Repeat\n\n- Never force-push main\n"
-    );
-    expect(ex).toContain("### User Preferences (in file: ## user preferences, append at its end)");
-    expect(ex).toContain("### Memory (in file: ## Do-Not-Repeat, append at its end)");
-    expect(ex).not.toContain("## Memory,");
   });
 
   test("sections outside the union are never injected", () => {
@@ -170,10 +158,10 @@ describe("excerptOf", () => {
     expect(prefs.join("\n")).toContain("Preference 29:"); // newest survives
     expect(prefs.join("\n")).not.toContain("Preference 0:"); // oldest evicted first
     expect(ex).toContain("a learning"); // prefs never crowd memory out
-    // The evicted ones are listed first in the index, with a nudge to merge them.
+    // The evicted ones are listed first in the index.
     const index = section(ex, "Not shown");
-    expect(index[1]).toBe(`prefs: ${prefs.length} of 30 shown, consolidate`);
-    expect(index[2]).toStartWith("- Preference 0:");
+    expect(ex.split("\n").some((l) => l.startsWith("prefs:"))).toBe(false);
+    expect(index[1]).toStartWith("- Preference 0:");
   });
 
   // Past its allowance the index outranks no bullet, and a preference outranks both.
@@ -273,37 +261,6 @@ describe("composeInjection", () => {
     expect(out).not.toContain("(fn, L");
   });
 
-  test("instructions route memory writes to the two canonical sections", () => {
-    const out = composeInjection(sources, 8192).text;
-    expect(out).toContain("Cerebrum protocol");
-    expect(out).toContain("`## User Preferences`");
-    expect(out).toContain("`## Memory`");
-    expect(out).toContain("Do NOT record");
-    expect(out).not.toContain("Key Learnings"); // the protocol names one target
-    expect(out).toContain("append new bullets at the end of the section, newest last");
-  });
-
-  test("instructions carry the journal protocol and the telegraphic style rule", () => {
-    const out = composeInjection(sources, 8192).text;
-    expect(out).toContain("Journal protocol");
-    expect(out).toContain("- YYYY-MM-DD: what you did; where you left off; NEXT: next step");
-    expect(out).toContain("shown what the last three entries did, plus the newest one's");
-    expect(out).toContain("put the handoff there, last");
-    expect(out).toContain("telegram-style");
-    expect(out).toContain("Keep each\n  cerebrum bullet to about 200 characters at most");
-    expect(out).toContain("start it with a short\n  **subject**");
-  });
-
-  test("journal sits between the staleness note and the cerebrum", () => {
-    const out = composeInjection(
-      { ...sources, stalenessNote: "index refresh skipped (lock busy)", journalBullets: ["- 2026-07-29 — NEXT: wire the trim"] },
-      8192
-    ).text;
-    expect(out.indexOf("refresh skipped")).toBeLessThan(out.indexOf("## Journal"));
-    expect(out.indexOf("## Journal")).toBeLessThan(out.indexOf("## Cerebrum"));
-    expect(out).toContain("- 2026-07-29 — NEXT: wire the trim");
-  });
-
   test("staleness note is included when set", () => {
     const out = composeInjection({ ...sources, stalenessNote: "index refresh skipped (lock busy)" }, 8192).text;
     expect(out).toContain("index refresh skipped");
@@ -336,11 +293,6 @@ describe("composeInjection", () => {
       ).join("\n");
     const fat = {
       ...sources,
-      journalBullets: [
-        "- 2026-07-28 — NEXT: finish the excerpt rewrite",
-        "- 2026-07-29 — …tests green, tree clean at 41980e5.",
-        "- 2026-07-30 — NEXT: probe both live installs after the bump",
-      ],
       cerebrumMd:
         `# Cerebrum\n\n## User Preferences\n\n${wrapped("Preference", 5, 3)}\n\n` +
         `## Memory\n\n${wrapped("Learning", 11, 7)}\n`,
@@ -373,15 +325,15 @@ describe("composeInjection", () => {
     // memory first, and only once memory is gone does the oldest preference
     // go. A user-stated preference outranks anything the agent inferred.
     test("a starved budget sheds memory before preferences, oldest first", () => {
-      const out = composeInjection(fat, 4096).text;
-      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(4096);
+      const out = composeInjection(fat, 2560).text;
+      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2560);
       expect(out).toContain("Preference 4:"); // newest preference survives
       expect(out).not.toContain("Preference 0:"); // oldest goes first
       expect(out).not.toContain("### Memory"); // memory yields entirely before prefs do
     });
 
     test("a section that cannot fit is dropped, not truncated mid-way", () => {
-      const out = composeInjection(sources, 2200).text;
+      const out = composeInjection(sources, 1200).text;
       expect(out).toContain("crank-mem (project memory)");
       expect(out).not.toContain("## ADRs"); // dropped whole — no half-list
     });
@@ -390,17 +342,16 @@ describe("composeInjection", () => {
     // too long to fit is dropped anyway, and reserving for it would take the
     // cerebrum down with it.
     test("a budget too tight for the ADRs still spends it on the cerebrum", () => {
-      const out = composeInjection(sources, 2970).text;
+      const out = composeInjection(sources, 1230).text;
       expect(out).not.toContain("## ADRs");
       expect(out).toContain("## Cerebrum");
       expect(out).toContain("Mistake number 14");
-      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2970);
+      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(1230);
     });
 
     test("instructions survive a budget too small to hold them", () => {
       const out = composeInjection(sources, 10).text;
       expect(out).toContain("symbol line ranges before slice-reading a large");
-      expect(out).toContain("Cerebrum protocol");
     });
   });
 

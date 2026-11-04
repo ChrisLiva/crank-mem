@@ -82,11 +82,9 @@ describe("session-start hook (black-box)", () => {
     // Codex has no Read tool and reads AGENTS.md (ADR 0003).
     expect(codex).toContain("file (`sed -n 'START,ENDp' file`).");
     expect(codex).not.toContain("offset/limit");
-    expect(codex).toContain("Do NOT record: anything AGENTS.md, the README");
     expect(codex).not.toContain("CLAUDE.md");
     const claude = ctxFor(claudeSessionStart(root));
     expect(claude).toContain("Read with offset/limit, or `sed -n 'START,ENDp' file`");
-    expect(claude).toContain("Do NOT record: anything CLAUDE.md, AGENTS.md, the README");
   });
 
   test("the most committed file stays indexed past max_files across session starts and a scan", () => {
@@ -200,7 +198,7 @@ describe("session-start hook (black-box)", () => {
 });
 
 describe("memory reaches the model whole (black-box)", () => {
-  test("a wrapped cerebrum bullet and a NEXT: handoff both survive the trip", () => {
+  test("a wrapped cerebrum bullet survives the trip", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     fs.writeFileSync(
       path.join(root, ".crank/cerebrum.md"),
@@ -208,17 +206,11 @@ describe("memory reaches the model whole (black-box)", () => {
         "- The blur dies when the container gets `position: fixed` or above a\n" +
         "  z-index of 10 — it becomes a backdrop root, killing the overlay blur.\n"
     );
-    fs.writeFileSync(
-      path.join(root, ".crank/journal.md"),
-      "# Journal\n\n- 2026-07-30: swept the board, tree clean; NEXT: probe both live\n  installs after the bump.\n"
-    );
-
     const ctx = inject(root);
     expect(ctx).toContain(
       "- The blur dies when the container gets `position: fixed` or above a\n" +
         "  z-index of 10 — it becomes a backdrop root, killing the overlay blur."
     );
-    expect(ctx).toContain("- 2026-07-30 — swept the board, tree clean; NEXT: probe both live installs after the bump.");
     expect(ctx).toContain("Always use tabs");
   });
 
@@ -235,27 +227,11 @@ describe("memory reaches the model whole (black-box)", () => {
     expect(ctx).toContain("Never force-push main");
   });
 
-  test("the excerpt names the heading the file really has", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    fs.writeFileSync(
-      path.join(root, ".crank/cerebrum.md"),
-      "# Cerebrum\n\n## User Preferences\n\n- Always use tabs\n\n## Key Learnings\n\n- The API rate-limits at 100 rps\n"
-    );
-    const ctx = inject(root);
-    expect(ctx).toContain("### Memory (in file: ## Key Learnings, append at its end)\n- The API rate-limits at 100 rps");
-    expect(ctx).toContain("### User Preferences (in file: ## User Preferences, append at its end)");
-    expect(ctx).toContain("append new bullets at the end of the section, newest last");
-  });
-
-  // Line numbers drift and an undated bullet cannot be judged, so the protocol
-  // asks for a date and a path citation.
-  test("the protocol asks for a date and path citations, and says memory is not proof", () => {
+  test("the instructions say memory is not proof", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
     const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    expect(ctx).toContain("End each cerebrum bullet with its date, `(YYYY-MM-DD)`");
-    expect(ctx).toContain("cite code by\n  backticked repo path and symbol name, not by line number");
     expect(ctx).toContain(
       "Memory is not proof of current behavior; verify a consequential claim\n  against the cited file before relying on it."
     );
@@ -298,9 +274,16 @@ describe("cited files (black-box)", () => {
 });
 
 describe("cerebrum index (black-box)", () => {
-  // 7 preferences over PREFS_TOKEN_CAP, 21 memory bullets, a journal and an ADR
-  // list overflow the 8,192-byte budget, so the excerpt must hide bullets and
-  // name every one it hides.
+  // Without upkeep protocols the default 8,192 bytes leave the excerpt under
+  // the token cap alone, so these tests shrink the budget until bytes bind.
+  const BUDGET = 5632;
+  const setBudget = (root: string): void => {
+    const configPath = path.join(root, ".crank/config.json");
+    fs.writeFileSync(configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(configPath, "utf-8")), injection_budget_bytes: BUDGET }));
+  };
+
+  // 7 preferences over PREFS_TOKEN_CAP, 21 memory bullets and an ADR list
+  // overflow the budget, so the excerpt must hide bullets and name every one it hides.
   test("a cerebrum too big for the budget stays under it and names the bullets it hides", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
@@ -314,25 +297,19 @@ describe("cerebrum index (black-box)", () => {
         Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i, 5)).join("\n") +
         "\n"
     );
-    fs.writeFileSync(
-      path.join(root, ".crank/journal.md"),
-      "# Journal\n\n" +
-        Array.from({ length: 3 }, (_, i) => `- 2026-09-2${i + 7}: ${"tuned the scaffold planner ".repeat(4)}; NEXT: rerun bench`).join("\n") +
-        "\n"
-    );
     fs.mkdirSync(path.join(root, "docs/adr"), { recursive: true });
     for (const f of ["0001-scaffold-points.md", "0002-pad-solid.md", "0003-tilt-cap.md"]) {
       fs.writeFileSync(path.join(root, "docs/adr", f), "# x");
     }
+    setBudget(root);
 
     const ctx = inject(root);
-    expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(8192);
+    expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(BUDGET);
     expect(ctx).toContain("## ADRs");
     expect(ctx).toContain("- **Gotcha 20**:"); // the newest memory bullet, whole
     expect(ctx).toMatch(/^### Not shown \(\d+ of 28; grep \.crank\/cerebrum\.md\)$/m);
-    expect(ctx).toMatch(/^prefs: \d of 7 shown, consolidate$/m);
     expect(ctx).toContain("- **Pref 0**: `Support.cpp` caps pillar reach at…");
-    expect(ctx).toMatch(/^- \*\*Gotcha 13\*\*: .*…$/m); // the newest hidden one
+    expect(ctx).toMatch(/^- \*\*Gotcha 15\*\*: .*…$/m); // the newest hidden one
   });
 
   test("memory bullets long enough to fill the excerpt still leave the hidden ones named", () => {
@@ -348,11 +325,12 @@ describe("cerebrum index (black-box)", () => {
         Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i, 9)).join("\n") +
         "\n"
     );
+    setBudget(root);
 
     const ctx = inject(root);
-    expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(8192);
+    expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(BUDGET);
     expect(ctx).toContain("- **Gotcha 20**:");
-    expect(ctx).toMatch(/^- \*\*Gotcha 16\*\*: .*…$/m); // the newest hidden one
+    expect(ctx).toMatch(/^- \*\*Gotcha 17\*\*: .*…$/m); // the newest hidden one
     expect(ctx.match(/^- \*\*Gotcha \d+\*\*: .*…$/gm)?.length).toBeGreaterThanOrEqual(10);
   });
 });
@@ -423,195 +401,13 @@ function inject(root: string): string {
   return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
 }
 
-describe("journal (black-box)", () => {
-  test("injects the last three bullets, oldest first, ahead of the cerebrum", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    fs.writeFileSync(
-      path.join(root, ".crank/cerebrum.md"),
-      "# Cerebrum\n\n## User Preferences\n\n- Always use tabs\n"
-    );
-    writeJournal(root, ["day 1: one", "day 2: two", "day 3: three", "day 4: four"]);
-
-    const ctx = inject(root);
-    expect(ctx).toContain("## Journal (recent — .crank/journal.md)");
-    expect(ctx).not.toContain("day 1: one"); // only the last three
-    expect(ctx.indexOf("day 2: two")).toBeLessThan(ctx.indexOf("day 3: three"));
-    expect(ctx.indexOf("day 3: three")).toBeLessThan(ctx.indexOf("day 4: four"));
-    expect(ctx.indexOf("day 4: four")).toBeLessThan(ctx.indexOf("## Cerebrum"));
-  });
-
-  test("each entry's done-clause reaches the model; only the newest NEXT: does", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    writeJournal(root, [
-      "2026-09-21: wired the rails; NEXT: run impeccable critique.",
-      "2026-09-22: impeccable critique (30/40); NEXT: fix the contrast findings.",
-      "2026-09-23: fixed contrast; NEXT: Chris smoke-checks rails.",
-    ]);
-
-    const ctx = inject(root);
-    expect(ctx).toContain("- 2026-09-21 — wired the rails\n");
-    expect(ctx).toContain("- 2026-09-22 — impeccable critique (30/40)\n");
-    expect(ctx).toContain("- 2026-09-23 — fixed contrast; NEXT: Chris smoke-checks rails.");
-    expect(ctx).not.toContain("run impeccable critique");
-    expect(ctx).not.toContain("fix the contrast findings");
-  });
-
-  test("states how many files changed since the last entry, counting Bash-made files", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;", "c.ts": "const c = 1;" });
-    const journal = writeJournal(root, ["2026-09-23: fixed contrast; NEXT: smoke-check rails."]);
-    git(root, "init", "-q");
-    gitCommit(root, "init");
-    const hourAgo = new Date(Date.now() - 3_600_000);
-    for (const f of [journal, path.join(root, "a.ts"), path.join(root, "c.ts")]) fs.utimesSync(f, hourAgo, hourAgo);
-    expect(inject(root)).toContain("smoke-check rails.\n0 file(s) changed since the last journal entry.");
-
-    // Written outside any hook, as a Bash `cp` or `sed -i` would.
-    fs.writeFileSync(path.join(root, "b.ts"), "x");
-    fs.writeFileSync(path.join(root, "a.ts"), "const a = 2;");
-    expect(inject(root)).toContain("2 file(s) changed since the last journal entry.");
-
-    // Without git the count comes from the index, which still lists the unchanged c.ts.
-    fs.rmSync(path.join(root, ".git"), { recursive: true });
-    expect(inject(root)).toContain("2 file(s) changed since the last journal entry.");
-  });
-
-  test("no journal file: section omitted, everything else injects", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    const ctx = inject(root);
-    expect(ctx).not.toContain("## Journal");
-    expect(ctx).toContain("`.crank/anatomy.md` indexes 1 file(s)");
-  });
-
-  test("seeded but empty journal: section omitted", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    fs.writeFileSync(path.join(root, ".crank/journal.md"), JOURNAL_HEADER);
-    expect(inject(root)).not.toContain("## Journal");
-  });
-
-  test("trims to the last 20 bullets, preserving the header and the mtime", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    const file = writeJournal(root, Array.from({ length: 25 }, (_, i) => `entry ${i}`));
-    const before = fs.statSync(file).mtimeMs;
-
-    inject(root);
-
-    const after = fs.readFileSync(file, "utf-8");
-    expect(after).toContain("# Journal");
-    expect((after.match(/^- /gm) ?? []).length).toBe(20);
-    expect(after).toContain("- entry 5");
-    expect(after).not.toContain("- entry 4");
-    // A trim is housekeeping, not a new entry: the nudge's staleness signal
-    // keys on this mtime and must survive the rewrite exactly, sub-millisecond
-    // part included.
-    expect(fs.statSync(file).mtimeMs).toBe(before);
-  });
-
-  // The journal is added before the cerebrum excerpt, so a sprawling entry
-  // must not be able to spend the budget the cerebrum needs.
-  test("sprawling entries are capped, leaving room for the cerebrum and ADRs", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    fs.writeFileSync(
-      path.join(root, ".crank/cerebrum.md"),
-      "# Cerebrum\n\n## User Preferences\n\n- Always use tabs\n"
-    );
-    fs.mkdirSync(path.join(root, "docs/adr"), { recursive: true });
-    fs.writeFileSync(path.join(root, "docs/adr/0001-use-tabs.md"), "# x");
-    writeJournal(root, ["day 1: one", "day 2: two", `day 3: ${"x".repeat(4000)}; NEXT: ${"y".repeat(4000)}`]);
-
-    const ctx = inject(root);
-    expect(ctx).toContain("## Journal");
-    expect(ctx).toContain("Always use tabs");
-    expect(ctx).toContain("0001-use-tabs.md");
-    // The long entry survives as a capped headline, not verbatim: what it did
-    // and its handoff, each cut short. "- " plus the 360-byte newest-entry cap.
-    expect(ctx).toContain("…; NEXT: yyy");
-    expect(ctx.split("\n").every((l) => Buffer.byteLength(l, "utf-8") <= 362)).toBe(true);
-  });
-
-  test("the headline cap is bytes, and never splits a character", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    writeJournal(root, [`2026-07-29: ${"中".repeat(2000)}`, `2026-07-30: x; NEXT: ${"🚀".repeat(2000)}`]);
-
-    const bullets = inject(root)
-      .split("\n")
-      .filter((l) => l.startsWith("- 2026-07-"));
-    expect(bullets.length).toBe(2);
-    // "- <date> — " (17B) plus the older (160B) and newest (360B) entry caps.
-    expect(Buffer.byteLength(bullets[0]!, "utf-8")).toBeLessThanOrEqual(177);
-    expect(Buffer.byteLength(bullets[1]!, "utf-8")).toBeLessThanOrEqual(377);
-    for (const b of bullets) expect(b).not.toContain("�"); // no lone surrogate half
-    expect(bullets[1]).toContain("x; NEXT: 🚀"); // what the entry did rides along
-    expect(bullets[1]).toContain("🚀…"); // the capped NEXT: clause ends mid-stream
-  });
-
-  test("a budget too tight for the journal drops it whole, keeping the instructions", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    const configPath = path.join(root, ".crank/config.json");
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    // Just above the instructions block, which is exempt from the budget:
-    // enough for the journal to be considered and rejected.
-    fs.writeFileSync(configPath, JSON.stringify({ ...config, injection_budget_bytes: 1800 }));
-    writeJournal(root, Array.from({ length: 3 }, (_, i) => `day ${i}: ${"x".repeat(200)}`));
-
-    const ctx = inject(root);
-    expect(ctx).not.toContain("## Journal");
-    expect(ctx).toContain("crank-mem (project memory)");
-  });
-
-  test("sub-bullets and prose ride along with their entry through a trim", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    const file = path.join(root, ".crank/journal.md");
-    const entries = Array.from(
-      { length: 25 },
-      (_, i) => `- day ${i}: headline\n  - sub detail ${i}\n\n  wrapped prose ${i}\n`
-    ).join("");
-    fs.writeFileSync(file, JOURNAL_HEADER + entries);
-
-    const ctx = inject(root);
-    // Only top-level bullets count as entries — the last three, each folded
-    // into one headline that carries its continuation.
-    expect(ctx).toContain("- day 24: headline - sub detail 24 wrapped prose 24");
-    expect(ctx).toContain("- day 22: headline");
-    expect(ctx).not.toContain("day 21"); // the fourth-newest entry is not injected
-
-    const after = fs.readFileSync(file, "utf-8");
-    expect((after.match(/^- day /gm) ?? []).length).toBe(20);
-    expect(after).toContain("  - sub detail 24"); // indentation preserved
-    expect(after).toContain("  wrapped prose 24"); // interleaved prose preserved
-    expect(after).not.toContain("day 4:");
-  });
-
-  // compact fires mid-turn: the unlocked rewrite could clobber an entry the
-  // agent is appending, so it injects without trimming.
-  test("a compact session start injects but does not rewrite the journal", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    const file = writeJournal(root, Array.from({ length: 25 }, (_, i) => `entry ${i}`));
-    const before = fs.readFileSync(file, "utf-8");
-
-    const run = runHook(
-      HOOK,
-      JSON.stringify({ ...claudeSessionStart(root), source: "compact" })
-    );
-    expect(run.status).toBe(0);
-    const ctx = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    expect(ctx).toContain("- entry 24");
-    expect(fs.readFileSync(file, "utf-8")).toBe(before);
-  });
-
-  test("unreadable journal (a directory): exit 0, section omitted", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    fs.mkdirSync(path.join(root, ".crank/journal.md"));
-    expect(inject(root)).not.toContain("## Journal");
-  });
-});
-
 // Digest-era injection. Every run passes one temp CRANK_HOME per project, so a
 // planted stop file or spool entry is the one the hook reads.
 const PAST_WORK = "- Past work: `crank-mem search <query>`";
 const NOTE_STOPPED =
   "_Note: crank-mem digests stopped (login): run `crank-mem digest resume` once that is fixed._";
 const NOTE_WAITED =
-  "_Note: crank-mem: a session here has waited over 2 hours for its digest, so memory upkeep is back on; see `crank-mem stats`._";
+  "_Note: crank-mem: a session here has waited over 2 hours for its digest; see `crank-mem stats`._";
 
 function memoryProject(digest: boolean): { root: string; home: string } {
   const root = makeCrankProject({ "a.ts": "const a = 1;" });
@@ -752,7 +548,7 @@ describe("digests running (black-box)", () => {
     for (const absent of ["## Recent memory", "## Next steps", PAST_WORK]) expect(ctx).not.toContain(absent);
   });
 
-  test("a session waiting over 2 hours for its digest is noted, brings upkeep back, for this project only", () => {
+  test("a session waiting over 2 hours for its digest is noted, for this project only", () => {
     const { root, home } = memoryProject(true);
     writeJournal(root, ["2026-07-01: did a thing"]);
     seedMemory(root, titled(2), { nextSteps: "Wire the daemon." });
@@ -779,53 +575,94 @@ describe("digests running (black-box)", () => {
     spoolEntry(home, "old", root, threeHoursAgo);
     ctx = injectIn(root, home);
     expect(count(ctx, NOTE_WAITED)).toBe(1);
-    expect(ctx).toContain("## Journal (recent");
+    expect(ctx).not.toContain("## Journal (recent");
     expect(ctx).not.toContain("## Next steps");
   });
 });
 
-describe("digests off, stopped, or Codex (black-box)", () => {
-  test("digests off keep the upkeep protocols and journal, and add recall", () => {
-    const { root, home } = memoryProject(false);
-    seedMemory(root, titled(3), { nextSteps: "Wire the daemon." });
-    writeJournal(root, ["2026-07-01: did a thing"]);
-    const ctx = injectIn(root, home);
-    for (const kept of ["Cerebrum protocol", "## Journal", RECALL_BULLET, "## Recent memory", "append at its end"]) {
-      expect(ctx).toContain(kept);
-    }
-    expect(ctx).not.toContain("## Next steps");
-  });
+// Every digest state injects the same instructions and labels: no state asks
+// the agent to keep memory, and journal.md is never read.
+const UPKEEP = [
+  "Cerebrum protocol", "Journal protocol", "telegram-style", "append at its end", "consolidate",
+  "## Journal", "agent-maintained", "session log", "journal.md",
+];
+const LEAD = "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`.";
 
-  test("stopped digests keep the upkeep protocols, say why, and order the sections", () => {
-    const { root, home } = memoryProject(true);
-    stopDigests(home);
-    seedMemory(root, titled(3), { nextSteps: "Wire the daemon." });
-    writeJournal(root, ["2026-07-01: did a thing"]);
-    fs.mkdirSync(path.join(root, "docs/adr"), { recursive: true });
-    fs.writeFileSync(path.join(root, "docs/adr/0001-x.md"), "# x");
-    const ctx = injectIn(root, home);
-    for (const kept of ["Cerebrum protocol", "## Journal", RECALL_BULLET, "## Recent memory", "append at its end"]) {
-      expect(ctx).toContain(kept);
-    }
-    expect(ctx).not.toContain("## Next steps");
-    expect(ctx.split("\n").filter((l) => l === NOTE_STOPPED)).toHaveLength(1);
-    const at = [NOTE_STOPPED, "## Recent memory", "## Journal (", "## Cerebrum (", "## ADRs ("].map((h) => ctx.indexOf(h));
-    expect(at.every((i) => i >= 0)).toBe(true);
-    expect([...at].sort((a, b) => a - b)).toEqual(at);
-  });
+describe("no upkeep prompt in any digest state (black-box)", () => {
+  const states: Array<{ name: string; setup: (root: string, home: string) => object; check?: (ctx: string) => void }> = [
+    {
+      name: "Claude, digests off",
+      setup: (root) => {
+        saveConfig(path.join(root, ".crank"), { ...defaultConfig(), digest: false });
+        return claudeSessionStart(root);
+      },
+      check: (ctx) => {
+        for (const kept of [RECALL_BULLET, "## Recent memory"]) expect(ctx).toContain(kept);
+        expect(ctx).not.toContain("## Next steps");
+      },
+    },
+    { name: "Claude, digests on", setup: (root) => claudeSessionStart(root) },
+    {
+      name: "Claude, digests on and stopped",
+      setup: (root, home) => {
+        stopDigests(home);
+        return claudeSessionStart(root);
+      },
+      check: (ctx) => {
+        expect(ctx.split("\n").filter((l) => l === NOTE_STOPPED)).toHaveLength(1);
+        const at = [NOTE_STOPPED, "## Recent memory", "## Cerebrum (", "## ADRs ("].map((h) => ctx.indexOf(h));
+        expect(at.every((i) => i >= 0)).toBe(true);
+        expect([...at].sort((a, b) => a - b)).toEqual(at);
+      },
+    },
+    {
+      name: "Claude, digests on with a session waiting over 2 hours",
+      setup: (root, home) => {
+        spoolEntry(home, "old", root, Date.now() - 3 * 3_600_000);
+        return claudeSessionStart(root);
+      },
+      check: (ctx) => expect(count(ctx, NOTE_WAITED)).toBe(1),
+    },
+    { name: "Codex, digests on", setup: (root) => codexSessionStart(root) },
+  ];
 
-  test("a Codex session keeps the protocols and journal with digests on, adds recall, and shows the capture notes", () => {
+  for (const { name, setup, check } of states) {
+    test(name, () => {
+      const { root, home } = memoryProject(true);
+      fs.writeFileSync(path.join(root, ".crank/cerebrum.md"), "# Cerebrum\n\n## Memory\n\n- **Fact**: a memory bullet\n");
+      writeJournal(root, ["2026-07-01: one", "2026-07-02: two", "2026-07-03: three; NEXT: four"]);
+      seedMemory(root, titled(3), { nextSteps: "Wire the daemon." });
+      fs.mkdirSync(path.join(root, "docs/adr"), { recursive: true });
+      fs.writeFileSync(path.join(root, "docs/adr/0001-x.md"), "# x");
+      const ctx = injectIn(root, home, setup(root, home));
+      for (const upkeep of UPKEEP) expect(ctx).not.toContain(upkeep);
+      for (const kept of [LEAD, "Memory is not proof", "ADR protocol:", "## Cerebrum (.crank/cerebrum.md)\n### Memory\n"]) {
+        expect(ctx).toContain(kept);
+      }
+      check?.(ctx);
+    });
+  }
+
+  test("a Codex session shows the capture notes", () => {
     const { root, home } = memoryProject(true);
-    seedMemory(root, titled(3));
-    writeJournal(root, ["2026-07-01: did a thing"]);
-    const ctx = injectIn(root, home, codexSessionStart(root));
-    for (const kept of ["Cerebrum protocol", "Journal protocol", "## Journal", RECALL_BULLET, "## Recent memory"]) {
-      expect(ctx).toContain(kept);
-    }
     spoolEntry(home, "old", root, Date.now() - 3 * 3_600_000);
     stopDigests(home);
     const noted = injectIn(root, home, codexSessionStart(root));
     expect(count(noted, NOTE_WAITED)).toBe(1);
     expect(noted.split("\n").filter((l) => l === NOTE_STOPPED)).toHaveLength(1);
+  });
+
+  test("session start leaves journal.md unread", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    const file = writeJournal(
+      root,
+      Array.from({ length: 60 }, (_, i) => `2026-0${1 + Math.floor(i / 28)}-${String((i % 28) + 1).padStart(2, "0")}: entry ${i}`)
+    );
+    const bytes = fs.readFileSync(file);
+    const mtimeMs = fs.statSync(file).mtimeMs;
+    const run = runHook(HOOK, JSON.stringify({ ...claudeSessionStart(root), source: "startup" }));
+    expect(run.status).toBe(0);
+    expect(fs.readFileSync(file).equals(bytes)).toBe(true);
+    expect(fs.statSync(file).mtimeMs).toBe(mtimeMs);
   });
 });

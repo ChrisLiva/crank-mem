@@ -33,7 +33,7 @@ describe("parseBlocks", () => {
     expect(parseBlocks([])).toEqual([]);
   });
 
-  // trimJournal writes blocks back to disk, so the grouping must be lossless:
+  // the cerebrum editor writes blocks back to disk, so the grouping must be lossless:
   // every line lands in exactly one block, in order.
   test("blocks round-trip the input verbatim", () => {
     const text =
