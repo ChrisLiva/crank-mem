@@ -120,7 +120,7 @@ function validate(value: unknown): value is Digest {
   return isObj(summary) && SUMMARY_KEYS.every((key) => typeof summary[key] === "string");
 }
 
-const oneLine = (text: string) => text.replace(/\s+/g, " ");
+export const oneLine = (text: string) => text.replace(/\s+/g, " ");
 
 /**
  * The model request for one transcript delta. The input's blocks, each ending in a blank line, come in order:

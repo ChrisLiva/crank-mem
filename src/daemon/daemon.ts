@@ -24,7 +24,7 @@ const RETRY_CAP_MS = 3_600_000;
 /** A session whose transcript has not changed for this long is digested before it ends. */
 const QUIET_MS = 30 * 60_000;
 /** A live session is digested this long after the daemon first saw it, then this long after each digest that exited 0. */
-export const MID_SESSION_MS = 2 * 3_600_000;
+const MID_SESSION_MS = 2 * 3_600_000;
 const SEEN_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 
 type Options = { sweepMs: number; idleMs: number; retryMs: number; retryCapMs: number; runTimeoutMs: number | null; midSessionMs: number; once: boolean };

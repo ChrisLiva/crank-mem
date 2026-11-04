@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { parseArgs, positive } from "../cli/args.ts";
 import { COMMANDS } from "../cli/commands.ts";
 import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
+import { CRANK_DIR } from "../hooks/lib/config.ts";
 import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
 import { deleteEntry, readSpool, settleEntry, type SpoolEntry } from "../hooks/lib/spool.ts";
@@ -36,8 +37,8 @@ const HISTORY_TOTAL = 30;
 const REJECTION_LIMIT = 3;
 
 /** How often the maintenance pass snapshots the store, and how long a stale-flagged row survives it. */
-export const MAINTAIN_EVERY_MS = 24 * 3_600_000;
-export const STALE_KEEP_MS = 90 * 24 * 3_600_000;
+const MAINTAIN_EVERY_MS = 24 * 3_600_000;
+const STALE_KEEP_MS = 90 * 24 * 3_600_000;
 
 export async function run(args: string[]): Promise<number> {
   const stem = args[0];
@@ -123,7 +124,7 @@ async function digest(
 function digestContext(memory: Memory, entry: SpoolEntry, paths: string[]): DigestContext {
   let cerebrum: string | null = null;
   try {
-    cerebrum = splitPreamble(fs.readFileSync(path.join(entry.projectRoot, ".crank", CEREBRUM_FILE), "utf8")).body?.trimEnd() ?? null;
+    cerebrum = splitPreamble(fs.readFileSync(path.join(entry.projectRoot, CRANK_DIR, CEREBRUM_FILE), "utf8")).body?.trimEnd() ?? null;
   } catch {
     // no cerebrum: the digest runs on the transcript and history alone
   }

@@ -8,6 +8,7 @@ import { localDate, type ConsolidationOutcome, type Memory, type PendingWork } f
 import { loadIndex } from "../hooks/lib/store.ts";
 import { writeStopState, writeTextAtomic } from "../hooks/lib/user-state.ts";
 import { applyEdits, numberBullets, type CerebrumEdit } from "./cerebrum-edit.ts";
+import { oneLine } from "./digest-prompt.ts";
 import { askClaude } from "./gateway.ts";
 import { redact } from "./redact.ts";
 
@@ -70,8 +71,6 @@ function validate(value: unknown): value is Consolidation {
     Array.isArray(value.proposals) && value.proposals.every(isVerdict) &&
     Array.isArray(value.stale) && value.stale.every(isStaleVerdict);
 }
-
-const oneLine = (text: string) => text.replace(/\s+/g, " ");
 
 /** A titled input block, or "" when it has no lines. */
 const block = (title: string, lines: string[]) => (lines.length === 0 ? "" : `[${title}]\n${lines.join("\n")}\n`);
