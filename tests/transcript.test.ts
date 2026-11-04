@@ -31,10 +31,11 @@ function writeTranscript(records: object[]): string {
   return file;
 }
 const userText = (text: string) => ({ type: "user", message: { role: "user", content: text } });
-const bashCall = (command: string) => ({
+const toolCall = (name: string, input: object, id = "toolu_x") => ({
   type: "assistant",
-  message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_x", name: "Bash", input: { command } }] },
+  message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] },
 });
+const bashCall = (command: string) => toolCall("Bash", { command });
 
 describe("distill on the fixture transcript", () => {
   test("fixtures hold no home path and the expected text is ASCII, untrailed and at least 2,000 characters", () => {
@@ -67,7 +68,7 @@ describe("distill on the fixture transcript", () => {
   test("an empty file distills to nothing", () => {
     const file = path.join(tempDir(), "empty.jsonl");
     fs.writeFileSync(file, "");
-    expect(distill(file, null, 400_000)).toEqual({ text: "", next: null, truncated: false, records: 0 });
+    expect(distill(file, null, 400_000)).toEqual({ text: "", next: null, truncated: false, records: 0, paths: [] });
   });
 });
 
@@ -99,7 +100,7 @@ describe("after", () => {
   });
 
   test("after the last record gives nothing", () => {
-    expect(distill(FIXTURE, pos(29), 400_000)).toEqual({ text: "", next: null, truncated: false, records: 0 });
+    expect(distill(FIXTURE, pos(29), 400_000)).toEqual({ text: "", next: null, truncated: false, records: 0, paths: [] });
   });
 });
 
@@ -107,7 +108,7 @@ describe("maxChars", () => {
   test("cuts at a record boundary", () => {
     const texts = ["a", "b", "c"].map((c) => c.repeat(300));
     const d = distill(writeTranscript(texts.map(userText)), null, 700);
-    expect(d).toEqual({ text: `[USER]\n${texts[0]}\n\n[USER]\n${texts[1]}`, next: pos(2), truncated: true, records: 2 });
+    expect(d).toEqual({ text: `[USER]\n${texts[0]}\n\n[USER]\n${texts[1]}`, next: pos(2), truncated: true, records: 2, paths: [] });
   });
 
   test("sends a single over-limit record alone, cut with a note", () => {
@@ -116,6 +117,29 @@ describe("maxChars", () => {
     expect(d.text).toBe(`[USER]\n${text}`.slice(0, 500) + "...[507 chars cut]");
     expect(d.truncated).toBe(true);
     expect(d.next).toEqual(pos(1));
+  });
+});
+
+describe("paths", () => {
+  test("collects the delta's tool-call paths once each, in first-seen order", () => {
+    const file = writeTranscript([
+      toolCall("Read", { file_path: "/r/src/a.ts" }, "t1"),
+      toolCall("Grep", { pattern: "x", path: "src" }, "t2"),
+      toolCall("NotebookEdit", { notebook_path: "nb.ipynb", new_source: "" }, "t3"),
+      toolCall("Bash", { command: "cat src/b.ts src/c.ts" }, "t4"),
+      toolCall("Read", { file_path: "/r/src/a.ts" }, "t5"),
+    ]);
+    expect(distill(file, null, 400_000).paths).toEqual(["/r/src/a.ts", "src", "nb.ipynb", "src/b.ts", "src/c.ts"]);
+  });
+
+  test("leaves out paths from records at or before after, and from the record maxChars holds back", () => {
+    const readOf = (p: string) => toolCall("Read", { file_path: p }, `read-${p}`);
+    const file = writeTranscript([readOf("a.ts"), userText("u"), readOf("b.ts")]);
+    expect(distill(file, pos(2), 400_000).paths).toEqual(["b.ts"]);
+    const readText = `[TOOL_USE Read] ${JSON.stringify({ file_path: "a.ts" })}`;
+    const d = distill(file, null, `${readText}\n\n[USER]\nu`.length); // admits records 1 and 2, not 3
+    expect(d.next).toEqual(pos(2));
+    expect(d.paths).toEqual(["a.ts"]);
   });
 });
 

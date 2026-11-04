@@ -3,9 +3,11 @@ import * as path from "node:path";
 import { isSensitiveFile } from "../hooks/lib/config.ts";
 import { isObj } from "../hooks/lib/hook-io.ts";
 import type { Position } from "../hooks/lib/memory.ts";
+import { shellReadPaths } from "../hooks/lib/shell-reads.ts";
 import { redact, stripBlocks } from "./redact.ts";
 
-export type Distilled = { text: string; next: Position | null; truncated: boolean; records: number };
+/** `paths`: raw path strings the delta's tool calls name, each once, in first-seen order. */
+export type Distilled = { text: string; next: Position | null; truncated: boolean; records: number; paths: string[] };
 
 const INPUT_CAP = 500;
 const RESULT_CAP = 500;
@@ -36,6 +38,7 @@ export function distill(file: string, after: Position | null, maxChars: number):
   let next: Position | null = null;
   let records = 0;
   let truncated = false;
+  const paths = new Set<string>();
   for (const r of covered) {
     const conversation = isConversation(r);
     const text = conversation ? renderRecord(r, calls).join(BLOCK_SEP) : "";
@@ -50,11 +53,25 @@ export function distill(file: string, after: Position | null, maxChars: number):
         length += added;
       }
     }
-    if (conversation) records++;
+    if (conversation) {
+      records++;
+      for (const p of toolPaths(r)) paths.add(p);
+    }
     next = positionOf(r) ?? next;
     if (truncated) break;
   }
-  return { text: parts.join(BLOCK_SEP), next, truncated, records };
+  return { text: parts.join(BLOCK_SEP), next, truncated, records, paths: [...paths] };
+}
+
+function toolPaths(r: Rec): string[] {
+  const out: string[] = [];
+  for (const b of blocksOf(r)) {
+    if (b.type !== "tool_use" || !isObj(b.input)) continue;
+    const { file_path, path: p, notebook_path, command } = b.input;
+    for (const v of [file_path, p, notebook_path]) if (typeof v === "string") out.push(v);
+    if (b.name === "Bash" && typeof command === "string") out.push(...shellReadPaths(command));
+  }
+  return out;
 }
 
 function readRecords(file: string): Rec[] {
