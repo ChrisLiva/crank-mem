@@ -78,6 +78,7 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
   }
   const outcome = memory.appendDigest({
     session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd, ...stored(r.output, entry.projectRoot, entry.cwd),
+    proposals: [], stale: [],
   });
   if (outcome === "appended") {
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");

@@ -45,6 +45,8 @@ function digest(sessionId: string, expected: Position | null, next: Position, ov
     costUsd: 0.01,
     summary: { request: "r", investigated: "i", learned: "l", completed: "c", next_steps: "n" },
     observations: [],
+    proposals: [],
+    stale: [],
     ...over,
   };
 }
@@ -180,6 +182,7 @@ describe("appendDigest", () => {
       facts: input.facts,
       filesRead: input.filesRead,
       filesModified: input.filesModified,
+      staleFlag: null,
     }]);
     expect(memory.fileHistory("src/ä b.ts", 5)).toEqual([line!]);
     memory.close();
@@ -243,6 +246,55 @@ describe("appendDigest", () => {
   });
 });
 
+describe("proposals and stale flags", () => {
+  const P1 = { uuid: "u-1", timestamp: "2026-11-02T10:00:00.123Z" };
+  const P2 = { uuid: "u-2", timestamp: "2026-11-02T10:05:00.456Z" };
+
+  test("a digest that loses its position race stores no proposal and no flag", () => {
+    const memory = writable();
+    memory.appendDigest(digest("s", null, P1, { observations: [obs({ title: "x", narrative: "n" })] }));
+    const x = memory.recent(1)[0]!.id;
+    expect(memory.appendDigest(digest("s", { uuid: "u-1", timestamp: "other" }, P2, {
+      proposals: [{ kind: "memory", bullet: "- **Lock**: retry 2 s" }],
+      stale: [{ id: x, reason: "gone" }],
+    }))).toBe("stale");
+    expect(memory.stats("m", 0).pendingProposals).toBe(0);
+    expect(memory.get([x])[0]!.staleFlag).toBeNull();
+  });
+
+  test("proposals dedupe on the bullet without its dates, case or spacing", () => {
+    const memory = writable();
+    const propose = (n: number, bullet: string) => {
+      const prev = n === 1 ? null : { uuid: `p-${n - 1}`, timestamp: "t" };
+      expect(memory.appendDigest(digest("s", prev, { uuid: `p-${n}`, timestamp: "t" }, {
+        proposals: [{ kind: "memory", bullet }],
+      }))).toBe("appended");
+    };
+    propose(1, "- **Lock**: retry 2 s (2026-11-01)");
+    propose(2, "- **lock**:   retry  2 s (2026-11-04)");
+    propose(3, "- **Lock**: retry 2 s");
+    expect(memory.stats("m", 0).pendingProposals).toBe(1);
+    propose(4, "- **Lock**: retry 3 s");
+    expect(memory.stats("m", 0).pendingProposals).toBe(2);
+  });
+
+  test("a second flag on a stale row keeps the first", async () => {
+    const memory = writable();
+    memory.appendDigest(digest("s", null, P1, { observations: [obs({ title: "x", narrative: "n" })] }));
+    const x = memory.recent(1)[0]!.id;
+    const before = Date.now();
+    expect(memory.appendDigest(digest("s", P1, P2, { stale: [{ id: x, reason: "first" }] }))).toBe("appended");
+    const first = memory.get([x])[0]!.staleFlag;
+    expect(first?.reason).toBe("first");
+    expect(first!.atMs).toBeGreaterThanOrEqual(before);
+    await sleep(2);
+    expect(memory.appendDigest(digest("s", P2, { uuid: "u-3", timestamp: "t" }, { stale: [{ id: x, reason: "second" }] })))
+      .toBe("appended");
+    expect(memory.get([x])[0]!.staleFlag).toEqual(first);
+    expect(memory.stats("m", 0).staleRows).toBe(1);
+  });
+});
+
 describe("recordRejection", () => {
   test("counts up from the first rejection and resets on a stored digest", () => {
     const memory = writable();
@@ -260,7 +312,9 @@ describe("read methods", () => {
   test("match the table on a seeded store", async () => {
     const memory = writable();
     expect(memory.latestNextSteps()).toBeNull();
-    expect(memory.stats("m1", 0)).toEqual({ observations: 0, unembedded: 0, lastDigestMs: null, costUsdSince: 0 });
+    expect(memory.stats("m1", 0)).toEqual({
+      observations: 0, unembedded: 0, lastDigestMs: null, costUsdSince: 0, pendingProposals: 0, staleRows: 0,
+    });
     const n1 = { uuid: "a", timestamp: "2026-11-02T10:00:00.000Z" };
     const summary = (next_steps: string) => ({ request: "r", investigated: "i", learned: "l", completed: "c", next_steps });
     memory.appendDigest(digest("s1", null, n1, {
@@ -321,7 +375,12 @@ describe("read methods", () => {
 describe("formatLine", () => {
   test("renders id, local date, type and title", () => {
     const createdAtMs = new Date(2026, 0, 2, 3, 4).getTime();
-    expect(formatLine({ id: 7, createdAtMs, type: "bugfix", title: "X" })).toBe("#7 2026-01-02 bugfix X");
+    expect(formatLine({ id: 7, createdAtMs, type: "bugfix", title: "X", stale: false })).toBe("#7 2026-01-02 bugfix X");
+  });
+
+  test("tags a stale row after its type", () => {
+    const createdAtMs = new Date(2026, 0, 2, 3, 4).getTime();
+    expect(formatLine({ id: 7, createdAtMs, type: "bugfix", title: "X", stale: true })).toBe("#7 2026-01-02 bugfix [stale] X");
   });
 });
 
@@ -338,7 +397,7 @@ describe("search", () => {
   }
 
   function query(over: Partial<SearchQuery> & { text: string }): SearchQuery {
-    return { vector: null, limit: 10, type: null, sinceMs: null, file: null, ...over };
+    return { vector: null, limit: 10, type: null, sinceMs: null, file: null, stale: false, ...over };
   }
 
   const vec = (...values: number[]) => new Float32Array(values);

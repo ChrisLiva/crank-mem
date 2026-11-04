@@ -2,6 +2,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
+import { ISO_DATE } from "./bullets.ts";
 import { CRANK_DIR } from "./config.ts";
 import { runGit } from "./scanner.ts";
 
@@ -37,20 +38,27 @@ export type NewObservation = {
   type: ObservationType; title: string; narrative: string; facts: string[];
   filesRead: string[]; filesModified: string[];
 };
+export type ProposalKind = "preference" | "memory";
 export type DigestInput = {
   session: SessionKey; expected: Position | null; next: Position;
   model: string; costUsd: number; summary: DigestSummary; observations: NewObservation[];
+  proposals: { kind: ProposalKind; bullet: string }[];
+  stale: { id: number; reason: string }[];
 };
-export type ObservationLine = { id: number; createdAtMs: number; type: ObservationType; title: string };
+export type ObservationLine = { id: number; createdAtMs: number; type: ObservationType; title: string; stale: boolean };
 export type Observation = ObservationLine & {
   sessionId: string; narrative: string; facts: string[]; filesRead: string[]; filesModified: string[];
+  staleFlag: { atMs: number; reason: string } | null;
 };
 export type SearchHit = ObservationLine;
 export type SearchQuery = {
   text: string; vector: { model: string; values: Float32Array } | null; limit: number;
-  type: ObservationType | null; sinceMs: number | null; file: string | null;
+  type: ObservationType | null; sinceMs: number | null; file: string | null; stale: boolean;
 };
-export type MemoryStats = { observations: number; unembedded: number; lastDigestMs: number | null; costUsdSince: number };
+export type MemoryStats = {
+  observations: number; unembedded: number; lastDigestMs: number | null; costUsdSince: number;
+  pendingProposals: number; staleRows: number;
+};
 
 export interface Memory {
   position(sessionId: string): Position | null;
@@ -246,19 +254,27 @@ function migrate(db: sqlite.DatabaseSync): number | null | "newer" {
 
 type Row = Record<string, unknown>;
 
-const LINE_COLUMNS = "o.id, o.created_at, o.type, o.title";
+const LINE_COLUMNS = "o.id, o.created_at, o.type, o.title, o.stale_at";
 const NEWEST_FIRST = "ORDER BY o.created_at DESC, o.id DESC";
 const UNEMBEDDED = "NOT EXISTS (SELECT 1 FROM observation_vectors v WHERE v.observation_id = o.id AND v.model = ?)";
 
 function toLine(row: Row): ObservationLine {
-  return { id: Number(row.id), createdAtMs: Number(row.created_at), type: row.type as ObservationType, title: String(row.title) };
+  return {
+    id: Number(row.id), createdAtMs: Number(row.created_at), type: row.type as ObservationType, title: String(row.title),
+    stale: row.stale_at !== null,
+  };
 }
 
-/** The one renderer of `#<id> <YYYY-MM-DD> <type> <title>`, dated in local time. */
+/** The one renderer of `#<id> <YYYY-MM-DD> <type> [stale] <title>`, dated in local time; `[stale]` only on a flagged row. */
 export function formatLine(line: ObservationLine): string {
-  const d = new Date(line.createdAtMs);
+  return `#${line.id} ${localDate(line.createdAtMs)} ${line.type} ${line.stale ? "[stale] " : ""}${line.title}`;
+}
+
+/** `YYYY-MM-DD` of an epoch time in the local zone. */
+export function localDate(ms: number): string {
+  const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `#${line.id} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${line.type} ${line.title}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 // Search fuses a keyword list and a vector list by reciprocal rank (k = RRF_K),
@@ -281,10 +297,19 @@ function dot(a: Float32Array, b: Float32Array): number {
   return Number.isNaN(sum) ? -Infinity : sum;
 }
 
-/** The dedupe key: sha256 hex of the case- and whitespace-normalized title and narrative. */
+/** sha256 hex of the text, lowercased, with whitespace runs collapsed and trimmed. */
+function normalizedHash(text: string): string {
+  return crypto.createHash("sha256").update(text.toLowerCase().replace(/\s+/g, " ").trim()).digest("hex");
+}
+
+/** An observation's dedupe key: its normalized title and narrative. */
 function contentHash(title: string, narrative: string): string {
-  const normalized = (title + "\n" + narrative).toLowerCase().replace(/\s+/g, " ").trim();
-  return crypto.createHash("sha256").update(normalized).digest("hex");
+  return normalizedHash(title + "\n" + narrative);
+}
+
+/** A proposal's dedupe key: its normalized bullet without dates or the `()` they leave empty. */
+function bulletHash(bullet: string): string {
+  return normalizedHash(bullet.replace(ISO_DATE, "").replace(/\(\s*\)/g, ""));
 }
 
 function samePosition(a: Position | null, b: Position | null): boolean {
@@ -366,6 +391,16 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
           for (const file of o.filesRead) insertFile.run(file, inserted.lastInsertRowid, "read");
           for (const file of o.filesModified) insertFile.run(file, inserted.lastInsertRowid, "modified");
         }
+        const insertProposal = db.prepare(
+          `INSERT INTO proposals (digest_id, kind, bullet, bullet_hash, created_at)
+           VALUES (?, ?, ?, ?, ?) ON CONFLICT(bullet_hash) DO NOTHING`,
+        );
+        for (const p of input.proposals) insertProposal.run(digestId, p.kind, p.bullet, bulletHash(p.bullet), now);
+        // A row keeps its first flag.
+        const flag = db.prepare(
+          "UPDATE observations SET stale_at = ?, stale_reason = ?, stale_reviewed = 0 WHERE id = ? AND stale_at IS NULL",
+        );
+        for (const f of input.stale) flag.run(now, f.reason, f.id);
         return "appended" as const;
       });
       return result === stale ? "stale" : result;
@@ -400,7 +435,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     hasVectors,
 
     search(query) {
-      const filters: string[] = [];
+      const filters: string[] = query.stale ? [] : ["o.stale_at IS NULL"];
       const params: sqlite.SQLInputValue[] = [];
       if (query.type !== null) { filters.push("o.type = ?"); params.push(query.type); }
       if (query.sinceMs !== null) { filters.push("o.created_at >= ?"); params.push(query.sinceMs); }
@@ -467,7 +502,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       const found: Observation[] = [];
       for (const id of ids) {
         const row = one(
-          `SELECT ${LINE_COLUMNS}, o.narrative, o.facts, d.session_id FROM observations o
+          `SELECT ${LINE_COLUMNS}, o.stale_reason, o.narrative, o.facts, d.session_id FROM observations o
            JOIN digests d ON d.id = o.digest_id WHERE o.id = ?`,
           id,
         );
@@ -480,13 +515,14 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
           facts: JSON.parse(String(row.facts)) as string[],
           filesRead: files.filter((f) => f.kind === "read").map((f) => String(f.path)),
           filesModified: files.filter((f) => f.kind === "modified").map((f) => String(f.path)),
+          staleFlag: row.stale_at === null ? null : { atMs: Number(row.stale_at), reason: String(row.stale_reason) },
         });
       }
       return found;
     },
 
     recent(limit) {
-      return all(`SELECT ${LINE_COLUMNS} FROM observations o ${NEWEST_FIRST} LIMIT ?`, limit).map(toLine);
+      return all(`SELECT ${LINE_COLUMNS} FROM observations o WHERE o.stale_at IS NULL ${NEWEST_FIRST} LIMIT ?`, limit).map(toLine);
     },
 
     latestNextSteps() {
@@ -499,7 +535,8 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     fileHistory(relPath, limit) {
       return all(
         `SELECT ${LINE_COLUMNS} FROM observations o
-         WHERE o.id IN (SELECT observation_id FROM observation_files WHERE path = ?) ${NEWEST_FIRST} LIMIT ?`,
+         WHERE o.stale_at IS NULL AND o.id IN (SELECT observation_id FROM observation_files WHERE path = ?)
+         ${NEWEST_FIRST} LIMIT ?`,
         relPath, limit,
       ).map(toLine);
     },
@@ -513,11 +550,17 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
         "SELECT MAX(created_at) AS last, COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= ?), 0) AS cost FROM digests",
         sinceMs,
       )!;
+      const flags = one(
+        `SELECT (SELECT COUNT(*) FROM proposals WHERE state = 'pending') AS proposals,
+                (SELECT COUNT(*) FROM observations WHERE stale_at IS NOT NULL) AS stale`,
+      )!;
       return {
         observations: Number(counts.total),
         unembedded: Number(counts.pending),
         lastDigestMs: digests.last === null ? null : Number(digests.last),
         costUsdSince: Number(digests.cost),
+        pendingProposals: Number(flags.proposals),
+        staleRows: Number(flags.stale),
       };
     },
 

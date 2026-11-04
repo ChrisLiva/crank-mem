@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type * as sqlite from "node:sqlite";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
-import { memoryPath, openMemory, type NewObservation } from "../src/hooks/lib/memory.ts";
+import { memoryPath, openMemory, type DigestInput, type NewObservation } from "../src/hooks/lib/memory.ts";
 import { DAEMON_FILE, type DaemonState } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
@@ -119,7 +119,7 @@ let seedCount = 0;
 export function seedMemory(
   root: string,
   observations: Partial<NewObservation>[],
-  opts: { costUsd?: number; nextSteps?: string } = {}
+  opts: { costUsd?: number; nextSteps?: string; proposals?: DigestInput["proposals"]; stale?: DigestInput["stale"] } = {}
 ): number[] {
   const n = ++seedCount;
   const opened = openMemory(memoryPath(root), "write");
@@ -142,6 +142,8 @@ export function seedMemory(
         filesRead: o.filesRead ?? [],
         filesModified: o.filesModified ?? [],
       })),
+      proposals: opts.proposals ?? [],
+      stale: opts.stale ?? [],
     });
     const after = memory.stats("seed", 0).observations;
     if (after - before !== observations.length) {

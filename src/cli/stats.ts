@@ -115,6 +115,8 @@ async function captureLines(root: string, config: CrankConfig): Promise<string[]
     lines.push(row("unembedded", String(s.unembedded)));
     lines.push(row("last digest", s.lastDigestMs === null ? "never" : ageOf(s.lastDigestMs)));
     lines.push(row("month cost", `${dollars(s.costUsdSince)} (list price)`));
+    lines.push(row("proposals", String(s.pendingProposals)));
+    lines.push(row("stale", String(s.staleRows)));
   } else {
     lines.push(row("memory", MEMORY_STATE[opened.status]));
   }

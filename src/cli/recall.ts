@@ -1,7 +1,7 @@
 import { EMBED_MODEL, embed, modelPresent } from "../daemon/embedder.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 import {
-  formatLine, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_OLDER_NOTE, MEMORY_UNREADABLE_NOTE, OBSERVATION_TYPES,
+  formatLine, localDate, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_OLDER_NOTE, MEMORY_UNREADABLE_NOTE, OBSERVATION_TYPES,
   type MemoryReader, type Observation, type ObservationType, type SearchQuery,
 } from "../hooks/lib/memory.ts";
 import { parseArgs } from "./args.ts";
@@ -60,7 +60,8 @@ const isObservationType = (value: string): value is ObservationType => OBSERVATI
 export async function search(args: string[]): Promise<number> {
   const { flags, rest } = parseArgs(args, COMMANDS.search.value);
   // An unknown flag is query text, so `search --max-turns` finds that option.
-  const extra = Object.keys(flags).filter((key) => key !== "" && !COMMANDS.search.value.includes(key)).map((key) => `--${key}`);
+  const known = [...COMMANDS.search.value, ...COMMANDS.search.bool];
+  const extra = Object.keys(flags).filter((key) => key !== "" && !known.includes(key)).map((key) => `--${key}`);
   const text = [...rest, ...extra].join(" ");
   const usage = () => { console.error(COMMANDS.search.usage); return 1; };
   const [limit, type, since, file] = [flags.limit, flags.type, flags.since, flags.file].map(stringFlag);
@@ -81,7 +82,7 @@ export async function search(args: string[]): Promise<number> {
     const hits = memory.search({
       text, vector: embeddable ? await queryVector(text, host) : null,
       limit: limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT),
-      type: type ?? null, sinceMs, file: relFile,
+      type: type ?? null, sinceMs, file: relFile, stale: flags.stale === true,
     });
     for (const hit of hits) console.log(formatLine(hit));
     return 0;
@@ -130,6 +131,7 @@ function formatObservation(o: Observation): string {
   return [
     formatLine(o),
     `session: ${o.sessionId}`,
+    ...(o.staleFlag ? [`stale: ${localDate(o.staleFlag.atMs)} ${o.staleFlag.reason}`] : []),
     `narrative: ${o.narrative}`,
     o.facts.length > 0 ? ["facts:", ...o.facts.map((fact) => `- ${fact}`)].join("\n") : "facts: (none)",
     `files read: ${list(o.filesRead)}`,

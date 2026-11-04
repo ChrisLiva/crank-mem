@@ -6,6 +6,9 @@
 // Grouping is deliberately dumb: no inline markdown is parsed, and lines are
 // carried verbatim, so a block can be written back byte-identically.
 
+/** A `YYYY-MM-DD` date. Global: use matchAll, match or replace, never test or exec. */
+export const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
+
 export interface Block {
   kind: "bullet" | "other";
   /** Raw lines, verbatim and in order. */

@@ -6,6 +6,7 @@ import { memoryPaths } from "../src/hooks/lib/hook-io.ts";
 import { git, gitCommit, plantMemory, runCli, seedMemory } from "./helpers.ts";
 import { MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE } from "../src/hooks/lib/memory.ts";
 import { NO_MEMORY_NOTE } from "../src/cli/recall.ts";
+import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
 
 describe("memoryPaths", () => {
   test("keeps repo-relative, non-sensitive paths inside the root, deduped in input order", () => {
@@ -142,6 +143,53 @@ describe("search flags", () => {
       expect(run.stderr).toContain(SEARCH_USAGE);
       expect(run.stdout).toBe("");
     }
+  });
+});
+
+describe("stale rows", () => {
+  const TZ = "America/New_York";
+
+  /** Rows A and B, with A flagged stale. */
+  function staleProject(files: Record<string, string> = { "a.ts": "export const a = 1;\n" }) {
+    const root = initedProject(files);
+    const [a, b] = seedMemory(root, [
+      { title: "Lock retry is two seconds", filesRead: ["a.ts"] },
+      { title: "Lock files live in .crank", filesRead: ["a.ts"] },
+    ]) as [number, number];
+    seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
+    return { root, a, b, staleLine: `#${a} ${localDate(0, TZ)} discovery [stale] Lock retry is two seconds` };
+  }
+
+  test("search hides a stale row unless --stale asks for it", () => {
+    const { root, b, staleLine } = staleProject();
+    const plain = runCli(root, ["search", "Lock"], { TZ });
+    expect(plain.status).toBe(0);
+    expect(plain.stdout).toContain(`#${b} ${localDate(0, TZ)} discovery Lock files live in .crank\n`);
+    expect(plain.stdout).not.toContain("Lock retry is two seconds");
+    const all = runCli(root, ["search", "Lock", "--stale"], { TZ });
+    expect(all.status).toBe(0);
+    expect(all.stdout.split("\n")).toContain(staleLine);
+    expect(all.stdout).toContain(`#${b} ${localDate(0, TZ)} discovery Lock files live in .crank\n`);
+    expect(runCli(root, ["search", "--stale"], { TZ })).toMatchObject({ status: 1, stdout: "", stderr: `${CLI_COMMANDS.search.usage}\n` });
+    expect(runCli(root, ["search", "--help"], { TZ }).stdout.split("\n")[0]).toBe(
+      "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path] [--stale]"
+    );
+  });
+
+  test("timeline keeps a stale row and tags it", () => {
+    const { root, a, staleLine } = staleProject();
+    const run = runCli(root, ["timeline", String(a)], { TZ });
+    expect(run.status).toBe(0);
+    expect(run.stdout.split("\n")).toContain(staleLine);
+  });
+
+  test("get prints the flag's local date and reason after the session", () => {
+    const { root, a } = staleProject();
+    const run = runCli(root, ["get", String(a)], { TZ });
+    expect(run.status).toBe(0);
+    const lines = run.stdout.split("\n");
+    expect(lines[1]).toMatch(/^session: seed-\d+$/);
+    expect(lines[2]).toBe(`stale: ${localDate(0, TZ)} retry is 5 s now`);
   });
 });
 

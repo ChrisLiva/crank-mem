@@ -72,6 +72,21 @@ describe("post-read file history", () => {
   });
 });
 
+describe("post-read stale rows", () => {
+  test("a file's history leaves out a stale row", () => {
+    const root = makeCrankProject({ "src/a.ts": "export const a = 1;\n" });
+    const seedMs = Date.now();
+    const [a] = seedMemory(root, [
+      { title: "Lock retry is two seconds", filesRead: ["src/a.ts"] },
+      { title: "Lock files live in .crank", filesRead: ["src/a.ts"] },
+    ]) as [number];
+    seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
+    setMtime(path.join(root, "src/a.ts"), seedMs - HOUR);
+    const ctx = context(run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)));
+    expect(ctx).toMatch(/^History of src\/a\.ts:\n#\d+ \S+ discovery Lock files live in \.crank$/);
+  });
+});
+
 describe("post-read once per agent per session", () => {
   test("a repeat read is silent; a subagent and another session see it again", () => {
     const { root } = seeded();

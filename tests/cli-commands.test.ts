@@ -136,7 +136,7 @@ describe("stats: memory health", () => {
 
 describe("stats: capture health", () => {
   // The capture rows in their order, each label padded to the value column.
-  const CAPTURE_ROWS = /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|memory): .*\n)+ {2}embedder: /;
+  const CAPTURE_ROWS = /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|proposals|stale|memory): .*\n)+ {2}embedder: /;
 
   function digestOn(root: string): void {
     expect(runCli(root, ["digest", "on"]).status).toBe(0);
@@ -163,6 +163,8 @@ describe("stats: capture health", () => {
     expect(run.stdout).toContain("  unembedded:       3\n");
     expect(run.stdout).toMatch(/ {2}last digest: {6}\d+s ago\n/);
     expect(run.stdout).toContain("  month cost:       $0.03 (list price)\n");
+    expect(run.stdout).toContain("  proposals:        0\n");
+    expect(run.stdout).toContain("  stale:            0\n");
     expect(run.stdout).toContain("  embedder:         not ready (run crank-mem setup)\n");
 
     fs.writeFileSync(
@@ -175,6 +177,16 @@ describe("stats: capture health", () => {
     expect(ready).toContain("  embedder:         ready\n");
     expect(ready).toContain("  digest:           on\n");
     expect(ready).toContain("  spool:            0 waiting, 0 parked\n");
+  });
+
+  test("counts pending proposals and stale rows after the month cost", () => {
+    const root = initedProject();
+    const [a] = seedMemory(root, [{ title: "Lock retry is two seconds" }, { title: "Lock files live in .crank" }]) as [number];
+    seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
+    seedMemory(root, [], { proposals: [{ kind: "memory", bullet: "- **P**: x" }] });
+    const out = cli(root, "stats").stdout;
+    expect(out).toMatch(CAPTURE_ROWS);
+    expect(out).toMatch(/\n {2}month cost: .*\n {2}proposals: {8}1\n {2}stale: {12}1\n {2}embedder: /);
   });
 
   test("a month under a cent shows two significant digits, not $0.00", () => {

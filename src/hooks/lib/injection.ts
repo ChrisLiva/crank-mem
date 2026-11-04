@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { estimateProseTokens } from "./tokens.ts";
-import { parseBullets } from "./bullets.ts";
+import { ISO_DATE, parseBullets } from "./bullets.ts";
 import { SOURCE_EXTENSIONS } from "./scanner.ts";
 import { symbolsSupported } from "./symbols.ts";
 import { CEREBRUM_FILE } from "./cerebrum-files.ts";
@@ -272,7 +272,6 @@ export interface CitedFiles {
 
 /** A backticked file citation: a path or basename with an extension, then an optional `:line`. */
 const FILE_CITATION = /^([^\s*=:]+\.[A-Za-z]\w*)(?::\d+(?:-\d+)?)?$/;
-const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
 
 /**
  * Tags for the files a bullet cites in backticks: ` [cited file missing: …]`

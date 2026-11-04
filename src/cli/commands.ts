@@ -33,9 +33,9 @@ export const COMMANDS = {
   },
   search: {
     summary: "Search stored memory by meaning or keyword",
-    usage: "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path]",
+    usage: "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path] [--stale]",
     value: ["limit", "type", "since", "file", "model-host"],
-    bool: [],
+    bool: ["stale"],
     unknownIsText: true,
   },
   timeline: {

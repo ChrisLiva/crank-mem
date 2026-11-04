@@ -507,6 +507,15 @@ describe("digests running (black-box)", () => {
     expect(Buffer.byteLength([section, all[lines.length]].join("\n"), "utf-8")).toBeGreaterThan(1536);
   });
 
+  test("recent memory leaves out a stale row", () => {
+    const { root, home } = memoryProject(true);
+    const [a] = seedMemory(root, [{ title: "Lock retry is two seconds" }, { title: "Lock files live in .crank" }]) as [number];
+    seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
+    const section = sectionOf(injectIn(root, home), "## Recent memory\n")!;
+    expect(section).toMatch(/\n#\d+ \S+ discovery Lock files live in \.crank(\n|$)/);
+    expect(section).not.toContain("Lock retry is two seconds");
+  });
+
   test("the whole injection stays in budget, and a tiny budget keeps only the instructions", () => {
     const { root, home } = memoryProject(true);
     seedMemory(root, titled(60), { nextSteps: "Wire the daemon." });
