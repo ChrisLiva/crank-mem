@@ -19,6 +19,12 @@ export function parseArgs(argv: string[], valueFlags: string[]): { flags: Record
   return { flags, rest };
 }
 
+/** The first flag in argv that is neither one of `valueFlags` nor one of `boolFlags`, or null. */
+export function unknownFlag(argv: string[], valueFlags: string[], boolFlags: string[]): string | null {
+  const known = [...valueFlags, ...boolFlags];
+  return Object.keys(parseArgs(argv, valueFlags).flags).find((name) => !known.includes(name)) ?? null;
+}
+
 /** A numeric flag's value, or the default when it is absent, valueless (`true`) or not a positive number. */
 export function positive(value: string | boolean | undefined, fallback: number): number {
   const n = typeof value === "string" ? Number(value) : NaN;

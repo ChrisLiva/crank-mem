@@ -5,6 +5,7 @@ import {
   type MemoryReader, type Observation, type ObservationType, type SearchQuery,
 } from "../hooks/lib/memory.ts";
 import { parseArgs } from "./args.ts";
+import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";
 
 export const NO_MEMORY_NOTE = "crank-mem: no memory exists yet.";
@@ -36,8 +37,6 @@ async function withMemory(
   }
 }
 
-const SEARCH_USAGE = "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path]";
-const SEARCH_FLAGS = ["limit", "type", "since", "file", "model-host"];
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 
@@ -59,11 +58,11 @@ function stringFlag(value: string | boolean | undefined): string | undefined | n
 const isObservationType = (value: string): value is ObservationType => OBSERVATION_TYPES.some((t) => t === value);
 
 export async function search(args: string[]): Promise<number> {
-  const { flags, rest } = parseArgs(args, SEARCH_FLAGS);
+  const { flags, rest } = parseArgs(args, COMMANDS.search.value);
   // An unknown flag is query text, so `search --max-turns` finds that option.
-  const extra = Object.keys(flags).filter((key) => key !== "" && !SEARCH_FLAGS.includes(key)).map((key) => `--${key}`);
+  const extra = Object.keys(flags).filter((key) => key !== "" && !COMMANDS.search.value.includes(key)).map((key) => `--${key}`);
   const text = [...rest, ...extra].join(" ");
-  const usage = () => { console.error(SEARCH_USAGE); return 1; };
+  const usage = () => { console.error(COMMANDS.search.usage); return 1; };
   const [limit, type, since, file] = [flags.limit, flags.type, flags.since, flags.file].map(stringFlag);
   if (!text.trim()) return usage();
   if (limit === null || type === null || since === null || file === null) return usage();
@@ -100,16 +99,15 @@ async function queryVector(text: string, host: string | undefined): Promise<Sear
   }
 }
 
-const TIMELINE_USAGE = "Usage: crank-mem timeline <id> [--depth n]";
 const DEFAULT_DEPTH = 5;
 const NUMBER = /^\d+$/;
 
 export async function timeline(args: string[]): Promise<number> {
-  const { flags, rest } = parseArgs(args, ["depth"]);
+  const { flags, rest } = parseArgs(args, COMMANDS.timeline.value);
   const [id] = rest;
   const depth = flags.depth ?? String(DEFAULT_DEPTH);
   if (rest.length !== 1 || !NUMBER.test(id!) || typeof depth !== "string" || !NUMBER.test(depth)) {
-    console.error(TIMELINE_USAGE);
+    console.error(COMMANDS.timeline.usage);
     return 1;
   }
   const project = openNearestProject();
@@ -125,7 +123,6 @@ export async function timeline(args: string[]): Promise<number> {
   });
 }
 
-const GET_USAGE = "Usage: crank-mem get <id...>";
 const MAX_GET = 20;
 
 function formatObservation(o: Observation): string {
@@ -142,7 +139,7 @@ function formatObservation(o: Observation): string {
 
 export async function get(args: string[]): Promise<number> {
   if (args.length === 0 || !args.every((arg) => NUMBER.test(arg))) {
-    console.error(GET_USAGE);
+    console.error(COMMANDS.get.usage);
     return 1;
   }
   const project = openNearestProject();

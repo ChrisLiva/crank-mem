@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import { parseArgs, positive } from "../cli/args.ts";
+import { COMMANDS } from "../cli/commands.ts";
 import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
 import { deleteEntry, readSpool, settleEntry, type SpoolEntry } from "../hooks/lib/spool.ts";
@@ -37,7 +38,7 @@ export async function run(args: string[]): Promise<number> {
     deleteEntry(stem);
     return 0;
   }
-  const { flags } = parseArgs(args.slice(1), ["run-timeout-ms"]);
+  const { flags } = parseArgs(args.slice(1), COMMANDS.job.value);
   const timeoutMs = positive(flags["run-timeout-ms"], RUN_TIMEOUT_MS);
 
   const opened = openMemory(memoryPath(entry.projectRoot), "write");

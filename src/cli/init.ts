@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "./args.ts";
+import { COMMANDS } from "./commands.ts";
 import { choose } from "./prompt.ts";
 import { cliVersion, REPO_ROOT } from "./version.ts";
 import { vendorHooks, templatePath } from "./vendor.ts";
@@ -31,7 +32,7 @@ function detectRuntime(): CrankConfig["runtime"] | null {
 }
 
 export async function run(args: string[]): Promise<number> {
-  const { flags } = parseArgs(args, ["git", "adr", "codex", "codex-trust"]);
+  const { flags } = parseArgs(args, COMMANDS.init.value);
   const yes = flags.yes === true;
   const root = process.cwd();
   const crankDir = path.join(root, CRANK_DIR);

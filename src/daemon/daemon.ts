@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs, positive } from "../cli/args.ts";
+import { COMMANDS } from "../cli/commands.ts";
 import { REPO_ROOT, cliVersion } from "../cli/version.ts";
 import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { trySteal } from "../hooks/lib/lock.ts";
@@ -27,7 +28,7 @@ const SEEN_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 type Options = { sweepMs: number; idleMs: number; retryMs: number; retryCapMs: number; runTimeoutMs: number | null; once: boolean };
 
 export async function run(args: string[]): Promise<number> {
-  const { flags } = parseArgs(args, ["sweep-ms", "idle-ms", "retry-ms", "retry-cap-ms", "run-timeout-ms"]);
+  const { flags } = parseArgs(args, COMMANDS.daemon.value);
   const opts: Options = {
     sweepMs: positive(flags["sweep-ms"], SWEEP_MS),
     idleMs: positive(flags["idle-ms"], IDLE_MS),

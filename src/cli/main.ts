@@ -1,24 +1,21 @@
 import { cliVersion } from "./version.ts";
-
-const USAGE = `crank-mem ${cliVersion()} — project memory for coding agents
-
-Usage: crank-mem <command> [flags]
-
-Commands:
-  init       Wire hooks into this project and run the first scan
-  scan       Full index rebuild
-  digest     Turn background digests on or off, or resume them
-  search     Search stored memory by meaning or keyword
-  timeline   Show the observations around one id
-  get        Print stored observations in full
-  setup      Install packages and download the local search model
-  stats      Index coverage, memory health and Codex hook status
-  upgrade    Re-vendor hooks and repair their wiring after a git pull
-  uninstall  Remove all wiring, offer backup restore
-`;
+import { unknownFlag } from "./args.ts";
+import { commandHelp, commandSpec, usage } from "./commands.ts";
 
 async function main(): Promise<number> {
   const [cmd, ...rest] = process.argv.slice(2);
+  const spec = cmd === undefined ? undefined : commandSpec(cmd);
+  if (spec) {
+    if (rest.includes("--help") || rest.includes("-h")) {
+      console.log(commandHelp(spec));
+      return 0;
+    }
+    const unknown = spec.unknownIsText ? null : unknownFlag(rest, spec.value, spec.bool);
+    if (unknown !== null) {
+      console.error(`crank-mem: unknown flag --${unknown}\n${spec.usage}`);
+      return 1;
+    }
+  }
   switch (cmd) {
     case "init":
       return (await import("./init.ts")).run(rest);
@@ -49,7 +46,7 @@ async function main(): Promise<number> {
       console.log(cliVersion());
       return 0;
     default:
-      console.log(USAGE);
+      console.log(usage());
       return cmd === undefined || cmd === "help" || cmd === "--help" ? 0 : 1;
   }
 }

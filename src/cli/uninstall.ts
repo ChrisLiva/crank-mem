@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "./args.ts";
+import { COMMANDS } from "./commands.ts";
 import { choose } from "./prompt.ts";
 import {
   removeCrankHooksFromFile, removeIgnoreLines, removeCodexFeatures,
@@ -25,7 +26,7 @@ import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
 // ADR directory.
 
 export async function run(args: string[]): Promise<number> {
-  const { flags } = parseArgs(args, []);
+  const { flags } = parseArgs(args, COMMANDS.uninstall.value);
 
   // A leftover pre-rename install (only crank/, no .crank/) can't be opened as
   // a project — sweep it and stop, so the new CLI can clean up after itself.

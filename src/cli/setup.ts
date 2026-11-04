@@ -2,6 +2,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { embed, EMBED_MODEL, modelPresent, modelsDir } from "../daemon/embedder.ts";
 import { ensureCrankHome } from "../hooks/lib/user-state.ts";
 import { parseArgs, positive } from "./args.ts";
+import { COMMANDS } from "./commands.ts";
 import { REPO_ROOT } from "./version.ts";
 
 // `crank-mem setup`: install the clone's packages and download the local
@@ -31,7 +32,7 @@ export function installPackages(): InstallResult {
 }
 
 export async function run(args: string[]): Promise<number> {
-  const { flags } = parseArgs(args, ["model-host", "fetch-timeout-ms"]);
+  const { flags } = parseArgs(args, COMMANDS.setup.value);
   const host = typeof flags["model-host"] === "string" ? flags["model-host"] : undefined;
   const fetchTimeoutMs = positive(flags["fetch-timeout-ms"], 0) || undefined;
 

@@ -491,3 +491,64 @@ describe("vendored hooks run standalone", () => {
     expect(JSON.parse(res.stdout).hookSpecificOutput.additionalContext).toContain("`.crank/anatomy.md` indexes 1 file(s)");
   });
 });
+
+/** Every file under `dir`, by relative path, with its bytes. */
+function tree(dir: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (const entry of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const file = path.join(entry.parentPath, entry.name);
+    files[path.relative(dir, file)] = fs.readFileSync(file).toString("base64");
+  }
+  return files;
+}
+
+describe("flags", () => {
+  const COMMANDS = ["init", "scan", "digest", "search", "timeline", "get", "setup", "stats", "upgrade", "uninstall", "daemon", "job"];
+
+  test("--help and -h print the command's usage and change nothing", () => {
+    const root = initedProject();
+    const before = tree(root);
+    const home = makeCrankHome();
+    for (const cmd of COMMANDS) {
+      for (const help of ["--help", "-h"]) {
+        const run = runCli(root, [cmd, help], { CRANK_HOME: home });
+        expect([cmd, help, run.status, run.stdout.startsWith(`Usage: crank-mem ${cmd}`)]).toEqual([cmd, help, 0, true]);
+      }
+    }
+    expect(tree(root)).toEqual(before);
+    expect(fs.readdirSync(home)).toEqual([]);
+  });
+
+  test("init --help in a fresh directory installs nothing", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-help-"));
+    fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
+    const run = cli(root, "init", "--help");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("--git commit|ignore|exclude");
+    expect(fs.readdirSync(root)).toEqual(["a.ts"]);
+  });
+
+  test("an unknown flag exits 1 with the usage before anything is written", () => {
+    const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "crank-flag-"));
+    const init = cli(fresh, "init", "--yes", "--bogus");
+    expect(init.status).toBe(1);
+    expect(init.stderr).toContain("crank-mem: unknown flag --bogus\nUsage: crank-mem init ");
+    expect(fs.readdirSync(fresh)).toEqual([]);
+
+    const root = initedProject();
+    const before = tree(root);
+    for (const args of [["uninstall", "--yes", "--force"], ["upgrade", "--dry-run"], ["scan", "--full"], ["init", "--git=commit"]]) {
+      const run = cli(root, ...args);
+      expect([args, run.status]).toEqual([args, 1]);
+      expect(run.stderr).toContain(`unknown flag ${args.at(-1)}`);
+    }
+    expect(tree(root)).toEqual(before);
+  });
+
+  test("the command list points at per-command help", () => {
+    const run = cli(os.tmpdir(), "--help");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("Run `crank-mem <command> --help` for its flags.");
+  });
+});
