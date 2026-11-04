@@ -599,6 +599,13 @@ describe("flags", () => {
     expect(fs.readdirSync(home)).toEqual([]);
   });
 
+  test("job --help hides the job's test flags", () => {
+    const run = runCli(os.tmpdir(), ["job", "--help"], { CRANK_HOME: makeCrankHome() });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("Usage: crank-mem job <stem> (internal: the daemon runs it)");
+    expect(run.stdout).not.toContain("consolidate");
+  });
+
   test("init --help in a fresh directory installs nothing", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-help-"));
     fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");

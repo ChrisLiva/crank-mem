@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { TOKEN, cleanup, digestProject, journey, readRecord, runCli, search, seedMemory, temps, userRecord } from "./helpers.ts";
+import { consolidationRequest } from "../src/daemon/consolidate.ts";
+import { isSensitiveFile } from "../src/hooks/lib/config.ts";
+import {
+  TOKEN, appendRecords, cleanup, digestProject, journey, laterRecords, readRecord, rerun, runCli, search, seedMemory, stop, temps,
+  userRecord,
+} from "./helpers.ts";
 import { okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 
@@ -11,8 +16,33 @@ const CEREBRUM = "# Cerebrum\n\n## User Preferences\n\n## Memory\n\n" +
   "- **Lock retry**: `src/lock.ts` → `withLock` retries EEXIST for 2 seconds (2026-10-01)\n" +
   "- **Scanner**: `src/scan.ts` → `walk` skips symlinks (2026-10-01)\n";
 
+/** The consolidation call's deny rules: the sensitive-file filter as `Read(<glob>)`, in the probed order (ADR 0011). */
+const DENY_SETTINGS = JSON.stringify({
+  disableAllHooks: true,
+  permissions: {
+    deny: [
+      "**/.npmrc", "**/.netrc", "**/.htpasswd", "**/.pgpass",
+      "**/*.pem", "**/*.key", "**/*.p8", "**/*.p12", "**/*.pfx", "**/*.keystore", "**/*.jks", "**/*.ppk", "**/*.kdbx", "**/*.tfstate",
+      "**/.env", "**/.env.*", "**/id_rsa*", "**/id_dsa*", "**/id_ecdsa*", "**/id_ed25519*", "**/*credential*",
+      "**/secrets.json", "**/secrets.yaml", "**/secrets.yml", "**/secrets.toml",
+    ].map((g) => `Read(${g})`),
+  },
+});
+
+/** The names `tests/config.test.ts` → describe `isSensitiveFile` checks, plus two near misses. */
+const FILTER_NAMES = [
+  ".env", ".env.local", "server.pem", "id_rsa", "id_ed25519.pub", "aws-credentials.json", "secrets.yaml", ".npmrc", "app.key",
+  "terraform.tfstate", "index.ts", "README.md", "environment.ts", "keyboard.ts", "id_token.ts", "secrets.txt",
+];
+
+const digestOf = (proposals: { kind: string; bullet: string }[], stale: { id: number; reason: string }[] = []) =>
+  ({ observations: [], summary: SAMPLE_DIGEST.summary, proposals, stale });
+
+/** The value after `flag` in a recorded argv. */
+const flagValue = (argv: string[], flag: string): string => argv[argv.indexOf(flag) + 1]!;
+
 describe("digest feeds consolidation", () => {
-  test("the first job sees cerebrum and the file's history, and stores its proposal and its flag on a shown row", () => {
+  test("the first job stores a proposal and a flag that its consolidation reviews, and later jobs consolidate only when due", () => {
     const root = digestProject({}, temps);
     fs.mkdirSync(path.join(root, "src"));
     fs.writeFileSync(path.join(root, "src/lock.ts"), "export const LOCK_RETRY_MS = 5000;\n");
@@ -25,16 +55,32 @@ describe("digest feeds consolidation", () => {
       userRecord("c-0", "2026-01-02T00:00:00.000Z", "change the lock retry window ".repeat(80)),
       readRecord("c-1", "2026-01-02T00:00:01.000Z", path.join(root, "src/lock.ts")),
     ].join("\n") + "\n";
-    const output = {
-      observations: [],
-      summary: SAMPLE_DIGEST.summary,
-      proposals: [
+    const output = digestOf(
+      [
         { kind: "memory", bullet: "**Lock constant**: `src/lock.ts` → `LOCK_RETRY_MS` holds the retry window (2026-11-01)" },
         { kind: "memory", bullet: "   " },
       ],
-      stale: [{ id: a, reason: "the session changed the retry to 5 s; token " + TOKEN }, { id: 999, reason: "unlisted" }],
-    };
-    const { home, fake, job } = journey(root, [{ lines: okStreamOf(output) }], { transcript });
+      [{ id: a!, reason: "the session changed the retry to 5 s; token " + TOKEN }, { id: 999, reason: "unlisted" }],
+    );
+    const consolidation1 = okStreamOf({
+      edits: [
+        { op: "add", heading: "Memory", bullet: "**Lock constant**: `src/lock.ts` → `LOCK_RETRY_MS` holds the retry window", proposal: 1 },
+        { op: "replace", bullet_id: 2 },
+        { op: "add", heading: "Memory", bullet: "**X**", proposal: 77 },
+      ],
+      proposals: [{ id: 1, verdict: "accepted", reason: "LOCK_RETRY_MS exists" }],
+      stale: [{ id: a, verdict: "confirmed" }],
+    });
+    const scenarios = [
+      { lines: okStreamOf(output) },
+      { lines: consolidation1 },
+      { lines: okStreamOf(digestOf([{ kind: "memory", bullet: "**Scan depth**: `src/scan.ts` → `walk` stops at 8 levels" }])) },
+      { lines: okStreamOf(digestOf([])) },
+      { lines: okStreamOf({ edits: [], proposals: [{ id: 2, verdict: "rejected", reason: "already said" }], stale: [] }) },
+      { lines: okStreamOf(digestOf([])) },
+    ];
+    const j = journey(root, scenarios, { transcript, env: { TZ: "UTC" } });
+    const { home, fake, job } = j;
 
     const stdin = fake.calls()[0]!.stdin;
     expect(stdin).toContain("[CEREBRUM]\n## User Preferences\n\n## Memory\n\n- **Lock retry**");
@@ -56,7 +102,70 @@ describe("digest feeds consolidation", () => {
     expect(staleLine).toContain("[redacted]");
     expect(got.stdout).not.toContain(TOKEN);
     const stats = runCli(root, ["stats"], { CRANK_HOME: home }).stdout;
-    expect(stats).toContain("\n  proposals:        1\n");
+    expect(stats).toContain("\n  proposals:        0\n");
     expect(stats).toContain("\n  stale:            1\n");
-  }, 30_000);
+    expect(stats).toMatch(/^  consolidation:    \d+s ago \(ok\)$/m);
+
+    // Step 1's consolidation: the project's read-only tools, its deny rules and cwd, and the same env.
+    const calls = fake.calls();
+    expect(calls.length).toBe(2);
+    const [digestCall, call] = [calls[0]!, calls[1]!];
+    const req = consolidationRequest("", { proposals: [], stale: [] });
+    const swapped: Record<string, string> = {
+      "--tools": "Read,Grep,Glob", "--max-turns": "40", "--settings": DENY_SETTINGS,
+      "--system-prompt": req.system, "--json-schema": JSON.stringify(req.schema),
+    };
+    expect(call.argv).toEqual(digestCall.argv.map((arg, i) => swapped[digestCall.argv[i - 1]!] ?? arg));
+    expect(call.cwd).toBe(fs.realpathSync(root));
+    expect(call.env).toEqual(digestCall.env);
+    expect(call.stdin).toBe(
+      "[CEREBRUM]\n## User Preferences\n## Memory\n" +
+      "[B1] **Lock retry**: `src/lock.ts` → `withLock` retries EEXIST for 2 seconds (2026-10-01)\n" +
+      "[B2] **Scanner**: `src/scan.ts` → `walk` skips symlinks (2026-10-01)\n\n" +
+      "[PROPOSALS]\n[P1] (memory) **Lock constant**: `src/lock.ts` → `LOCK_RETRY_MS` holds the retry window (2026-11-01)\n\n" +
+      `[STALE]\n[O${a}] Lock retry is two seconds: withLock retries EEXIST for 2 seconds. | flagged: the session changed the retry to 5 s; token [redacted]\n`,
+    );
+    const today = new Date().toISOString().slice(0, 10);
+    const cerebrum = path.join(root, ".crank/cerebrum.md");
+    const scanner = "- **Scanner**: `src/scan.ts` → `walk` skips symlinks (2026-10-01)\n";
+    const afterStep1 = CEREBRUM.replace(
+      scanner, `${scanner}- **Lock constant**: \`src/lock.ts\` → \`LOCK_RETRY_MS\` holds the retry window (${today})\n`,
+    );
+    expect(fs.readFileSync(cerebrum, "utf8")).toBe(afterStep1);
+    const backups = path.join(root, ".crank/backups/cerebrum");
+    const backupFiles = () => fs.readdirSync(backups);
+    expect(backupFiles().length).toBe(1);
+    expect(fs.readFileSync(path.join(backups, backupFiles()[0]!), "utf8")).toBe(CEREBRUM);
+    expect(fs.existsSync(path.join(root, ".crank/cerebrum-archive.md"))).toBe(false);
+
+    // The deny rules match the sensitive-file filter.
+    const deny: string[] = JSON.parse(flagValue(call.argv, "--settings")).permissions.deny;
+    const globs = deny.map((rule) => /^Read\((?<glob>.+)\)$/.exec(rule)!.groups!.glob!);
+    for (const name of FILTER_NAMES) {
+      expect([name, globs.some((g) => path.matchesGlob("src/" + name, g))]).toEqual([name, isSensitiveFile(name)]);
+    }
+
+    // Step 2: inside the 2-hour window, only the digest runs.
+    const statsOf = () => runCli(root, ["stats"], { CRANK_HOME: home }).stdout;
+    appendRecords(j.transcript, laterRecords("s2").records);
+    stop(j);
+    expect(rerun(j).status).toBe(0);
+    expect(fake.calls().length).toBe(3);
+    expect(statsOf()).toContain("\n  proposals:        1\n");
+
+    // Step 3: a 1 ms window runs both calls, and a consolidation that applies no edit writes nothing.
+    appendRecords(j.transcript, laterRecords("s3").records);
+    stop(j);
+    expect(rerun(j, 10_000, {}, ["--consolidate-every-ms", "1"]).status).toBe(0);
+    expect(fake.calls().length).toBe(5);
+    expect(statsOf()).toContain("\n  proposals:        0\n");
+    expect(fs.readFileSync(cerebrum, "utf8")).toBe(afterStep1);
+    expect(backupFiles().length).toBe(1);
+
+    // Step 3b: nothing waits, so only the digest runs.
+    appendRecords(j.transcript, laterRecords("s3b").records);
+    stop(j);
+    expect(rerun(j, 10_000, {}, ["--consolidate-every-ms", "1"]).status).toBe(0);
+    expect(fake.calls().length).toBe(6);
+  }, 60_000);
 });

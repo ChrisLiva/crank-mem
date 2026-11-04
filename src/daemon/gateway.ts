@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { SENSITIVE_GLOBS } from "../hooks/lib/config.ts";
 import { isObj, type Obj } from "../hooks/lib/hook-io.ts";
 import { crankHome } from "../hooks/lib/user-state.ts";
 
@@ -90,23 +91,35 @@ function lastResult(stdout: string): Obj | null {
   return found;
 }
 
-function callArgs(system: string, schema: object): string[] {
+/**
+ * The fixed call shape (ADR 0008). With a `project`, the run gets read-only tools over it, room for
+ * their turns, and deny rules for the sensitive-file filter (ADR 0011).
+ */
+function callArgs(system: string, schema: object, project: string | null): string[] {
+  const settings = project === null
+    ? { disableAllHooks: true }
+    : { disableAllHooks: true, permissions: { deny: SENSITIVE_GLOBS.map((g) => `Read(${g})`) } };
   return [
-    "-p", "--model", "haiku", "--effort", "low", "--tools", "", "--setting-sources", "",
-    "--settings", JSON.stringify({ disableAllHooks: true }), "--strict-mcp-config", "--no-session-persistence",
-    "--max-turns", "2", "--system-prompt", system, "--json-schema", JSON.stringify(schema),
+    "-p", "--model", "haiku", "--effort", "low", "--tools", project === null ? "" : "Read,Grep,Glob", "--setting-sources", "",
+    "--settings", JSON.stringify(settings), "--strict-mcp-config", "--no-session-persistence",
+    "--max-turns", project === null ? "2" : "40", "--system-prompt", system, "--json-schema", JSON.stringify(schema),
     "--output-format", "stream-json", "--verbose",
   ];
 }
 
-/** One structured-output run on the user's Claude login, gated on `claude auth status`. */
+/**
+ * One structured-output run on the user's Claude login, gated on `claude auth status`. Without `project`
+ * both spawns run in an empty `<crank home>/run`; with it, both run in the project, since a deny rule
+ * does not reach a directory passed by `--add-dir` (ADR 0011).
+ */
 export async function askClaude<T>(
   req: { system: string; input: string; schema: object; validate: (value: unknown) => value is T },
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; project?: string } = {},
 ): Promise<ModelResult<T>> {
   const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_MS;
-  const cwd = path.join(crankHome(), "run");
-  fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
+  const project = opts.project ?? null;
+  const cwd = project ?? path.join(crankHome(), "run");
+  if (project === null) fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
 
   const auth = await runClaude(["auth", "status"], null, cwd, timeoutMs);
   if (auth.failure) return auth.failure;
@@ -120,7 +133,7 @@ export async function askClaude<T>(
     };
   }
 
-  const run = await runClaude(callArgs(req.system, req.schema), req.input, cwd, timeoutMs, true);
+  const run = await runClaude(callArgs(req.system, req.schema, project), req.input, cwd, timeoutMs, true);
   if (run.failure) return run.failure;
   return classify(run, req.validate);
 }

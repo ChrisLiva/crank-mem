@@ -9,6 +9,7 @@ import { deleteEntry, readSpool, settleEntry, type SpoolEntry } from "../hooks/l
 import { readStopState, writeStopState } from "../hooks/lib/user-state.ts";
 import { digestRequest, type Digest, type DigestContext } from "./digest-prompt.ts";
 import { EMBED_MODEL, embed } from "./embedder.ts";
+import { CONSOLIDATE_EVERY_MS, consolidate } from "./consolidate.ts";
 import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
 import { redact } from "./redact.ts";
 import { distill } from "./transcript.ts";
@@ -46,18 +47,22 @@ export async function run(args: string[]): Promise<number> {
   }
   const { flags } = parseArgs(args.slice(1), COMMANDS.job.value);
   const timeoutMs = positive(flags["run-timeout-ms"], RUN_TIMEOUT_MS);
+  const everyMs = positive(flags["consolidate-every-ms"], CONSOLIDATE_EVERY_MS);
 
   const opened = openMemory(memoryPath(entry.projectRoot), "write");
   if (opened.status !== "open") return 1;
   const memory = opened.memory;
   try {
-    return await digest(memory, stem, entry, timeoutMs);
+    return await digest(memory, stem, entry, { timeoutMs, everyMs });
   } finally {
     memory.close();
   }
 }
 
-async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs: number): Promise<number> {
+async function digest(
+  memory: Memory, stem: string, entry: SpoolEntry, opts: { timeoutMs: number; everyMs: number },
+): Promise<number> {
+  const { timeoutMs } = opts;
   const pos = memory.position(stem);
   const d = distill(entry.transcriptPath, pos, MAX_DELTA_CHARS);
   if (pos === null && fs.statSync(entry.transcriptPath).size > PARK_SIZE && d.records === 0) {
@@ -90,6 +95,7 @@ async function digest(memory: Memory, stem: string, entry: SpoolEntry, timeoutMs
   if (outcome === "appended") {
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
     await embedPending(memory);
+    await consolidate(entry.projectRoot, memory, opts);
   }
   return 0;
 }

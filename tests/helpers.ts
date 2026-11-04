@@ -466,11 +466,14 @@ export function expectStopped(home: string, reason: "credential" | "login"): voi
   expect(typeof state?.detail === "string" && state.detail.length > 0).toBe(true);
 }
 
-/** Three 800-character `user` records dated after the fixture, and their distilled text. */
-export function laterRecords(): { records: string[]; text: string } {
-  const contents = ["alpha", "bravo", "delta"].map((w) => `${w} `.repeat(200).slice(0, 800));
+/**
+ * Three 800-character `user` records dated after the fixture, and their distilled text. A job finds its saved
+ * position by uuid, so each job in one journey needs a batch with its own `tag`.
+ */
+export function laterRecords(tag = "later"): { records: string[]; text: string } {
+  const contents = [0, 1, 2].map(() => `${tag} `.repeat(800).slice(0, 800));
   return {
-    records: contents.map((c, i) => userRecord(`later-${i}`, `2026-01-03T00:00:0${i}.000Z`, c)),
+    records: contents.map((c, i) => userRecord(`${tag}-${i}`, `2026-01-03T00:00:0${i}.000Z`, c)),
     text: contents.map((c) => `[USER]\n${c}`).join("\n\n"),
   };
 }

@@ -143,6 +143,17 @@ const SENSITIVE_EXTENSIONS = new Set([
 ]);
 const SENSITIVE_BASENAMES = new Set([".npmrc", ".netrc", ".htpasswd", ".pgpass"]);
 
+/**
+ * The filter as permission globs, for the read-only tools a consolidation run gets (ADR 0011).
+ * The probed list matches isSensitiveFile under path.matchesGlob, except that it is case-sensitive.
+ */
+export const SENSITIVE_GLOBS: readonly string[] = [
+  ...[...SENSITIVE_BASENAMES].map((b) => `**/${b}`),
+  ...[...SENSITIVE_EXTENSIONS].map((ext) => `**/*${ext}`),
+  "**/.env", "**/.env.*", "**/id_rsa*", "**/id_dsa*", "**/id_ecdsa*", "**/id_ed25519*", "**/*credential*",
+  "**/secrets.json", "**/secrets.yaml", "**/secrets.yml", "**/secrets.toml",
+];
+
 export function isSensitiveFile(basename: string): boolean {
   const lower = basename.toLowerCase();
   if (lower === ".env" || lower.startsWith(".env.")) return true;
