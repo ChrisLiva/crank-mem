@@ -196,6 +196,15 @@ describe("stats: capture health", () => {
     expect(ready).toContain("  spool:            0 waiting, 0 parked\n");
   });
 
+  test("a month under a cent shows two significant digits, not $0.00", () => {
+    const root = initedProject();
+    seedMemory(root, [{ title: "one small digest" }], { costUsd: 0.002152 });
+    expect(cli(root, "stats").stdout).toContain("  month cost:       $0.0022 (list price)\n");
+    const empty = initedProject();
+    seedMemory(empty, [{ title: "a free digest" }], { costUsd: 0 });
+    expect(cli(empty, "stats").stdout).toContain("  month cost:       $0.00 (list price)\n");
+  });
+
   test("digest off by default, and one memory row stands in for a store that is missing, newer or unreadable", () => {
     const root = initedProject();
     const fresh = cli(root, "stats").stdout;

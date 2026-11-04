@@ -138,6 +138,11 @@ const MEMORY_STATE = {
   unreadable: "unreadable",
 } as const;
 
+/** To the cent, or to two significant digits under a cent: one Haiku digest costs about $0.002. */
+function dollars(usd: number): string {
+  return usd > 0 && usd < 0.01 ? `$${usd.toPrecision(2)}` : `$${usd.toFixed(2)}`;
+}
+
 /** Whether digests run, what waits for them user-wide, what the store holds, and whether search by meaning works. */
 async function captureLines(root: string, config: CrankConfig): Promise<string[]> {
   const stop = readStopState();
@@ -159,7 +164,7 @@ async function captureLines(root: string, config: CrankConfig): Promise<string[]
     lines.push(row("observations", String(s.observations)));
     lines.push(row("unembedded", String(s.unembedded)));
     lines.push(row("last digest", s.lastDigestMs === null ? "never" : ageOf(s.lastDigestMs)));
-    lines.push(row("month cost", `$${s.costUsdSince.toFixed(2)} (list price)`));
+    lines.push(row("month cost", `${dollars(s.costUsdSince)} (list price)`));
   } else {
     lines.push(row("memory", MEMORY_STATE[opened.status]));
   }
