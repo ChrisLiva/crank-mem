@@ -148,7 +148,7 @@ describe("digest on and the embedder", () => {
 describe("help", () => {
   test("lists setup and none of the hidden commands or flags", () => {
     const out = runCli(tempDir("crank-setup-help-"), ["--help"]).stdout;
-    expect(out).toContain("  setup      Install packages and download the local search model\n");
+    expect(out).toContain("  setup           Install packages and download the local search model\n");
     for (const flag of [
       "--model-host", "--fetch-timeout-ms", "--sweep-ms", "--idle-ms", "--retry-ms", "--retry-cap-ms", "--run-timeout-ms", "--once",
     ]) {

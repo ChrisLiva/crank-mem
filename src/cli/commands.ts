@@ -45,6 +45,7 @@ export const COMMANDS = {
     bool: [],
   },
   get: { summary: "Print stored observations in full", usage: "Usage: crank-mem get <id...>", value: [], bool: [] },
+  "restore-memory": { summary: "Put a memory.db snapshot back", usage: "Usage: crank-mem restore-memory [<file>]", value: [], bool: [] },
   setup: {
     summary: "Install packages and download the local search model",
     usage: "Usage: crank-mem setup",
@@ -87,9 +88,9 @@ export function commandHelp(spec: CommandSpec): string {
 
 /** `crank-mem --help`: every command with a summary. */
 export function usage(): string {
-  const lines = Object.entries(COMMANDS as Record<string, CommandSpec>)
-    .filter(([, spec]) => spec.summary)
-    .map(([name, spec]) => `  ${name.padEnd(11)}${spec.summary}`);
+  const listed = Object.entries(COMMANDS as Record<string, CommandSpec>).filter(([, spec]) => spec.summary);
+  const width = Math.max(...listed.map(([name]) => name.length)) + 2;
+  const lines = listed.map(([name, spec]) => `  ${name.padEnd(width)}${spec.summary}`);
   return [
     `crank-mem ${cliVersion()} — project memory for coding agents`,
     "",

@@ -13,6 +13,16 @@ function cli(cwd: string, codexHome: string, ...args: string[]): CliRun {
   return runCli(cwd, args, { CODEX_HOME: codexHome });
 }
 
+const SNAPSHOT_BYTES = "snapshot \u00e9\u0000bytes";
+
+/** Plants one daily memory snapshot in .crank/backups/memory/ and returns its path. */
+function plantSnapshot(root: string): string {
+  const file = path.join(root, ".crank/backups/memory/2026-11-04T00-00-00-000Z.db");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, SNAPSHOT_BYTES);
+  return file;
+}
+
 function makeProject(extra: Record<string, string> = {}): { root: string; codexHome: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-init-"));
   const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "crank-codexhome-"));
@@ -295,11 +305,22 @@ describe("init → uninstall round-trip", () => {
     fs.mkdirSync(audit);
     fs.writeFileSync(path.join(audit, "cerebrum.md"), "# Cerebrum\n");
     for (const name of STORE_FILES) fs.writeFileSync(path.join(root, ".crank", name), "x");
+    plantSnapshot(root);
     const un = cli(root, codexHome, "uninstall", "--yes", "--delete-crank");
     expect(un.status).toBe(0);
     expect(un.stdout).toContain("  deleted .crank/\n");
     expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
   });
+
+  for (const flags of [["--keep-crank"], ["--restore", "--keep-crank"]]) {
+    test(`uninstall ${flags.join(" ")} keeps the memory snapshots`, () => {
+      const { root, codexHome } = makeProject();
+      cli(root, codexHome, "init", "--yes", "--codex", "skip");
+      const snapshot = plantSnapshot(root);
+      expect(cli(root, codexHome, "uninstall", "--yes", ...flags).status).toBe(0);
+      expect(fs.readFileSync(snapshot, "utf8")).toBe(SNAPSHOT_BYTES);
+    });
+  }
 
   test("uninstall deletes the local digest switch", () => {
     const { root, codexHome } = makeProject();

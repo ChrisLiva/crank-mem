@@ -17,7 +17,7 @@ import {
   MARKER_FILE, DEDUP_FILE, CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, isCrankBackup, JOURNAL_FILE,
 } from "../hooks/lib/cerebrum-files.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
-import { MEMORY_FILE } from "../hooks/lib/memory.ts";
+import { MEMORY_FILE, SNAPSHOT_DIR } from "../hooks/lib/memory.ts";
 import { openProject } from "./project.ts";
 import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
 
@@ -169,7 +169,7 @@ function sweepLegacy(root: string): void {
 function deleteOwnedFiles(crankDir: string): string[] {
   const owned = [
     CONFIG_FILE, LOCAL_CONFIG_FILE, INDEX_FILE, ANATOMY_FILE, LOCK_FILE, MARKER_FILE, DEDUP_FILE, JOURNAL_FILE, LOG_FILE,
-    CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, "hooks",
+    CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, SNAPSHOT_DIR, "hooks",
     MEMORY_FILE, `${MEMORY_FILE}-wal`, `${MEMORY_FILE}-shm`,
   ];
   for (const name of owned) fs.rmSync(path.join(crankDir, name), { recursive: true, force: true });

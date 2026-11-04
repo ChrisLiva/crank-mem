@@ -211,7 +211,7 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
           writeSnapshot(db, path.join(path.dirname(file), SNAPSHOT_DIR), `${snapshotStamp()}-v${v}.db`);
         } catch (err) {
           db.close();
-          return { status: "unmigrated", detail: err instanceof Error ? err.message : String(err) };
+          return { status: "unmigrated", detail: errorMessage(err) };
         }
       }
       const from = migrate(db);
@@ -274,6 +274,95 @@ function writeSnapshot(db: sqlite.DatabaseSync, dir: string, name: string): stri
   } catch (err) {
     fs.rmSync(tmp, { force: true });
     throw err;
+  }
+}
+
+/** A restore retries a locked store every RESTORE_RETRY_MS for RESTORE_WAIT_MS. */
+const RESTORE_WAIT_MS = 10_000;
+const RESTORE_RETRY_MS = 100;
+
+/** SQLITE_NOTADB (26) or SQLITE_CORRUPT (11), extended codes included: the store is damaged, not busy or unwritable. */
+function isDamaged(err: unknown): boolean {
+  const code = (err as { errcode?: unknown } | null)?.errcode;
+  return typeof code === "number" && [26, 11].includes(code & 0xff);
+}
+
+const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** Why a snapshot cannot be restored, or null when it passes the integrity check at a version this code reads or migrates. */
+function snapshotProblem(src: sqlite.DatabaseSync): string | null {
+  try {
+    const check = String(Object.values(src.prepare("PRAGMA integrity_check").get() ?? {})[0]);
+    if (check !== "ok") return `integrity_check: ${check}`;
+    const v = userVersion(src);
+    return v < 1 || v > SCHEMA_VERSION ? `user_version ${v} is not 1 to ${SCHEMA_VERSION}` : null;
+  } catch (err) {
+    return errorMessage(err);
+  }
+}
+
+/**
+ * Copies `snapshotFile` over `storeFile`, first saving the current store as a daily snapshot.
+ * savedAs: where the previous store went, null when there was none.
+ */
+export async function restoreMemory(storeFile: string, snapshotFile: string): Promise<
+  | { status: "restored"; savedAs: string | null }
+  | { status: "invalid" | "busy"; detail: string }
+> {
+  const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
+  if (!mod) throw new Error("node:sqlite is unavailable");
+  let src: sqlite.DatabaseSync;
+  try {
+    src = new mod.DatabaseSync(snapshotFile, { readOnly: true });
+  } catch (err) {
+    return { status: "invalid", detail: errorMessage(err) };
+  }
+  try {
+    const problem = snapshotProblem(src);
+    if (problem !== null) return { status: "invalid", detail: problem };
+    let savedAs: string | null = null;
+    if (fs.existsSync(storeFile)) {
+      const dir = path.join(path.dirname(storeFile), SNAPSHOT_DIR);
+      const stamp = snapshotStamp();
+      // Read-write: under bun a read-only open of a closed WAL store with no -shm fails.
+      const current = new mod.DatabaseSync(storeFile);
+      let damaged = false;
+      try {
+        savedAs = writeSnapshot(current, dir, `${stamp}.db`);
+      } catch (err) {
+        if (!isDamaged(err)) throw err;
+        damaged = true;
+      } finally {
+        current.close();
+      }
+      if (damaged) {
+        savedAs = path.join(dir, `${stamp}.damaged`);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.renameSync(storeFile, savedAs);
+        for (const suffix of ["-wal", "-shm"]) {
+          if (fs.existsSync(storeFile + suffix)) fs.renameSync(storeFile + suffix, savedAs + suffix);
+        }
+      }
+    }
+    const firstMs = Date.now();
+    for (;;) {
+      try {
+        await mod.backup(src, storeFile);
+        break;
+      } catch {
+        if (Date.now() - firstMs >= RESTORE_WAIT_MS) return { status: "busy", detail: "memory.db stayed locked for 10 s" };
+        await new Promise((resolve) => setTimeout(resolve, RESTORE_RETRY_MS));
+      }
+    }
+    const db = new mod.DatabaseSync(storeFile);
+    try {
+      db.exec("PRAGMA journal_mode=WAL");
+    } finally {
+      db.close();
+    }
+    return { status: "restored", savedAs };
+  } finally {
+    src.close();
   }
 }
 

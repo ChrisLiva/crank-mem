@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
+import { digestRequest } from "../src/daemon/digest-prompt.ts";
 import { EMBED_MODEL } from "../src/daemon/embedder.ts";
 import { LOCAL_CONFIG_FILE } from "../src/hooks/lib/config.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import { MEMORY_OLDER_NOTE, memoryPath } from "../src/hooks/lib/memory.ts";
 import {
-  appendRecords, cleanup, digestProject, journey, laterRecords, makeCrankHome, makeCrankProject, plantMemory, rerun, runCli,
-  runHook, seedMemory, stop, temps,
+  appendRecords, children, cleanup, digestProject, journey, laterRecords, makeCrankHome, makeCrankProject, plantMemory, rerun, runCli,
+  runHook, search, seedMemory, stop, temps, tempDir,
 } from "./helpers.ts";
 import { okStream, okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
@@ -19,6 +23,22 @@ afterEach(cleanup);
 
 const UTC = { TZ: "UTC" };
 const MIGRATED_LINE = "  migrated memory.db v1 → v2";
+/** `get 1 2` on the two rows writeV1Store seeds. */
+const V1_GET =
+  "#1 2026-01-02 discovery Lock retry is two seconds\n" +
+  "session: v1-session\n" +
+  "narrative: withLock retries EEXIST for two seconds.\n" +
+  "facts:\n" +
+  "- LOCK_RETRY_MS is 2000\n" +
+  "files read: src/lock.ts\n" +
+  "files modified: (none)\n" +
+  "\n" +
+  "#2 2026-01-03 bugfix Scanner skips symlinks\n" +
+  "session: v1-session\n" +
+  "narrative: walkProject no longer follows symlinked directories.\n" +
+  "facts: (none)\n" +
+  "files read: (none)\n" +
+  "files modified: src/scan.ts\n";
 
 /** A project with digests on in config.local.json and the files the version-1 rows cite. */
 function project(): string {
@@ -76,22 +96,7 @@ describe("migration", () => {
     expect(up.status).toBe(0);
     expect(up.stdout.split("\n")).toContain(MIGRATED_LINE);
 
-    expect(runCli(root, ["get", "1", "2"], UTC).stdout).toBe(
-      "#1 2026-01-02 discovery Lock retry is two seconds\n" +
-      "session: v1-session\n" +
-      "narrative: withLock retries EEXIST for two seconds.\n" +
-      "facts:\n" +
-      "- LOCK_RETRY_MS is 2000\n" +
-      "files read: src/lock.ts\n" +
-      "files modified: (none)\n" +
-      "\n" +
-      "#2 2026-01-03 bugfix Scanner skips symlinks\n" +
-      "session: v1-session\n" +
-      "narrative: walkProject no longer follows symlinked directories.\n" +
-      "facts: (none)\n" +
-      "files read: (none)\n" +
-      "files modified: src/scan.ts\n",
-    );
+    expect(runCli(root, ["get", "1", "2"], UTC).stdout).toBe(V1_GET);
     expect(runCli(root, ["timeline", "1"], UTC).stdout).toBe(
       "#1 2026-01-02 discovery Lock retry is two seconds\n#2 2026-01-03 bugfix Scanner skips symlinks\n",
     );
@@ -312,5 +317,221 @@ describe("maintenance", () => {
     const names = snapshots(planted("memory.db.1.1.tmp"));
     expect(names).toHaveLength(1);
     expect(names[0]).toMatch(DAILY);
+  });
+});
+
+describe("restore-memory", () => {
+  const DAILY = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
+
+  /** Job 1 stores SAMPLE_DIGEST (row X) and writes snapshot S1; then row Y lands after it. Paths use the realpath spelling. */
+  function restoreProject(): { root: string; real: string; s1: string; j: ReturnType<typeof journey> } {
+    const root = project();
+    const j = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]);
+    expect(j.job.status).toBe(0);
+    seedMemory(root, [{ title: "Restore canary yankee" }]);
+    const real = fs.realpathSync(root);
+    const names = snapshots(root);
+    expect(names).toHaveLength(1);
+    return { root, real, s1: path.join(real, ".crank/backups/memory", names[0]!), j };
+  }
+
+  test("the default source is the newest snapshot, and the current store is saved first", () => {
+    const { root, real, s1, j } = restoreProject();
+    const calls = j.fake.calls().length;
+    fs.mkdirSync(path.join(root, "sub"));
+
+    const run = runCli(path.join(root, "sub"), ["restore-memory"]);
+    expect(run.status).toBe(0);
+    const saved = snapshots(root).filter((n) => n !== path.basename(s1));
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatch(DAILY);
+    const p = path.join(real, ".crank/backups/memory", saved[0]!);
+    expect(run.stdout).toBe(`restored memory.db from ${s1}\n  the previous store is at ${p}\n`);
+    expect(search(root, "EEXIST")).toContain("Lock file writes retry on EEXIST");
+    expect(search(root, "canary")).toBe("");
+    expect([...fs.readFileSync(memoryPath(root)).subarray(18, 20)]).toEqual([2, 2]);
+
+    const back = runCli(root, ["restore-memory", `.crank/backups/memory/${saved[0]}`]);
+    expect(back.status).toBe(0);
+    expect(search(root, "canary")).toContain("Restore canary yankee");
+    expect(j.fake.calls().length).toBe(calls);
+  });
+
+  test("a bad source, or a failed save of the current store, changes nothing", () => {
+    const { root, s1, j } = restoreProject();
+    const calls = j.fake.calls().length;
+    const sha = () => crypto.createHash("sha256").update(fs.readFileSync(memoryPath(root))).digest("hex");
+    const before = { sha: sha(), names: snapshots(root) };
+    const tmp = tempDir("crank-restore-src-");
+
+    const text = path.join(tmp, "text.db");
+    fs.writeFileSync(text, "not a database");
+    const newer = tempDir("crank-v3-");
+    plantMemory(newer, "newer");
+    const half = path.join(tmp, "half.db");
+    const bytes = fs.readFileSync(s1);
+    fs.writeFileSync(half, bytes.subarray(0, bytes.length / 2));
+
+    for (const [file, ending] of [
+      [text, "file is not a database\n"],
+      [memoryPath(newer), "user_version 3 is not 1 to 2\n"],
+      [half, "\n"],
+    ] as const) {
+      const run = runCli(root, ["restore-memory", file]);
+      expect([file, run.status, run.stderr.startsWith(`crank-mem: cannot restore from ${file}: `), run.stderr.endsWith(ending)])
+        .toEqual([file, 1, true, true]);
+      expect({ sha: sha(), names: snapshots(root) }).toEqual(before);
+    }
+
+    const copy = path.join(tmp, "s1.db");
+    fs.copyFileSync(s1, copy);
+    const dir = path.join(root, ".crank/backups/memory");
+    fs.rmSync(dir, { recursive: true });
+    fs.writeFileSync(dir, "x");
+    const failed = runCli(root, ["restore-memory", copy]);
+    expect(failed.status).toBe(1);
+    expect(failed.stderr.startsWith("crank-mem: cannot restore: ")).toBe(true);
+    expect(sha()).toBe(before.sha);
+    expect(j.fake.calls().length).toBe(calls);
+
+    const empty = project();
+    fs.mkdirSync(path.join(empty, ".crank/backups/memory"), { recursive: true });
+    const none = runCli(empty, ["restore-memory"]);
+    expect(none.status).toBe(1);
+    expect(none.stderr).toBe(`crank-mem: no snapshot in ${fs.realpathSync(empty)}/.crank/backups/memory.\n`);
+  });
+
+  /** A child that holds BEGIN IMMEDIATE on the store for `ms`, resolved once it prints `locked`; `exited` settles when it ends. */
+  async function holdStore(root: string, ms: number): Promise<{ exited: Promise<number | null> }> {
+    const script = path.join(tempDir("crank-holder-"), "hold.ts");
+    fs.writeFileSync(script, `
+const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
+const db = new DatabaseSync(${JSON.stringify(memoryPath(root))});
+db.exec("BEGIN IMMEDIATE");
+process.stdout.write("locked\\n");
+await new Promise((r) => setTimeout(r, ${ms}));
+db.exec("COMMIT");
+db.close();
+`);
+    const child = spawn(process.execPath, [script], { detached: true, stdio: ["ignore", "pipe", "inherit"] });
+    children.push(child);
+    const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+    await new Promise<void>((resolve, reject) => {
+      let out = "";
+      child.stdout!.on("data", (chunk) => {
+        out += chunk;
+        if (out.includes("locked\n")) resolve();
+      });
+      child.once("exit", () => reject(new Error(`holder exited before locking: ${out}`)));
+    });
+    return { exited };
+  }
+
+  test("a writer holding the store delays the restore by up to 10 seconds", async () => {
+    const short = restoreProject();
+    const calls = short.j.fake.calls().length;
+    const brief = await holdStore(short.root, 2_000);
+    const waited = runCli(short.root, ["restore-memory"]);
+    expect(waited.status).toBe(0);
+    await brief.exited;
+    expect(search(short.root, "canary")).toBe("");
+    expect(short.j.fake.calls().length).toBe(calls);
+
+    const long = restoreProject();
+    const held = await holdStore(long.root, 12_000);
+    const gaveUp = runCli(long.root, ["restore-memory"]);
+    expect(gaveUp.status).toBe(1);
+    expect(gaveUp.stderr).toBe("crank-mem: cannot restore: memory.db stayed locked for 10 s.\n");
+    await held.exited;
+    expect(search(long.root, "canary")).toContain("Restore canary yankee");
+  }, 40_000);
+
+  test("a version-1 snapshot is migrated after the restore, and a failed migration still counts as restored", () => {
+    const root = project();
+    writeV1Store(root);
+    expect(runCli(root, ["upgrade"]).status).toBe(0);
+    const v1 = snapshots(root);
+    expect(v1).toHaveLength(1);
+    expect(v1[0]).toMatch(/-v1\.db$/);
+
+    const run = runCli(root, ["restore-memory", `.crank/backups/memory/${v1[0]}`]);
+    expect(run.status).toBe(0);
+    expect(run.stdout.endsWith(`${MIGRATED_LINE}\n`)).toBe(true);
+    expect(runCli(root, ["get", "1", "2"], UTC).stdout).toBe(V1_GET);
+
+    const other = project();
+    const dir = path.join(other, ".crank/backups/memory");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.chmodSync(dir, 0o555);
+    try {
+      const file = path.join(root, ".crank/backups/memory", v1[0]!);
+      const failed = runCli(other, ["restore-memory", file]);
+      expect(failed.status).toBe(0);
+      expect(failed.stdout).toBe(`restored memory.db from ${file}\n`);
+      expect(failed.stderr).toContain("crank-mem: could not migrate memory.db (");
+      const older = runCli(other, ["search", "lock"]);
+      expect(older.status).toBe(1);
+      expect(older.stderr).toBe(MEMORY_OLDER_NOTE + "\n");
+    } finally {
+      fs.chmodSync(dir, 0o755);
+    }
+  });
+
+  test("a damaged store is moved aside, then restored over", () => {
+    const { root, real, s1, j } = restoreProject();
+    const calls = j.fake.calls().length;
+    fs.writeFileSync(memoryPath(root), "garbage");
+
+    const run = runCli(root, ["restore-memory"]);
+    expect(run.status).toBe(0);
+    const dir = path.join(real, ".crank/backups/memory");
+    const damaged = snapshots(root).filter((n) => n.endsWith(".damaged"));
+    expect(damaged).toHaveLength(1);
+    expect(damaged[0]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.damaged$/);
+    expect(run.stdout).toBe(`restored memory.db from ${s1}\n  the previous store is at ${path.join(dir, damaged[0]!)}\n`);
+    expect(fs.readFileSync(path.join(dir, damaged[0]!), "utf8")).toBe("garbage");
+    expect(search(root, "EEXIST")).toContain("Lock file writes retry on EEXIST");
+    expect([...fs.readFileSync(memoryPath(root)).subarray(18, 20)]).toEqual([2, 2]);
+
+    const again = runCli(root, ["restore-memory"]);
+    expect(again.status).toBe(0);
+    expect(again.stdout.startsWith(`restored memory.db from ${s1}\n`)).toBe(true);
+    expect(j.fake.calls().length).toBe(calls);
+  });
+
+  test("after a restore, a session digests from the restored position once it writes a new spool entry", () => {
+    const root = project();
+    const j = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]);
+    expect(j.job.status).toBe(0);
+    expect(snapshots(root)).toHaveLength(1);
+    const later = laterRecords();
+    appendRecords(j.transcript, later.records);
+    stop(j);
+    expect(rerun(j).status).toBe(0);
+    const digested = j.fake.calls().length;
+
+    expect(runCli(root, ["restore-memory"]).status).toBe(0);
+    expect(j.fake.calls().length).toBe(digested);
+
+    rerun(j);
+    expect(j.fake.calls().length).toBe(digested);
+
+    stop(j);
+    expect(rerun(j).status).toBe(0);
+    const calls = j.fake.calls();
+    expect(calls).toHaveLength(digested + 1);
+    expect(calls.at(-1)!.stdin).toBe(
+      digestRequest(later.text, SAMPLE_DIGEST.summary, { cerebrum: "## User Preferences\n\n## Memory", existing: [] }).input,
+    );
+  });
+
+  test("outside a project it prints the not-initialized hint, and --help prints its usage", () => {
+    const outside = runCli(os.tmpdir(), ["restore-memory"]);
+    expect(outside.status).toBe(1);
+    expect(outside.stderr).toBe(runCli(os.tmpdir(), ["get", "1"]).stderr);
+
+    const help = runCli(os.tmpdir(), ["restore-memory", "--help"]);
+    expect(help.status).toBe(0);
+    expect(help.stdout).toBe("Usage: crank-mem restore-memory [<file>]\n\nPut a memory.db snapshot back.\n");
   });
 });

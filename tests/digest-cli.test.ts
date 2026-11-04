@@ -196,6 +196,6 @@ describe("user state under the crank home", () => {
 
 describe("help", () => {
   test("usage lists the digest command", () => {
-    expect(runCli(tempDir("crank-digest-help-"), ["--help"]).stdout).toContain("digest     Turn background digests on or off, or resume them\n");
+    expect(runCli(tempDir("crank-digest-help-"), ["--help"]).stdout).toContain("digest          Turn background digests on or off, or resume them\n");
   });
 });

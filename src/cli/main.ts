@@ -29,6 +29,8 @@ async function main(): Promise<number> {
       return (await import("./recall.ts")).timeline(rest);
     case "get":
       return (await import("./recall.ts")).get(rest);
+    case "restore-memory":
+      return (await import("./restore-memory.ts")).run(rest);
     case "job":
       return (await import("../daemon/digest-job.ts")).run(rest);
     case "daemon":
