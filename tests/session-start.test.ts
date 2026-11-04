@@ -785,7 +785,7 @@ describe("digests running (black-box)", () => {
 });
 
 describe("digests off, stopped, or Codex (black-box)", () => {
-  test("digests off keep v1's protocols and journal, and add recall", () => {
+  test("digests off keep the upkeep protocols and journal, and add recall", () => {
     const { root, home } = memoryProject(false);
     seedMemory(root, titled(3), { nextSteps: "Wire the daemon." });
     writeJournal(root, ["2026-07-01: did a thing"]);
@@ -796,7 +796,7 @@ describe("digests off, stopped, or Codex (black-box)", () => {
     expect(ctx).not.toContain("## Next steps");
   });
 
-  test("stopped digests keep v1's protocols, say why, and order the sections", () => {
+  test("stopped digests keep the upkeep protocols, say why, and order the sections", () => {
     const { root, home } = memoryProject(true);
     stopDigests(home);
     seedMemory(root, titled(3), { nextSteps: "Wire the daemon." });

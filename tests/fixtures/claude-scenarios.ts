@@ -66,7 +66,7 @@ const usage = (costUSD: number, extra: Line = { provider: "firstParty" }) => ({
   [MODEL]: { costUSD, contextWindow: 1000000, maxOutputTokens: 128000, canonicalModel: MODEL, ...extra, costBasis: "list" },
 });
 
-/** A compliant run: the line types and order of research/probes/stage1/plan/live.jsonl. */
+/** A compliant run: the line types and order of ADR 0008 probe plan/live.jsonl. */
 export function okStream(digest: Digest): string[] {
   return lines(okLines(digest));
 }
@@ -114,18 +114,18 @@ function rejectedKey(apiKeySource: string, status: number): Line[] {
   ];
 }
 
-/** research/probes/stage1/exp/c1.*: ANTHROPIC_API_KEY set to a bad key. Exits 1. */
+/** ADR 0008 probe exp/c1.*: ANTHROPIC_API_KEY set to a bad key. Exits 1. */
 export function badKeyStream(): string[] {
   return lines(rejectedKey("ANTHROPIC_API_KEY", 401));
 }
 
-/** research/probes/stage1/plan/bare.jsonl: no login and no key. Exits 1. */
+/** ADR 0008 probe plan/bare.jsonl: no login and no key. Exits 1. */
 export function notLoggedInStream(): string[] {
   const text = "Not logged in · Please run /login";
   return lines([init("none", []), authFailed(text, 2), errorResult(text, null, 3)]);
 }
 
-/** research/probes/stage1/exp/d.out: the same failure without stream-json, as plain stdout. Exits 1. */
+/** ADR 0008 probe exp/d.out: the same failure without stream-json, as plain stdout. Exits 1. */
 export const NOT_LOGGED_IN_RAW = "Not logged in · Please run /login\n";
 
 /** No probe produced a 403: this is badKeyStream behind an `apiKeySource: "none"` init with the status changed. Exits 1. */
@@ -143,7 +143,7 @@ export function status500Stream(): string[] {
   return lines(rejectedKey("none", 500));
 }
 
-/** research/probes/stage1/plan/refuse2-1.jsonl: the model declines both turns, no structured_output key. Exits 0. */
+/** ADR 0008 probe plan/refuse2-1.jsonl: the model declines both turns, no structured_output key. Exits 0. */
 export function refusalStream(): string[] {
   const text = "I will not produce structured output.";
   return lines([
@@ -163,7 +163,7 @@ export function refusalStream(): string[] {
   ]);
 }
 
-/** research/probes/stage1/exp/b2.jsonl: a run at --max-turns 1 that never called the tool. Exits 1. */
+/** ADR 0008 probe exp/b2.jsonl: a run at --max-turns 1 that never called the tool. Exits 1. */
 export function maxTurnsStream(): string[] {
   return lines([
     init("none", ["StructuredOutput"]),

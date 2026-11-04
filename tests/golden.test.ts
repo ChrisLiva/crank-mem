@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { REPO_ROOT, makeCrankHome, makeCrankProject, runHook, setMtime } from "./helpers.ts";
 import { claudeSessionStart, claudeStop, claudeSubagentStart } from "./fixtures/payloads.ts";
 
-// Characterization: the stdout of the three injecting hooks on a fixed project,
+// Characterization: the stdout of session-start, subagent-start and stop on a fixed project,
 // with no memory.db and digest off, must stay byte-identical to the golden files.
 
 const GOLDEN = path.join(REPO_ROOT, "tests/fixtures/golden");

@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `bun test` needs `crank-mem setup` (or `bun src/cli/main.ts setup`) run once on the machine: `tests/digest-job.test.ts`, `tests/embedder.test.ts`, `tests/setup.test.ts` and `tests/cli-commands.test.ts` read the real model it downloads into `~/.crank/models`.
 
-There is no build step. `bin/crank-mem` is a shell launcher that runs `src/cli/main.ts` directly under bun (or node >= 23.6, which also executes TypeScript natively). Hooks under `src/hooks/` import only `node:` modules, and `tests/hooks-imports.test.ts` enforces it; `src/daemon/` may carry packages, loaded by dynamic `import()` so every other command works without them. The one package today is `@huggingface/transformers`, pinned exact in `package.json` for the embedder.
+There is no build step. `bin/crank-mem` is a shell launcher that runs `src/cli/main.ts` directly under bun (or node >= 23.6, which also executes TypeScript natively). Hooks under `src/hooks/` import only `node:` modules, and `tests/hooks-imports.test.ts` enforces it; `src/daemon/` may carry packages, loaded by dynamic `import()` so every other command works without them. The one package is `@huggingface/transformers`, pinned exact in `package.json` for the embedder.
 
 ## What this is
 
@@ -45,6 +45,6 @@ Tests are black-box: hooks and CLI commands are executed as real child processes
 
 `bun test` runs the test process in UTC with `TZ` unset, while `runCli` and `runHook` children run in the system zone, so an in-process local-date assertion passes against UTC getters too. Pin local dates through a CLI child with `TZ` in its env, in zones on both sides of UTC (`tests/recall-cli.test.ts` → `ZONES`).
 
-`runCli`'s `spawnSync` timeout (`tests/helpers.ts:79`) kills only the CLI child; a grandchild that hangs, such as `fakeClaude` with `auth: "hang"`, keeps running at ppid 1. After a RED run that hit the timeout, find leftover fake `claude` processes with `ps` and kill them.
+The `spawnSync` timeout in `tests/helpers.ts` → `runCli` kills only the CLI child; a grandchild that hangs, such as `fakeClaude` with `auth: "hang"`, keeps running at ppid 1. After a RED run that hit the timeout, find leftover fake `claude` processes with `ps` and kill them.
 
 To probe an fs failure path (such as `src/hooks/lib/spool.ts` → `settleEntry`'s non-`EEXIST` link fallback), run the probe under node: assigning `fs.linkSync` on the default `node:fs` import and calling `syncBuiltinESMExports()` reaches a module's `import * as fs` namespace under node 26 (the call threw the mock's `EPERM`) but not under bun 1.4 (it threw the real `ENOENT`).

@@ -84,7 +84,7 @@ directory is gitignored local evidence and is not part of this repo.
   file per agent per session, keyed by the transcript stem and `agent_id` under
   `<crank home>/seen/`.
 - For Bash, `src/hooks/lib/shell-reads.ts` → `shellReadPaths` names the files a command reads
-  with a plain read tool. This stage parses Bash for Claude sessions only, so ADR 0003's "No
+  with a plain read tool. crank-mem parses Bash for Claude sessions only, so ADR 0003's "No
   Bash-command parsing for reads" stands for Codex.
 - Read mode opens `memory.db` read-write with `PRAGMA query_only=ON` after `fs.existsSync`,
   never with `readOnly: true` (Finding 4). A missing store prints nothing.
