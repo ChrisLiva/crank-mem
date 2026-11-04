@@ -18,7 +18,7 @@ export const SNAPSHOT_DIR = path.join("backups", "memory");
 export const MEMORY_OLDER_NOTE = "crank-mem: memory.db predates this version; run `crank-mem upgrade`.";
 export const MEMORY_NEWER_NOTE = "crank-mem: memory.db is newer than this version; run `crank-mem upgrade`.";
 export const MEMORY_UNREADABLE_NOTE = "crank-mem: .crank/memory.db is not a readable database.";
-export type MemoryReader = Omit<Memory, "appendDigest" | "recordRejection" | "putVectors">;
+export type MemoryReader = Omit<Memory, "appendDigest" | "recordRejection" | "putVectors" | "recordConsolidation">;
 export type MemoryRead =
   | { status: "open"; memory: MemoryReader }
   | { status: "missing" | "older" | "newer" | "unreadable" };
@@ -58,7 +58,25 @@ export type SearchQuery = {
 export type MemoryStats = {
   observations: number; unembedded: number; lastDigestMs: number | null; costUsdSince: number;
   pendingProposals: number; staleRows: number;
+  lastConsolidation: { startedMs: number; outcome: ConsolidationOutcome } | null;
 };
+export type ConsolidationOutcome = "ok" | "conflict" | "rejected" | "retry" | "stopped";
+export type PendingWork = {
+  proposals: { id: number; kind: ProposalKind; bullet: string }[];
+  stale: { id: number; title: string; narrative: string; reason: string }[];
+  lastStartMs: number | null; lastOkStartMs: number | null;
+};
+type RunBase = { startedMs: number; model: string | null; costUsd: number };
+export type ConsolidationRecord =
+  | (RunBase & {
+      outcome: "ok"; sent: number[];
+      decided: { id: number; state: "accepted" | "rejected"; reason: string }[];
+      verdicts: { id: number; verdict: "confirmed" | "cleared" }[];
+    })
+  | (RunBase & { outcome: "rejected" | "retry" | "stopped"; sent: number[] })
+  | (RunBase & { outcome: "conflict" });
+/** A proposal still pending after this many counted runs expires. */
+const MAX_ATTEMPTS = 3;
 
 export interface Memory {
   position(sessionId: string): Position | null;
@@ -75,6 +93,9 @@ export interface Memory {
   latestNextSteps(): string | null;
   fileHistory(relPath: string, limit: number): ObservationLine[];
   stats(model: string, sinceMs: number): MemoryStats;
+  /** Pending proposals and unreviewed stale rows, oldest first; `limit` caps each list. */
+  pending(limit: number): PendingWork;
+  recordConsolidation(run: ConsolidationRecord): void;
   close(): void;
 }
 
@@ -550,6 +571,11 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
         "SELECT MAX(created_at) AS last, COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= ?), 0) AS cost FROM digests",
         sinceMs,
       )!;
+      const runCost = one(
+        "SELECT COALESCE(SUM(cost_usd), 0) AS cost FROM consolidations WHERE started_at >= ?",
+        sinceMs,
+      )!;
+      const last = one("SELECT started_at, outcome FROM consolidations ORDER BY started_at DESC, id DESC LIMIT 1");
       const flags = one(
         `SELECT (SELECT COUNT(*) FROM proposals WHERE state = 'pending') AS proposals,
                 (SELECT COUNT(*) FROM observations WHERE stale_at IS NOT NULL) AS stale`,
@@ -558,10 +584,58 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
         observations: Number(counts.total),
         unembedded: Number(counts.pending),
         lastDigestMs: digests.last === null ? null : Number(digests.last),
-        costUsdSince: Number(digests.cost),
+        costUsdSince: Number(digests.cost) + Number(runCost.cost),
         pendingProposals: Number(flags.proposals),
         staleRows: Number(flags.stale),
+        lastConsolidation: last
+          ? { startedMs: Number(last.started_at), outcome: last.outcome as ConsolidationOutcome }
+          : null,
       };
+    },
+
+    pending(limit) {
+      const proposals = all(
+        "SELECT id, kind, bullet FROM proposals WHERE state = 'pending' ORDER BY created_at, id LIMIT ?",
+        limit,
+      ).map((row) => ({ id: Number(row.id), kind: row.kind as ProposalKind, bullet: String(row.bullet) }));
+      const stale = all(
+        `SELECT id, title, narrative, stale_reason FROM observations
+         WHERE stale_at IS NOT NULL AND stale_reviewed = 0 ORDER BY stale_at, id LIMIT ?`,
+        limit,
+      ).map((row) => ({
+        id: Number(row.id), title: String(row.title), narrative: String(row.narrative), reason: String(row.stale_reason),
+      }));
+      const runs = one(
+        `SELECT MAX(started_at) AS last, MAX(started_at) FILTER (WHERE outcome = 'ok') AS lastOk FROM consolidations`,
+      )!;
+      const ms = (v: unknown) => (v === null ? null : Number(v));
+      return { proposals, stale, lastStartMs: ms(runs.last), lastOkStartMs: ms(runs.lastOk) };
+    },
+
+    recordConsolidation(run) {
+      transaction(() => {
+        const now = Date.now();
+        db.prepare("INSERT INTO consolidations (started_at, finished_at, outcome, model, cost_usd) VALUES (?, ?, ?, ?, ?)")
+          .run(run.startedMs, now, run.outcome, run.model, run.costUsd);
+        if (run.outcome === "conflict") return;
+        const attempt = db.prepare("UPDATE proposals SET attempts = attempts + 1 WHERE id = ? AND state = 'pending'");
+        for (const id of run.sent) attempt.run(id);
+        if (run.outcome === "ok") {
+          const decide = db.prepare(
+            "UPDATE proposals SET state = ?, reason = ?, decided_at = ? WHERE id = ? AND state = 'pending'",
+          );
+          for (const d of run.decided) decide.run(d.state, d.reason, now, d.id);
+          const confirm = db.prepare("UPDATE observations SET stale_reviewed = 1 WHERE id = ? AND stale_at IS NOT NULL");
+          const clear = db.prepare(
+            "UPDATE observations SET stale_at = NULL, stale_reason = NULL, stale_reviewed = 0 WHERE id = ?",
+          );
+          for (const v of run.verdicts) (v.verdict === "confirmed" ? confirm : clear).run(v.id);
+        }
+        const expire = db.prepare(
+          "UPDATE proposals SET state = 'expired', decided_at = ? WHERE id = ? AND state = 'pending' AND attempts >= ?",
+        );
+        for (const id of run.sent) expire.run(now, id, MAX_ATTEMPTS);
+      });
     },
 
     close: () => db.close(),

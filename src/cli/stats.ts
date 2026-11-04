@@ -117,6 +117,8 @@ async function captureLines(root: string, config: CrankConfig): Promise<string[]
     lines.push(row("month cost", `${dollars(s.costUsdSince)} (list price)`));
     lines.push(row("proposals", String(s.pendingProposals)));
     lines.push(row("stale", String(s.staleRows)));
+    const last = s.lastConsolidation;
+    lines.push(row("consolidation", last === null ? "never" : `${ageOf(last.startedMs)} (${last.outcome})`));
   } else {
     lines.push(row("memory", MEMORY_STATE[opened.status]));
   }

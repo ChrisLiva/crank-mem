@@ -9,6 +9,7 @@ import {
 } from "./helpers.ts";
 import { crankHooks } from "../src/cli/settings.ts";
 import { crankTrust } from "../src/cli/codex-trust.ts";
+import { memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
 
 function cli(cwd: string, ...args: string[]): CliRun {
   return cliWithCodexHome(fs.mkdtempSync(path.join(os.tmpdir(), "crank-ch-")), cwd, ...args);
@@ -136,7 +137,7 @@ describe("stats: memory health", () => {
 
 describe("stats: capture health", () => {
   // The capture rows in their order, each label padded to the value column.
-  const CAPTURE_ROWS = /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|proposals|stale|memory): .*\n)+ {2}embedder: /;
+  const CAPTURE_ROWS = /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|proposals|stale|consolidation|memory): .*\n)+ {2}embedder: /;
 
   function digestOn(root: string): void {
     expect(runCli(root, ["digest", "on"]).status).toBe(0);
@@ -186,7 +187,27 @@ describe("stats: capture health", () => {
     seedMemory(root, [], { proposals: [{ kind: "memory", bullet: "- **P**: x" }] });
     const out = cli(root, "stats").stdout;
     expect(out).toMatch(CAPTURE_ROWS);
-    expect(out).toMatch(/\n {2}month cost: .*\n {2}proposals: {8}1\n {2}stale: {12}1\n {2}embedder: /);
+    expect(out).toMatch(/\n {2}month cost: .*\n {2}proposals: {8}1\n {2}stale: {12}1\n {2}consolidation: {4}never\n {2}embedder: /);
+  });
+
+  test("shows the last consolidation after the stale row, and counts its cost in the month", () => {
+    const root = initedProject();
+    seedMemory(root, [{ title: "one digest" }], { costUsd: 0.002 });
+    expect(cli(root, "stats").stdout).toContain("\n  consolidation:    never\n");
+    const opened = openMemory(memoryPath(root), "write");
+    if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
+    try {
+      opened.memory.recordConsolidation({
+        outcome: "ok", startedMs: Date.now(), model: "m", costUsd: 0.003, sent: [], decided: [], verdicts: [],
+      });
+    } finally {
+      opened.memory.close();
+    }
+    const out = cli(root, "stats").stdout;
+    expect(out).toMatch(CAPTURE_ROWS);
+    expect(out).toMatch(/\n {2}stale: .*\n {2}consolidation: {4}\d+s ago \(ok\)\n/);
+    expect(out).toMatch(/^  consolidation:    \d+s ago \(ok\)$/m);
+    expect(out).toContain("  month cost:       $0.0050 (list price)\n");
   });
 
   test("a month under a cent shows two significant digits, not $0.00", () => {

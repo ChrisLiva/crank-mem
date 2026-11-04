@@ -295,6 +295,122 @@ describe("proposals and stale flags", () => {
   });
 });
 
+describe("consolidation work", () => {
+  /** Appends digests to one session, each chained on the last position. */
+  function chain(memory: Memory): (over: Partial<DigestInput>) => void {
+    let prev: Position | null = null;
+    let n = 0;
+    return (over) => {
+      const next = { uuid: `c-${++n}`, timestamp: "2026-11-02T10:00:00.123Z" };
+      expect(memory.appendDigest(digest("s", prev, next, over))).toBe("appended");
+      prev = next;
+    };
+  }
+
+  const B1 = "- **Lock**: retry 2 s, see `src/hooks/lib/lock.ts` (2026-11-01) é—日本";
+  const B2 = "- Prefer black-box tests";
+  const B3 = "- **Spool**: entries settle by link";
+
+  /** p1..p3 proposed in that order; s1 (the later row) flagged before s2. */
+  async function seeded() {
+    const memory = writable();
+    const append = chain(memory);
+    append({ observations: [obs({ title: "Row A", narrative: "lock waits ünïcode" }), obs({ title: "Row B", narrative: "spool narrative" })] });
+    const [a, b] = memory.recent(2).map((line) => line.id).reverse() as [number, number];
+    append({ proposals: [{ kind: "memory", bullet: B1 }], stale: [{ id: b, reason: "B moved — 2026-11-02" }] });
+    await sleep(2);
+    append({ proposals: [{ kind: "preference", bullet: B2 }], stale: [{ id: a, reason: "A gone" }] });
+    await sleep(2);
+    append({ proposals: [{ kind: "memory", bullet: B3 }] });
+    const [p1, p2, p3] = memory.pending(20).proposals.map((p) => p.id) as [number, number, number];
+    return { memory, append, p1, p2, p3, s1: b, s2: a };
+  }
+
+  test("pending returns proposals and stale rows oldest first, capped per list", async () => {
+    const { memory, p1, p2, s1, s2 } = await seeded();
+    expect(memory.pending(2)).toEqual({
+      proposals: [{ id: p1, kind: "memory", bullet: B1 }, { id: p2, kind: "preference", bullet: B2 }],
+      stale: [
+        { id: s1, title: "Row B", narrative: "spool narrative", reason: "B moved — 2026-11-02" },
+        { id: s2, title: "Row A", narrative: "lock waits ünïcode", reason: "A gone" },
+      ],
+      lastStartMs: null,
+      lastOkStartMs: null,
+    });
+    expect(s1).toBeGreaterThan(s2);
+  });
+
+  test("an ok record applies its decisions and verdicts", async () => {
+    const { memory, p1, p2, p3, s1, s2 } = await seeded();
+    const t = Date.now() - 0.25;
+    memory.recordConsolidation({
+      outcome: "ok", startedMs: t, model: "m", costUsd: 0.003, sent: [p1, p2, p3],
+      decided: [{ id: p1, state: "accepted", reason: "r1" }, { id: p2, state: "rejected", reason: "r2" }],
+      verdicts: [{ id: s1, verdict: "confirmed" }, { id: s2, verdict: "cleared" }],
+    });
+    const work = memory.pending(20);
+    expect(work.proposals).toEqual([{ id: p3, kind: "memory", bullet: B3 }]);
+    expect(memory.stats("m", 0).pendingProposals).toBe(1);
+    expect(memory.get([s1])[0]!.stale).toBe(true);
+    expect(work.stale).toEqual([]);
+    expect(memory.get([s2])[0]!.staleFlag).toBeNull();
+    const query: SearchQuery = { text: "Row A", vector: null, limit: 5, type: null, sinceMs: null, file: null, stale: false };
+    expect(memory.search(query).map((hit) => hit.id)).toEqual([s2]);
+    expect(work.lastOkStartMs).toBe(t);
+    expect(work.lastStartMs).toBe(t);
+  });
+
+  test("three counted runs expire a pending proposal, a conflict counts nothing, and a closed proposal never returns", () => {
+    const memory = writable();
+    const append = chain(memory);
+    append({
+      proposals: [
+        { kind: "memory", bullet: "- **Q1**: one" },
+        { kind: "memory", bullet: "- **Q2**: two" },
+        { kind: "memory", bullet: "- **Q3**: three" },
+        { kind: "preference", bullet: "- **R**: drop it (2026-11-01)" },
+      ],
+    });
+    const [q1, q2, q3, r] = memory.pending(20).proposals.map((p) => p.id) as [number, number, number, number];
+    const base = { model: "m", costUsd: 0 };
+    let started = Date.now();
+    const okRun = (sent: number[], decided: { id: number; state: "accepted" | "rejected"; reason: string }[] = []) =>
+      memory.recordConsolidation({ ...base, startedMs: ++started, outcome: "ok", sent, decided, verdicts: [] });
+    const pendingIds = () => memory.pending(20).proposals.map((p) => p.id);
+
+    memory.recordConsolidation({ ...base, startedMs: ++started, outcome: "conflict" });
+    okRun([q1, q2, q3, r], [{ id: r, state: "rejected", reason: "not durable" }]);
+    memory.recordConsolidation({ ...base, startedMs: ++started, outcome: "retry", sent: [q1] });
+    memory.recordConsolidation({ ...base, startedMs: ++started, outcome: "stopped", sent: [q2] });
+    okRun([q3]);
+    expect(pendingIds()).toEqual([q1, q2, q3]);
+
+    memory.recordConsolidation({ ...base, startedMs: ++started, outcome: "rejected", sent: [q1] });
+    expect(pendingIds()).toEqual([q2, q3]);
+    expect(memory.stats("m", 0).pendingProposals).toBe(2);
+    okRun([q2]);
+    expect(pendingIds()).toEqual([q3]);
+    expect(memory.stats("m", 0).pendingProposals).toBe(1);
+
+    append({ proposals: [{ kind: "preference", bullet: "- **R**: drop it (2026-11-04)" }, { kind: "memory", bullet: "- **Q1**: one (2026-11-04)" }] });
+    expect(pendingIds()).toEqual([q3]);
+    expect(memory.stats("m", 0).pendingProposals).toBe(1);
+  });
+
+  test("consolidation cost counts by start time, and stats names the latest run by start, then id", () => {
+    const memory = writable();
+    const t = Date.now();
+    chain(memory)({ costUsd: 0.002 });
+    memory.recordConsolidation({ outcome: "ok", startedMs: t, model: "m", costUsd: 0.003, sent: [], decided: [], verdicts: [] });
+    memory.recordConsolidation({ outcome: "conflict", startedMs: t - 10_000, model: null, costUsd: 0.004 });
+    const stats = memory.stats("m", t - 5_000);
+    expect(Math.abs(stats.costUsdSince - 0.005)).toBeLessThan(1e-9);
+    expect(stats.lastConsolidation).toEqual({ startedMs: t, outcome: "ok" });
+    memory.recordConsolidation({ outcome: "stopped", startedMs: t, model: "m", costUsd: 0, sent: [] });
+    expect(memory.stats("m", t - 5_000).lastConsolidation).toEqual({ startedMs: t, outcome: "stopped" });
+  });
+});
+
 describe("recordRejection", () => {
   test("counts up from the first rejection and resets on a stored digest", () => {
     const memory = writable();
@@ -314,6 +430,7 @@ describe("read methods", () => {
     expect(memory.latestNextSteps()).toBeNull();
     expect(memory.stats("m1", 0)).toEqual({
       observations: 0, unembedded: 0, lastDigestMs: null, costUsdSince: 0, pendingProposals: 0, staleRows: 0,
+      lastConsolidation: null,
     });
     const n1 = { uuid: "a", timestamp: "2026-11-02T10:00:00.000Z" };
     const summary = (next_steps: string) => ({ request: "r", investigated: "i", learned: "l", completed: "c", next_steps });
