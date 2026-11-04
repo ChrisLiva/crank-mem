@@ -88,7 +88,8 @@ describe("init → uninstall round-trip", () => {
     // data dir
     expect(fs.existsSync(path.join(root, ".crank/anatomy-index.json"))).toBe(true);
     expect(fs.existsSync(path.join(root, ".crank/cerebrum.md"))).toBe(true);
-    expect(fs.readFileSync(path.join(root, ".crank/journal.md"), "utf-8")).toContain("# Journal");
+    expect(fs.readFileSync(path.join(root, ".crank/cerebrum.md"), "utf-8")).toBe("# Cerebrum\n\n## User Preferences\n\n## Memory\n");
+    expect(fs.existsSync(path.join(root, ".crank/journal.md"))).toBe(false);
     expect(fs.existsSync(path.join(root, ".crank/hooks/lib/scanner.ts"))).toBe(true);
     const index = JSON.parse(fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"));
     expect(index.meta.fileCount).toBeGreaterThanOrEqual(2);

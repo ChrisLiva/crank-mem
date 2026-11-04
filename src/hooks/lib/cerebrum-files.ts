@@ -61,6 +61,17 @@ export function backupCerebrum(crankDir: string, text: string): string | null {
   }
 }
 
+/**
+ * Split a cerebrum at its first line starting `## `: `preamble` is every byte
+ * before that line (the whole text when there is none), `body` the rest from it
+ * on, or null when there is none.
+ */
+export function splitPreamble(md: string): { preamble: string; body: string | null } {
+  const cut = md.startsWith("## ") ? 0 : md.indexOf("\n## ") + 1;
+  if (cut === 0 && !md.startsWith("## ")) return { preamble: md, body: null };
+  return { preamble: md.slice(0, cut), body: md.slice(cut) };
+}
+
 // What the audit skill's backup step copies (skills/crank-mem-audit/SKILL.md).
 const AUDIT_BACKUP_FILES = new Set([CEREBRUM_FILE, JOURNAL_FILE, ARCHIVE_FILE]);
 

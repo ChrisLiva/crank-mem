@@ -18,7 +18,7 @@ import { defaultConfig, saveConfig, CRANK_DIR, type CrankConfig } from "../hooks
 import { fullScan } from "../hooks/lib/scanner.ts";
 import { commitIndex } from "../hooks/lib/store.ts";
 import { CLI_LOCK_BUDGET_MS } from "../hooks/lib/lock.ts";
-import { CEREBRUM_FILE, JOURNAL_FILE } from "../hooks/lib/cerebrum-files.ts";
+import { CEREBRUM_FILE } from "../hooks/lib/cerebrum-files.ts";
 
 function detectRuntime(): CrankConfig["runtime"] | null {
   if (spawnSync("bun", ["--version"], { stdio: "ignore" }).status === 0) return "bun";
@@ -134,9 +134,8 @@ export async function run(args: string[]): Promise<number> {
     ensureCrankGitignore(crankDir, backup);
     if (gitMode === "commit") ignoredBy = unignoreCerebrum(root, (f) => { backup(f); unignored.push(f); });
 
-    // ── Seed cerebrum + journal + first scan ───────────────────────────────
+    // ── Seed cerebrum + first scan ─────────────────────────────────────────
     fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, CEREBRUM_FILE));
-    fs.copyFileSync(templatePath("journal.md"), path.join(crankDir, JOURNAL_FILE));
     scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
   } catch (err) {
     console.error(`crank-mem: ${err instanceof Error ? err.message : String(err)}`);

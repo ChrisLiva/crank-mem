@@ -444,29 +444,85 @@ describe("upgrade", () => {
     expect(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf-8")).toBe(own);
   });
 
-  // The version stamp gates re-vendoring, not the journal: a deleted journal
-  // at the current version would otherwise never come back.
-  test("reseeds a deleted journal.md even when the version is current", () => {
+  test("seeds no journal.md and keeps an existing one byte for byte", () => {
     const root = initedProject();
-    fs.rmSync(path.join(root, ".crank/journal.md"));
+    const journal = path.join(root, ".crank/journal.md");
+    expect(fs.existsSync(journal)).toBe(false);
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("nothing else to do");
-    expect(fs.readFileSync(path.join(root, ".crank/journal.md"), "utf-8")).toContain("# Journal");
+    expect(run.stdout).not.toContain("seeded .crank/journal.md");
+    expect(fs.existsSync(journal)).toBe(false);
+
+    const kept = "# Journal\n\n- 2026-10-01: did a; NEXT: do b — ünïcode\n";
+    fs.writeFileSync(journal, kept);
+    expect(cli(root, "upgrade").status).toBe(0);
+    expect(fs.readFileSync(journal, "utf-8")).toBe(kept);
   });
 
-  test("seeds journal.md on an install that predates it", () => {
+  // 0.8.1 and earlier seeded the cerebrum with a protocol preamble; frozen here.
+  function frozenPreamble(): string {
+    const text = fs.readFileSync(path.join(import.meta.dir, "../src/templates/cerebrum-preamble-0.8.1.md"), "utf-8");
+    expect(Buffer.byteLength(text)).toBe(375);
+    expect(crypto.createHash("sha256").update(text).digest("hex")).toBe("3439e3f1b33c1c6286c0f1537a324567e5515a1a0d63e3f05c414de73452850d");
+    return text;
+  }
+
+  test("replaces an unedited template preamble once, after backing up the cerebrum", () => {
     const root = initedProject();
     const crankDir = path.join(root, ".crank");
-    const configPath = path.join(crankDir, "config.json");
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    config.vendored_version = "0.0.1";
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-    fs.rmSync(path.join(crankDir, "journal.md")); // pre-journal install
+    const cerebrum = path.join(crankDir, "cerebrum.md");
+    const body = "## User Preferences\n\n- **Tabs**: keep tabs (2026-10-01)\n\n## Memory\n";
+    const old = frozenPreamble() + body;
+    fs.writeFileSync(cerebrum, old);
 
-    expect(cli(root, "upgrade").status).toBe(0);
-    expect(fs.readFileSync(path.join(crankDir, "journal.md"), "utf-8")).toContain("# Journal");
+    const run = cli(root, "upgrade");
+    expect(run.status).toBe(0);
+    expect(run.stdout.split("\n")).toContain("  replaced the template preamble of .crank/cerebrum.md");
+    expect(fs.readFileSync(cerebrum, "utf-8")).toBe("# Cerebrum\n\n" + body);
+
+    const backups = path.join(crankDir, "backups");
+    const newest = path.join(backups, fs.readdirSync(backups).sort().at(-1)!);
+    const manifest = JSON.parse(fs.readFileSync(path.join(newest, "manifest.json"), "utf-8"));
+    const entry = manifest.entries.find((e: { original: string }) => e.original.endsWith("/.crank/cerebrum.md"));
+    expect(fs.readFileSync(path.join(newest, entry.backupFile), "utf-8")).toBe(old);
+
+    const names = fs.readdirSync(backups);
+    const again = cli(root, "upgrade");
+    expect(again.status).toBe(0);
+    expect(again.stdout).not.toContain("replaced the template preamble");
+    expect(fs.readdirSync(backups)).toEqual(names);
+  });
+
+  test("keeps an edited preamble, and a cerebrum whose backup fails, byte for byte", () => {
+    const root = initedProject();
+    const crankDir = path.join(root, ".crank");
+    const cerebrum = path.join(crankDir, "cerebrum.md");
+    const edited = [
+      "# Cerebrum\n\nMy own notes.\n\n## Memory\n",
+      frozenPreamble() + "- no heading — ünïcode (2026-10-01)\n",
+      "",
+    ];
+    for (const text of edited) {
+      fs.writeFileSync(cerebrum, text);
+      const run = cli(root, "upgrade");
+      expect(run.status).toBe(0);
+      expect(run.stdout).not.toContain("replaced the template preamble");
+      expect(fs.readFileSync(cerebrum, "utf-8")).toBe(text);
+    }
+
+    const unedited = frozenPreamble() + "## Memory\n";
+    fs.writeFileSync(cerebrum, unedited);
+    const backups = path.join(crankDir, "backups");
+    fs.chmodSync(backups, 0o555);
+    try {
+      const run = cli(root, "upgrade");
+      expect(run.status).toBe(0);
+      expect(run.stderr).toContain("crank-mem: could not replace the template preamble of .crank/cerebrum.md (");
+      expect(fs.readFileSync(cerebrum, "utf-8")).toBe(unedited);
+    } finally {
+      fs.chmodSync(backups, 0o755);
+    }
   });
 });
 
