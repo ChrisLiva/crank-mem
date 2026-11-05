@@ -8,7 +8,7 @@ import {
   spoolEntry, stopDigests,
 } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
-import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
+import { CODE_BULLET, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
 import { claudeSessionStart, codexSessionStart } from "./fixtures/payloads.ts";
 
@@ -85,6 +85,17 @@ describe("session-start hook (black-box)", () => {
     expect(codex).not.toContain("CLAUDE.md");
     const claude = ctxFor(claudeSessionStart(root));
     expect(claude).toContain("Read with offset/limit, or `sed -n 'START,ENDp' file`");
+    // The code pointer sits between the anatomy pointer and the proof bullet.
+    const pointerEnds: [string, string][] = [
+      [codex, "file (`sed -n 'START,ENDp' file`).\n"],
+      [claude, "file (Read with offset/limit, or `sed -n 'START,ENDp' file`).\n"],
+    ];
+    for (const [ctx, pointerEnd] of pointerEnds) {
+      expect(count(ctx, CODE_BULLET)).toBe(1);
+      const at = ctx.indexOf(CODE_BULLET);
+      expect(ctx.slice(0, at).endsWith(pointerEnd)).toBe(true);
+      expect(ctx.slice(at + CODE_BULLET.length).startsWith("\n- Memory is not proof")).toBe(true);
+    }
   });
 
   test("the most committed file stays indexed past max_files across session starts and a scan", () => {
@@ -531,6 +542,8 @@ describe("digests running (black-box)", () => {
     expect(ctx.endsWith("Existing ADRs are settled — don't relitigate them.")).toBe(true);
     expect(ctx.split("\n").filter((l) => l.startsWith("## "))).toEqual(["## crank-mem (project memory)"]);
     expect(count(ctx, RECALL_BULLET)).toBe(1);
+    expect(ctx.indexOf(CODE_BULLET)).toBeGreaterThan(-1);
+    expect(ctx.indexOf(CODE_BULLET)).toBeLessThan(ctx.indexOf(RECALL_BULLET));
   });
 
   test("next steps lead, then recent memory, then the cerebrum", () => {

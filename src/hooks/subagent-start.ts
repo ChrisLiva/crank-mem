@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex } from "./lib/store.ts";
-import { excerptOf, INJECTION_HEADING, RECALL_BULLET, recallApplies } from "./lib/injection.ts";
+import { CODE_BULLET, excerptOf, INJECTION_HEADING, RECALL_BULLET, recallApplies } from "./lib/injection.ts";
 import { CEREBRUM_FILE } from "./lib/cerebrum-files.ts";
 import { enableDebug } from "./lib/debug.ts";
 import { digestGate } from "./lib/spool.ts";
@@ -13,8 +13,10 @@ import { memoryPath, memoryStatus } from "./lib/memory.ts";
 // subagent, and this channel reaches the subagent but not its parent (ADR
 // 0007), so it is the only way memory reaches the agents doing most of the
 // tool calls. Read-only, with no index refresh: a compact cerebrum excerpt
-// labelled by section name, plus the recall pointer where recallApplies. The
-// wiring's agent_type matcher picks which subagents get it. Every path exits 0.
+// labelled by section name, CODE_BULLET (the outline/unfold pointer) with no
+// gate, so a project root always yields an injection, plus the recall pointer
+// where recallApplies. The wiring's agent_type matcher picks which subagents
+// get it. Every path exits 0.
 
 /** Excerpt budget per spawn: a quarter of the session injection, paid per subagent. */
 const SUBAGENT_EXCERPT_BYTES = 2048;
@@ -43,7 +45,6 @@ async function main(): Promise<void> {
   const excerpt = md
     ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, { index: loadIndex(crankDir), root }, true).text
     : "";
-  if (!excerpt && !recall) return;
 
   const lines = [INJECTION_HEADING];
   if (excerpt) {
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
       `- Excerpt of \`.crank/cerebrum.md\`, this project's memory; grep it for more. Memory is not proof: verify a claim against the cited file before relying on it.`,
     );
   }
+  lines.push(CODE_BULLET);
   if (recall) lines.push(RECALL_BULLET);
   if (excerpt) lines.push("", excerpt);
   emitAdditionalContext("SubagentStart", lines.join("\n"));

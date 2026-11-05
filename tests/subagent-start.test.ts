@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { makeCrankHome, makeCrankProject, runHook, seedMemory } from "./helpers.ts";
 import { claudeSubagentStart } from "./fixtures/payloads.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
-import { INJECTION_HEADING, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
+import { CODE_BULLET, INJECTION_HEADING, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 
 const HOOK = "src/hooks/subagent-start.ts";
 
@@ -54,14 +54,16 @@ describe("subagent-start hook (black-box)", () => {
 
     // Digests off, no store: no recall pointer.
     const off = context(root);
-    shape(off);
+    expect(shape(off)[2]).toBe(CODE_BULLET);
     expect(off).not.toContain(RECALL_BULLET);
     // Read-only: a subagent spawn does not refresh the index.
     expect(fs.existsSync(path.join(root, ".crank/anatomy-index.json"))).toBe(false);
 
-    // Digests on, no store: the recall pointer is the third line.
+    // Digests on, no store: the recall pointer follows the code pointer.
     setDigest(root, true);
-    expect(shape(context(root))[2]).toBe(RECALL_BULLET);
+    const on = shape(context(root));
+    expect(on[2]).toBe(CODE_BULLET);
+    expect(on[3]).toBe(RECALL_BULLET);
   });
 
   // At 2 KB the session-start order, preferences before memory, leaves no room
@@ -98,23 +100,22 @@ describe("subagent-start hook (black-box)", () => {
     expect(context(root)).toContain("[cited file missing: src/old/loader.ts]");
   });
 
-  test("stays silent with exit 0 when there is nothing to inject", () => {
+  test("injects the code pointer wherever the project root is found, and stays silent outside one", () => {
     // The template cerebrum holds headings and no bullets.
     const fresh = makeCrankProject();
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "crank-none-"));
     const noCerebrum = makeCrankProject();
     fs.rmSync(path.join(noCerebrum, ".crank/cerebrum.md"));
-    for (const root of [fresh, outside, noCerebrum]) {
-      const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(root)), undefined, { CRANK_HOME: HOME });
-      expect(run.status).toBe(0);
-      expect(run.stdout).toBe("");
-    }
+    for (const root of [fresh, noCerebrum]) expect(context(root)).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}`);
+    const none = runHook(HOOK, JSON.stringify(claudeSubagentStart(outside)), undefined, { CRANK_HOME: HOME });
+    expect(none.status).toBe(0);
+    expect(none.stdout).toBe("");
     const garbage = runHook(HOOK, "not json", undefined, { CRANK_HOME: HOME });
     expect(garbage.status).toBe(0);
     expect(garbage.stdout).toBe("");
 
-    // No excerpt, but recall applies: the heading and the pointer alone.
+    // No excerpt, but recall applies: the heading and the two pointers alone.
     seedMemory(noCerebrum, [{ title: "a stored observation" }]);
-    expect(context(noCerebrum)).toBe(`${INJECTION_HEADING}\n${RECALL_BULLET}`);
+    expect(context(noCerebrum)).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}\n${RECALL_BULLET}`);
   });
 });

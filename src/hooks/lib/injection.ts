@@ -40,6 +40,9 @@ export const INJECTION_HEADING = "## crank-mem (project memory)";
 /** Points at the memory store's read commands; see recallApplies for when it shows. */
 export const RECALL_BULLET =
   "- Past work: `crank-mem search <query>` finds stored observations by meaning or keyword, `crank-mem timeline <id>` shows what surrounds one, and `crank-mem get <id...>` prints them in full.";
+/** Points at the code commands; session start and SubagentStart show it ungated. */
+export const CODE_BULLET =
+  "- Code: `crank-mem outline <file>` lists a source file's symbols with line ranges, and `crank-mem unfold <file> <symbol|line>` prints one in full.";
 
 /**
  * Cerebrum sections read as semantic memory, lowercased. `## Memory` is the
@@ -97,7 +100,7 @@ const RECENT_MEMORY_ROWS = 50;
 function instructions(index: AnatomyIndex, codex: boolean, recall: boolean): string {
   const lead =
     "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`.";
-  const bullets = [anatomyPointer(index, codex), ...(recall ? [RECALL_BULLET] : []), PROOF_AND_ADR_BULLETS];
+  const bullets = [anatomyPointer(index, codex), CODE_BULLET, ...(recall ? [RECALL_BULLET] : []), PROOF_AND_ADR_BULLETS];
   return `${INJECTION_HEADING}\n\n${lead}\n\n${bullets.join("\n")}`;
 }
 
