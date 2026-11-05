@@ -20,8 +20,41 @@ export async function outline(args: string[]): Promise<number> {
   }
   const target = await readTarget(file);
   if (target === null) return 1;
-  process.stdout.write(`${file}\n` + renderRows(preorder(target.symbols).map(({ symbol }) => outlineRow(symbol))));
+  process.stdout.write(outlinePage(file, preorder(target.symbols), from === undefined ? 1 : Number(from)));
   return 0;
+}
+
+const CAP = 25_000;
+
+/** The outline page from line `n`: whole runs of equal-start rows while they and the continuation line fit under CAP. */
+function outlinePage(file: string, entries: { symbol: CodeSymbol; parents: CodeSymbol[] }[], n: number): string {
+  const head = `${file}\n`;
+  const first = entries.findIndex(({ symbol }) => symbol.start >= n);
+  if (first === -1) return head;
+  const listed = entries.slice(first);
+  const ctx = listed[0]!.parents.filter((p) => p.start < n).map(outlineRow);
+  const rows = listed.map(({ symbol }) => outlineRow(symbol));
+  const cont = (i: number) => {
+    if (i >= listed.length) return "";
+    const s = listed[i]!.symbol.start;
+    return `… ${listed.length - i} more symbols from L${s}: crank-mem outline ${file} --from ${s}\n`;
+  };
+  const page = (count: number, extra: string) => head + renderRows([...ctx, ...rows.slice(0, count)]) + extra;
+  let chosen = new RowsSize(ctx);
+  let i = 0;
+  while (i < listed.length) {
+    let j = i;
+    const grown = chosen.copy();
+    while (j < listed.length && listed[j]!.symbol.start === listed[i]!.symbol.start) grown.add(rows[j++]!);
+    if (head.length + grown.length + cont(j).length <= CAP) {
+      chosen = grown;
+      i = j;
+      continue;
+    }
+    if (i > 0) return page(i, cont(i));
+    return page(prefixFitting(new RowsSize(ctx), rows.slice(0, j), CAP - head.length - cont(j).length), cont(j));
+  }
+  return page(listed.length, "");
 }
 
 /** `crank-mem unfold <file> <symbol|line>`: every matching symbol's full source. */
@@ -48,8 +81,40 @@ export async function unfold(args: string[]): Promise<number> {
     if (close.length > 0) console.error(`Close: ${close.join(", ")}`);
     return 1;
   }
-  process.stdout.write(matches.map((s) => matchHeader(file, s) + matchLines(lines, s)).join("\n"));
+  process.stdout.write(cappedMatches(file, lines, matches));
   return 0;
+}
+
+/** Whole matches while they fit under CAP, folding a first match too long to print; the rest by header while those fit. */
+function cappedMatches(file: string, lines: string[], matches: CodeSymbol[]): string {
+  const n = matches.length;
+  const header = (i: number) => matchHeader(file, matches[i]!);
+  const more = (j: number) => `… ${j} more matches.\n`;
+  const past = (k: number) => `… ${k} matches past the cap, by header:\n`;
+  const reserve = (i: number) =>
+    i + 1 < n ? past(n - i - 1).length + header(i + 1).length + (i + 2 < n ? more(n - i - 2).length : 0) : 0;
+  let out = "";
+  let i = 0;
+  for (; i < n; i++) {
+    const piece = (i > 0 ? "\n" : "") + header(i) + matchLines(lines, matches[i]!);
+    if (out.length + piece.length + reserve(i) > CAP) break;
+    out += piece;
+  }
+  if (i === 0 && n > 0) {
+    const s = matches[0]!;
+    const tooLong = `… L${s.start}-${s.end} is too long to print whole: read a slice by line range, or run crank-mem outline ${file} --from ${s.start}.\n`;
+    const budget = CAP - header(0).length - tooLong.length - reserve(0);
+    const rows = preorder([s]).map(({ symbol }) => outlineRow(symbol));
+    out = header(0) + renderRows(rows.slice(0, prefixFitting(new RowsSize(), rows, budget))) + tooLong;
+    i = 1;
+  }
+  if (i < n) {
+    out += past(n - i);
+    let j = i;
+    while (j < n && out.length + header(j).length + (j + 1 < n ? more(n - j - 1).length : 0) <= CAP) out += header(j++);
+    if (j < n) out += more(n - j);
+  }
+  return out;
 }
 
 /** A number selects the deepest symbol spanning that line; a name, every symbol whose qualified name ends with its segments. */
@@ -143,6 +208,39 @@ function outlineRow(s: CodeSymbol): { gutter: string; rest: string } {
     ? (s.fold === "brace" ? " {" : "")
     : s.fold === "brace" ? " { … }" : s.fold === "other" ? " …" : "";
   return { gutter: `${s.start}-${s.end}`, rest: s.indent + head + marker };
+}
+
+/** The running length of rows as renderRows prints them. */
+class RowsSize {
+  private count = 0;
+  private rest = 0;
+  private width = 0;
+
+  constructor(rows: { gutter: string; rest: string }[] = []) {
+    for (const row of rows) this.add(row);
+  }
+
+  add(row: { gutter: string; rest: string }): this {
+    this.count += 1;
+    this.rest += row.rest.length;
+    this.width = Math.max(this.width, row.gutter.length);
+    return this;
+  }
+
+  copy(): RowsSize {
+    return Object.assign(new RowsSize(), this);
+  }
+
+  get length(): number {
+    return this.count * (this.width + 2) + this.rest;
+  }
+}
+
+/** How many of `rows`, from the first, fit within `budget` printed after the rows `size` already holds. */
+function prefixFitting(size: RowsSize, rows: { gutter: string; rest: string }[], budget: number): number {
+  let p = 0;
+  while (p < rows.length && size.copy().add(rows[p]!).length <= budget) size.add(rows[p++]!);
+  return p;
 }
 
 /** The rows with their gutters right-aligned to the widest. */

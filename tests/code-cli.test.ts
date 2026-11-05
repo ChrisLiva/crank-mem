@@ -149,6 +149,151 @@ describe("unfold", () => {
   }, 30_000);
 });
 
+describe("cap", () => {
+  test("outline pages within the cap and unfold folds what does not fit", () => {
+    const CAP = 25_000;
+    const pad = (n: number) => String(n).padStart(4, "0");
+    const pairLine = (n: number) => `function a${pad(n)}(x: number) { return x; } function b${pad(n)}(x: number) { return x; }`;
+    const manyLines: string[] = [];
+    const expected: { start: number; text: string }[] = [];
+    const pair = (n: number) => {
+      manyLines.push(pairLine(n));
+      for (const name of ["a", "b"]) expected.push({ start: n, text: `function ${name}${pad(n)}(x: number) { … }` });
+    };
+    for (let n = 1; n <= 399; n++) pair(n);
+    manyLines.push("class Big {");
+    expected.push({ start: 400, text: "class Big {" });
+    for (let n = 401; n <= 1200; n++) {
+      manyLines.push(`  m${pad(n)}(): void {}`);
+      expected.push({ start: n, text: `  m${pad(n)}(): void { … }` });
+    }
+    manyLines.push("}");
+    for (let n = 1202; n <= 1801; n++) pair(n);
+    const crowdedLine = Array.from({ length: 1500 }, (_, i) => `function c${pad(i + 1)}() {}`).join(" ");
+    const root = makeCrankProject({
+      "src/many.ts": manyLines.join("\n") + "\n",
+      "src/nest.ts": "namespace O {\n  class C {\n    m(): void {}\n    n(): void {}\n  }\n}\n",
+      "src/crowded.ts": `${crowdedLine}\nfunction tail() {}\n`,
+      "src/crowded2.ts": `${crowdedLine}\n`,
+    });
+    const outline = (file: string, from?: number) => runCli(root, ["outline", file, ...(from === undefined ? [] : ["--from", String(from)])]);
+    const CONT = /^… (?<k>\d+) more symbols from L(?<s>\d+): crank-mem outline src\/many\.ts --from \k<s>$/;
+
+    const seen: string[] = [];
+    let from = 1;
+    let sawBigContext = false;
+    for (let pages = 0; ; pages++) {
+      expect(pages).toBeLessThan(20);
+      const run = outline("src/many.ts", from === 1 ? undefined : from);
+      expect([from, run.status, run.stdout.length <= CAP, run.stdout.endsWith("\n")]).toEqual([from, 0, true, true]);
+      const lines = run.stdout.slice(0, -1).split("\n");
+      expect(lines[0]).toBe("src/many.ts");
+      const last = CONT.exec(lines.at(-1)!)?.groups;
+      if (from === 1) expect(last).toBeDefined();
+      const symbolLines = lines.slice(1, last ? -1 : undefined);
+      const widths = new Set(symbolLines.map((line) => line.split("│")[0]!.length));
+      expect(widths.size).toBe(1);
+      const starts: number[] = [];
+      for (const line of symbolLines) {
+        const [gutter, text] = line.split("│") as [string, string];
+        const start = Number(gutter.trim().split("-")[0]);
+        starts.push(start);
+        if (start >= from) seen.push(text);
+      }
+      if (from > 400 && from <= 1201 && symbolLines[0]!.trimStart() === "400-1201│class Big {") sawBigContext = true;
+      if (!last) break;
+      const s = Number(last.s);
+      expect(starts.every((start) => start < s)).toBe(true);
+      expect(Number(last.k)).toBe(expected.filter((e) => e.start >= s).length);
+      from = s;
+    }
+    expect(seen).toEqual(expected.map((e) => e.text));
+    expect(sawBigContext).toBe(true);
+    expect(outline("src/many.ts", 99999)).toEqual({ status: 0, stdout: "src/many.ts\n", stderr: "" });
+    expect(outline("src/nest.ts", 4)).toEqual({
+      status: 0,
+      stdout: "src/nest.ts\n1-6│namespace O {\n2-5│  class C {\n4-4│    n(): void { … }\n",
+      stderr: "",
+    });
+
+    const crowded = outline("src/crowded.ts");
+    expect(crowded.status).toBe(0);
+    expect(crowded.stdout.length).toBeLessThanOrEqual(CAP);
+    const crowdedLines = crowded.stdout.slice(0, -1).split("\n");
+    expect(crowdedLines.at(-1)).toBe("… 1 more symbols from L2: crank-mem outline src/crowded.ts --from 2");
+    expect(crowdedLines.length).toBeGreaterThan(2);
+    expect(crowdedLines.slice(1, -1).every((line) => /^1-1│function c\d{4}\(\) \{ … \}$/.test(line))).toBe(true);
+    expect(outline("src/crowded.ts", 2)).toEqual({ status: 0, stdout: "src/crowded.ts\n2-2│function tail() { … }\n", stderr: "" });
+    const crowded2 = outline("src/crowded2.ts");
+    expect(crowded2.status).toBe(0);
+    expect(crowded2.stdout.length).toBeLessThanOrEqual(CAP);
+    expect(crowded2.stdout.slice(0, -1).split("\n").at(-1)).toMatch(/^1-1│function c\d{4}\(\) \{ … \}$/);
+
+    const methods = Array.from({ length: 2998 }, (_, i) => `  m${pad(i + 2)}(): void {}`);
+    fs.writeFileSync(
+      path.join(root, "src/huge.ts"),
+      ["class Huge {", ...methods, "}", "namespace later {", "  export function Huge(): void {}", "}", ""].join("\n"),
+    );
+    const huge = runCli(root, ["unfold", "src/huge.ts", "Huge"]);
+    expect(huge.status).toBe(0);
+    expect(huge.stdout.length).toBeLessThanOrEqual(CAP);
+    const hugeLines = huge.stdout.slice(0, -1).split("\n");
+    expect(hugeLines[0]).toBe("src/huge.ts:1-3000 class Huge");
+    expect(hugeLines[1]).toEndWith("│class Huge {");
+    expect(hugeLines.slice(1, -3).every((line) => /^ *\d+-\d+│/.test(line))).toBe(true);
+    expect(hugeLines.slice(-3)).toEqual([
+      "… L1-3000 is too long to print whole: read a slice by line range, or run crank-mem outline src/huge.ts --from 1.",
+      "… 1 matches past the cap, by header:",
+      "src/huge.ts:3002-3002 fn later.Huge",
+    ]);
+
+    /** The capped unfold reassembled from its whole matches and bare headers, counting how many of each it printed. */
+    const folded = (stdout: string, wholes: string[], headers: string[]) => {
+      const n = wholes.length;
+      const pastAt = stdout.indexOf("\n… ") + 1;
+      const w = stdout.slice(0, pastAt).split("\n").filter((line) => headers.includes(line + "\n")).length;
+      const after = stdout.slice(pastAt).split("\n").filter((line) => headers.includes(line + "\n")).length;
+      const more = w + after < n ? `… ${n - w - after} more matches.\n` : "";
+      const rebuilt = wholes.slice(0, w).join("\n") + `… ${n - w} matches past the cap, by header:\n` + headers.slice(w, w + after).join("") + more;
+      return { w, after, more, rebuilt };
+    };
+    const x40 = "x".repeat(40);
+    const forty: string[] = [];
+    const fortyWholes: string[] = [];
+    const fortyHeaders: string[] = [];
+    for (let b = 1; b <= 40; b++) {
+      const nn = String(b).padStart(2, "0");
+      const start = forty.length + 2;
+      forty.push(`namespace n${nn} {`, "  export function big(): void {");
+      for (let v = 1; v <= 30; v++) forty.push(`    const v${String(v).padStart(2, "0")} = "${x40}";`);
+      forty.push("  }", "}");
+      const end = forty.length - 1;
+      fortyHeaders.push(`src/forty.ts:${start}-${end} fn n${nn}.big\n`);
+      fortyWholes.push(fortyHeaders.at(-1)! + forty.slice(start - 1, end).map((line, i) => `${String(start + i).padStart(String(end).length)}│${line}\n`).join(""));
+    }
+    fs.writeFileSync(path.join(root, "src/forty.ts"), forty.join("\n") + "\n");
+    const fortyRun = runCli(root, ["unfold", "src/forty.ts", "big"]);
+    expect([fortyRun.status, fortyRun.stdout.length <= CAP]).toEqual([0, true]);
+    const f40 = folded(fortyRun.stdout, fortyWholes, fortyHeaders);
+    expect([f40.w >= 1, f40.after >= 1, fortyRun.stdout]).toEqual([true, true, f40.rebuilt]);
+
+    const thousand: string[] = [];
+    const thousandWholes: string[] = [];
+    const thousandHeaders: string[] = [];
+    for (let n = 1; n <= 1000; n++) {
+      thousand.push(`namespace t${pad(n)} { export function f(): void {} }`);
+      thousandHeaders.push(`src/thousand.ts:${n}-${n} fn t${pad(n)}.f\n`);
+      thousandWholes.push(`${thousandHeaders.at(-1)}${n}│${thousand.at(-1)}\n`);
+    }
+    fs.writeFileSync(path.join(root, "src/thousand.ts"), thousand.join("\n") + "\n");
+    const thousandRun = runCli(root, ["unfold", "src/thousand.ts", "f"]);
+    expect([thousandRun.status, thousandRun.stdout.length <= CAP]).toEqual([0, true]);
+    const f1000 = folded(thousandRun.stdout, thousandWholes, thousandHeaders);
+    expect(f1000.more).toMatch(/^… \d+ more matches\.\n$/);
+    expect(thousandRun.stdout).toBe(f1000.rebuilt);
+  }, 60_000);
+});
+
 describe("refusals", () => {
   test("argument and path checks refuse in order, each with one stderr line and no file written", () => {
     const bare = tempDir("crank-code-bare-");
