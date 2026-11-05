@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `bun test tests/scanner.test.ts` — run one test file
 - `bun test -t "pattern"` — run tests matching a name
 - `bun run typecheck` — `tsc --noEmit`
+- `bun run format` / `bun run format:check` — oxfmt (pinned exact in `package.json`). `.oxfmtrc.json` leaves out `tests/fixtures/`, whose bytes the `.outline`/`.headers` goldens record, and all markdown, whose ADRs quote probe output verbatim and whose README shows JSONL one record per line
 
 `bun test` needs `crank-mem setup` (or `bun src/cli/main.ts setup`) run once on the machine: `tests/digest-job.test.ts`, `tests/embedder.test.ts`, `tests/setup.test.ts` and `tests/cli-commands.test.ts` read the real model it downloads into `~/.crank/models`.
 
