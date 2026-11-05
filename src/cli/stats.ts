@@ -117,13 +117,20 @@ function dollars(usd: number): string {
   return usd > 0 && usd < 0.01 ? `$${usd.toPrecision(2)}` : `$${usd.toFixed(2)}`;
 }
 
-/** Whether digests run, what waits for them user-wide, what the store holds, and whether search by meaning works. */
-async function captureLines(root: string, config: CrankConfig): Promise<string[]> {
+/**
+ * Whether digests run, what waits for them user-wide, what the store holds, and
+ * whether search by meaning works, as label and value pairs: `stats` pads them
+ * and the dashboard's Health view answers them as they are.
+ */
+export async function captureRows(
+  root: string,
+  config: CrankConfig,
+): Promise<[label: string, value: string][]> {
   const stop = readStopState();
-  const lines = [
-    row("digest", !config.digest ? "off" : stop ? `stopped (${stop.reason})` : "on"),
-    row("daemon", daemonAlive() ? "alive" : "not running"),
-    row("spool", `${readSpool().length} waiting, ${readParked().length} parked`),
+  const rows: [label: string, value: string][] = [
+    ["digest", !config.digest ? "off" : stop ? `stopped (${stop.reason})` : "on"],
+    ["daemon", daemonAlive() ? "alive" : "not running"],
+    ["spool", `${readSpool().length} waiting, ${readParked().length} parked`],
   ];
   const store = memoryPath(root);
   const opened = openMemory(store, "read");
@@ -136,25 +143,24 @@ async function captureLines(root: string, config: CrankConfig): Promise<string[]
     } finally {
       opened.memory.close();
     }
-    lines.push(row("observations", String(s.observations)));
-    lines.push(row("unembedded", String(s.unembedded)));
-    lines.push(row("last digest", s.lastDigestMs === null ? "never" : ageOf(s.lastDigestMs)));
-    lines.push(row("month cost", `${dollars(s.costUsdSince)} (list price)`));
-    lines.push(row("proposals", String(s.pendingProposals)));
-    lines.push(row("stale", String(s.staleRows)));
+    rows.push(["observations", String(s.observations)]);
+    rows.push(["unembedded", String(s.unembedded)]);
+    rows.push(["last digest", s.lastDigestMs === null ? "never" : ageOf(s.lastDigestMs)]);
+    rows.push(["month cost", `${dollars(s.costUsdSince)} (list price)`]);
+    rows.push(["proposals", String(s.pendingProposals)]);
+    rows.push(["stale", String(s.staleRows)]);
     const last = s.lastConsolidation;
-    lines.push(
-      row("consolidation", last === null ? "never" : `${ageOf(last.startedMs)} (${last.outcome})`),
-    );
+    rows.push([
+      "consolidation",
+      last === null ? "never" : `${ageOf(last.startedMs)} (${last.outcome})`,
+    ]);
   } else {
-    lines.push(row("memory", MEMORY_STATE[opened.status]));
+    rows.push(["memory", MEMORY_STATE[opened.status]]);
   }
   const latest = latestSnapshot(store);
-  lines.push(row("last snapshot", latest === null ? "never" : ageOf(latest.atMs)));
-  lines.push(
-    row("embedder", (await embedderReady()) ? "ready" : "not ready (run crank-mem setup)"),
-  );
-  return lines;
+  rows.push(["last snapshot", latest === null ? "never" : ageOf(latest.atMs)]);
+  rows.push(["embedder", (await embedderReady()) ? "ready" : "not ready (run crank-mem setup)"]);
+  return rows;
 }
 
 export async function run(_args: string[]): Promise<number> {
@@ -184,7 +190,7 @@ export async function run(_args: string[]): Promise<number> {
   console.log(`  runtime:          ${config.runtime} (vendored ${config.vendored_version})`);
   console.log(`  injection budget: ${config.injection_budget_bytes} bytes`);
   for (const line of memoryLines(root, crankDir, config, index)) console.log(line);
-  for (const line of await captureLines(root, config)) console.log(line);
+  for (const [label, value] of await captureRows(root, config)) console.log(row(label, value));
 
   const codexHooks = path.join(root, ".codex", "hooks.json");
   if (!hasCrankHooks(codexHooks)) {

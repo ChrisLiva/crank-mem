@@ -22,6 +22,7 @@ import {
 import { readStopState } from "../hooks/lib/user-state.ts";
 import { NO_MEMORY_NOTE, queryVector, STATE_NOTES } from "./recall.ts";
 import { registeredRoots } from "./registry.ts";
+import { captureRows } from "./stats.ts";
 
 // The dashboard's HTTP server: loopback only, and every request carries the
 // session cookie, which the URL's `?token=` trades for once. The checks run
@@ -251,6 +252,12 @@ async function consolidations(root: string, params: URLSearchParams): Promise<An
   return { status: 200, body };
 }
 
+/** `GET …/health`: the capture rows `crank-mem stats` prints, without its padding. */
+async function health(root: string): Promise<Answer> {
+  const rows = await captureRows(root, loadConfig(path.join(root, CRANK_DIR)));
+  return { status: 200, body: { rows } };
+}
+
 /** The answer for a route under `/api/projects/<id>`, or null when no route matches. */
 async function projectRoute(
   project: Project,
@@ -261,6 +268,7 @@ async function projectRoute(
   if (route === "/proposals") return proposals(project.root, params);
   if (route === "/stale") return stale(project.root, params);
   if (route === "/consolidations") return consolidations(project.root, params);
+  if (route === "/health") return health(project.root);
   const one = /^\/observations\/([^/]*)$/.exec(route);
   if (one) return observation(project.root, one[1]!);
   return null;

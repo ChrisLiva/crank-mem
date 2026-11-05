@@ -998,3 +998,70 @@ describe("curation view", () => {
     }
   }, 20_000);
 });
+
+describe("health view", () => {
+  test("GET …/health answers the capture rows `stats` prints, unpadded and in order", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const [a] = seedMemory(root, [{ title: "Lock retry is two seconds" }, { title: "日本 ✓" }], {
+      costUsd: 0.002,
+      proposals: [{ kind: "memory", bullet: "- **P**: x" }],
+    }) as [number];
+    seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
+    const threeHoursAgo = Date.now() - 3 * 3600_000;
+    const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
+    const db = new mod.DatabaseSync(memoryPath(root));
+    try {
+      db.prepare("UPDATE digests SET created_at = ?").run(threeHoursAgo);
+    } finally {
+      db.close();
+    }
+    withWritable(root, (memory) =>
+      memory.recordConsolidation({
+        outcome: "conflict",
+        startedMs: threeHoursAgo,
+        model: null,
+        costUsd: 0,
+      }),
+    );
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const health = await memoryJson(dash, root, "health");
+
+    const run = runCli(root, ["stats"], { CRANK_HOME: home });
+    expect(run.status).toBe(0);
+    const lines = run.stdout.split("\n");
+    const first = lines.findIndex((l) => l.startsWith("  digest:"));
+    const last = lines.findIndex((l) => l.startsWith("  embedder:"));
+    const printed = lines
+      .slice(first, last + 1)
+      .map((l) => /^ {2}([^:]+):\s+(.*)$/.exec(l)!.slice(1, 3));
+    expect(printed.find(([label]) => label === "consolidation")).toEqual([
+      "consolidation",
+      "3h ago (conflict)",
+    ]);
+    expect(health).toEqual({ rows: printed });
+  }, 20_000);
+
+  test("a missing or newer store answers the single memory row `stats` prints for it", async () => {
+    const home = makeCrankHome();
+    const missing = registeredProject(home);
+    const newer = registeredProject(home);
+    plantMemory(newer, "newer");
+    const dash = await startDashboard(home, ["--port", "0"]);
+    for (const [root, value] of [
+      [missing, "none yet"],
+      [newer, "newer than this version; run crank-mem upgrade"],
+    ] as const) {
+      const { rows } = (await memoryJson(dash, root, "health")) as { rows: [string, string][] };
+      expect(rows.map(([label]) => label)).toEqual([
+        "digest",
+        "daemon",
+        "spool",
+        "memory",
+        "last snapshot",
+        "embedder",
+      ]);
+      expect(rows.find(([label]) => label === "memory")).toEqual(["memory", value]);
+    }
+  }, 20_000);
+});
