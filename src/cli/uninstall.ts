@@ -26,6 +26,7 @@ import {
 } from "../hooks/lib/cerebrum-files.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
 import { MEMORY_FILE, SNAPSHOT_DIR } from "../hooks/lib/memory.ts";
+import { USAGE_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
 import { openProject } from "./project.ts";
 import { unregisterProject } from "./registry.ts";
 import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
@@ -207,6 +208,8 @@ function deleteOwnedFiles(crankDir: string): string[] {
     MEMORY_FILE,
     `${MEMORY_FILE}-wal`,
     `${MEMORY_FILE}-shm`,
+    USAGE_FILE,
+    USAGE_ROTATED_FILE,
   ];
   for (const name of owned) fs.rmSync(path.join(crankDir, name), { recursive: true, force: true });
   for (const name of readdirOrEmpty(crankDir)) {

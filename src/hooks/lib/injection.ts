@@ -11,6 +11,7 @@ import {
   formatLine,
   memoryPath,
   openMemory,
+  type ObservationLine,
 } from "./memory.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
 import type { CrankConfig } from "./config.ts";
@@ -149,7 +150,7 @@ export interface InjectionSources {
 }
 
 type Recall =
-  | { status: "open"; nextSteps: string | null; recentLines: string[] }
+  | { status: "open"; nextSteps: string | null; recent: ObservationLine[] }
   | { status: "missing" | "older" | "newer" | "unreadable" };
 
 /** The recall bullet shows with a readable store, and while digests run with none yet, since they will fill it. */
@@ -398,6 +399,18 @@ function indexEntry(bullet: string): string {
   return `- ${cut}…`;
 }
 
+/** What an injection showed, section by section, for its usage line. */
+export interface Shown {
+  /** Ids of the recent memory lines, newest first; empty when that section did not fit. */
+  recentIds: number[];
+  nextSteps: boolean;
+  cerebrum: boolean;
+  adrs: boolean;
+  /** Staleness, drift and capture notes that fit. */
+  notes: number;
+  recallPointer: boolean;
+}
+
 /**
  * Compose the injection under a hard byte cap.
  *
@@ -413,22 +426,25 @@ function indexEntry(bullet: string): string {
  * headless fragment. Consequence: the result can exceed `budgetBytes`, but only
  * by the fixed size of the instructions.
  *
- * Returns the text and the excerpt counts that crank-mem stats reports, or a
- * null excerpt without a cerebrum.
+ * Returns the text, the excerpt counts that crank-mem stats reports (a null
+ * excerpt without a cerebrum), and what each section showed.
  */
 export function composeInjection(
   sources: InjectionSources,
   budgetBytes: number,
-): { text: string; excerpt: Excerpt | null } {
+): { text: string; excerpt: Excerpt | null; shown: Shown } {
   const running = sources.running ?? false;
   const recall = sources.recall;
-  const parts: string[] = [
-    instructions(
-      sources.index,
-      sources.codex ?? false,
-      recall ? recallApplies(running, recall.status) : false,
-    ),
-  ];
+  const recallPointer = recall ? recallApplies(running, recall.status) : false;
+  const parts: string[] = [instructions(sources.index, sources.codex ?? false, recallPointer)];
+  const shown: Shown = {
+    recentIds: [],
+    nextSteps: false,
+    cerebrum: false,
+    adrs: false,
+    notes: 0,
+    recallPointer,
+  };
   let used = bytes(parts[0]!);
 
   const fit = (section: string): boolean => {
@@ -439,20 +455,19 @@ export function composeInjection(
     return true;
   };
 
-  if (sources.stalenessNote) fit(`_Note: ${sources.stalenessNote}_`);
-  if (sources.driftNote) fit(`_Note: ${sources.driftNote}_`);
-  for (const note of sources.captureNotes ?? []) fit(`_Note: ${note}_`);
+  const notes = [sources.stalenessNote, sources.driftNote, ...(sources.captureNotes ?? [])];
+  for (const note of notes) if (note && fit(`_Note: ${note}_`)) shown.notes++;
 
   if (recall?.status === "open") {
-    const { nextSteps, recentLines } = recall;
+    const { nextSteps, recent } = recall;
     if (running && nextSteps !== null && bytes(nextSteps) <= NEXT_STEPS_MAX_BYTES) {
-      fit(`## Next steps (last digested session)\n${nextSteps}`);
+      shown.nextSteps = fit(`## Next steps (last digested session)\n${nextSteps}`);
     }
     // Newest first, so the cap drops the oldest whole lines.
-    const lines = [...recentLines];
-    const section = () => ["## Recent memory", ...lines].join("\n");
+    const lines = recent.map((line) => ({ id: line.id, text: formatLine(line) }));
+    const section = () => ["## Recent memory", ...lines.map((l) => l.text)].join("\n");
     while (lines.length && bytes(section()) > RECENT_MEMORY_MAX_BYTES) lines.pop();
-    if (lines.length) fit(section());
+    if (lines.length && fit(section())) shown.recentIds = lines.map((l) => l.id);
   }
 
   const adrSection = sources.adrFilenames.length
@@ -477,12 +492,12 @@ export function composeInjection(
       budgetBytes - used - adrReserve - bytes(SEP),
       sources.projectRoot ? { index: sources.index, root: sources.projectRoot } : undefined,
     );
-    if (excerpt.text) fit(excerpt.text);
+    if (excerpt.text) shown.cerebrum = fit(excerpt.text);
   }
 
-  if (adrSection) fit(adrSection);
+  if (adrSection) shown.adrs = fit(adrSection);
 
-  return { text: parts.join(SEP), excerpt };
+  return { text: parts.join(SEP), excerpt, shown };
 }
 
 /** Load ADR filenames (NNNN-*.md) from the configured directory. */
@@ -539,7 +554,7 @@ function readRecall(root: string, gate: DigestGate): Recall {
     return {
       status: "open",
       nextSteps: gate.running && gate.drained ? memory.latestNextSteps() : null,
-      recentLines: memory.recent(RECENT_MEMORY_ROWS).map(formatLine),
+      recent: memory.recent(RECENT_MEMORY_ROWS),
     };
   } catch {
     return { status: "unreadable" };

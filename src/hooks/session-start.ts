@@ -15,6 +15,7 @@ import { captureNotes, composeInjection, injectionSources } from "./lib/injectio
 import { driftNote } from "./lib/drift.ts";
 import { estimateProseTokens } from "./lib/tokens.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
+import { hookActor, recordUsage } from "./lib/usage.ts";
 
 // SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
 // included. Refreshes the index under lock, then emits the injection via
@@ -62,7 +63,11 @@ async function main(): Promise<void> {
   const source = typeof payload.source === "string" ? payload.source : null;
   const sources = injectionSources(root, crankDir, config, index, isCodexPayload(payload));
   const drift = driftNote(config);
-  const context = composeInjection(
+  const {
+    text: context,
+    excerpt,
+    shown,
+  } = composeInjection(
     {
       ...sources,
       stalenessNote,
@@ -70,9 +75,22 @@ async function main(): Promise<void> {
       captureNotes: captureNotes(sources.gate, sources.recall.status),
     },
     config.injection_budget_bytes,
-  ).text;
+  );
 
   emitAdditionalContext("SessionStart", context);
+  recordUsage(root, hookActor(payload), {
+    channel: "session-start",
+    source,
+    ids: shown.recentIds,
+    nextSteps: shown.nextSteps,
+    cerebrum: shown.cerebrum,
+    adrs: shown.adrs,
+    cerebrumBullets: excerpt ? { shown: excerpt.shown, total: excerpt.total } : null,
+    bytes: Buffer.byteLength(context, "utf-8"),
+    budget: config.injection_budget_bytes,
+    notes: shown.notes,
+    recallPointer: shown.recallPointer,
+  });
   debugEvent("injected", {
     source,
     fileCount: index.meta.fileCount,
