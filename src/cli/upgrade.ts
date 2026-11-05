@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { cliVersion, REPO_ROOT } from "./version.ts";
-import { installPackages } from "./setup.ts";
+import { buildDashboard, dashboardCurrent, dashboardDir, installPackages } from "./setup.ts";
 import { vendorHooks, templatePath } from "./vendor.ts";
 import { openProject } from "./project.ts";
 import { registerProject } from "./registry.ts";
@@ -34,10 +34,11 @@ import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
 // state: commit mode loses a stale crank-mem ignore block, ignore and exclude
 // mode regain a missing one. It puts CRANK_ALLOW_RULES in the wired Claude
 // settings file in place of LEGACY_ALLOW_RULE, and installs the clone's
-// packages. Of config.json it updates only vendored_version and
-// clone_root. Of cerebrum it replaces only an unedited 0.8.1 template preamble,
-// after backing the file up; it never touches the index. Recomputes Codex
-// trusted hashes iff the user opted in at init.
+// packages, rebuilding the dashboard when its build is not for this version.
+// Of config.json it updates only vendored_version and clone_root. Of cerebrum
+// it replaces only an unedited 0.8.1 template preamble, after backing the file
+// up; it never touches the index. Recomputes Codex trusted hashes iff the user
+// opted in at init.
 
 export async function run(_args: string[]): Promise<number> {
   const project = openProject();
@@ -168,8 +169,19 @@ export async function run(_args: string[]): Promise<number> {
 
   // A pull can change package.json at the same version; an install failure
   // costs search by meaning, not the upgrade.
-  const installed = installPackages();
+  const installed = installPackages(REPO_ROOT);
   if (!installed.ok) console.error(`crank-mem: could not install packages (${installed.detail})`);
+  // A pull can also change the dashboard's sources; a failed build costs the
+  // dashboard, not the upgrade.
+  if (!dashboardCurrent(path.join(dashboardDir(), "dist"))) {
+    const dashInstalled = installPackages(dashboardDir());
+    if (!dashInstalled.ok) {
+      console.error(`crank-mem: could not install dashboard packages (${dashInstalled.detail})`);
+    } else {
+      const built = buildDashboard();
+      if (!built.ok) console.error(`crank-mem: could not build the dashboard (${built.detail})`);
+    }
+  }
   registerProject(root);
 
   migrateStore(memoryPath(root));

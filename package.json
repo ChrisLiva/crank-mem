@@ -5,7 +5,7 @@
   "description": "Project memory for coding agents: anatomy index, cerebrum, session injection.",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p dashboard",
     "test": "bun test",
     "format": "oxfmt",
     "format:check": "oxfmt --check"

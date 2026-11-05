@@ -7,8 +7,8 @@ import { parseArgs, positive } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { cliVersion, REPO_ROOT } from "./version.ts";
 
-// `crank-mem setup`: install the clone's packages and download the local
-// search model into <crank home>/models.
+// `crank-mem setup`: install the clone's packages, build the dashboard and
+// download the local search model into <crank home>/models.
 
 /** The dashboard package, whose build `crank-mem dashboard` serves from `dist/`. */
 export function dashboardDir(): string {
@@ -27,21 +27,17 @@ export function dashboardCurrent(distDir: string): boolean {
 
 export type InstallResult = { ok: true; tool: "bun" | "npm" } | { ok: false; detail: string };
 
-function spawnTool(tool: "bun" | "npm", args: string[]): SpawnSyncReturns<string> {
-  return spawnSync(tool, args, { cwd: REPO_ROOT, encoding: "utf-8" });
-}
-
 function isEnoent(r: SpawnSyncReturns<string>): boolean {
   return (r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 }
 
-/** bun from the lockfile; npm from the exact pin in package.json when bun is not on PATH, writing no package-lock.json. */
-export function installPackages(): InstallResult {
+/** Runs bun with `bunArgs` in `dir`, or npm with `npmArgs` when bun is not on PATH. */
+function runTool(dir: string, bunArgs: string[], npmArgs: string[]): InstallResult {
   let tool: "bun" | "npm" = "bun";
-  let r = spawnTool("bun", ["install", "--frozen-lockfile"]);
+  let r = spawnSync("bun", bunArgs, { cwd: dir, encoding: "utf-8" });
   if (isEnoent(r)) {
     tool = "npm";
-    r = spawnTool("npm", ["install", "--ignore-scripts", "--no-package-lock"]);
+    r = spawnSync("npm", npmArgs, { cwd: dir, encoding: "utf-8" });
   }
   if (!r.error && r.status === 0) return { ok: true, tool };
   const lastLine = (r.stderr ?? "")
@@ -55,17 +51,54 @@ export function installPackages(): InstallResult {
   };
 }
 
+/** bun from the lockfile; npm from the exact pins in package.json when bun is not on PATH, writing no package-lock.json. */
+export function installPackages(dir: string): InstallResult {
+  return runTool(
+    dir,
+    ["install", "--frozen-lockfile"],
+    ["install", "--ignore-scripts", "--no-package-lock"],
+  );
+}
+
+/** Builds the dashboard into `dist/` and stamps it with this clone's version. */
+export function buildDashboard(): InstallResult {
+  const built = runTool(dashboardDir(), ["run", "build"], ["run", "build"]);
+  if (!built.ok) return built;
+  try {
+    const dist = path.join(dashboardDir(), "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(path.join(dist, ".crank-version"), cliVersion());
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+  }
+  return built;
+}
+
 export async function run(args: string[]): Promise<number> {
   const { flags } = parseArgs(args, COMMANDS.setup.value);
   const host = typeof flags["model-host"] === "string" ? flags["model-host"] : undefined;
   const fetchTimeoutMs = positive(flags["fetch-timeout-ms"], 0) || undefined;
 
-  const installed = installPackages();
+  const installed = installPackages(REPO_ROOT);
   if (!installed.ok) {
     console.error(`crank-mem: could not install packages (${installed.detail})`);
     return 1;
   }
   console.log(`crank-mem: installed packages with ${installed.tool}`);
+
+  const dashInstalled = installPackages(dashboardDir());
+  if (!dashInstalled.ok) {
+    console.error(`crank-mem: could not install dashboard packages (${dashInstalled.detail})`);
+    return 1;
+  }
+  console.log(`crank-mem: installed dashboard packages with ${dashInstalled.tool}`);
+
+  const built = buildDashboard();
+  if (!built.ok) {
+    console.error(`crank-mem: could not build the dashboard (${built.detail})`);
+    return 1;
+  }
+  console.log("crank-mem: built the dashboard");
 
   ensureCrankHome();
   const dir = modelsDir();

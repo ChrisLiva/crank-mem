@@ -71,7 +71,7 @@ export const COMMANDS = {
     bool: [],
   },
   setup: {
-    summary: "Install packages and download the local search model",
+    summary: "Install packages, build the dashboard and download the local search model",
     usage: "Usage: crank-mem setup",
     value: ["model-host", "fetch-timeout-ms"],
     bool: [],

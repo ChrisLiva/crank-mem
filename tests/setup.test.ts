@@ -2,8 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { cliVersion } from "../src/cli/version.ts";
 import {
   REPO_ROOT,
+  dashboardFixture,
   makeCrankHome,
   makeModelHome,
   realModelsDir,
@@ -17,21 +19,53 @@ function tempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-/** A fake package manager named `name` that records its argv and cwd, then exits `exit`. */
+type Call = { argv: string; cwd: string };
+
+/**
+ * A fake package manager named `name` that appends each call's argv and cwd,
+ * then exits `exit`, or 1 on the call `failOn` names.
+ */
 function fakeTool(
   name: "bun" | "npm",
   exit: number,
-): { dir: string; argv(): string | null; cwd(): string | null } {
+  failOn?: { argv: string; cwd?: string },
+): { dir: string; calls(): Call[] } {
   const dir = tempDir(`crank-fake${name}-`);
+  const log = path.join(dir, "calls");
+  const match = failOn
+    ? `[ "$*" = "${failOn.argv}" ]${failOn.cwd ? ` && [ "$(pwd -P)" = "${failOn.cwd}" ]` : ""}`
+    : "false";
   fs.writeFileSync(
     path.join(dir, name),
-    `#!/bin/sh\nprintf '%s' "$*" > "${dir}/argv"\npwd -P > "${dir}/cwd"\necho "${name} failed on purpose" >&2\nexit ${exit}\n`,
+    `#!/bin/sh\nprintf '%s\\t%s\\n' "$*" "$(pwd -P)" >> "${log}"\necho "${name} failed on purpose" >&2\nif ${match}; then exit 1; fi\nexit ${exit}\n`,
     { mode: 0o755 },
   );
-  const read = (f: string) =>
-    fs.existsSync(path.join(dir, f)) ? fs.readFileSync(path.join(dir, f), "utf-8").trim() : null;
-  return { dir, argv: () => read("argv"), cwd: () => read("cwd") };
+  const calls = () =>
+    fs.existsSync(log)
+      ? fs
+          .readFileSync(log, "utf-8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => {
+            const [argv, cwd] = l.split("\t");
+            return { argv: argv!, cwd: cwd! };
+          })
+      : [];
+  return { dir, calls };
 }
+
+/** A temp `CRANK_DASHBOARD_DIR` with no build, and its realpath. */
+function emptyDashboard(): { dir: string; real: string; stamp(): string | null } {
+  const dir = tempDir("crank-dash-");
+  const stampFile = path.join(dir, "dist/.crank-version");
+  return {
+    dir,
+    real: fs.realpathSync(dir),
+    stamp: () => (fs.existsSync(stampFile) ? fs.readFileSync(stampFile, "utf-8") : null),
+  };
+}
+
+const ROOT_REAL = fs.realpathSync(REPO_ROOT);
 
 const servers: Array<{ stop(): void }> = [];
 afterEach(() => {
@@ -39,44 +73,61 @@ afterEach(() => {
 });
 
 describe("setup", () => {
-  test("installs with bun, downloads the model, and a second run downloads nothing", async () => {
+  test("installs with bun, builds the dashboard, downloads the model, and a second run downloads nothing", async () => {
     const bun = fakeTool("bun", 0);
+    const dash = emptyDashboard();
     const home = makeCrankHome();
     const server = await startModelServer(realModelsDir(), "ok");
     servers.push(server);
-    const env = { CRANK_HOME: home, PATH: `${bun.dir}:${process.env.PATH}` };
+    const env = {
+      CRANK_HOME: home,
+      CRANK_DASHBOARD_DIR: dash.dir,
+      PATH: `${bun.dir}:${process.env.PATH}`,
+    };
     const modelsDir = path.join(home, "models");
+    const steps =
+      "crank-mem: installed packages with bun\ncrank-mem: installed dashboard packages with bun\ncrank-mem: built the dashboard\n";
 
     const first = runCli(REPO_ROOT, ["setup", "--model-host", server.url], env);
     expect(first.stderr).toBe("");
     expect(first.status).toBe(0);
-    expect(bun.argv()).toBe("install --frozen-lockfile");
-    expect(bun.cwd()).toBe(fs.realpathSync(REPO_ROOT));
+    expect(bun.calls()).toEqual([
+      { argv: "install --frozen-lockfile", cwd: ROOT_REAL },
+      { argv: "install --frozen-lockfile", cwd: dash.real },
+      { argv: "run build", cwd: dash.real },
+    ]);
+    expect(dash.stamp()).toBe(cliVersion());
     expect(fs.statSync(path.join(modelsDir, MODEL_FILE)).size).toBe(
       fs.statSync(path.join(realModelsDir(), MODEL_FILE)).size,
     );
     expect(first.stdout).toBe(
-      `crank-mem: installed packages with bun\ncrank-mem: downloaded Xenova/all-MiniLM-L6-v2 to ${modelsDir}\n`,
+      `${steps}crank-mem: downloaded Xenova/all-MiniLM-L6-v2 to ${modelsDir}\n`,
     );
 
     const served = server.requests().length;
     expect(served).toBeGreaterThan(0);
     const second = runCli(REPO_ROOT, ["setup", "--model-host", server.url], env);
     expect(second.status).toBe(0);
-    expect(second.stdout).toBe(
-      `crank-mem: installed packages with bun\ncrank-mem: model already in ${modelsDir}\n`,
-    );
+    expect(second.stdout).toBe(`${steps}crank-mem: model already in ${modelsDir}\n`);
     expect(server.requests().length).toBe(served);
   });
 
   test("falls back to npm without a lockfile when bun is not on PATH", () => {
     const npm = fakeTool("npm", 0);
-    const run = runCli(REPO_ROOT, ["setup"], { CRANK_HOME: makeModelHome(), PATH: npm.dir });
+    const dash = emptyDashboard();
+    const run = runCli(REPO_ROOT, ["setup"], {
+      CRANK_HOME: makeModelHome(),
+      CRANK_DASHBOARD_DIR: dash.dir,
+      PATH: npm.dir,
+    });
     expect(run.status).toBe(0);
-    expect(npm.argv()).toBe("install --ignore-scripts --no-package-lock");
-    expect(npm.cwd()).toBe(fs.realpathSync(REPO_ROOT));
+    expect(npm.calls()).toEqual([
+      { argv: "install --ignore-scripts --no-package-lock", cwd: ROOT_REAL },
+      { argv: "install --ignore-scripts --no-package-lock", cwd: dash.real },
+      { argv: "run build", cwd: dash.real },
+    ]);
     expect(run.stdout).toContain(
-      "crank-mem: installed packages with npm\ncrank-mem: model already in ",
+      "crank-mem: installed packages with npm\ncrank-mem: installed dashboard packages with npm\ncrank-mem: built the dashboard\ncrank-mem: model already in ",
     );
   });
 
@@ -84,16 +135,50 @@ describe("setup", () => {
     const bun = fakeTool("bun", 1);
     const run = runCli(REPO_ROOT, ["setup"], {
       CRANK_HOME: makeModelHome(),
+      CRANK_DASHBOARD_DIR: emptyDashboard().dir,
       PATH: `${bun.dir}:${process.env.PATH}`,
     });
     expect(run.status).toBe(1);
     expect(run.stderr).toBe("crank-mem: could not install packages (bun failed on purpose)\n");
     expect(run.stdout).toBe("");
+    expect(bun.calls()).toHaveLength(1);
+  });
+
+  test("a dashboard install failure exits 1 before the build", () => {
+    const dash = emptyDashboard();
+    const bun = fakeTool("bun", 0, { argv: "install --frozen-lockfile", cwd: dash.real });
+    const run = runCli(REPO_ROOT, ["setup"], {
+      CRANK_HOME: makeModelHome(),
+      CRANK_DASHBOARD_DIR: dash.dir,
+      PATH: `${bun.dir}:${process.env.PATH}`,
+    });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toBe(
+      "crank-mem: could not install dashboard packages (bun failed on purpose)\n",
+    );
+    expect(run.stdout).toBe("crank-mem: installed packages with bun\n");
+    expect(bun.calls().map((c) => c.argv)).not.toContain("run build");
+    expect(dash.stamp()).toBeNull();
+  });
+
+  test("a build failure exits 1, writes no stamp and skips the model", () => {
+    const dash = emptyDashboard();
+    const bun = fakeTool("bun", 0, { argv: "run build" });
+    const run = runCli(REPO_ROOT, ["setup"], {
+      CRANK_HOME: makeModelHome(),
+      CRANK_DASHBOARD_DIR: dash.dir,
+      PATH: `${bun.dir}:${process.env.PATH}`,
+    });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toBe("crank-mem: could not build the dashboard (bun failed on purpose)\n");
+    expect(run.stdout).not.toContain("model");
+    expect(dash.stamp()).toBeNull();
   });
 
   test("with neither bun nor npm on PATH, the spawn error is the detail", () => {
     const run = runCli(REPO_ROOT, ["setup"], {
       CRANK_HOME: makeModelHome(),
+      CRANK_DASHBOARD_DIR: emptyDashboard().dir,
       PATH: tempDir("crank-emptypath-"),
     });
     expect(run.status).toBe(1);
@@ -131,15 +216,53 @@ function initedProject(): string {
 }
 
 describe("upgrade installs packages", () => {
-  test("at the current version it runs the install and stays a no-op", () => {
+  test("at the current version with a current dashboard it runs only the root install", () => {
     const root = initedProject();
     const bun = fakeTool("bun", 0);
-    const run = runCli(root, ["upgrade"], { PATH: `${bun.dir}:${process.env.PATH}` });
+    const run = runCli(root, ["upgrade"], {
+      CRANK_DASHBOARD_DIR: dashboardFixture(cliVersion()),
+      PATH: `${bun.dir}:${process.env.PATH}`,
+    });
     expect(run.status).toBe(0);
-    expect(bun.argv()).toBe("install --frozen-lockfile");
+    expect(bun.calls().map((c) => c.argv)).toEqual(["install --frozen-lockfile"]);
     expect(run.stdout).toContain("already at");
     expect(run.stdout).not.toContain("installed packages");
     expect(run.stderr).toBe("");
+  });
+
+  test("a dashboard without a current stamp is installed, built and stamped", () => {
+    const root = initedProject();
+    const dash = dashboardFixture(null);
+    const dashReal = fs.realpathSync(dash);
+    const bun = fakeTool("bun", 0);
+    const run = runCli(root, ["upgrade"], {
+      CRANK_DASHBOARD_DIR: dash,
+      PATH: `${bun.dir}:${process.env.PATH}`,
+    });
+    expect(run.status).toBe(0);
+    expect(bun.calls()).toEqual([
+      { argv: "install --frozen-lockfile", cwd: ROOT_REAL },
+      { argv: "install --frozen-lockfile", cwd: dashReal },
+      { argv: "run build", cwd: dashReal },
+    ]);
+    expect(fs.readFileSync(path.join(dash, "dist/.crank-version"), "utf-8")).toBe(cliVersion());
+    expect(run.stdout).toContain("already at");
+    expect(run.stdout).not.toContain("dashboard");
+    expect(run.stderr).toBe("");
+  });
+
+  test("a dashboard build failure warns, writes no stamp and still exits 0", () => {
+    const root = initedProject();
+    const dash = dashboardFixture(null);
+    const bun = fakeTool("bun", 0, { argv: "run build" });
+    const run = runCli(root, ["upgrade"], {
+      CRANK_DASHBOARD_DIR: dash,
+      PATH: `${bun.dir}:${process.env.PATH}`,
+    });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("crank-mem: could not build the dashboard (bun failed on purpose)\n");
+    expect(fs.existsSync(path.join(dash, "dist/.crank-version"))).toBe(false);
+    expect(run.stdout).toContain("already at");
   });
 
   test("an install failure warns and still exits 0", () => {
@@ -177,7 +300,7 @@ describe("help", () => {
   test("lists setup and none of the hidden commands or flags", () => {
     const out = runCli(tempDir("crank-setup-help-"), ["--help"]).stdout;
     expect(out).toContain(
-      "  setup           Install packages and download the local search model\n",
+      "  setup           Install packages, build the dashboard and download the local search model\n",
     );
     for (const flag of [
       "--model-host",
