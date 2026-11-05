@@ -1,0 +1,8 @@
+src/powershell.ps1
+  4-8│function Get-Thing { … }
+10-12│filter Only-Even { … }
+14-16│workflow Run-Flow { … }
+18-28│class Box {
+21-23│    Box([int]$size) { … }
+25-27│    [int] Area() { … }
+30-33│enum Color { Red Green }

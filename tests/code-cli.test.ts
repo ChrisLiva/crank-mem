@@ -84,6 +84,8 @@ describe("unfold", () => {
       "src/doc2.py": "class A:\n    # doc for m\n    def m(self): pass\n",
       "src/doc.go": "package p\n\n// Foo is a thing.\ntype Foo struct {\n\tx int\n}\n",
       "src/doc.rs": "/// doc\n#[inline]\nfn f() {}\n",
+      "src/n.cs": "namespace Outer {\n  class K {\n    void M() {}\n  }\n}\n",
+      "src/doc.rb": "class A\n  # doc for m\n  def m\n  end\n\n  # doc for n\n  def n\n  end\nend\n",
     });
     const unfold = (file: string, query: string) => runCli(root, ["unfold", file, query]);
 
@@ -131,6 +133,19 @@ describe("unfold", () => {
       stdout: "src/doc.go:4-6 struct Foo\n3│// Foo is a thing.\n4│type Foo struct {\n5│\tx int\n6│}\n",
     });
     expect(unfold("src/doc.rs", "f")).toMatchObject({ status: 0, stdout: "src/doc.rs:2-3 fn f\n1│/// doc\n2│#[inline]\n3│fn f() {}\n" });
+    expect(runCli(root, ["outline", "src/n.cs"])).toMatchObject({
+      status: 0,
+      stdout: "src/n.cs\n1-5│namespace Outer {\n2-4│  class K {\n3-3│    void M() { … }\n",
+    });
+    expect(unfold("src/n.cs", "M").stdout.split("\n")[0]).toBe("src/n.cs:3-3 method Outer.K.M");
+    expect(unfold("src/doc.rb", "A.m")).toMatchObject({
+      status: 0,
+      stdout: "src/doc.rb:3-4 method A.m\n2│  # doc for m\n3│  def m\n4│  end\n",
+    });
+    expect(unfold("src/doc.rb", "A.n")).toMatchObject({
+      status: 0,
+      stdout: "src/doc.rb:7-8 method A.n\n6│  # doc for n\n7│  def n\n8│  end\n",
+    });
   }, 30_000);
 });
 
@@ -226,7 +241,7 @@ describe("without the code reader", () => {
   }, 30_000);
 });
 
-const FAMILIES = ["typescript.ts", "tsx.tsx", "cpp.cpp", "javascript.js", "python.py", "go.go", "rust.rs", "bash.sh", "java.java"];
+const FAMILIES = ["typescript.ts", "tsx.tsx", "cpp.cpp", "javascript.js", "python.py", "go.go", "rust.rs", "bash.sh", "java.java", "c-sharp.cs", "ruby.rb", "php.php", "powershell.ps1"];
 
 describe("families", () => {
   for (const fixture of FAMILIES) {

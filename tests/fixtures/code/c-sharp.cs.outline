@@ -1,0 +1,14 @@
+src/c-sharp.cs
+  1-1│namespace App;
+ 4-29│[Serializable] public class Foo {
+11-14│    public Foo(int count) { … }
+16-18│    ~Foo() { … }
+20-20│    public static Foo operator +(Foo a, Foo b) …
+22-22│    public int this[int i] => i;
+24-28│    public int Area() { … }
+31-31│public record Point(int X, int Y);
+33-36│public struct Pair { … }
+38-41│public interface IShape {
+40-40│    double Area();
+43-47│public enum Color { … }
+49-49│public delegate void Handler(int code);

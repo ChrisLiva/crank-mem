@@ -79,6 +79,8 @@ interface FamilyRules {
   scope(node: Node): string;
   /** The node whose start ends the head, or null when bodiless. */
   body(node: Node): Node | null;
+  /** A container's members, when they are not `body`'s named children. */
+  members?(node: Node, body: Node): Node[];
   comments: ReadonlySet<string>;
 }
 
@@ -383,7 +385,125 @@ const java: FamilyRules = {
   comments: new Set(["line_comment", "block_comment"]),
 };
 
-const RULES: Partial<Record<Grammar, FamilyRules>> = { typescript, tsx: typescript, javascript, python, go, cpp, rust, bash, java };
+const CSHARP_KINDS: Record<string, SymbolKind> = {
+  namespace_declaration: "namespace",
+  file_scoped_namespace_declaration: "namespace",
+  class_declaration: "class",
+  record_declaration: "class",
+  struct_declaration: "struct",
+  interface_declaration: "interface",
+  enum_declaration: "enum",
+  delegate_declaration: "type",
+  method_declaration: "method",
+  constructor_declaration: "method",
+  destructor_declaration: "method",
+  operator_declaration: "method",
+  indexer_declaration: "method",
+};
+const CSHARP_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["namespace", "class", "struct", "interface"]);
+
+const csharp: FamilyRules = {
+  kind: (node) => Object.hasOwn(CSHARP_KINDS, node.type) ? CSHARP_KINDS[node.type]! : null,
+  container: (_node, kind) => CSHARP_CONTAINERS.has(kind),
+  passThrough: (node) => node.type === "declaration_list" ? node.namedChildren : null,
+  widen: (node) => ({ start: node, head: node }),
+  name(node) {
+    switch (node.type) {
+      case "destructor_declaration":
+        return `~${node.childForFieldName("name")?.text ?? ""}`;
+      case "operator_declaration":
+        return `operator ${node.childForFieldName("operator")?.text ?? ""}`;
+      case "indexer_declaration":
+        return "this[]";
+    }
+    return node.childForFieldName("name")?.text ?? "";
+  },
+  scope: (node) => csharp.name(node),
+  body: (node) => node.childForFieldName("body"),
+  comments: new Set(["comment"]),
+};
+
+/** A method in `class << self`: its parent is the singleton class's body. */
+const inRubySingletonClass = (node: Node) => node.parent?.parent?.type === "singleton_class";
+/** `private def pm; end`: the `call` whose argument list holds the method. */
+const rubyWrappingCall = (node: Node) => node.parent?.type === "argument_list" && node.parent.parent?.type === "call" ? node.parent.parent : null;
+
+const ruby: FamilyRules = {
+  kind(node, parent) {
+    switch (node.type) {
+      case "module":
+        return "module";
+      case "class":
+        return "class";
+      case "method":
+        return parent === null ? "fn" : "method";
+      case "singleton_method":
+        return "method";
+    }
+    return null;
+  },
+  container: (_node, kind) => kind === "module" || kind === "class",
+  passThrough(node) {
+    if (node.type === "call") {
+      const args = node.childForFieldName("arguments")?.namedChildren ?? [];
+      return args.filter((child) => child.type === "method" || child.type === "singleton_method");
+    }
+    return node.type === "singleton_class" ? node.childForFieldName("body")?.namedChildren ?? [] : null;
+  },
+  widen: (node) => ({ start: rubyWrappingCall(node) ?? node, head: node }),
+  name(node) {
+    const name = node.childForFieldName("name")?.text ?? "";
+    if (node.type === "singleton_method") return `${node.childForFieldName("object")?.text ?? ""}.${name}`;
+    return node.type === "method" && inRubySingletonClass(node) ? `self.${name}` : name;
+  },
+  scope: (node) => ruby.name(node),
+  body: (node) => node.childForFieldName("body"),
+  comments: new Set(["comment"]),
+};
+
+const PHP_KINDS: Record<string, SymbolKind> = {
+  function_definition: "fn",
+  class_declaration: "class",
+  interface_declaration: "interface",
+  trait_declaration: "trait",
+  enum_declaration: "enum",
+  method_declaration: "method",
+  namespace_definition: "namespace",
+};
+const PHP_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "interface", "trait", "enum", "namespace"]);
+
+const php: FamilyRules = {
+  ...java,
+  kind: (node) => Object.hasOwn(PHP_KINDS, node.type) ? PHP_KINDS[node.type]! : null,
+  container: (_node, kind) => PHP_CONTAINERS.has(kind),
+  passThrough: () => null,
+  comments: new Set(["comment"]),
+};
+
+const PS_KINDS: Record<string, SymbolKind> = {
+  function_statement: "fn",
+  class_statement: "class",
+  class_method_definition: "method",
+  enum_statement: "enum",
+};
+/** Statements whose body is their anonymous `{` child, having no body field. */
+const PS_BRACE_BODIES = new Set(["function_statement", "class_statement", "class_method_definition"]);
+
+const powershell: FamilyRules = {
+  kind: (node) => Object.hasOwn(PS_KINDS, node.type) ? PS_KINDS[node.type]! : null,
+  container: (_node, kind) => kind === "class",
+  passThrough: (node) => node.type === "statement_list" ? node.namedChildren : null,
+  widen: (node) => ({ start: node, head: node }),
+  name: (node) => (node.children.find((c) => c.type === "function_name") ?? node.children.find((c) => c.type === "simple_name"))?.text ?? "",
+  scope: (node) => powershell.name(node),
+  body: (node) => PS_BRACE_BODIES.has(node.type) ? node.children.find((c) => c.type === "{") ?? null : null,
+  members: (node, body) => node.namedChildren.filter((child) => child.startIndex >= body.endIndex),
+  comments: new Set(["comment"]),
+};
+
+const RULES: Partial<Record<Grammar, FamilyRules>> = {
+  typescript, tsx: typescript, javascript, python, go, cpp, rust, bash, java, "c-sharp": csharp, ruby, php, powershell,
+};
 
 /** A node's last line, 1-based: a node that ends at column 0 of a later row ends on the row before. */
 function endLine(node: Node): number {
@@ -446,7 +566,9 @@ function walk(nodes: Node[], parent: { kind: SymbolKind; qualifier: string } | n
       indent: /^[ \t]*/.exec(text.slice(lineStart, headNode.startIndex))![0],
       head: headText(text.slice(headNode.startIndex, body ? headEnd(body, rules) : headNode.endIndex)),
       fold: body === null ? "none" : text.startsWith("{", body.startIndex) ? "brace" : "other",
-      children: body && rules.container(node, kind) ? walk(body.namedChildren, { kind, qualifier }, rules, text) : [],
+      children: body && rules.container(node, kind)
+        ? walk(rules.members?.(node, body) ?? body.namedChildren, { kind, qualifier }, rules, text)
+        : [],
     });
   }
   return symbols;

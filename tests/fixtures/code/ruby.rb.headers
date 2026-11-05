@@ -1,0 +1,9 @@
+src/ruby.rb:1-2 fn top
+src/ruby.rb:4-28 module Shapes
+src/ruby.rb:5-27 class Shapes.Box
+src/ruby.rb:9-14 method Shapes.Box.area
+src/ruby.rb:16-18 method Shapes.Box.self.cm
+src/ruby.rb:20-20 method Shapes.Box.pm
+src/ruby.rb:23-25 method Shapes.Box.self.build
+src/ruby.rb:30-30 fn sq
+src/ruby.rb:32-32 fn m
