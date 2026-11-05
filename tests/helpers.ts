@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -516,6 +517,26 @@ export function dashboardFixture(stamp: string | null): string {
   if (stamp !== null) fs.writeFileSync(path.join(dir, "dist/.crank-version"), stamp);
   return dir;
 }
+
+export function registeredProject(home: string, root = tempDir("crank-dash-proj-")): string {
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
+  expect(runCli(root, ["init", "--yes", "--codex", "skip"], { CRANK_HOME: home }).status).toBe(0);
+  return fs.realpathSync(root);
+}
+
+/** The id the dashboard gives a project whose store sits in `<root>/.crank`. */
+export function projectId(root: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(path.join(fs.realpathSync(root), ".crank"))
+    .digest("hex")
+    .slice(0, 12);
+}
+
+// bun test runs this process in UTC, so each CLI child gets a pinned zone and dates are computed in it.
+// Zones on both sides of UTC make a UTC-midnight reading fail at any hour in one of them.
+export const ZONES = ["Pacific/Kiritimati", "Pacific/Pago_Pago"];
 
 const STARTUP_LINE = /^crank-mem dashboard: (http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]+))\n/;
 

@@ -1,19 +1,24 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  cleanup,
   git,
   gitCommit,
   makeCrankHome,
   makeCrankProject,
   plantMemory,
+  projectId,
   REPO_ROOT,
+  registeredProject,
   runCli,
   runHook,
   seedMemory,
+  startDashboard,
   tempDir,
+  ZONES,
 } from "./helpers.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import {
@@ -23,6 +28,8 @@ import {
   claudeSubagentStart,
   codexSessionStart,
 } from "./fixtures/payloads.ts";
+
+afterEach(cleanup);
 
 const HOOK = "src/hooks/session-start.ts";
 const SUBAGENT_HOOK = "src/hooks/subagent-start.ts";
@@ -683,4 +690,452 @@ describe("usage capture: the outline and unfold lines", () => {
       ["a.ts", 0, "no-reader"],
     ]);
   }, 30_000);
+});
+
+const D = 86_400_000;
+const X = 999_999;
+const CHANNELS = [
+  "file-history",
+  "get",
+  "outline",
+  "search",
+  "session-start",
+  "subagent-start",
+  "timeline",
+  "unfold",
+];
+const SEARCH = {
+  limit: 10,
+  type: null,
+  since: null,
+  file: null,
+  stale: false,
+  ms: 1,
+  mode: "keyword",
+};
+
+function searchLine(
+  ts: number,
+  agent: string,
+  session: string | null,
+  query: string,
+  ids: number[],
+) {
+  return { v: 1, ts, agent, session, channel: "search", ...SEARCH, query, ids };
+}
+
+/** Write `entries` to the project's usage file, objects as JSON lines and strings as they are. */
+function writeLog(root: string, entries: Array<object | string>, file = "usage.jsonl"): void {
+  const text = entries.map((e) => (typeof e === "string" ? e : JSON.stringify(e)) + "\n").join("");
+  fs.writeFileSync(path.join(root, ".crank", file), text);
+}
+
+/** The window journey's lines, from `now`, over the ids A, B and C. */
+function windowLines(now: number, [A, B, C]: number[]) {
+  const L1 = { ...searchLine(now - 3 * D, "claude", "s1", "Foo  Bar ", [A!, B!]), mode: "hybrid" };
+  const L2 = {
+    v: 1,
+    ts: now - 3 * D + 300_000,
+    agent: "claude",
+    session: "s1",
+    channel: "get",
+    requested: [B],
+    found: [B],
+  };
+  const L3 = searchLine(now - 3 * D + 60_000, "manual", null, "manual q", [A!]);
+  const L4 = searchLine(now - 20 * D, "claude", "s2", "foo bar", []);
+  const L5 = {
+    v: 1,
+    ts: now - 20 * D,
+    agent: "claude",
+    session: "s2",
+    channel: "session-start",
+    source: "startup",
+    ids: [A, C, X],
+    nextSteps: false,
+    cerebrum: false,
+    adrs: false,
+    cerebrumBullets: null,
+    bytes: 1,
+    budget: 8192,
+    notes: 0,
+    recallPointer: false,
+  };
+  const L6 = searchLine(now - 60 * D, "claude", "s3", "baz", [C!]);
+  const L7 = {
+    v: 1,
+    ts: now - 60 * D,
+    agent: "claude",
+    session: "s3",
+    channel: "file-history",
+    tool: "Read",
+    shown: [{ path: "a.ts", ids: [A] }],
+    empty: ["b.ts"],
+    seen: [],
+    cut: [],
+    bytes: 1,
+  };
+  const L8 = searchLine(now - 100 * D, "claude", "s4", "old", [A!]);
+  return {
+    L1,
+    L2,
+    L3,
+    L4,
+    L5,
+    L6,
+    L7,
+    L8,
+    log: [L1, L2, L3, L4, L5, L6, L7, L8, "not json", { ...L1, v: 2 }],
+  };
+}
+
+const TITLES = ["Alpha one", "Bravo two", "Charlie three", "Delta four"];
+
+/** A registered project on `home` with four observations and the window journey's log. */
+function windowProject(home: string) {
+  const root = registeredProject(home);
+  const ids = seedMemory(
+    root,
+    TITLES.map((title) => ({ title })),
+  );
+  const lines = windowLines(Date.now(), ids);
+  writeLog(root, lines.log);
+  return { root, ids, lines };
+}
+
+type Dashboard = Awaited<ReturnType<typeof startDashboard>>;
+
+async function usageOf(dash: Dashboard, root: string, query: string): Promise<Record<string, any>> {
+  const res = await dash.get(`/api/projects/${projectId(root)}/usage?${query}`);
+  expect(res.status).toBe(200);
+  return (await res.json()) as Record<string, any>;
+}
+
+/** Each channel's count summed over `perDay`. */
+function totals(body: Record<string, any>): Record<string, number> {
+  const sum: Record<string, number> = {};
+  for (const day of body.perDay) {
+    for (const [channel, n] of Object.entries(day.counts as Record<string, number>)) {
+      sum[channel] = (sum[channel] ?? 0) + n;
+    }
+  }
+  return sum;
+}
+
+function channelCounts(counts: Record<string, number>): Record<string, number> {
+  return Object.fromEntries(CHANNELS.map((c) => [c, counts[c] ?? 0]));
+}
+
+describe("usage window: the usage endpoint aggregates the log", () => {
+  for (const zone of ZONES) {
+    test(`days 7, 30 and 90, agent runs only and with manual runs, in ${zone}`, async () => {
+      const home = makeCrankHome();
+      const { root, ids, lines } = windowProject(home);
+      const [A, B, C] = ids as [number, number, number];
+      const { L1, L2, L3, L4 } = lines;
+      const title = (id: number) => TITLES[ids.indexOf(id)]!;
+      const dash = await startDashboard(home, ["--port", "0"], { env: { TZ: zone } });
+      const local = new Intl.DateTimeFormat("en-CA", { timeZone: zone });
+
+      const week = await usageOf(dash, root, "days=7&manual=0");
+      expect(week.perDay).toHaveLength(7);
+      const dates: string[] = week.perDay.map((d: { date: string }) => d.date);
+      expect(dates.at(-1)).toBe(local.format(Date.now()));
+      expect([...new Set(dates)].sort()).toEqual(dates);
+      for (const day of week.perDay) expect(Object.keys(day.counts).sort()).toEqual(CHANNELS);
+      const on = (ts: number) =>
+        week.perDay.find((d: { date: string }) => d.date === local.format(ts));
+      expect(on(L1.ts).counts.search).toBe(1);
+      expect(on(L2.ts).counts.get).toBe(1);
+      expect(totals(week)).toEqual(channelCounts({ search: 1, get: 1 }));
+      expect(week).toMatchObject({
+        days: 7,
+        searches: 1,
+        zeroResultShare: 0,
+        keywordShare: 0,
+        followThrough: 1,
+        topQueries: [
+          {
+            query: "foo bar",
+            count: 1,
+            lastMs: L1.ts,
+            meanResults: 2,
+            runs: [{ ts: L1.ts, ids: [A, B] }],
+          },
+        ],
+        neverSurfacedShare: 0.5,
+        observationCount: 4,
+        sessionStarts: 0,
+      });
+      expect(week.surfaced).toEqual([
+        { id: B, count: 2, title: title(B) },
+        { id: A, count: 1, title: title(A) },
+      ]);
+
+      const manual = await usageOf(dash, root, "days=7&manual=1");
+      expect(manual).toMatchObject({ searches: 2, keywordShare: 0.5, followThrough: 1 });
+      expect(manual.topQueries).toEqual([
+        {
+          query: "manual q",
+          count: 1,
+          lastMs: L3.ts,
+          meanResults: 1,
+          runs: [{ ts: L3.ts, ids: [A] }],
+        },
+        week.topQueries[0],
+      ]);
+      expect(manual.surfaced).toEqual([
+        { id: B, count: 2, title: title(B) },
+        { id: A, count: 2, title: title(A) },
+      ]);
+
+      const month = await usageOf(dash, root, "days=30&manual=0");
+      expect(month.perDay).toHaveLength(30);
+      expect(month).toMatchObject({
+        searches: 2,
+        zeroResultShare: 0.5,
+        keywordShare: 0.5,
+        followThrough: 1,
+        sessionStarts: 1,
+        neverSurfacedShare: 0.25,
+      });
+      expect(month.topQueries).toEqual([
+        {
+          query: "foo bar",
+          count: 2,
+          lastMs: L1.ts,
+          meanResults: 1,
+          runs: [
+            { ts: L1.ts, ids: [A, B] },
+            { ts: L4.ts, ids: [] },
+          ],
+        },
+      ]);
+      expect(month.surfaced).toEqual([
+        { id: B, count: 2, title: title(B) },
+        { id: A, count: 2, title: title(A) },
+        { id: X, count: 1, title: "(deleted)" },
+        { id: C, count: 1, title: title(C) },
+      ]);
+
+      const quarter = await usageOf(dash, root, "days=90&manual=0");
+      expect(quarter.perDay).toHaveLength(90);
+      expect(quarter.searches).toBe(3);
+      expect(quarter.zeroResultShare).toBeCloseTo(1 / 3);
+      expect(quarter.keywordShare).toBeCloseTo(2 / 3);
+      expect(quarter.followThrough).toBe(0.5);
+      expect(
+        quarter.topQueries.map((q: { query: string; count: number }) => [q.query, q.count]),
+      ).toEqual([
+        ["foo bar", 2],
+        ["baz", 1],
+      ]);
+      expect(quarter.surfaced.map((s: { id: number; count: number }) => [s.id, s.count])).toEqual([
+        [A, 3],
+        [C, 2],
+        [B, 2],
+        [X, 1],
+      ]);
+      expect(quarter.neverSurfacedShare).toBe(0.25);
+      expect(quarter.topFiles).toEqual([{ path: "a.ts", count: 1 }]);
+      expect(quarter.filesWithoutMemory).toEqual([{ path: "b.ts", count: 1 }]);
+      expect(totals(quarter)).toEqual(
+        channelCounts({ search: 3, get: 1, "session-start": 1, "file-history": 1 }),
+      );
+    }, 30_000);
+  }
+
+  test("a bad days or manual gets 400, and a missing manual means 0", async () => {
+    const home = makeCrankHome();
+    const { root } = windowProject(home);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const id = projectId(root);
+    for (const query of [
+      "manual=0",
+      "days=5",
+      "days=abc",
+      "days=toString",
+      "days=7&manual=2",
+      "days=7&manual=x",
+    ]) {
+      expect([query, (await dash.get(`/api/projects/${id}/usage?${query}`)).status]).toEqual([
+        query,
+        400,
+      ]);
+    }
+    expect(await usageOf(dash, root, "days=7")).toEqual(
+      await usageOf(dash, root, "days=7&manual=0"),
+    );
+  }, 20_000);
+
+  test("a missing usage log answers zero counts and null shares", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    seedMemory(
+      root,
+      TITLES.map((title) => ({ title })),
+    );
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const body = await usageOf(dash, root, "days=7");
+    expect(body.perDay).toHaveLength(7);
+    for (const day of body.perDay) expect(day.counts).toEqual(channelCounts({}));
+    expect(body).toEqual({
+      days: 7,
+      manual: false,
+      perDay: body.perDay,
+      searches: 0,
+      zeroResultShare: null,
+      keywordShare: null,
+      followThrough: null,
+      topQueries: [],
+      surfaced: [],
+      neverSurfacedShare: 1,
+      observationCount: 4,
+      topFiles: [],
+      filesWithoutMemory: [],
+      sessionStarts: 0,
+      subagentStarts: 0,
+      outlines: 0,
+      unfolds: 0,
+      cappedShare: null,
+    });
+  }, 20_000);
+
+  test("a store that does not open still answers the log's metrics, with no titles", async () => {
+    const home = makeCrankHome();
+    const { root } = windowProject(home);
+    const newer = registeredProject(home);
+    plantMemory(newer, "newer");
+    const missing = registeredProject(home);
+    for (const other of [newer, missing]) {
+      fs.copyFileSync(
+        path.join(root, ".crank/usage.jsonl"),
+        path.join(other, ".crank/usage.jsonl"),
+      );
+    }
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const good = await usageOf(dash, root, "days=90&manual=0");
+    const expected = {
+      ...good,
+      observationCount: 0,
+      neverSurfacedShare: null,
+      surfaced: good.surfaced.map((s: object) => ({ ...s, title: "(deleted)" })),
+    };
+    expect(await usageOf(dash, newer, "days=90&manual=0")).toEqual(expected);
+    expect(await usageOf(dash, missing, "days=90&manual=0")).toEqual(expected);
+  }, 20_000);
+
+  test("the rotated file is read too, and a changed file is read again", async () => {
+    const home = makeCrankHome();
+    const { root, lines } = windowProject(home);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const whole = await usageOf(dash, root, "days=30&manual=0");
+    expect(whole.searches).toBe(2);
+    writeLog(root, [lines.L4], "usage.1.jsonl");
+    writeLog(
+      root,
+      lines.log.filter((l) => l !== lines.L4),
+    );
+    expect(await usageOf(dash, root, "days=30&manual=0")).toEqual(whole);
+    fs.appendFileSync(
+      path.join(root, ".crank/usage.jsonl"),
+      JSON.stringify(searchLine(Date.now() - 1000, "claude", "s5", "later", [])) + "\n",
+    );
+    expect((await usageOf(dash, root, "days=30&manual=0")).searches).toBe(3);
+  }, 20_000);
+
+  test("follow-through needs the same session within 30 minutes, and a query keeps its last 10 runs", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const T = Date.now() - D;
+    const actor = (session: string) => ({ v: 1, agent: "claude", session });
+    writeLog(root, [
+      searchLine(T, "claude", "s1", "one", [1]),
+      { ...actor("s2"), ts: T + 60_000, channel: "get", requested: [1], found: [1] },
+      searchLine(T + 7_200_000, "claude", "s1", "two", [2]),
+      { ...actor("s1"), ts: T + 9_060_000, channel: "get", requested: [2], found: [2] },
+      searchLine(T + 14_400_000, "claude", "s1", "three", [3]),
+      { ...actor("s1"), ts: T + 16_140_000, channel: "timeline", anchor: 3, depth: 5, ids: [3] },
+      ...Array.from({ length: 11 }, (_, i) =>
+        searchLine(T + 18_000_000 + i, "claude", null, "again", []),
+      ),
+    ]);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const body = await usageOf(dash, root, "days=7&manual=0");
+    expect(body.followThrough).toBeCloseTo(1 / 3);
+    const again = body.topQueries.find((q: { query: string }) => q.query === "again");
+    expect(again.count).toBe(11);
+    expect(again.runs.map((r: { ts: number }) => r.ts)).toEqual(
+      Array.from({ length: 10 }, (_, i) => T + 18_000_010 - i),
+    );
+  }, 20_000);
+});
+
+describe("usage capture: the journey's lines reach the usage endpoint", () => {
+  test("every channel counts once, and a dashboard search records no line", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    fs.writeFileSync(path.join(root, "code.ts"), THREE);
+    const hit = seedMemory(root, [{ title: "Epsilon finding", filesRead: ["a.ts"] }])[0]!;
+    const hook = (file: string, payload: object) =>
+      runHook(file, JSON.stringify(payload), root, { CRANK_HOME: home });
+    expect(hook(HOOK, claudeSessionStart(root)).status).toBe(0);
+    expect(hook(SUBAGENT_HOOK, claudeSubagentStart(root, "Explore")).status).toBe(0);
+    expect(hook(READ_HOOK, claudePostRead(root, path.join(root, "a.ts"), TRANSCRIPT)).status).toBe(
+      0,
+    );
+    const claude = (args: string[]) => claudeCli(root, args, { CRANK_HOME: home });
+    expect(printedIds(claude(["search", "epsilon"]).stdout)).toEqual([hit]);
+    expect(claude(["search", "zzz-none"]).stdout).toBe("");
+    expect(claude(["timeline", String(hit)]).status).toBe(0);
+    expect(claude(["get", String(hit)]).status).toBe(0);
+    expect(claude(["outline", "code.ts"]).status).toBe(0);
+    expect(claude(["unfold", "code.ts", "one"]).status).toBe(0);
+    const manual = runCli(root, ["search", "epsilon"], {
+      CLAUDECODE: "",
+      CLAUDE_CODE_SESSION_ID: "",
+      CRANK_HOME: home,
+    });
+    expect(printedIds(manual.stdout)).toEqual([hit]);
+
+    const lines = usageLines(root);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const all = await usageOf(dash, root, "days=7&manual=1");
+    expect(totals(all)).toEqual(
+      channelCounts({
+        "session-start": 1,
+        "subagent-start": 1,
+        "file-history": 1,
+        search: 3,
+        timeline: 1,
+        get: 1,
+        outline: 1,
+        unfold: 1,
+      }),
+    );
+    expect(all).toMatchObject({
+      sessionStarts: 1,
+      subagentStarts: 1,
+      outlines: 1,
+      unfolds: 1,
+      cappedShare: 0,
+    });
+    expect(all.zeroResultShare).toBeCloseTo(1 / 3);
+    const lists = (l: Record<string, any>): number[][] =>
+      [l.ids, l.found, ...(l.shown ?? []).map((s: { ids: number[] }) => s.ids)].filter(
+        Array.isArray,
+      );
+    const listing = lines.filter((l) => lists(l).some((ids) => ids.includes(hit)));
+    expect(all.surfaced.find((s: { id: number }) => s.id === hit).count).toBe(listing.length);
+
+    const agents = await usageOf(dash, root, "days=7&manual=0");
+    expect(agents).toMatchObject({ searches: 2, zeroResultShare: 0.5, followThrough: 1 });
+
+    const before = lineCount(root);
+    const res = await dash.get(`/api/projects/${projectId(root)}/observations?q=epsilon`);
+    expect(res.status).toBe(200);
+    const found = (await res.json()) as { lines: { id: number }[] };
+    expect(found.lines.map((l) => l.id)).toEqual([hit]);
+    expect(lineCount(root)).toBe(before);
+  }, 60_000);
 });

@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -24,7 +23,9 @@ import {
   makeModelHome,
   plantMemory,
   plantVector,
+  projectId,
   REPO_ROOT,
+  registeredProject,
   runCli,
   seedMemory,
   startDashboard,
@@ -44,13 +45,6 @@ const FIXTURE_INDEX = path.join(REPO_ROOT, "tests/fixtures/dashboard-dist/index.
 const FIXTURE_APP_JS = path.join(REPO_ROOT, "tests/fixtures/dashboard-dist/assets/app.js");
 
 /** `root` (a fresh temp dir by default) inited with `home` as its crank home, as a realpath. */
-function registeredProject(home: string, root = tempDir("crank-dash-proj-")): string {
-  fs.mkdirSync(root, { recursive: true });
-  fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
-  expect(runCli(root, ["init", "--yes", "--codex", "skip"], { CRANK_HOME: home }).status).toBe(0);
-  return fs.realpathSync(root);
-}
-
 function registryFile(home: string): string {
   return path.join(home, "projects.json");
 }
@@ -60,15 +54,6 @@ function registry(home: string): {
   projects: { root: string; addedAtMs: number }[];
 } {
   return JSON.parse(fs.readFileSync(registryFile(home), "utf-8"));
-}
-
-/** The id the dashboard gives a project whose store sits in `<root>/.crank`. */
-function projectId(root: string): string {
-  return crypto
-    .createHash("sha256")
-    .update(path.join(fs.realpathSync(root), ".crank"))
-    .digest("hex")
-    .slice(0, 12);
 }
 
 async function projects(dash: Awaited<ReturnType<typeof startDashboard>>): Promise<unknown> {

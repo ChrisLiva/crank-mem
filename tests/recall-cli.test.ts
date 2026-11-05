@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { memoryPaths } from "../src/hooks/lib/hook-io.ts";
-import { git, gitCommit, plantMemory, runCli, seedMemory, tempDir } from "./helpers.ts";
+import { git, gitCommit, plantMemory, runCli, seedMemory, tempDir, ZONES } from "./helpers.ts";
 import { MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE } from "../src/hooks/lib/memory.ts";
 import { NO_MEMORY_NOTE } from "../src/cli/recall.ts";
 import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
@@ -86,10 +86,6 @@ describe("store placement", () => {
     );
   });
 });
-
-// bun test runs this process in UTC, so each CLI child gets a pinned zone and dates are computed in it.
-// Zones on both sides of UTC make a UTC-midnight reading fail at any hour in one of them.
-const ZONES = ["Pacific/Kiritimati", "Pacific/Pago_Pago"];
 
 function localDate(offsetDays: number, timeZone: string): string {
   return new Date(Date.now() + offsetDays * 86_400_000).toLocaleDateString("en-CA", { timeZone });

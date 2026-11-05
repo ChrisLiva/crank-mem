@@ -19,10 +19,13 @@ import {
   type ProposalState,
   type StaleRow,
 } from "../hooks/lib/memory.ts";
+import { readUsage } from "../hooks/lib/usage.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
+import { EMBED_MODEL } from "../daemon/embedder.ts";
 import { NO_MEMORY_NOTE, queryVector, STATE_NOTES } from "./recall.ts";
 import { registeredRoots } from "./registry.ts";
 import { captureRows } from "./stats.ts";
+import { usageMetrics } from "./usage-metrics.ts";
 
 // The dashboard's HTTP server: loopback only, and every request carries the
 // session cookie, which the URL's `?token=` trades for once. The checks run
@@ -258,6 +261,27 @@ async function health(root: string): Promise<Answer> {
   return { status: 200, body: { rows } };
 }
 
+/** `GET …/usage`: the Usage view's metrics over the log; a store that does not open gives no titles. */
+async function usage(root: string, params: URLSearchParams): Promise<Answer> {
+  const days = ([7, 30, 90] as const).find((d) => String(d) === params.get("days"));
+  const manual = params.get("manual") ?? "0";
+  if (days === undefined || (manual !== "0" && manual !== "1")) return { status: 400 };
+  const events = readUsage(path.dirname(memoryPath(root)));
+  const opts = { nowMs: Date.now(), days, manual: manual === "1" };
+  const body = await withStore(root, (memory) =>
+    usageMetrics(events, {
+      ...opts,
+      titles: (ids) => new Map(memory.get(ids).map((o) => [o.id, o.title])),
+      observationCount: memory.stats(EMBED_MODEL, 0).observations,
+    }),
+  );
+  if (!("note" in body)) return { status: 200, body };
+  return {
+    status: 200,
+    body: usageMetrics(events, { ...opts, titles: () => new Map(), observationCount: 0 }),
+  };
+}
+
 /** The answer for a route under `/api/projects/<id>`, or null when no route matches. */
 async function projectRoute(
   project: Project,
@@ -269,6 +293,7 @@ async function projectRoute(
   if (route === "/stale") return stale(project.root, params);
   if (route === "/consolidations") return consolidations(project.root, params);
   if (route === "/health") return health(project.root);
+  if (route === "/usage") return usage(project.root, params);
   const one = /^\/observations\/([^/]*)$/.exec(route);
   if (one) return observation(project.root, one[1]!);
   return null;

@@ -148,3 +148,40 @@ export function cliActor(): UsageActor {
     ? { agent: "claude", session: process.env.CLAUDE_CODE_SESSION_ID || null }
     : { agent: "manual", session: null };
 }
+
+const parsed = new Map<string, { size: number; mtimeMs: number; lines: UsageLine[] }>();
+
+/** The `v: 1` lines of one usage file, parsed again only when its size or mtime changed. */
+function readUsageFile(file: string): UsageLine[] {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(file);
+  } catch {
+    parsed.delete(file);
+    return [];
+  }
+  const cached = parsed.get(file);
+  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.lines;
+  const lines: UsageLine[] = [];
+  try {
+    for (const text of fs.readFileSync(file, "utf-8").split("\n")) {
+      if (!text) continue;
+      try {
+        const line = JSON.parse(text) as UsageLine | null;
+        if (line?.v === 1) lines.push(line);
+      } catch {}
+    }
+  } catch {
+    return [];
+  }
+  parsed.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, lines });
+  return lines;
+}
+
+/** The usage lines of the store in `storeDir`, the rotated file's first. Never throws. */
+export function readUsage(storeDir: string): UsageLine[] {
+  return [
+    ...readUsageFile(path.join(storeDir, USAGE_ROTATED_FILE)),
+    ...readUsageFile(path.join(storeDir, USAGE_FILE)),
+  ];
+}
