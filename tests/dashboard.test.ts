@@ -428,9 +428,10 @@ describe("project registry", () => {
     const b = registeredProject(home, tempDir("crank-b-"));
     const a = registeredProject(home, tempDir("crank-a-"));
     seedMemory(a, [{ title: "seeded" }]);
-    const ties = [tempDir("crank-dash-tie-"), tempDir("crank-dash-tie-")]
-      .map((parent) => registeredProject(home, path.join(parent, "same")))
-      .sort();
+    const tieParent = tempDir("crank-dash-tie-");
+    const ties = ["p2", "p1"]
+      .map((p) => registeredProject(home, path.join(tieParent, p, "same")))
+      .reverse();
     const dash = await startDashboard(home, ["--port", "0"]);
     const entry = (root: string, memory: string, dot: string) => ({
       id: projectId(root),
