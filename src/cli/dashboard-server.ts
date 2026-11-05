@@ -3,6 +3,10 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
+import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
+import { memoryPath, memoryStatus, type MemoryRead } from "../hooks/lib/memory.ts";
+import { readStopState } from "../hooks/lib/user-state.ts";
+import { registeredRoots } from "./registry.ts";
 
 // The dashboard's HTTP server: loopback only, and every request carries the
 // session cookie, which the URL's `?token=` trades for once. The checks run
@@ -61,6 +65,47 @@ function staticFile(distDir: string, pathname: string): string | null {
   }
 }
 
+type Project = { id: string; name: string; root: string };
+
+/**
+ * The registered roots that still hold `.crank/config.json`, one per store and
+ * listed under the root that holds the store, ordered by name and then root.
+ */
+function listProjects(): Project[] {
+  const byStore = new Map<string, Project>();
+  for (const registered of registeredRoots()) {
+    if (!fs.existsSync(path.join(registered, CRANK_DIR, CONFIG_FILE))) continue;
+    const storeDir = path.dirname(memoryPath(registered));
+    const root = path.dirname(storeDir);
+    const id = crypto.createHash("sha256").update(storeDir).digest("hex").slice(0, 12);
+    byStore.set(storeDir, { id, name: path.basename(root), root });
+  }
+  return [...byStore.values()].sort(
+    (a, b) =>
+      (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) ||
+      (a.root < b.root ? -1 : a.root > b.root ? 1 : 0),
+  );
+}
+
+function projectById(id: string): Project | null {
+  return listProjects().find((p) => p.id === id) ?? null;
+}
+
+/** Green: a readable store taking digests. Grey: digests off. Amber: anything needing a look. */
+function projectDot(root: string, memory: MemoryRead["status"]): "green" | "amber" | "grey" {
+  if (memory !== "open") return "amber";
+  if (!loadConfig(path.join(root, CRANK_DIR)).digest) return "grey";
+  return readStopState() === null ? "green" : "amber";
+}
+
+function projectsBody(): string {
+  const projects = listProjects().map((p) => {
+    const memory = memoryStatus(memoryPath(p.root));
+    return { ...p, dot: projectDot(p.root, memory), memory };
+  });
+  return JSON.stringify({ projects });
+}
+
 function unauthorized(res: http.ServerResponse): void {
   res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" }).end(UNAUTHORIZED_BODY);
 }
@@ -96,6 +141,15 @@ export async function serveDashboard(opts: {
     }
     const cookie = cookieValue(req.headers.cookie, COOKIE);
     if (cookie === null || !sameToken(cookie, opts.token)) return unauthorized(res);
+    if (url.pathname === "/api/projects") {
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" }).end(projectsBody());
+      return;
+    }
+    const scoped = /^\/api\/projects\/([^/]+)\//.exec(url.pathname);
+    if (scoped && projectById(scoped[1]!) === null) {
+      res.writeHead(404).end();
+      return;
+    }
     const file = staticFile(opts.distDir, url.pathname);
     if (file === null) {
       res.writeHead(404).end();

@@ -27,6 +27,7 @@ import {
 import { LOG_FILE } from "../hooks/lib/debug.ts";
 import { MEMORY_FILE, SNAPSHOT_DIR } from "../hooks/lib/memory.ts";
 import { openProject } from "./project.ts";
+import { unregisterProject } from "./registry.ts";
 import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
 
 // Remove all crank-mem wiring. Default is surgical: strip exactly the
@@ -133,6 +134,7 @@ export async function run(args: string[]): Promise<number> {
     console.log("  kept .crank/ (delete it manually when ready)");
   }
 
+  unregisterProject(root);
   console.log("crank-mem: uninstalled.");
   return 0;
 }

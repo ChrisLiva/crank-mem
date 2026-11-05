@@ -7,6 +7,7 @@ import { choose } from "./prompt.ts";
 import { cliVersion, REPO_ROOT } from "./version.ts";
 import { vendorHooks, templatePath } from "./vendor.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
+import { registerProject } from "./registry.ts";
 import {
   crankHooks,
   mergeHooksIntoFile,
@@ -180,6 +181,8 @@ export async function run(args: string[]): Promise<number> {
     }
     return 1;
   }
+
+  registerProject(root);
 
   // ── Summary ──────────────────────────────────────────────────────────────
   console.log(`crank-mem ${cliVersion()} initialized (runtime: ${runtime}, git: ${gitMode})`);

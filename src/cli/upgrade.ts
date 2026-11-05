@@ -4,6 +4,7 @@ import { cliVersion, REPO_ROOT } from "./version.ts";
 import { installPackages } from "./setup.ts";
 import { vendorHooks, templatePath } from "./vendor.ts";
 import { openProject } from "./project.ts";
+import { registerProject } from "./registry.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
   crankTrust,
@@ -169,6 +170,7 @@ export async function run(_args: string[]): Promise<number> {
   // costs search by meaning, not the upgrade.
   const installed = installPackages();
   if (!installed.ok) console.error(`crank-mem: could not install packages (${installed.detail})`);
+  registerProject(root);
 
   migrateStore(memoryPath(root));
 

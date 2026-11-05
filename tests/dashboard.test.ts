@@ -1,16 +1,23 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { cliVersion } from "../src/cli/version.ts";
+import { loadConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import {
   cleanup,
   dashboardFixture,
+  git,
+  gitCommit,
   makeCrankHome,
   makeCrankProject,
+  plantMemory,
   REPO_ROOT,
   runCli,
+  seedMemory,
   startDashboard,
+  stopDigests,
   tempDir,
   waitFor,
 } from "./helpers.ts";
@@ -24,6 +31,43 @@ const FORBIDDEN_HOST_BODY = "crank-mem dashboard: forbidden host.\n";
 const STARTUP_URL = /^http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]{64})$/;
 const FIXTURE_INDEX = path.join(REPO_ROOT, "tests/fixtures/dashboard-dist/index.html");
 const FIXTURE_APP_JS = path.join(REPO_ROOT, "tests/fixtures/dashboard-dist/assets/app.js");
+
+/** `root` (a fresh temp dir by default) inited with `home` as its crank home, as a realpath. */
+function registeredProject(home: string, root = tempDir("crank-dash-proj-")): string {
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
+  expect(runCli(root, ["init", "--yes", "--codex", "skip"], { CRANK_HOME: home }).status).toBe(0);
+  return fs.realpathSync(root);
+}
+
+function registryFile(home: string): string {
+  return path.join(home, "projects.json");
+}
+
+function registry(home: string): {
+  version: number;
+  projects: { root: string; addedAtMs: number }[];
+} {
+  return JSON.parse(fs.readFileSync(registryFile(home), "utf-8"));
+}
+
+/** The id the dashboard gives a project whose store sits in `<root>/.crank`. */
+function projectId(root: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(path.join(fs.realpathSync(root), ".crank"))
+    .digest("hex")
+    .slice(0, 12);
+}
+
+async function projects(dash: Awaited<ReturnType<typeof startDashboard>>): Promise<unknown> {
+  const res = await dash.get("/api/projects");
+  expect([res.status, res.headers.get("content-type")]).toEqual([
+    200,
+    "application/json; charset=utf-8",
+  ]);
+  return res.json();
+}
 
 function portOf(url: string): number {
   return Number(STARTUP_URL.exec(url)![1]);
@@ -345,5 +389,144 @@ describe("dashboard server", () => {
     expect((await bare.get("/")).status).toBe(200);
     expect(await bare.stop()).toBe(0);
     expect(bare.output()).toEqual({ stdout: `crank-mem dashboard: ${bare.url}\n`, stderr: "" });
+  }, 20_000);
+});
+
+describe("project registry", () => {
+  test("init registers the root, and each upgrade keeps exactly one entry for it", () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    for (let i = 0; i < 2; i++) {
+      expect(runCli(root, ["upgrade"], { CRANK_HOME: home }).status).toBe(0);
+    }
+    const file = registry(home);
+    expect(file.version).toBe(1);
+    expect(file.projects.map((p) => p.root)).toEqual([root]);
+    expect(typeof file.projects[0]!.addedAtMs).toBe("number");
+  });
+
+  test("uninstall with --keep-crank or --delete-crank removes only its own root", () => {
+    for (const flag of ["--keep-crank", "--delete-crank"]) {
+      const home = makeCrankHome();
+      const gone = registeredProject(home);
+      const kept = registeredProject(home);
+      const run = runCli(gone, ["uninstall", "--yes", flag], { CRANK_HOME: home });
+      expect([flag, run.status]).toEqual([flag, 0]);
+      expect([flag, registry(home).projects.map((p) => p.root)]).toEqual([flag, [kept]]);
+    }
+  });
+
+  test("a registry write that fails leaves init's status and output as they are", () => {
+    const fileHome = path.join(tempDir("crank-dash-filehome-"), "home");
+    fs.writeFileSync(fileHome, "");
+    const runs = [makeCrankHome(), fileHome].map((home) => {
+      const root = tempDir("crank-dash-proj-");
+      fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
+      return runCli(root, ["init", "--yes", "--codex", "skip"], { CRANK_HOME: home });
+    });
+    expect(runs[1]).toEqual(runs[0]!);
+    expect(runs[1]!.status).toBe(0);
+  });
+
+  test("GET /api/projects lists inited roots by name, then root, with id, store status and dot", async () => {
+    const home = makeCrankHome();
+    const b = registeredProject(home, tempDir("crank-b-"));
+    const a = registeredProject(home, tempDir("crank-a-"));
+    seedMemory(a, [{ title: "seeded" }]);
+    const ties = [tempDir("crank-dash-tie-"), tempDir("crank-dash-tie-")]
+      .map((parent) => registeredProject(home, path.join(parent, "same")))
+      .sort();
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const entry = (root: string, memory: string, dot: string) => ({
+      id: projectId(root),
+      name: path.basename(root),
+      root,
+      memory,
+      dot,
+    });
+    expect(await projects(dash)).toEqual({
+      projects: [
+        entry(a, "open", "grey"),
+        entry(b, "missing", "amber"),
+        ...ties.map((root) => entry(root, "missing", "amber")),
+      ],
+    });
+  }, 20_000);
+
+  test("roots sharing a store list once under the main checkout, and a root without config drops", async () => {
+    const home = makeCrankHome();
+    const tmp = tempDir("crank-dash-git-");
+    const main = path.join(tmp, "main");
+    fs.mkdirSync(main);
+    fs.writeFileSync(path.join(main, "a.ts"), "export const a = 1;\n");
+    git(main, "init", "-q");
+    const init = runCli(main, ["init", "--git", "commit", "--yes", "--codex", "skip"], {
+      CRANK_HOME: home,
+    });
+    expect(init.status).toBe(0);
+    gitCommit(main, "init");
+    const worktree = path.join(tmp, "wt");
+    git(main, "worktree", "add", "-q", worktree);
+    expect(runCli(worktree, ["upgrade"], { CRANK_HOME: home }).status).toBe(0);
+    const standalone = registeredProject(home);
+    expect(registry(home).projects.map((p) => p.root)).toEqual([
+      fs.realpathSync(main),
+      fs.realpathSync(worktree),
+      standalone,
+    ]);
+
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const roots = async () =>
+      ((await projects(dash)) as { projects: { root: string }[] }).projects.map((p) => p.root);
+    expect(await roots()).toEqual([standalone, fs.realpathSync(main)]);
+    const before = fs.readFileSync(registryFile(home));
+    fs.rmSync(path.join(standalone, ".crank/config.json"));
+    expect(await roots()).toEqual([fs.realpathSync(main)]);
+    expect(fs.readFileSync(registryFile(home)).equals(before)).toBe(true);
+  }, 20_000);
+
+  test("the dot follows the store, the project's digest setting and the recorded stop", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home, tempDir("crank-a-"));
+    const newer = registeredProject(home, tempDir("crank-b-"));
+    seedMemory(root, [{ title: "seeded" }]);
+    plantMemory(newer, "newer");
+    const crankDir = path.join(root, ".crank");
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const states = async () =>
+      ((await projects(dash)) as { projects: { memory: string; dot: string }[] }).projects.map(
+        (p) => [p.memory, p.dot],
+      );
+    saveConfig(crankDir, { ...loadConfig(crankDir), digest: true });
+    expect(await states()).toEqual([
+      ["open", "green"],
+      ["newer", "amber"],
+    ]);
+    stopDigests(home);
+    expect((await states())[0]).toEqual(["open", "amber"]);
+    saveConfig(crankDir, { ...loadConfig(crankDir), digest: false });
+    expect((await states())[0]).toEqual(["open", "grey"]);
+  }, 20_000);
+
+  test("a missing, unparsable or all-dropped registry answers an empty list", async () => {
+    const home = makeCrankHome();
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const body = async () => (await dash.get("/api/projects")).text();
+    expect(await body()).toBe('{"projects":[]}');
+    fs.writeFileSync(registryFile(home), "not json");
+    expect(await body()).toBe('{"projects":[]}');
+    const gone = tempDir("crank-dash-gone-");
+    fs.writeFileSync(
+      registryFile(home),
+      JSON.stringify({ version: 1, projects: [{ root: gone, addedAtMs: 1 }] }),
+    );
+    expect(await body()).toBe('{"projects":[]}');
+  }, 20_000);
+
+  test("a project-scoped route for an id no listed project has answers 404", async () => {
+    const home = makeCrankHome();
+    registeredProject(home);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    expect((await dash.get("/api/projects/000000000000/health")).status).toBe(404);
   }, 20_000);
 });
