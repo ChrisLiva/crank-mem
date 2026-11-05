@@ -1,0 +1,26 @@
+src/typescript.ts
+  6-9│export function add(a: number, b: number): number { … }
+11-13│function* count(): Generator<number> { … }
+15-15│function over(a: string): string;
+16-16│function over(a: number): number;
+17-19│function over(a: unknown): unknown { … }
+21-21│export const twice = (x: number) => …
+23-25│var legacy = function (y: string) { … }
+37-37│function decorate(target: unknown, key: string) { … }
+39-52│export class Box<T> {
+41-43│  handler = () => { … }
+44-46│  late = function () { … }
+47-47│  constructor(private value: T) { … }
+48-51│  get current(): T { … }
+54-59│export abstract class Shape {
+55-55│  abstract area(): number
+56-58│  describe(): string { … }
+61-66│export interface Named {
+63-65│  greet(other: Named): string
+68-68│export type Pair = [string, number];
+70-73│export enum Color { … }
+75-77│namespace NS {
+76-76│  export function helper(): void { … }
+79-81│module "m" {
+80-80│  export function fromM(): void;
+83-85│export default function () { … }

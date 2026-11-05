@@ -30,3 +30,8 @@ export function positive(value: string | boolean | undefined, fallback: number):
   const n = typeof value === "string" ? Number(value) : NaN;
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
+
+/** A value flag's string, undefined when absent, or null when it came without a value. */
+export function stringFlag(value: string | boolean | undefined): string | undefined | null {
+  return value === undefined ? undefined : typeof value === "string" ? value : null;
+}

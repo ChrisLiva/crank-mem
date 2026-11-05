@@ -45,6 +45,12 @@ export const COMMANDS = {
     bool: [],
   },
   get: { summary: "Print stored observations in full", usage: "Usage: crank-mem get <id...>", value: [], bool: [] },
+  outline: {
+    summary: "Print a source file's symbols with their bodies folded",
+    usage: "Usage: crank-mem outline <file> [--from <line>]",
+    value: ["from"],
+    bool: [],
+  },
   "restore-memory": { summary: "Put a memory.db snapshot back", usage: "Usage: crank-mem restore-memory [<file>]", value: [], bool: [] },
   setup: {
     summary: "Install packages and download the local search model",

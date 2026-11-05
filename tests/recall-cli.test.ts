@@ -339,13 +339,18 @@ describe("where the commands run", () => {
 });
 
 describe("help", () => {
-  test("--help lists search, timeline and get, and hides --model-host", () => {
+  test("--help lists the recall and code commands, and hides --model-host", () => {
     const run = runCli(os.tmpdir(), ["--help"]);
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("  search          Search stored memory by meaning or keyword\n");
     expect(run.stdout).toContain("  timeline        Show the observations around one id\n");
-    expect(run.stdout).toContain("  get             Print stored observations in full\n");
+    expect(run.stdout).toContain(
+      "  get             Print stored observations in full\n  outline         Print a source file's symbols with their bodies folded\n",
+    );
     expect(run.stdout).toContain("  restore-memory  Put a memory.db snapshot back\n");
     expect(run.stdout).not.toContain("--model-host");
-  });
+    expect(runCli(os.tmpdir(), ["outline", "--help"]).stdout).toBe(
+      "Usage: crank-mem outline <file> [--from <line>]\n\nPrint a source file's symbols with their bodies folded.\n",
+    );
+  }, 20_000);
 });

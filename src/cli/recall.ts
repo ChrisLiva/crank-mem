@@ -4,7 +4,7 @@ import {
   formatLine, localDate, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_OLDER_NOTE, MEMORY_UNREADABLE_NOTE, OBSERVATION_TYPES,
   type MemoryReader, type Observation, type ObservationType, type SearchQuery,
 } from "../hooks/lib/memory.ts";
-import { parseArgs } from "./args.ts";
+import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";
 
@@ -48,11 +48,6 @@ function localMidnight(value: string): number | null {
   const date = new Date(y, mo - 1, d);
   if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null;
   return date.getTime();
-}
-
-/** A value flag's string, undefined when absent, or null when it came without a value. */
-function stringFlag(value: string | boolean | undefined): string | undefined | null {
-  return value === undefined ? undefined : typeof value === "string" ? value : null;
 }
 
 const isObservationType = (value: string): value is ObservationType => OBSERVATION_TYPES.some((t) => t === value);
