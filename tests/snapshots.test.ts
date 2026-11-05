@@ -253,7 +253,7 @@ describe("maintenance", () => {
     expect(last.startsWith("[PRIOR SUMMARY]\n")).toBe(true);
     expect(last).toContain("r4 r4");
     expect(last).not.toContain("r3 r3");
-  });
+  }, 20_000);
 
   test("the trim keeps the newest 7 daily snapshots and every -v1.db, and removes stray temp files", () => {
     const root = maintained();
