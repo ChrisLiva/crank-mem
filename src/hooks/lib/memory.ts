@@ -11,7 +11,7 @@ import { runGit } from "./scanner.ts";
 // process.getBuiltinModule on each open, so a runtime without it degrades to
 // "unreadable" instead of failing at import time.
 
-export const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 2;
 export const MEMORY_FILE = "memory.db";
 /** Snapshots of the store, relative to the folder that holds it. */
 export const SNAPSHOT_DIR = path.join("backups", "memory");
@@ -87,7 +87,7 @@ export type Observation = ObservationLine & {
   filesModified: string[];
   staleFlag: { atMs: number; reason: string } | null;
 };
-export type SearchHit = ObservationLine;
+type SearchHit = ObservationLine;
 export type SearchQuery = {
   text: string;
   vector: { model: string; values: Float32Array } | null;
@@ -97,7 +97,7 @@ export type SearchQuery = {
   file: string | null;
   stale: boolean;
 };
-export type MemoryStats = {
+type MemoryStats = {
   observations: number;
   unembedded: number;
   lastDigestMs: number | null;
@@ -114,7 +114,7 @@ export type PendingWork = {
   lastOkStartMs: number | null;
 };
 type RunBase = { startedMs: number; model: string | null; costUsd: number };
-export type ConsolidationRecord =
+type ConsolidationRecord =
   | (RunBase & {
       outcome: "ok";
       sent: number[];

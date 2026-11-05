@@ -23,7 +23,7 @@ export const BACKUP_DIR = path.join("backups", "cerebrum");
 export const CEREBRUM_FILE = "cerebrum.md";
 // Where superseded entries go; never injected.
 export const ARCHIVE_FILE = "cerebrum-archive.md";
-export const BACKUP_KEEP = 5;
+const BACKUP_KEEP = 5;
 
 // Episodic memory, `.crank/journal.md`. No hook reads or writes it.
 export const JOURNAL_FILE = "journal.md";
@@ -33,7 +33,7 @@ export const MARKER_FILE = "cerebrum-nudge.json";
 export const DEDUP_FILE = "cerebrum-dedup.json";
 
 // The audit skill sets disable-model-invocation, so only the user can start it.
-export const AUDIT_SKILL = "crank-mem-audit";
+const AUDIT_SKILL = "crank-mem-audit";
 
 /**
  * Copy cerebrum.md to backups/cerebrum/<timestamp>.md unless the newest copy

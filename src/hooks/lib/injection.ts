@@ -148,7 +148,7 @@ export interface InjectionSources {
   captureNotes?: string[];
 }
 
-export type Recall =
+type Recall =
   | { status: "open"; nextSteps: string | null; recentLines: string[] }
   | { status: "missing" | "older" | "newer" | "unreadable" };
 

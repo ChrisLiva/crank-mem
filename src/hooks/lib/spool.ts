@@ -30,15 +30,15 @@ export type SpoolItem = { stem: string; entry: SpoolEntry };
 
 export const DAEMON_FILE = "daemon.json";
 /** A heartbeat older than this means the daemon is gone; it heartbeats once a sweep. */
-export const HEARTBEAT_MAX_MS = 90_000;
+const HEARTBEAT_MAX_MS = 90_000;
 /** A spool entry for this project quiet this long turns the digest gate off. */
-export const CAPTURE_STALL_MS = 2 * 3_600_000;
+const CAPTURE_STALL_MS = 2 * 3_600_000;
 export type DaemonState = { pid: number; version: string; heartbeatMs: number };
 
 const PARKED = "parked";
 const EXT = ".json";
 
-export function spoolDir(): string {
+function spoolDir(): string {
   return path.join(crankHome(), "spool");
 }
 
@@ -55,7 +55,7 @@ export function transcriptStem(transcriptPath: unknown): string | null {
 }
 
 /** Write the entry for a transcript, replacing any parked copy so the session is digested again. */
-export function writeSignal(
+function writeSignal(
   transcriptPath: string,
   projectRoot: string,
   ended: boolean,

@@ -5,7 +5,7 @@ import { findProjectRoot } from "../hooks/lib/hook-io.ts";
 
 // Shared "is crank-mem initialized here?" guard for CLI commands.
 
-export const NOT_INITIALIZED = "crank-mem: not initialized here — run `crank-mem init` first.";
+const NOT_INITIALIZED = "crank-mem: not initialized here — run `crank-mem init` first.";
 
 export interface OpenedProject {
   root: string;

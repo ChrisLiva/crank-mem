@@ -78,7 +78,7 @@ function toPosix(p: string): string {
 }
 
 /** Stat-free name gate: excluded, binary or lockfile paths are never indexable. */
-export function isIndexableName(relPath: string, config: CrankConfig): boolean {
+function isIndexableName(relPath: string, config: CrankConfig): boolean {
   if (isExcluded(relPath, config.excludes)) return false;
   if (BINARY_EXTENSIONS.has(path.extname(relPath).toLowerCase())) return false;
   if (LOCKFILE.test(relPath)) return false;
