@@ -61,7 +61,7 @@ function outlinePage(file: string, entries: { symbol: CodeSymbol; parents: CodeS
 export async function unfold(args: string[]): Promise<number> {
   const { rest } = parseArgs(args, COMMANDS.unfold.value);
   const [file, query] = rest;
-  if (file === undefined || query === undefined || rest.length !== 2) {
+  if (file === undefined || !query || rest.length !== 2) {
     console.error(COMMANDS.unfold.usage);
     return 1;
   }

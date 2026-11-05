@@ -302,7 +302,7 @@ describe("refusals", () => {
       expect([args, runCli(bare, ["outline", ...args])]).toEqual([args, { status: 1, stdout: "", stderr: usage }]);
     }
     const unfoldUsage = "Usage: crank-mem unfold <file> <symbol|line>\n";
-    for (const args of [[], ["a.ts"], ["a.ts", "f", "g"]]) {
+    for (const args of [[], ["a.ts"], ["a.ts", ""], ["a.ts", "f", "g"]]) {
       expect([args, runCli(bare, ["unfold", ...args])]).toEqual([args, { status: 1, stdout: "", stderr: unfoldUsage }]);
     }
     expect(fs.readdirSync(bare)).toEqual([]);
