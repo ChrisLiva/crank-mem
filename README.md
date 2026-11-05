@@ -43,8 +43,9 @@ An install made with `--codex-trust write` skips that, because upgrade
 recomputes the trusted hashes.
 
 Requires bun, or node >= 23.6 (runs TypeScript directly; no build step). Hooks
-import only `node:` modules; the one package, `@huggingface/transformers`, serves
-search by meaning and loads only when a command needs it.
+import only `node:` modules. Three packages each load only when a command needs
+them: `@huggingface/transformers` for search by meaning, and `web-tree-sitter`
+with `@vscode/tree-sitter-wasm` for `outline` and `unfold`.
 
 ## Commands
 
@@ -54,6 +55,8 @@ search by meaning and loads only when a command needs it.
 - `crank-mem search <query>` — search stored memory by meaning or keyword (`--limit`, `--type`, `--since YYYY-MM-DD`, `--file`, and `--stale` to include observations flagged stale, marked `[stale]`); keyword only until `setup` has run
 - `crank-mem timeline <id>` — the observations around one id (`--depth`)
 - `crank-mem get <id...>` — print stored observations in full, with the date and reason of a stale flag
+- `crank-mem outline <file>` — print a source file's symbols as folded source with start-end line ranges, members under their class; a long outline ends with a `--from <line>` command for the next page
+- `crank-mem unfold <file> <symbol|line>` — print one symbol in full with line numbers and its doc comment, by bare or qualified name or by any line inside it; every match prints
 - `crank-mem restore-memory [<file>]` — put a `memory.db` snapshot back: the named file, or the newest one in `.crank/backups/memory/`. It checks the snapshot's integrity and schema version, saves the current store as a snapshot first so the restore can be undone, then migrates the restored store to this version
 - `crank-mem setup` — install the clone's packages and download the local search model into `~/.crank/models`
 - `crank-mem stats` — index report; memory health (cerebrum bullets injected against total, preferences left out, the oldest bullet left out, cited paths that still exist, days since the last audit); capture health (digest on, off or stopped, daemon, spool waiting and parked, store counts, last digest, the month's cost at list price, pending `proposals`, `stale` rows, the last `consolidation` and its outcome, `last snapshot`, embedder); whether Codex threads got the injection and whether its hook trust is current
@@ -83,10 +86,10 @@ before replacing it.
 Claude Code fires `SessionStart` only in the main session, so crank-mem wires
 `SubagentStart` too. Each `general-purpose`, `Explore`, `Plan` and
 `workflow-subagent` subagent gets a 2,048-byte cerebrum excerpt, split between
-preferences and the newest memory bullets, a pointer to `cerebrum.md`, and,
-when the project has a readable `memory.db` or digests are running, a recall
-pointer to `crank-mem search`, `timeline` and `get`; custom and plugin agents
-get nothing. The parent session does not see it. See ADR 0007.
+preferences and the newest memory bullets, a pointer to `cerebrum.md`, a
+pointer to `crank-mem outline` and `unfold`, and, when the project has a
+readable `memory.db` or digests are running, a recall pointer to
+`crank-mem search`, `timeline` and `get`; custom and plugin agents get nothing. The parent session does not see it. See ADR 0007.
 
 ## Digests
 
