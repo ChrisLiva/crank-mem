@@ -7,7 +7,13 @@ import type * as sqlite from "node:sqlite";
 import { NO_MEMORY_NOTE } from "../src/cli/recall.ts";
 import { cliVersion } from "../src/cli/version.ts";
 import { loadConfig, saveConfig } from "../src/hooks/lib/config.ts";
-import { MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE } from "../src/hooks/lib/memory.ts";
+import {
+  MEMORY_NEWER_NOTE,
+  MEMORY_UNREADABLE_NOTE,
+  memoryPath,
+  openMemory,
+  type Memory,
+} from "../src/hooks/lib/memory.ts";
 import {
   cleanup,
   dashboardFixture,
@@ -756,6 +762,239 @@ describe("memory view", () => {
         "crank-mem dashboard: internal error.\n",
       ]);
       expect((await dash.get("/api/projects")).status).toBe(200);
+    }
+  }, 20_000);
+});
+
+type ProposalJson = {
+  id: number;
+  kind: string;
+  bullet: string;
+  state: string;
+  reason: string | null;
+  createdAtMs: number;
+  decidedAtMs: number | null;
+};
+
+/** Run `fn` on the project's store opened for writing, then close it. */
+function withWritable(root: string, fn: (memory: Memory) => void): void {
+  const opened = openMemory(memoryPath(root), "write");
+  if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
+  try {
+    fn(opened.memory);
+  } finally {
+    opened.memory.close();
+  }
+}
+
+describe("curation view", () => {
+  test("proposals, stale flags and consolidation runs page 50 newest first, and a run's decisions show", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const bullets = Array.from({ length: 55 }, (_, i) => `- **Rule ${i}**: keep é—日本 ${i}`);
+    seedMemory(root, [], {
+      proposals: bullets.map((bullet, i) => ({
+        kind: i % 2 === 0 ? ("memory" as const) : ("preference" as const),
+        bullet,
+      })),
+    });
+    const dash = await startDashboard(home, ["--port", "0"]);
+
+    const page1 = await memoryJson(dash, root, "proposals");
+    const rows1 = page1.rows as ProposalJson[];
+    const created = rows1[0]!.createdAtMs;
+    expect(typeof created).toBe("number");
+    const all = rows1.map((r) => r.id);
+    expect(all).toEqual([...all].sort((a, b) => b - a));
+    expect(rows1).toEqual(
+      bullets
+        .slice(5)
+        .reverse()
+        .map((bullet, i) => ({
+          id: all[i]!,
+          kind: bullets.indexOf(bullet) % 2 === 0 ? "memory" : "preference",
+          bullet,
+          state: "pending",
+          reason: null,
+          createdAtMs: created,
+          decidedAtMs: null,
+        })),
+    );
+    expect(page1.next).toBe(String(all[49]));
+    const page2 = await memoryJson(dash, root, `proposals?before=${page1.next}`);
+    expect([(page2.rows as ProposalJson[]).map((r) => r.bullet), page2.next]).toEqual([
+      bullets.slice(0, 5).reverse(),
+      null,
+    ]);
+
+    const [p1, p2, p3] = all as [number, number, number];
+    let runs = 0;
+    withWritable(root, (memory) => {
+      memory.recordConsolidation({
+        outcome: "ok",
+        startedMs: 1,
+        model: "m",
+        costUsd: 0,
+        sent: [p1, p2],
+        decided: [
+          { id: p1, state: "accepted", reason: "fits" },
+          { id: p2, state: "rejected", reason: "dup" },
+        ],
+        verdicts: [],
+      });
+      for (let i = 0; i < 3; i++) {
+        memory.recordConsolidation({
+          outcome: "retry",
+          startedMs: 2 + i,
+          model: null,
+          costUsd: 0,
+          sent: [p3],
+        });
+      }
+      runs += 4;
+    });
+    const inState = async (query: string) =>
+      (await memoryJson(dash, root, `proposals?${query}`)) as {
+        rows: ProposalJson[];
+        next: string | null;
+      };
+    const accepted = await inState("state=accepted");
+    expect(accepted).toEqual({
+      rows: [
+        {
+          ...rows1[0]!,
+          state: "accepted",
+          reason: "fits",
+          decidedAtMs: expect.any(Number),
+        },
+      ],
+      next: null,
+    });
+    expect((await inState("state=rejected")).rows.map((r) => [r.id, r.state, r.reason])).toEqual([
+      [p2, "rejected", "dup"],
+    ]);
+    expect((await inState("state=expired")).rows.map((r) => [r.id, r.state])).toEqual([
+      [p3, "expired"],
+    ]);
+    const pending1 = await inState("state=pending");
+    expect(pending1.rows.length).toBe(50);
+    expect(
+      pending1.rows.filter((r) => [p1, p2, p3].includes(r.id) || r.state !== "pending"),
+    ).toEqual([]);
+    expect(pending1.next).not.toBeNull();
+    const pending2 = await inState(`state=pending&before=${pending1.next}`);
+    expect([pending2.rows.map((r) => r.bullet), pending2.next]).toEqual([
+      bullets.slice(0, 2).reverse(),
+      null,
+    ]);
+    for (const query of ["state=nope", "before=x", "before=", "state=pending&before=1:1"]) {
+      const res = await dash.get(`/api/projects/${projectId(root)}/proposals?${query}`);
+      expect([query, res.status]).toEqual([query, 400]);
+    }
+
+    const flagged = seedMemory(
+      root,
+      Array.from({ length: 51 }, (_, i) => ({ title: `Row ${i} ✓` })),
+    );
+    seedMemory(root, [], { stale: flagged.map((id, i) => ({ id, reason: `moved — ${i}` })) });
+    const stale1 = await memoryJson(dash, root, "stale");
+    const staleAt = stale1.rows[0].staleAtMs;
+    expect(typeof staleAt).toBe("number");
+    const staleRow = (id: number, reviewed = false) => ({
+      id,
+      title: `Row ${flagged.indexOf(id)} ✓`,
+      staleAtMs: staleAt,
+      reason: `moved — ${flagged.indexOf(id)}`,
+      reviewed,
+    });
+    expect(stale1).toEqual({
+      rows: flagged
+        .slice(1)
+        .reverse()
+        .map((id) => staleRow(id)),
+      next: `${staleAt}:${flagged[1]}`,
+    });
+    expect(await memoryJson(dash, root, `stale?before=${stale1.next}`)).toEqual({
+      rows: [staleRow(flagged[0]!)],
+      next: null,
+    });
+    withWritable(root, (memory) => {
+      memory.recordConsolidation({
+        outcome: "ok",
+        startedMs: 5,
+        model: "m",
+        costUsd: 0,
+        sent: [],
+        decided: [],
+        verdicts: [{ id: flagged[0]!, verdict: "confirmed" }],
+      });
+      runs += 1;
+    });
+    expect(await memoryJson(dash, root, `stale?before=${stale1.next}`)).toEqual({
+      rows: [staleRow(flagged[0]!, true)],
+      next: null,
+    });
+    for (const query of ["before=1", "before=x", "before="]) {
+      const res = await dash.get(`/api/projects/${projectId(root)}/stale?${query}`);
+      expect([query, res.status]).toEqual([query, 400]);
+    }
+
+    withWritable(root, (memory) => {
+      for (let i = 0; i < 52; i++) {
+        memory.recordConsolidation({
+          outcome: "conflict",
+          startedMs: i,
+          model: i % 2 === 0 ? null : "sonnet",
+          costUsd: i + 0.125,
+        });
+        runs += 1;
+      }
+    });
+    const runs1 = await memoryJson(dash, root, "consolidations");
+    const runIds = (runs1.rows as { id: number }[]).map((r) => r.id);
+    expect(runIds.length).toBe(50);
+    expect(runIds).toEqual([...runIds].sort((a, b) => b - a));
+    expect(runs1.rows[0]).toEqual({
+      id: runIds[0],
+      startedAtMs: 51,
+      finishedAtMs: expect.any(Number),
+      outcome: "conflict",
+      model: "sonnet",
+      costUsd: 51.125,
+    });
+    expect(runs1.next).toBe(String(runIds[49]));
+    const runs2 = await memoryJson(dash, root, `consolidations?before=${runs1.next}`);
+    expect([runs2.rows.length, runs2.next]).toEqual([runs - 50, null]);
+    expect(runs2.rows.at(-1)).toEqual({
+      id: expect.any(Number),
+      startedAtMs: 1,
+      finishedAtMs: expect.any(Number),
+      outcome: "ok",
+      model: "m",
+      costUsd: 0,
+    });
+    for (const query of ["before=x", "before=", "before=1:1"]) {
+      const res = await dash.get(`/api/projects/${projectId(root)}/consolidations?${query}`);
+      expect([query, res.status]).toEqual([query, 400]);
+    }
+  }, 30_000);
+
+  test("a store that does not open answers every Curation route with the Memory view's note", async () => {
+    const home = makeCrankHome();
+    const missing = registeredProject(home);
+    const newer = registeredProject(home);
+    plantMemory(newer, "newer");
+    const unreadable = registeredProject(home);
+    plantMemory(unreadable, "unreadable");
+    const dash = await startDashboard(home, ["--port", "0"]);
+    for (const [root, note] of [
+      [missing, NO_MEMORY_NOTE],
+      [newer, MEMORY_NEWER_NOTE],
+      [unreadable, MEMORY_UNREADABLE_NOTE],
+    ] as const) {
+      for (const route of ["proposals", "stale", "consolidations"]) {
+        expect(await memoryJson(dash, root, route)).toEqual({ note });
+      }
     }
   }, 20_000);
 });

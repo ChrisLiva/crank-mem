@@ -9,10 +9,15 @@ import {
   memoryStatus,
   OBSERVATION_TYPES,
   openMemory,
+  PROPOSAL_STATES,
+  type ConsolidationRow,
   type MemoryRead,
   type MemoryReader,
   type ObservationLine,
   type ObservationType,
+  type ProposalRow,
+  type ProposalState,
+  type StaleRow,
 } from "../hooks/lib/memory.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
 import { NO_MEMORY_NOTE, queryVector, STATE_NOTES } from "./recall.ts";
@@ -198,6 +203,54 @@ async function observation(root: string, oid: string): Promise<Answer> {
   return body === null ? { status: 404 } : { status: 200, body };
 }
 
+/** `GET …/proposals`: one page of proposals in every state or in `state`, newest first. */
+async function proposals(root: string, params: URLSearchParams): Promise<Answer> {
+  const beforeParam = params.get("before");
+  const beforeId = beforeParam === null ? null : parseId(beforeParam);
+  const state = params.get("state");
+  if (beforeParam !== null && beforeId === null) return { status: 400 };
+  if (state !== null && !PROPOSAL_STATES.some((s) => s === state)) return { status: 400 };
+  const body = await withStore(root, (memory) =>
+    pageOf(
+      memory.proposalRows({ state: state as ProposalState | null, beforeId, limit: PAGE + 1 }),
+      PAGE,
+      (row: ProposalRow) => String(row.id),
+    ),
+  );
+  return { status: 200, body };
+}
+
+/** `GET …/stale`: one page of stale-flagged observations, newest flag first. */
+async function stale(root: string, params: URLSearchParams): Promise<Answer> {
+  const beforeParam = params.get("before");
+  const before = beforeParam === null ? null : parseCursor(beforeParam);
+  if (beforeParam !== null && before === null) return { status: 400 };
+  const body = await withStore(root, (memory) =>
+    pageOf(
+      memory.staleRows({
+        before: before && { staleAtMs: before.ms, id: before.id },
+        limit: PAGE + 1,
+      }),
+      PAGE,
+      (row: StaleRow) => `${row.staleAtMs}:${row.id}`,
+    ),
+  );
+  return { status: 200, body };
+}
+
+/** `GET …/consolidations`: one page of consolidation runs, newest first. */
+async function consolidations(root: string, params: URLSearchParams): Promise<Answer> {
+  const beforeParam = params.get("before");
+  const beforeId = beforeParam === null ? null : parseId(beforeParam);
+  if (beforeParam !== null && beforeId === null) return { status: 400 };
+  const body = await withStore(root, (memory) =>
+    pageOf(memory.consolidationRows({ beforeId, limit: PAGE + 1 }), PAGE, (row: ConsolidationRow) =>
+      String(row.id),
+    ),
+  );
+  return { status: 200, body };
+}
+
 /** The answer for a route under `/api/projects/<id>`, or null when no route matches. */
 async function projectRoute(
   project: Project,
@@ -205,6 +258,9 @@ async function projectRoute(
   params: URLSearchParams,
 ): Promise<Answer | null> {
   if (route === "/observations") return observations(project.root, params);
+  if (route === "/proposals") return proposals(project.root, params);
+  if (route === "/stale") return stale(project.root, params);
+  if (route === "/consolidations") return consolidations(project.root, params);
   const one = /^\/observations\/([^/]*)$/.exec(route);
   if (one) return observation(project.root, one[1]!);
   return null;

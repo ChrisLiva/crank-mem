@@ -61,6 +61,24 @@ export type NewObservation = {
   filesModified: string[];
 };
 export type ProposalKind = "preference" | "memory";
+export const PROPOSAL_STATES = ["pending", "accepted", "rejected", "expired"] as const;
+export type ProposalState = (typeof PROPOSAL_STATES)[number];
+export type ProposalRow = {
+  id: number;
+  kind: ProposalKind;
+  bullet: string;
+  state: ProposalState;
+  reason: string | null;
+  createdAtMs: number;
+  decidedAtMs: number | null;
+};
+export type StaleRow = {
+  id: number;
+  title: string;
+  staleAtMs: number;
+  reason: string;
+  reviewed: boolean;
+};
 export type DigestInput = {
   session: SessionKey;
   expected: Position | null;
@@ -107,6 +125,14 @@ type MemoryStats = {
   lastConsolidation: { startedMs: number; outcome: ConsolidationOutcome } | null;
 };
 export type ConsolidationOutcome = "ok" | "conflict" | "rejected" | "retry" | "stopped";
+export type ConsolidationRow = {
+  id: number;
+  startedAtMs: number;
+  finishedAtMs: number;
+  outcome: ConsolidationOutcome;
+  model: string | null;
+  costUsd: number;
+};
 export type PendingWork = {
   proposals: { id: number; kind: ProposalKind; bullet: string }[];
   stale: { id: number; title: string; narrative: string; reason: string }[];
@@ -149,6 +175,16 @@ export interface Memory {
   stats(model: string, sinceMs: number): MemoryStats;
   /** Pending proposals and unreviewed stale rows, oldest first; `limit` caps each list. */
   pending(limit: number): PendingWork;
+  /** Proposals newest first by id, in `state` when it is set, with ids below `beforeId` when it is set. */
+  proposalRows(q: {
+    state: ProposalState | null;
+    beforeId: number | null;
+    limit: number;
+  }): ProposalRow[];
+  /** Observations flagged stale, newest flag first by `(stale_at, id)`, strictly older than `before` when it is set. */
+  staleRows(q: { before: { staleAtMs: number; id: number } | null; limit: number }): StaleRow[];
+  /** Consolidation runs newest first by id, with ids below `beforeId` when it is set. */
+  consolidationRows(q: { beforeId: number | null; limit: number }): ConsolidationRow[];
   recordConsolidation(run: ConsolidationRecord): void;
   /**
    * When the newest snapshot is older than `everyMs` (or there is none): snapshots the store, deletes rows
@@ -913,6 +949,69 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       )!;
       const ms = (v: unknown) => (v === null ? null : Number(v));
       return { proposals, stale, lastStartMs: ms(runs.last), lastOkStartMs: ms(runs.lastOk) };
+    },
+
+    proposalRows(q) {
+      const filters: string[] = [];
+      const params: (string | number)[] = [];
+      if (q.state !== null) {
+        filters.push("state = ?");
+        params.push(q.state);
+      }
+      if (q.beforeId !== null) {
+        filters.push("id < ?");
+        params.push(q.beforeId);
+      }
+      const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+      return all(
+        `SELECT id, kind, bullet, state, reason, created_at, decided_at FROM proposals ${where}
+         ORDER BY id DESC LIMIT ?`,
+        ...params,
+        q.limit,
+      ).map((row) => ({
+        id: Number(row.id),
+        kind: row.kind as ProposalKind,
+        bullet: String(row.bullet),
+        state: row.state as ProposalState,
+        reason: row.reason === null ? null : String(row.reason),
+        createdAtMs: Number(row.created_at),
+        decidedAtMs: row.decided_at === null ? null : Number(row.decided_at),
+      }));
+    },
+
+    staleRows(q) {
+      const before = q.before === null ? "" : "AND (stale_at, id) < (?, ?)";
+      const params = q.before === null ? [] : [q.before.staleAtMs, q.before.id];
+      return all(
+        `SELECT id, title, stale_at, stale_reason, stale_reviewed FROM observations
+         WHERE stale_at IS NOT NULL ${before} ORDER BY stale_at DESC, id DESC LIMIT ?`,
+        ...params,
+        q.limit,
+      ).map((row) => ({
+        id: Number(row.id),
+        title: String(row.title),
+        staleAtMs: Number(row.stale_at),
+        reason: String(row.stale_reason),
+        reviewed: Number(row.stale_reviewed) === 1,
+      }));
+    },
+
+    consolidationRows(q) {
+      const before = q.beforeId === null ? "" : "WHERE id < ?";
+      const params = q.beforeId === null ? [] : [q.beforeId];
+      return all(
+        `SELECT id, started_at, finished_at, outcome, model, cost_usd FROM consolidations
+         ${before} ORDER BY id DESC LIMIT ?`,
+        ...params,
+        q.limit,
+      ).map((row) => ({
+        id: Number(row.id),
+        startedAtMs: Number(row.started_at),
+        finishedAtMs: Number(row.finished_at),
+        outcome: row.outcome as ConsolidationOutcome,
+        model: row.model === null ? null : String(row.model),
+        costUsd: Number(row.cost_usd),
+      }));
     },
 
     recordConsolidation(run) {
