@@ -1,0 +1,6 @@
+src/bash.sh
+  4-6│f() { … }
+ 8-10│function g { … }
+13-15│function h() { … }
+17-19│s() …
+21-21│outer() { … }

@@ -310,7 +310,80 @@ function firstTypeIdentifier(node: Node | null): Node | null {
   return null;
 }
 
-const RULES: Partial<Record<Grammar, FamilyRules>> = { typescript, tsx: typescript, javascript, python, go, cpp };
+const RUST_KINDS: Record<string, SymbolKind> = {
+  struct_item: "struct",
+  union_item: "struct",
+  enum_item: "enum",
+  trait_item: "trait",
+  impl_item: "impl",
+  type_item: "type",
+};
+const RUST_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["trait", "impl", "module"]);
+/** An impl's type, its base type when generic (`impl<T> Gen<T>` → `Gen`). */
+const rustImplType = (node: Node) => {
+  const type = node.childForFieldName("type");
+  return (type?.type === "generic_type" ? type.childForFieldName("type") : type)?.text ?? "";
+};
+
+const rust: FamilyRules = {
+  kind(node, parent) {
+    if (node.type === "function_item" || node.type === "function_signature_item") {
+      return parent === "impl" || parent === "trait" ? "method" : "fn";
+    }
+    if (node.type === "mod_item") return node.childForFieldName("body") ? "module" : null;
+    return Object.hasOwn(RUST_KINDS, node.type) ? RUST_KINDS[node.type]! : null;
+  },
+  container: (_node, kind) => RUST_CONTAINERS.has(kind),
+  passThrough: () => null,
+  widen(node) {
+    let start = node;
+    while (start.previousSibling?.type === "attribute_item") start = start.previousSibling;
+    return { start, head: node };
+  },
+  name(node) {
+    if (node.type !== "impl_item") return node.childForFieldName("name")?.text ?? "";
+    const trait = node.childForFieldName("trait");
+    return trait ? `${trait.text} for ${rustImplType(node)}` : rustImplType(node);
+  },
+  scope: (node) => node.type === "impl_item" ? rustImplType(node) : rust.name(node),
+  body: (node) => node.childForFieldName("body"),
+  comments: new Set(["line_comment", "block_comment"]),
+};
+
+const bash: FamilyRules = {
+  kind: (node) => node.type === "function_definition" ? "fn" : null,
+  container: () => false,
+  passThrough: () => null,
+  widen: (node) => ({ start: node, head: node }),
+  name: (node) => node.childForFieldName("name")?.text ?? "",
+  scope: (node) => bash.name(node),
+  body: (node) => node.childForFieldName("body"),
+  comments: new Set(["comment"]),
+};
+
+const JAVA_KINDS: Record<string, SymbolKind> = {
+  class_declaration: "class",
+  record_declaration: "class",
+  interface_declaration: "interface",
+  annotation_type_declaration: "interface",
+  enum_declaration: "enum",
+  method_declaration: "method",
+  constructor_declaration: "method",
+};
+const JAVA_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "interface", "enum"]);
+
+const java: FamilyRules = {
+  kind: (node) => Object.hasOwn(JAVA_KINDS, node.type) ? JAVA_KINDS[node.type]! : null,
+  container: (_node, kind) => JAVA_CONTAINERS.has(kind),
+  passThrough: (node) => node.type === "enum_body_declarations" ? node.namedChildren : null,
+  widen: (node) => ({ start: node, head: node }),
+  name: (node) => node.childForFieldName("name")?.text ?? "",
+  scope: (node) => java.name(node),
+  body: (node) => node.childForFieldName("body"),
+  comments: new Set(["line_comment", "block_comment"]),
+};
+
+const RULES: Partial<Record<Grammar, FamilyRules>> = { typescript, tsx: typescript, javascript, python, go, cpp, rust, bash, java };
 
 /** A node's last line, 1-based: a node that ends at column 0 of a later row ends on the row before. */
 function endLine(node: Node): number {

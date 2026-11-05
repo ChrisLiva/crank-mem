@@ -83,6 +83,7 @@ describe("unfold", () => {
       "src/doc.py": "# doc\n@deco\ndef f(): pass\n",
       "src/doc2.py": "class A:\n    # doc for m\n    def m(self): pass\n",
       "src/doc.go": "package p\n\n// Foo is a thing.\ntype Foo struct {\n\tx int\n}\n",
+      "src/doc.rs": "/// doc\n#[inline]\nfn f() {}\n",
     });
     const unfold = (file: string, query: string) => runCli(root, ["unfold", file, query]);
 
@@ -129,6 +130,7 @@ describe("unfold", () => {
       status: 0,
       stdout: "src/doc.go:4-6 struct Foo\n3│// Foo is a thing.\n4│type Foo struct {\n5│\tx int\n6│}\n",
     });
+    expect(unfold("src/doc.rs", "f")).toMatchObject({ status: 0, stdout: "src/doc.rs:2-3 fn f\n1│/// doc\n2│#[inline]\n3│fn f() {}\n" });
   }, 30_000);
 });
 
@@ -224,7 +226,7 @@ describe("without the code reader", () => {
   }, 30_000);
 });
 
-const FAMILIES = ["typescript.ts", "tsx.tsx", "cpp.cpp", "javascript.js", "python.py", "go.go"];
+const FAMILIES = ["typescript.ts", "tsx.tsx", "cpp.cpp", "javascript.js", "python.py", "go.go", "rust.rs", "bash.sh", "java.java"];
 
 describe("families", () => {
   for (const fixture of FAMILIES) {
