@@ -31,6 +31,8 @@ async function main(): Promise<number> {
       return (await import("./recall.ts")).get(rest);
     case "outline":
       return (await import("./code.ts")).outline(rest);
+    case "unfold":
+      return (await import("./code.ts")).unfold(rest);
     case "restore-memory":
       return (await import("./restore-memory.ts")).run(rest);
     case "job":

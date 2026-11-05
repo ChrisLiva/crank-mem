@@ -590,7 +590,7 @@ function tree(dir: string): Record<string, string> {
 }
 
 describe("flags", () => {
-  const COMMANDS = ["init", "scan", "digest", "search", "timeline", "get", "outline", "restore-memory", "setup", "stats", "upgrade", "uninstall", "daemon", "job"];
+  const COMMANDS = ["init", "scan", "digest", "search", "timeline", "get", "outline", "unfold", "restore-memory", "setup", "stats", "upgrade", "uninstall", "daemon", "job"];
 
   test("--help and -h print the command's usage and change nothing", () => {
     const root = initedProject();

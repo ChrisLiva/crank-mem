@@ -148,6 +148,20 @@ function endLine(node: Node): number {
   return end.column === 0 && end.row > node.startPosition.row ? end.row : end.row + 1;
 }
 
+/** The first line of the comment run directly above the symbol, or its start line with no run. */
+function docStart(node: Node, start: Node, head: Node, rules: FamilyRules): number {
+  let from = start;
+  if (start.equals(head)) {
+    from = node;
+    while (from.parent && rules.passThrough(from.parent) !== null && from.parent.startPosition.row === start.startPosition.row) from = from.parent;
+  }
+  let first = start.startPosition.row + 1;
+  for (let sib = from.previousSibling; sib && rules.comments.has(sib.type) && endLine(sib) === first - 1; sib = sib.previousSibling) {
+    first = sib.startPosition.row + 1;
+  }
+  return first;
+}
+
 /** Criterion 21's head: whitespace collapsed, no space inside brackets, trimmed, one trailing `{` dropped. */
 function headText(raw: string): string {
   const text = oneLine(raw).replace(/([([]) /g, "$1").replace(/,? ([)\]])/g, "$1").trim();
@@ -175,7 +189,7 @@ function walk(nodes: Node[], parent: { kind: SymbolKind; qualifier: string } | n
       kind,
       start: startLine,
       end: endLine(headNode),
-      docStart: startLine,
+      docStart: docStart(node, start, headNode, rules),
       indent: /^[ \t]*/.exec(text.slice(lineStart, headNode.startIndex))![0],
       head: headText(text.slice(headNode.startIndex, body ? body.startIndex : headNode.endIndex)),
       fold: body === null ? "none" : text.startsWith("{", body.startIndex) ? "brace" : "other",

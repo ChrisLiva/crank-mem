@@ -336,7 +336,7 @@ describe("where the commands run", () => {
 
   test("outside any project each command prints the init hint and exits 1", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-recall-bare-"));
-    for (const args of [...COMMANDS, ["outline", "a.ts"]]) {
+    for (const args of [...COMMANDS, ["outline", "a.ts"], ["unfold", "a.ts", "f"]]) {
       const run = runCli(bare, args);
       expect(run.status, args[0]).toBe(1);
       expect(run.stderr).toContain("not initialized here");
@@ -354,10 +354,14 @@ describe("help", () => {
     expect(run.stdout).toContain(
       "  get             Print stored observations in full\n  outline         Print a source file's symbols with their bodies folded\n",
     );
+    expect(run.stdout).toContain(
+      "  outline         Print a source file's symbols with their bodies folded\n  unfold          Print one symbol's full source\n",
+    );
     expect(run.stdout).toContain("  restore-memory  Put a memory.db snapshot back\n");
     expect(run.stdout).not.toContain("--model-host");
     expect(runCli(os.tmpdir(), ["outline", "--help"]).stdout).toBe(
       "Usage: crank-mem outline <file> [--from <line>]\n\nPrint a source file's symbols with their bodies folded.\n",
     );
+    expect(runCli(os.tmpdir(), ["unfold", "--help"]).stdout).toBe("Usage: crank-mem unfold <file> <symbol|line>\n\nPrint one symbol's full source.\n");
   }, 20_000);
 });

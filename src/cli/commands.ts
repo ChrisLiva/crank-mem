@@ -51,6 +51,7 @@ export const COMMANDS = {
     value: ["from"],
     bool: [],
   },
+  unfold: { summary: "Print one symbol's full source", usage: "Usage: crank-mem unfold <file> <symbol|line>", value: [], bool: [] },
   "restore-memory": { summary: "Put a memory.db snapshot back", usage: "Usage: crank-mem restore-memory [<file>]", value: [], bool: [] },
   setup: {
     summary: "Install packages and download the local search model",
