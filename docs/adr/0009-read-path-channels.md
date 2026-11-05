@@ -96,6 +96,13 @@ directory is gitignored local evidence and is not part of this repo.
   a legacy `Bash(crank-mem *)` there and keeping the user's other rules in place, and
   `uninstall` removes all four (Findings 8 and 9).
 
+Amended 2026-11-04: `init` and `upgrade` also add `Bash(crank-mem outline *)` and
+`Bash(crank-mem unfold *)`, in Finding 9's form, after the three recall rules.
+`shellReadPaths` names the file a `crank-mem outline` or `crank-mem unfold` call reads: the
+first word after the subcommand that is not a flag and not the value of `--from`, so such a
+call gets the same file history as a Read. `uninstall` removes all six rules: the five in
+`CRANK_ALLOW_RULES` and the legacy `Bash(crank-mem *)`.
+
 ## Re-probe method (~10 min when `claude --version` changes minor version)
 
 1. In a scratch project outside any repo, write a hook script per event that discards stdin

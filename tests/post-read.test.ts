@@ -56,7 +56,9 @@ describe("post-read file history", () => {
     const viaRead = context(run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)));
     const viaBash = context(run(root, claudePostBash(root, "sed -n '1,20p' src/a.ts", TRANSCRIPT)));
     expect(viaBash).toBe(viaRead);
-  });
+    const viaUnfold = context(run(root, claudePostBash(root, "crank-mem unfold src/a.ts f", TRANSCRIPT)));
+    expect(viaUnfold).toBe(viaRead);
+  }, 20_000);
 
   test("sections stop at 1,536 bytes", () => {
     const root = makeCrankProject({ "src/a.ts": "a\n", "src/b.ts": "b\n" });

@@ -416,7 +416,7 @@ describe("upgrade", () => {
     expect(run.stdout).toContain("  added the crank-mem recall rules to permissions.allow");
     const after = JSON.parse(fs.readFileSync(local, "utf-8"));
     expect(after.permissions).toEqual({
-      allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"],
+      allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"],
       deny: ["x"],
     });
     expect(after.hooks).toEqual(settings.hooks);
@@ -426,7 +426,25 @@ describe("upgrade", () => {
     const again = cli(root, "upgrade");
     expect(again.stdout).not.toContain("recall rules");
     expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(withRule);
-  });
+
+    // An install holding only the three recall rules gains the two code-reading rules.
+    settings.permissions = { allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] };
+    fs.writeFileSync(local, JSON.stringify(settings, null, 2) + "\n");
+    const three = cli(root, "upgrade");
+    expect(three.status).toBe(0);
+    expect(three.stdout.split("  added the crank-mem recall rules to permissions.allow").length).toBe(2);
+    expect(JSON.parse(fs.readFileSync(local, "utf-8")).permissions.allow).toEqual([
+      "Bash(ls:*)",
+      "Bash(crank-mem search *)",
+      "Bash(crank-mem timeline *)",
+      "Bash(crank-mem get *)",
+      "Bash(crank-mem outline *)",
+      "Bash(crank-mem unfold *)",
+    ]);
+    const converged = fs.readFileSync(local);
+    expect(cli(root, "upgrade").stdout).not.toContain("recall rules");
+    expect(fs.readFileSync(local).equals(converged)).toBe(true);
+  }, 20_000);
 
   test("adds SubagentStart to an install wired before it existed and keeps the user's edits", () => {
     const root = initedProject();

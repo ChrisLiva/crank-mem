@@ -21,6 +21,15 @@ describe("shellReadPaths", () => {
       ["rg foo", []],
       ["cat", []],
       ["", []],
+      ["crank-mem outline src/a.ts", ["src/a.ts"]],
+      ["crank-mem outline src/a.ts --from 40", ["src/a.ts"]],
+      ["crank-mem outline --from 40 src/a.ts", ["src/a.ts"]],
+      ["crank-mem unfold src/a.ts f", ["src/a.ts"]],
+      ["crank-mem unfold src/a.ts 12", ["src/a.ts"]],
+      ["crank-mem search foo", []],
+      ["crank-mem outline --help", []],
+      ["crank-mem outline", []],
+      ["crank-mem outline --from 40", []],
     ];
     for (const [command, paths] of table) expect([command, shellReadPaths(command)]).toEqual([command, paths]);
   });

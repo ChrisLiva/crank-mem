@@ -216,9 +216,15 @@ export function removeCrankHooksFromFile(
   return true;
 }
 
-// ── The permissions.allow rules that let agents run the recall commands ─────
+// ── The permissions.allow rules that let agents run the recall and code-reading commands ─────
 
-export const CRANK_ALLOW_RULES = ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] as const;
+export const CRANK_ALLOW_RULES = [
+  "Bash(crank-mem search *)",
+  "Bash(crank-mem timeline *)",
+  "Bash(crank-mem get *)",
+  "Bash(crank-mem outline *)",
+  "Bash(crank-mem unfold *)",
+] as const;
 /** The rule earlier releases wrote, which pre-approved every crank-mem subcommand. */
 export const LEGACY_ALLOW_RULE = "Bash(crank-mem *)";
 

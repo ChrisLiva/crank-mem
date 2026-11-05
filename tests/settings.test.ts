@@ -201,7 +201,7 @@ describe("addAllowRule", () => {
     const backedUp: string[] = [];
     expect(addAllowRule(f, (file) => backedUp.push(fs.readFileSync(file, "utf-8")))).toBe(true);
     const after = JSON.parse(fs.readFileSync(f, "utf-8"));
-    expect(after).toEqual({ model: "opus", permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"], deny: ["x"] } });
+    expect(after).toEqual({ model: "opus", permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"], deny: ["x"] } });
     expect(backedUp).toHaveLength(1);
     expect(JSON.parse(backedUp[0]!).permissions.allow).toEqual(["Bash(ls:*)"]);
   });
@@ -217,16 +217,16 @@ describe("addAllowRule", () => {
   test("creates missing permissions and allow keys", () => {
     const missingFile = tmpFile();
     expect(addAllowRule(missingFile)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(missingFile, "utf-8"))).toEqual({ permissions: { allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] } });
+    expect(JSON.parse(fs.readFileSync(missingFile, "utf-8"))).toEqual({ permissions: { allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"] } });
     const noAllow = writeSettings({ permissions: { deny: ["x"] } });
     expect(addAllowRule(noAllow)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(noAllow, "utf-8"))).toEqual({ permissions: { deny: ["x"], allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] } });
+    expect(JSON.parse(fs.readFileSync(noAllow, "utf-8"))).toEqual({ permissions: { deny: ["x"], allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"] } });
   });
   test("replaces the legacy Bash(crank-mem *) rule, keeping the user's other rules in place", () => {
     const f = writeSettings({ permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)", "Bash(git *)"] } });
     expect(addAllowRule(f)).toBe(true);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({
-      permissions: { allow: ["Bash(ls:*)", "Bash(git *)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] },
+      permissions: { allow: ["Bash(ls:*)", "Bash(git *)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"] },
     });
   });
   test("leaves a non-object file or a malformed permissions or allow alone", () => {
@@ -269,12 +269,12 @@ describe("removeAllowRule", () => {
     expect(fs.readFileSync(f, "utf-8")).toBe("{}\n");
   });
   test("keeps permissions when other keys remain", () => {
-    const f = writeSettings({ permissions: { allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"], deny: ["x"] } });
+    const f = writeSettings({ permissions: { allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"], deny: ["x"] } });
     expect(removeAllowRule(f)).toBe(true);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({ permissions: { deny: ["x"] } });
   });
   test("drops the legacy rule alongside the recall rules", () => {
-    const f = writeSettings({ permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] } });
+    const f = writeSettings({ permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"] } });
     expect(removeAllowRule(f)).toBe(true);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({ permissions: { allow: ["Bash(ls:*)"] } });
   });

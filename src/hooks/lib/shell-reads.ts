@@ -1,10 +1,12 @@
-// The files a Bash command reads with a plain read tool. A best-effort
+// The files a Bash command reads with a plain read tool or `crank-mem outline`/`unfold`. A best-effort
 // lexer, not a shell parser: callers filter the candidates through
 // memoryPaths, so a stray word such as a `head -n` count costs nothing.
 
 const READERS = new Set(["cat", "sed", "head", "tail", "awk", "nl"]);
 /** Readers whose first non-flag word is a program, not a file. */
 const PROGRAM_FIRST = new Set(["sed", "awk"]);
+/** `crank-mem` subcommands whose first non-flag word, outside a `--from` value, is the file they read. */
+const CODE_READERS = new Set(["outline", "unfold"]);
 const REDIRECTS = new Set([">", ">>", "2>", "&>"]);
 
 /** The command with each heredoc body, terminator line included, removed. */
@@ -64,6 +66,11 @@ function segments(command: string): string[][] {
 export function shellReadPaths(command: string): string[] {
   const paths: string[] = [];
   for (const [name, ...rest] of segments(dropHeredocs(command))) {
+    if (name === "crank-mem" && CODE_READERS.has(rest[0]!)) {
+      const file = rest.slice(1).find((w, i, words) => !w.startsWith("-") && words[i - 1] !== "--from");
+      if (file !== undefined) paths.push(file);
+      continue;
+    }
     if (!READERS.has(name!)) continue;
     const args: string[] = [];
     for (let i = 0; i < rest.length; i++) {
