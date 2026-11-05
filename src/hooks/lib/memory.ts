@@ -135,6 +135,12 @@ export interface Memory {
   putVectors(model: string, rows: { id: number; vector: Float32Array }[]): void;
   hasVectors(model: string): boolean;
   search(query: SearchQuery): SearchHit[];
+  /** Lines newest first by `(created_at, id)`, strictly older than `before` when it is set. */
+  list(
+    q: Pick<SearchQuery, "limit" | "type" | "file" | "stale"> & {
+      before: { createdAtMs: number; id: number } | null;
+    },
+  ): ObservationLine[];
   timeline(id: number, depth: number): ObservationLine[] | null;
   get(ids: number[]): Observation[];
   recent(limit: number): ObservationLine[];
@@ -496,6 +502,28 @@ export function localDate(ms: number): string {
 const RRF_K = 60;
 const LIST_DEPTH = 50;
 
+/** The terms (on observations `o`) and their bind values that `search` and `list` narrow by. */
+function lineFilters(q: Pick<SearchQuery, "type" | "sinceMs" | "file" | "stale">): {
+  filters: string[];
+  params: sqlite.SQLInputValue[];
+} {
+  const filters: string[] = q.stale ? [] : ["o.stale_at IS NULL"];
+  const params: sqlite.SQLInputValue[] = [];
+  if (q.type !== null) {
+    filters.push("o.type = ?");
+    params.push(q.type);
+  }
+  if (q.sinceMs !== null) {
+    filters.push("o.created_at >= ?");
+    params.push(q.sinceMs);
+  }
+  if (q.file !== null) {
+    filters.push("o.id IN (SELECT observation_id FROM observation_files WHERE path = ?)");
+    params.push(q.file);
+  }
+  return { filters, params };
+}
+
 function newestFirst(a: ObservationLine, b: ObservationLine): number {
   return b.createdAtMs - a.createdAtMs || b.id - a.id;
 }
@@ -692,20 +720,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     hasVectors,
 
     search(query) {
-      const filters: string[] = query.stale ? [] : ["o.stale_at IS NULL"];
-      const params: sqlite.SQLInputValue[] = [];
-      if (query.type !== null) {
-        filters.push("o.type = ?");
-        params.push(query.type);
-      }
-      if (query.sinceMs !== null) {
-        filters.push("o.created_at >= ?");
-        params.push(query.sinceMs);
-      }
-      if (query.file !== null) {
-        filters.push("o.id IN (SELECT observation_id FROM observation_files WHERE path = ?)");
-        params.push(query.file);
-      }
+      const { filters, params } = lineFilters(query);
       const where = filters.map((f) => ` AND ${f}`).join("");
       const keyword = (joiner: " " | " OR "): ObservationLine[] => {
         const match = ftsQuery(query.text, joiner);
@@ -752,6 +767,20 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
         .sort((x, y) => y.score - x.score || newestFirst(x.line, y.line))
         .slice(0, query.limit)
         .map((entry) => entry.line);
+    },
+
+    list(q) {
+      const { filters, params } = lineFilters({ ...q, sinceMs: null });
+      if (q.before !== null) {
+        filters.push("(o.created_at, o.id) < (?, ?)");
+        params.push(q.before.createdAtMs, q.before.id);
+      }
+      const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+      return all(
+        `SELECT ${LINE_COLUMNS} FROM observations o ${where} ${NEWEST_FIRST} LIMIT ?`,
+        ...params,
+        q.limit,
+      ).map(toLine);
     },
 
     timeline(id, depth) {

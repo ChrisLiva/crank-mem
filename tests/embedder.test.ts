@@ -3,11 +3,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { NO_MEMORY_NOTE } from "../src/cli/recall.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
-import { memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
 import {
   makeCrankHome,
   makeCrankProject,
   makeModelHome,
+  plantVector,
   realModelsDir,
   runCli,
   seedMemory,
@@ -24,17 +24,6 @@ afterEach(() => {
 function temp(dir: string): string {
   temps.push(dir);
   return dir;
-}
-
-/** Store one vector so `search` embeds its query. */
-function plantVector(root: string, id: number): void {
-  const opened = openMemory(memoryPath(root), "write");
-  if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
-  try {
-    opened.memory.putVectors(EMBED_MODEL, [{ id, vector: new Float32Array(384) }]);
-  } finally {
-    opened.memory.close();
-  }
 }
 
 describe("search by meaning (black-box)", () => {

@@ -22,7 +22,7 @@ export const NO_MEMORY_NOTE = "crank-mem: no memory exists yet.";
 const KEYWORD_ONLY_NOTE =
   "crank-mem: keyword search only; run `crank-mem setup` for search by meaning.";
 
-const STATE_NOTES = {
+export const STATE_NOTES = {
   older: MEMORY_OLDER_NOTE,
   newer: MEMORY_NEWER_NOTE,
   unreadable: MEMORY_UNREADABLE_NOTE,
@@ -98,10 +98,13 @@ export async function search(args: string[]): Promise<number> {
   const host = typeof flags["model-host"] === "string" ? flags["model-host"] : undefined;
   return withMemory(project.root, true, async (memory) => {
     const embeddable = memory.hasVectors(EMBED_MODEL);
-    if (!embeddable && !modelPresent()) console.error(KEYWORD_ONLY_NOTE);
+    const vector = await queryVector(memory, text, host);
+    if ((!embeddable && !modelPresent()) || (embeddable && vector === null)) {
+      console.error(KEYWORD_ONLY_NOTE);
+    }
     const hits = memory.search({
       text,
-      vector: embeddable ? await queryVector(text, host) : null,
+      vector,
       limit: limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT),
       type: type ?? null,
       sinceMs,
@@ -113,13 +116,20 @@ export async function search(args: string[]): Promise<number> {
   });
 }
 
-/** The query's embedding, or null with a note on stderr when the local model cannot run; never fetches. */
-async function queryVector(text: string, host: string | undefined): Promise<SearchQuery["vector"]> {
+/**
+ * The query's embedding, or null when the store holds no `EMBED_MODEL` vectors or the local model
+ * cannot run. It never fetches and never prints.
+ */
+export async function queryVector(
+  memory: MemoryReader,
+  text: string,
+  host?: string,
+): Promise<SearchQuery["vector"]> {
+  if (!memory.hasVectors(EMBED_MODEL)) return null;
   try {
     const [values] = await embed([text], { remote: false, host });
     return { model: EMBED_MODEL, values: values! };
   } catch {
-    console.error(KEYWORD_ONLY_NOTE);
     return null;
   }
 }

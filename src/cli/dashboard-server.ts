@@ -4,8 +4,18 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
-import { memoryPath, memoryStatus, type MemoryRead } from "../hooks/lib/memory.ts";
+import {
+  memoryPath,
+  memoryStatus,
+  OBSERVATION_TYPES,
+  openMemory,
+  type MemoryRead,
+  type MemoryReader,
+  type ObservationLine,
+  type ObservationType,
+} from "../hooks/lib/memory.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
+import { NO_MEMORY_NOTE, queryVector, STATE_NOTES } from "./recall.ts";
 import { registeredRoots } from "./registry.ts";
 
 // The dashboard's HTTP server: loopback only, and every request carries the
@@ -15,6 +25,7 @@ import { registeredRoots } from "./registry.ts";
 const COOKIE = "crank_dashboard";
 const UNAUTHORIZED_BODY = "crank-mem dashboard: open the URL that `crank-mem dashboard` printed.\n";
 const FORBIDDEN_HOST_BODY = "crank-mem dashboard: forbidden host.\n";
+const INTERNAL_ERROR_BODY = "crank-mem dashboard: internal error.\n";
 const SECURITY_HEADERS = {
   "X-Frame-Options": "DENY",
   "X-Content-Type-Options": "nosniff",
@@ -106,6 +117,108 @@ function projectsBody(): string {
   return JSON.stringify({ projects });
 }
 
+/** `fn`'s answer over the project's store, opened read-only and closed after; a store that does not open answers its note. */
+async function withStore<T>(
+  root: string,
+  fn: (memory: MemoryReader) => T | Promise<T>,
+): Promise<T | { note: string }> {
+  const opened = openMemory(memoryPath(root), "read");
+  if (opened.status === "missing") return { note: NO_MEMORY_NOTE };
+  if (opened.status !== "open") return { note: STATE_NOTES[opened.status] };
+  try {
+    return await fn(opened.memory);
+  } finally {
+    opened.memory.close();
+  }
+}
+
+/** A `<ms>:<id>` paging cursor, or null for anything else. */
+function parseCursor(s: string): { ms: number; id: number } | null {
+  const m = /^(\d+):(\d+)$/.exec(s);
+  return m ? { ms: Number(m[1]), id: Number(m[2]) } : null;
+}
+
+/** The first `limit` of the `limit + 1` rows a reader returned, and the last kept row's cursor when the extra row exists. */
+function pageOf<T>(
+  rows: T[],
+  limit: number,
+  cursor: (row: T) => string,
+): { rows: T[]; next: string | null } {
+  const kept = rows.slice(0, limit);
+  return { rows: kept, next: rows.length > limit ? cursor(kept[kept.length - 1]!) : null };
+}
+
+/** A decimal row id, or null for anything else. */
+function parseId(s: string): number | null {
+  return /^\d+$/.test(s) ? Number(s) : null;
+}
+
+const PAGE = 50;
+type Answer = { status: number; body?: unknown };
+
+/** `GET …/observations`: one page of lines, newest first. */
+async function observations(root: string, params: URLSearchParams): Promise<Answer> {
+  const beforeParam = params.get("before");
+  const before = beforeParam === null ? null : parseCursor(beforeParam);
+  const type = params.get("type");
+  const q = params.get("q");
+  if (beforeParam !== null && before === null) return { status: 400 };
+  if (type !== null && !OBSERVATION_TYPES.some((t) => t === type)) return { status: 400 };
+  if (q !== null && q.trim() === "") return { status: 400 };
+  const filters = {
+    type: type as ObservationType | null,
+    file: params.get("file"),
+    stale: params.get("stale") === "1",
+  };
+  const body = await withStore(root, async (memory) => {
+    if (q !== null) {
+      const vector = await queryVector(memory, q);
+      const lines = memory.search({ ...filters, text: q, vector, sinceMs: null, limit: PAGE });
+      return { lines, next: null, mode: vector !== null ? "hybrid" : "keyword" };
+    }
+    const page = pageOf(
+      memory.list({
+        ...filters,
+        limit: PAGE + 1,
+        before: before && { createdAtMs: before.ms, id: before.id },
+      }),
+      PAGE,
+      (line: ObservationLine) => `${line.createdAtMs}:${line.id}`,
+    );
+    return { lines: page.rows, next: page.next };
+  });
+  return { status: 200, body };
+}
+
+/** `GET …/observations/<oid>`: the whole observation. */
+async function observation(root: string, oid: string): Promise<Answer> {
+  const id = parseId(oid);
+  if (id === null) return { status: 400 };
+  const body = await withStore(root, (memory) => memory.get([id])[0] ?? null);
+  return body === null ? { status: 404 } : { status: 200, body };
+}
+
+/** The answer for a route under `/api/projects/<id>`, or null when no route matches. */
+async function projectRoute(
+  project: Project,
+  route: string,
+  params: URLSearchParams,
+): Promise<Answer | null> {
+  if (route === "/observations") return observations(project.root, params);
+  const one = /^\/observations\/([^/]*)$/.exec(route);
+  if (one) return observation(project.root, one[1]!);
+  return null;
+}
+
+function sendAnswer(res: http.ServerResponse, answer: Answer): void {
+  if (answer.body === undefined) {
+    res.writeHead(answer.status).end();
+    return;
+  }
+  const json = JSON.stringify(answer.body);
+  res.writeHead(answer.status, { "Content-Type": "application/json; charset=utf-8" }).end(json);
+}
+
 function unauthorized(res: http.ServerResponse): void {
   res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" }).end(UNAUTHORIZED_BODY);
 }
@@ -145,9 +258,21 @@ export async function serveDashboard(opts: {
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" }).end(projectsBody());
       return;
     }
-    const scoped = /^\/api\/projects\/([^/]+)\//.exec(url.pathname);
-    if (scoped && projectById(scoped[1]!) === null) {
-      res.writeHead(404).end();
+    const scoped = /^\/api\/projects\/([^/]+)(\/.*)$/.exec(url.pathname);
+    if (scoped) {
+      const project = projectById(scoped[1]!);
+      if (project === null) {
+        res.writeHead(404).end();
+        return;
+      }
+      projectRoute(project, scoped[2]!, url.searchParams)
+        .then((answer) => sendAnswer(res, answer ?? { status: 404 }))
+        .catch(() => {
+          if (res.headersSent) return res.destroy();
+          res
+            .writeHead(500, { "Content-Type": "text/plain; charset=utf-8" })
+            .end(INTERNAL_ERROR_BODY);
+        });
       return;
     }
     const file = staticFile(opts.distDir, url.pathname);

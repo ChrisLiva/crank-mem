@@ -3,8 +3,11 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
+import type * as sqlite from "node:sqlite";
+import { NO_MEMORY_NOTE } from "../src/cli/recall.ts";
 import { cliVersion } from "../src/cli/version.ts";
 import { loadConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import { MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE } from "../src/hooks/lib/memory.ts";
 import {
   cleanup,
   dashboardFixture,
@@ -12,7 +15,9 @@ import {
   gitCommit,
   makeCrankHome,
   makeCrankProject,
+  makeModelHome,
   plantMemory,
+  plantVector,
   REPO_ROOT,
   runCli,
   seedMemory,
@@ -528,5 +533,229 @@ describe("project registry", () => {
     registeredProject(home);
     const dash = await startDashboard(home, ["--port", "0"]);
     expect((await dash.get("/api/projects/000000000000/health")).status).toBe(404);
+  }, 20_000);
+});
+
+type Line = { id: number; createdAtMs: number; type: string; title: string; stale: boolean };
+
+/** GET a project's Memory route and parse its 200 JSON body. */
+async function memoryJson(
+  dash: Awaited<ReturnType<typeof startDashboard>>,
+  root: string,
+  route: string,
+): Promise<any> {
+  const res = await dash.get(`/api/projects/${projectId(root)}/${route}`);
+  expect([route, res.status, res.headers.get("content-type")]).toEqual([
+    route,
+    200,
+    "application/json; charset=utf-8",
+  ]);
+  return res.json();
+}
+
+describe("memory view", () => {
+  test("observations page 50 lines newest first, and next pages strictly older lines", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const ids = seedMemory(
+      root,
+      Array.from({ length: 60 }, (_, i) => ({ title: `Line ${i}` })),
+    );
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const page1 = await memoryJson(dash, root, "observations");
+    const created = page1.lines[0].createdAtMs;
+    expect(typeof created).toBe("number");
+    expect(page1).toEqual({
+      lines: ids
+        .slice(10)
+        .reverse()
+        .map((id) => ({
+          id,
+          createdAtMs: created,
+          type: "discovery",
+          title: `Line ${ids.indexOf(id)}`,
+          stale: false,
+        })),
+      next: `${created}:${ids[10]}`,
+    });
+    const page2 = await memoryJson(dash, root, `observations?before=${page1.next}`);
+    expect(page2).toEqual({
+      lines: ids
+        .slice(0, 10)
+        .reverse()
+        .map((id) => ({
+          id,
+          createdAtMs: created,
+          type: "discovery",
+          title: `Line ${ids.indexOf(id)}`,
+          stale: false,
+        })),
+      next: null,
+    });
+  }, 20_000);
+
+  test("type, file and stale narrow the list, and stale rows stay out without stale=1", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const [bugfix, feature, flagged] = seedMemory(root, [
+      { type: "bugfix", title: "Fix a", filesRead: ["src/a.ts"] },
+      { type: "feature", title: "Add b" },
+      { type: "decision", title: "Old c" },
+    ]);
+    seedMemory(root, [], { stale: [{ id: flagged!, reason: "c changed" }] });
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const ids = async (query: string) =>
+      ((await memoryJson(dash, root, `observations${query}`)).lines as Line[]).map((l) => [
+        l.id,
+        l.stale,
+      ]);
+    expect(await ids("?type=bugfix")).toEqual([[bugfix!, false]]);
+    expect(await ids("?file=src/a.ts")).toEqual([[bugfix!, false]]);
+    expect(await ids("")).toEqual([
+      [feature!, false],
+      [bugfix!, false],
+    ]);
+    expect(await ids("?stale=1")).toEqual([
+      [flagged!, true],
+      [feature!, false],
+      [bugfix!, false],
+    ]);
+  }, 20_000);
+
+  test("q searches with the filters, ignores a well-formed before, and names the mode", async () => {
+    const home = makeModelHome();
+    const keyword = registeredProject(home);
+    const [, walrus] = seedMemory(keyword, [
+      { type: "bugfix", title: "Lock retry on EEXIST" },
+      { type: "bugfix", title: "Walrus cache warms" },
+      { type: "feature", title: "Walrus import added" },
+    ]);
+    const hybrid = registeredProject(makeCrankHome());
+    expect(runCli(hybrid, ["upgrade"], { CRANK_HOME: home }).status).toBe(0);
+    const [planted] = seedMemory(hybrid, [{ title: "Walrus vectors" }]);
+    plantVector(hybrid, planted!);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const found = await memoryJson(dash, keyword, "observations?q=walrus&type=bugfix&before=1:1");
+    expect([found.lines.map((l: Line) => l.id), found.next, found.mode]).toEqual([
+      [walrus],
+      null,
+      "keyword",
+    ]);
+    const byMeaning = await memoryJson(dash, hybrid, "observations?q=walrus");
+    expect([byMeaning.lines.map((l: Line) => l.id), byMeaning.next, byMeaning.mode]).toEqual([
+      [planted],
+      null,
+      "hybrid",
+    ]);
+  }, 30_000);
+
+  test("an observation's route answers its whole record, 404 for an unknown id and 400 for a bad one", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const given = {
+      type: "decision" as const,
+      title: "Keep retries at 5 s ✓",
+      narrative: "Retries stay at 5 s — “why”: load.",
+      facts: ["5 s backoff", "max 3 tries"],
+      filesRead: ["src/a.ts", "src/b.ts"],
+      filesModified: ["src/c.ts"],
+    };
+    const [id] = seedMemory(root, [given]);
+    seedMemory(root, [], { stale: [{ id: id!, reason: "retry is 6 s now" }] });
+    const dash = await startDashboard(home, ["--port", "0"]);
+    expect(await memoryJson(dash, root, `observations/${id}`)).toEqual({
+      ...given,
+      id,
+      createdAtMs: expect.any(Number),
+      stale: true,
+      sessionId: expect.stringMatching(/^seed-\d+$/),
+      staleFlag: { atMs: expect.any(Number), reason: "retry is 6 s now" },
+    });
+    for (const [oid, status] of [
+      [String(id! + 1), 404],
+      ["abc", 400],
+      ["1.5", 400],
+      ["", 400],
+    ] as const) {
+      const res = await dash.get(`/api/projects/${projectId(root)}/observations/${oid}`);
+      expect([oid, res.status]).toEqual([oid, status]);
+    }
+  }, 20_000);
+
+  test("a malformed before, an unknown type or a blank q answers 400, with or without q", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    seedMemory(root, [{ title: "Walrus cache warms" }]);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    for (const query of [
+      "before=x",
+      "before=1",
+      "before=",
+      "type=nope",
+      "q=%20",
+      "q=",
+      "q=walrus&before=x",
+      "q=walrus&type=nope",
+    ]) {
+      const res = await dash.get(`/api/projects/${projectId(root)}/observations?${query}`);
+      expect([query, res.status]).toEqual([query, 400]);
+    }
+  }, 20_000);
+
+  test("a store that does not open answers both routes with its note, and another project still answers lines", async () => {
+    const home = makeCrankHome();
+    const missing = registeredProject(home);
+    const newer = registeredProject(home);
+    plantMemory(newer, "newer");
+    const unreadable = registeredProject(home);
+    plantMemory(unreadable, "unreadable");
+    const seeded = registeredProject(home);
+    const [id] = seedMemory(seeded, [{ title: "Still here" }]);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    for (const [root, note] of [
+      [missing, NO_MEMORY_NOTE],
+      [newer, MEMORY_NEWER_NOTE],
+      [unreadable, MEMORY_UNREADABLE_NOTE],
+    ] as const) {
+      for (const route of ["observations", "observations/1"]) {
+        expect(await memoryJson(dash, root, route)).toEqual({ note });
+      }
+    }
+    const lines = (await memoryJson(dash, seeded, "observations")).lines as Line[];
+    expect(lines.map((l) => [l.id, l.title])).toEqual([[id!, "Still here"]]);
+  }, 20_000);
+
+  test("a route that throws after its store opens answers 500, and the server keeps serving", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
+    const db = new mod.DatabaseSync(path.join(root, ".crank/memory.db"));
+    db.exec("PRAGMA user_version = 2");
+    db.close();
+    const dash = await startDashboard(home, ["--port", "0"]);
+    expect(((await projects(dash)) as { projects: { memory: string }[] }).projects).toEqual([
+      expect.objectContaining({ memory: "open" }),
+    ]);
+    for (const route of ["observations", "observations?q=walrus", "observations/1"]) {
+      const res = await dash.get(`/api/projects/${projectId(root)}/${route}`);
+      expect([
+        route,
+        res.status,
+        res.headers.get("content-type"),
+        res.headers.get("x-frame-options"),
+        res.headers.get("x-content-type-options"),
+        res.headers.get("content-security-policy"),
+        await res.text(),
+      ]).toEqual([
+        route,
+        500,
+        "text/plain; charset=utf-8",
+        "DENY",
+        "nosniff",
+        "default-src 'self'; frame-ancestors 'none'",
+        "crank-mem dashboard: internal error.\n",
+      ]);
+      expect((await dash.get("/api/projects")).status).toBe(200);
+    }
   }, 20_000);
 });

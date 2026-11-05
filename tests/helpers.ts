@@ -192,6 +192,17 @@ export function seedMemory(
   }
 }
 
+/** Store one vector so `search` embeds its query. */
+export function plantVector(root: string, id: number): void {
+  const opened = openMemory(memoryPath(root), "write");
+  if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
+  try {
+    opened.memory.putVectors(EMBED_MODEL, [{ id, vector: new Float32Array(384) }]);
+  } finally {
+    opened.memory.close();
+  }
+}
+
 /** Write the project's store in one bad state: a newer schema, or a file that is not a database. */
 export function plantMemory(root: string, state: "newer" | "unreadable"): void {
   const file = memoryPath(root);
