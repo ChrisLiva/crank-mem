@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
+import { cliVersion } from "../src/cli/version.ts";
 import {
   cleanup,
   dashboardFixture,
@@ -19,8 +20,10 @@ afterEach(cleanup);
 const USAGE = "Usage: crank-mem dashboard [--port <n>] [--no-open]";
 const NOT_BUILT = "crank-mem: the dashboard is not built — run `crank-mem setup`.\n";
 const UNAUTHORIZED_BODY = "crank-mem dashboard: open the URL that `crank-mem dashboard` printed.\n";
+const FORBIDDEN_HOST_BODY = "crank-mem dashboard: forbidden host.\n";
 const STARTUP_URL = /^http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]{64})$/;
 const FIXTURE_INDEX = path.join(REPO_ROOT, "tests/fixtures/dashboard-dist/index.html");
+const FIXTURE_APP_JS = path.join(REPO_ROOT, "tests/fixtures/dashboard-dist/assets/app.js");
 
 function portOf(url: string): number {
   return Number(STARTUP_URL.exec(url)![1]);
@@ -177,6 +180,92 @@ describe("dashboard server", () => {
       expect(res.status).toBe(200);
       expect(Buffer.from(await res.arrayBuffer()).equals(index)).toBe(true);
     }
+  }, 20_000);
+
+  test("a Host other than 127.0.0.1 or localhost on the port is refused before the cookie check", async () => {
+    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
+    const port = portOf(dash.url);
+    for (const host of ["evil.example:80", "127.0.0.1", "localhost:1"]) {
+      const res = await dash.get("/", { headers: { Host: host } });
+      expect([host, res.status, await res.text()]).toEqual([host, 403, FORBIDDEN_HOST_BODY]);
+    }
+    const local = await dash.get("/", { headers: { Host: `localhost:${port}` } });
+    expect(local.status).toBe(200);
+  }, 20_000);
+
+  test("a method other than GET or HEAD gets 405, checked after Host and before the cookie", async () => {
+    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
+    const post = await dash.get("/", { method: "POST", headers: { Cookie: "" } });
+    expect([post.status, post.headers.get("allow")]).toEqual([405, "GET, HEAD"]);
+    const health = await dash.get("/api/projects/zzzzzzzzzzzz/health", { headers: { Cookie: "" } });
+    expect(health.status).toBe(401);
+    const put = await dash.get("/", { method: "PUT", headers: { Host: "evil.example:80" } });
+    expect(put.status).toBe(403);
+  }, 20_000);
+
+  test("every response carries the security headers, and index.html and /api/ carry no-store", async () => {
+    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
+    const samples: Array<[number, string, RequestInit]> = [
+      [200, "/", {}],
+      [303, `/?token=${dash.token}`, { headers: { Cookie: "" } }],
+      [401, "/", { headers: { Cookie: "" } }],
+      [403, "/", { headers: { Host: "evil.example:80" } }],
+      [404, "/nope.js", {}],
+      [405, "/", { method: "POST" }],
+    ];
+    for (const [status, p, init] of samples) {
+      const res = await dash.get(p, init);
+      expect([
+        res.status,
+        res.headers.get("x-frame-options"),
+        res.headers.get("x-content-type-options"),
+        res.headers.get("content-security-policy"),
+      ]).toEqual([status, "DENY", "nosniff", "default-src 'self'; frame-ancestors 'none'"]);
+    }
+    for (const p of ["/", "/api/projects"]) {
+      expect([p, (await dash.get(p)).headers.get("cache-control")]).toEqual([p, "no-store"]);
+    }
+  }, 20_000);
+
+  test("the static handler serves files under dist only, typed by extension", async () => {
+    const dashboardDir = dashboardFixture(cliVersion());
+    fs.writeFileSync(path.join(dashboardDir, "package.json"), "{}");
+    fs.writeFileSync(path.join(dashboardDir, "dist/assets/app.css"), "body{}");
+    const dash = await startDashboard(makeCrankHome(), ["--port", "0"], { dashboardDir });
+    for (const p of [
+      "/..%2fpackage.json",
+      "/assets/..%2f..%2fpackage.json",
+      "/%E0%A4%A",
+      "/assets",
+      "/nope.js",
+    ]) {
+      expect([p, (await dash.get(p)).status]).toEqual([p, 404]);
+    }
+    const js = await dash.get("/assets/app.js");
+    expect([js.status, js.headers.get("content-type")]).toEqual([
+      200,
+      "text/javascript; charset=utf-8",
+    ]);
+    expect(Buffer.from(await js.arrayBuffer()).equals(fs.readFileSync(FIXTURE_APP_JS))).toBe(true);
+    for (const [p, type] of [
+      ["/", "text/html; charset=utf-8"],
+      ["/assets/app.css", "text/css; charset=utf-8"],
+    ]) {
+      const res = await dash.get(p!);
+      expect([p, res.status, res.headers.get("content-type")]).toEqual([p, 200, type]);
+    }
+  }, 20_000);
+
+  test("HEAD answers GET's status and headers with an empty body", async () => {
+    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
+    const get = await dash.get("/assets/app.js");
+    const head = await dash.get("/assets/app.js", { method: "HEAD" });
+    expect([head.status, head.headers.get("content-type"), await head.text()]).toEqual([
+      get.status,
+      get.headers.get("content-type"),
+      "",
+    ]);
+    expect(get.status).toBe(200);
   }, 20_000);
 
   test("SIGTERM and SIGINT each exit 0, free the port and leave the token file alone", async () => {
