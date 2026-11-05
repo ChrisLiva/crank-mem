@@ -196,7 +196,7 @@ function writeSettings(value: unknown): string {
 }
 
 describe("addAllowRule", () => {
-  test("appends the recall rules, keeps other entries and keys, backs up first", () => {
+  test("appends the crank-mem rules, keeps other entries and keys, backs up first", () => {
     const f = writeSettings({ model: "opus", permissions: { allow: ["Bash(ls:*)"], deny: ["x"] } });
     const backedUp: string[] = [];
     expect(addAllowRule(f, (file) => backedUp.push(fs.readFileSync(file, "utf-8")))).toBe(true);
@@ -273,7 +273,7 @@ describe("removeAllowRule", () => {
     expect(removeAllowRule(f)).toBe(true);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({ permissions: { deny: ["x"] } });
   });
-  test("drops the legacy rule alongside the recall rules", () => {
+  test("drops the legacy rule alongside the crank-mem rules", () => {
     const f = writeSettings({ permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"] } });
     expect(removeAllowRule(f)).toBe(true);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({ permissions: { allow: ["Bash(ls:*)"] } });

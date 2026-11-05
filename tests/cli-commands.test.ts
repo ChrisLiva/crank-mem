@@ -403,7 +403,7 @@ describe("upgrade", () => {
     expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(backups);
   });
 
-  test("upgrade swaps the legacy allow rule for the recall rules, once, keeping the user's other rules", () => {
+  test("upgrade swaps the legacy allow rule for the crank-mem rules, once, keeping the user's other rules", () => {
     const root = initedProject();
     const local = path.join(root, ".claude/settings.local.json");
     const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
@@ -413,7 +413,7 @@ describe("upgrade", () => {
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("  added the crank-mem recall rules to permissions.allow");
+    expect(run.stdout).toContain("  added the crank-mem rules to permissions.allow");
     const after = JSON.parse(fs.readFileSync(local, "utf-8"));
     expect(after.permissions).toEqual({
       allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"],
@@ -424,7 +424,7 @@ describe("upgrade", () => {
     const withRule = fs.readdirSync(path.join(root, ".crank/backups")).length;
     expect(withRule).toBe(backups + 1);
     const again = cli(root, "upgrade");
-    expect(again.stdout).not.toContain("recall rules");
+    expect(again.stdout).not.toContain("added the crank-mem rules");
     expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(withRule);
 
     // An install holding only the three recall rules gains the two code-reading rules.
@@ -432,7 +432,7 @@ describe("upgrade", () => {
     fs.writeFileSync(local, JSON.stringify(settings, null, 2) + "\n");
     const three = cli(root, "upgrade");
     expect(three.status).toBe(0);
-    expect(three.stdout.split("  added the crank-mem recall rules to permissions.allow").length).toBe(2);
+    expect(three.stdout.split("  added the crank-mem rules to permissions.allow").length).toBe(2);
     expect(JSON.parse(fs.readFileSync(local, "utf-8")).permissions.allow).toEqual([
       "Bash(ls:*)",
       "Bash(crank-mem search *)",
@@ -442,7 +442,7 @@ describe("upgrade", () => {
       "Bash(crank-mem unfold *)",
     ]);
     const converged = fs.readFileSync(local);
-    expect(cli(root, "upgrade").stdout).not.toContain("recall rules");
+    expect(cli(root, "upgrade").stdout).not.toContain("added the crank-mem rules");
     expect(fs.readFileSync(local).equals(converged)).toBe(true);
   }, 20_000);
 

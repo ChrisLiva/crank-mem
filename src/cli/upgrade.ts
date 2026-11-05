@@ -62,7 +62,7 @@ export async function run(_args: string[]): Promise<number> {
     if (mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), backup)) {
       console.log(`  re-wired Claude Code hooks in ${path.relative(root, wired)}`);
     }
-    if (addAllowRule(wired, backup)) console.log("  added the crank-mem recall rules to permissions.allow");
+    if (addAllowRule(wired, backup)) console.log("  added the crank-mem rules to permissions.allow");
     // Codex wiring was opt-in at init: leave a hooks.json without crank entries alone.
     if (hasCrankHooks(codexHooksJson)) {
       codexRewired = mergeHooksIntoFile(codexHooksJson, crankHooks(config.runtime, "codex"), backup);
