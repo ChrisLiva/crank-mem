@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { memoryPaths } from "../src/hooks/lib/hook-io.ts";
-import { git, gitCommit, plantMemory, runCli, seedMemory } from "./helpers.ts";
+import { git, gitCommit, plantMemory, runCli, seedMemory, tempDir } from "./helpers.ts";
 import { MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE } from "../src/hooks/lib/memory.ts";
 import { NO_MEMORY_NOTE } from "../src/cli/recall.ts";
 import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
@@ -325,17 +325,24 @@ describe("where the commands run", () => {
       expect(run.status, args[0]).toBe(0);
       expect(run.stdout).toMatch(/^#1 \S+ discovery Anchor row\n/);
     }
-  });
+    expect(runCli(path.join(root, "src"), ["outline", "a.ts"])).toMatchObject({ status: 0, stdout: "a.ts\n" });
+    const abs = path.join(root, "src/a.ts");
+    expect(runCli(root, ["outline", abs])).toMatchObject({ status: 0, stdout: `${abs}\n` });
+    const alias = path.join(tempDir("crank-alias-"), "root");
+    fs.symlinkSync(root, alias);
+    const aliased = path.join(alias, "src/a.ts");
+    expect(runCli(root, ["outline", aliased])).toMatchObject({ status: 0, stdout: `${aliased}\n` });
+  }, 20_000);
 
   test("outside any project each command prints the init hint and exits 1", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-recall-bare-"));
-    for (const args of COMMANDS) {
+    for (const args of [...COMMANDS, ["outline", "a.ts"]]) {
       const run = runCli(bare, args);
       expect(run.status, args[0]).toBe(1);
       expect(run.stderr).toContain("not initialized here");
       expect(fs.existsSync(path.join(bare, ".crank"))).toBe(false);
     }
-  });
+  }, 20_000);
 });
 
 describe("help", () => {

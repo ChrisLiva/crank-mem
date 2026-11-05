@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { makeCrankProject, REPO_ROOT, runCli } from "./helpers.ts";
+import { makeCrankProject, REPO_ROOT, runCli, tempDir } from "./helpers.ts";
 
 const FIXTURES = path.join(REPO_ROOT, "tests/fixtures/code");
 
@@ -67,6 +68,87 @@ describe("outline", () => {
     expect(long.status).toBe(0);
     expect(long.stdout.split("\n")[1]!.split("│")[1]).toBe(`function long(${params}): void`.slice(0, 159) + "…" + " { … }");
     expect(outline("./src/a.ts").stdout.split("\n")[0]).toBe("./src/a.ts");
+  }, 30_000);
+});
+
+describe("refusals", () => {
+  test("argument and path checks refuse in order, each with one stderr line and no file written", () => {
+    const bare = tempDir("crank-code-bare-");
+    const usage = "Usage: crank-mem outline <file> [--from <line>]\n";
+    for (const args of [[], ["a.ts", "b.ts"], ["a.ts", "--from"], ["a.ts", "--from", "0"], ["a.ts", "--from", "1.5"], ["a.ts", "--from", "abc"]]) {
+      expect([args, runCli(bare, ["outline", ...args])]).toEqual([args, { status: 1, stdout: "", stderr: usage }]);
+    }
+    expect(fs.readdirSync(bare)).toEqual([]);
+    expect(runCli(bare, ["outline", "a.ts"])).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "crank-mem: not initialized here — run `crank-mem init` first.\n",
+    });
+    expect(fs.existsSync(path.join(bare, ".crank"))).toBe(false);
+
+    const outside = path.join(tempDir("crank-code-outside-"), "o.ts");
+    fs.writeFileSync(outside, "export const o = 1;\n");
+    const root = makeCrankProject({
+      "src/a.ts": "export const a = 1;\n",
+      "src/credentials.ts": "export const c = 1;\n",
+      "src/.env": "SECRET=1\n",
+      "src/locked.ts": "export const l = 1;\n",
+      "notes.swift": "let n = 1\n",
+      "NOTES.SWIFT": "let n = 1\n",
+      "Makefile": "all:\n",
+    });
+    fs.symlinkSync(outside, path.join(root, "src/link.ts"));
+    fs.symlinkSync(path.join(root, "src/.env"), path.join(root, "src/notes.ts"));
+    fs.mkdirSync(path.join(root, "src/x.ts"));
+    const tree = () => fs.readdirSync(root, { recursive: true }).sort();
+    const before = tree();
+    const refuses = (file: string, line: string) => {
+      expect([file, runCli(root, ["outline", file])]).toEqual([file, { status: 1, stdout: "", stderr: `crank-mem: ${line}\n` }]);
+      expect(tree()).toEqual(before);
+    };
+    refuses(outside, `${outside} is outside this project.`);
+    refuses("/nonexistent-crank-dir/a.ts", "/nonexistent-crank-dir/a.ts is outside this project.");
+    refuses("src/link.ts", "src/link.ts is outside this project.");
+    refuses("src/credentials.ts", "src/credentials.ts is a sensitive file; crank-mem does not read it.");
+    refuses("src/notes.ts", "src/notes.ts is a sensitive file; crank-mem does not read it.");
+    refuses("src/missing.ts", "no file src/missing.ts.");
+    refuses("src/a.ts/x.ts", "cannot read src/a.ts/x.ts (ENOTDIR).");
+    refuses("notes.swift", "no grammar for .swift files.");
+    refuses("NOTES.SWIFT", "no grammar for .swift files.");
+    refuses("Makefile", "no grammar for Makefile.");
+    const locked = path.join(root, "src/locked.ts");
+    fs.chmodSync(locked, 0o000);
+    try {
+      refuses("src/locked.ts", "cannot read src/locked.ts (EACCES).");
+    } finally {
+      fs.chmodSync(locked, 0o644);
+    }
+    refuses("src/x.ts", "cannot read src/x.ts (EISDIR).");
+  }, 30_000);
+});
+
+describe("without the code reader", () => {
+  test("outline reports the missing reader, and scan and --help still exit 0", () => {
+    const clone = tempDir("crank-clone-");
+    for (const name of ["src", "bin", "package.json"]) fs.cpSync(path.join(REPO_ROOT, name), path.join(clone, name), { recursive: true });
+    fs.mkdirSync(path.join(clone, "node_modules"));
+    const root = makeCrankProject({ "src/a.ts": "export function a(): void {}\n" });
+    const run = (...args: string[]) => {
+      const result = spawnSync(process.execPath, [path.join(clone, "src/cli/main.ts"), ...args], {
+        cwd: root,
+        encoding: "utf-8",
+        timeout: 30_000,
+        env: { ...process.env, CRANK_HOME: tempDir("crank-home-"), CODEX_HOME: tempDir("crank-codexhome-") },
+      });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    };
+    expect(run("outline", "src/a.ts")).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "crank-mem: the code reader is not installed — run `crank-mem setup`.\n",
+    });
+    expect(run("scan").status).toBe(0);
+    expect(run("--help").status).toBe(0);
   }, 30_000);
 });
 

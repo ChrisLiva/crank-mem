@@ -1,33 +1,71 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseArgs } from "./args.ts";
+import { isSensitiveFile } from "../hooks/lib/config.ts";
+import { repoRelative } from "../hooks/lib/hook-io.ts";
+import { parseArgs, stringFlag } from "./args.ts";
 import { codeSymbols, grammarFor, type CodeSymbol } from "./code-symbols.ts";
 import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";
 
-const NOT_INSTALLED = "crank-mem: the code reader is not installed — run `crank-mem setup`.";
+const NOT_INSTALLED = "the code reader is not installed — run `crank-mem setup`.";
 
 /** `crank-mem outline <file>`: the path line, then one folded line per symbol. */
 export async function outline(args: string[]): Promise<number> {
-  const { rest } = parseArgs(args, COMMANDS.outline.value);
+  const { flags, rest } = parseArgs(args, COMMANDS.outline.value);
   const file = rest[0];
-  if (file === undefined || rest.length !== 1) {
+  const from = stringFlag(flags.from);
+  if (file === undefined || rest.length !== 1 || from === null || (from !== undefined && !/^[1-9]\d*$/.test(from))) {
     console.error(COMMANDS.outline.usage);
     return 1;
   }
-  if (!openNearestProject()) return 1;
+  const target = await readTarget(file);
+  if (target === null) return 1;
+  process.stdout.write(`${file}\n` + renderRows(preorder(target.symbols).map(({ symbol }) => outlineRow(symbol))));
+  return 0;
+}
+
+/** The file's text and symbols, or null after printing why crank-mem refuses to read it. */
+async function readTarget(file: string): Promise<{ text: string; symbols: CodeSymbol[] } | null> {
+  const project = openNearestProject();
+  if (project === null) return null;
+  const refuse = (reason: string): null => {
+    console.error(`crank-mem: ${reason}`);
+    return null;
+  };
+  const cannotRead = (e: unknown): null => refuse(`cannot read ${file} (${(e as NodeJS.ErrnoException).code}).`);
+  const outsideLine = `${file} is outside this project.`;
+  const abs = path.resolve(process.cwd(), file);
+  const realRoot = fs.realpathSync(project.root);
+  const within = (p: string) => p === realRoot || p.startsWith(realRoot + path.sep);
+  if (repoRelative(project.root, process.cwd(), file) === null) {
+    let anc = abs;
+    while (!fs.existsSync(anc)) anc = path.dirname(anc);
+    if (!within(fs.realpathSync(anc))) return refuse(outsideLine);
+  }
+  let real: string;
+  try {
+    real = fs.realpathSync(abs);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT" ? refuse(`no file ${file}.`) : cannotRead(e);
+  }
+  if (!within(real)) return refuse(outsideLine);
+  if (isSensitiveFile(path.basename(abs)) || isSensitiveFile(path.basename(real))) {
+    return refuse(`${file} is a sensitive file; crank-mem does not read it.`);
+  }
   const grammar = grammarFor(file);
   if (grammar === null) {
-    console.error(`crank-mem: no grammar for ${file}.`);
-    return 1;
+    const ext = path.extname(path.basename(file)).toLowerCase();
+    return refuse(ext ? `no grammar for ${ext} files.` : `no grammar for ${path.basename(file)}.`);
   }
-  const symbols = await codeSymbols(fs.readFileSync(path.resolve(process.cwd(), file), "utf8"), grammar);
-  if (symbols === null) {
-    console.error(NOT_INSTALLED);
-    return 1;
+  let text: string;
+  try {
+    text = fs.readFileSync(real, "utf8");
+  } catch (e) {
+    return cannotRead(e);
   }
-  process.stdout.write(`${file}\n` + renderRows(preorder(symbols).map(({ symbol }) => outlineRow(symbol))));
-  return 0;
+  const symbols = await codeSymbols(text, grammar);
+  if (symbols === null) return refuse(NOT_INSTALLED);
+  return { text, symbols };
 }
 
 const HEAD_CAP = 160;
