@@ -101,6 +101,8 @@ const TS_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "interface", "n
 const TS_PASS_THROUGH = new Set(["export_statement", "ambient_declaration", "lexical_declaration", "variable_declaration"]);
 const TS_DECLARATIONS = new Set(["lexical_declaration", "variable_declaration"]);
 const FUNCTION_VALUES = new Set(["arrow_function", "function_expression"]);
+/** Symbols whose body is their field `value`'s field `body`. */
+const VALUE_BODIES = new Set(["variable_declarator", "public_field_definition", "field_definition"]);
 const hasFunctionValue = (node: Node) => FUNCTION_VALUES.has(node.childForFieldName("value")?.type ?? "");
 /** `export default function () {}` or `export default class {}`: the node is its export's field `value`. */
 const isDefaultExport = (node: Node) =>
@@ -134,9 +136,100 @@ const typescript: FamilyRules = {
     return name?.text ?? "";
   },
   scope: (node) => typescript.name(node),
-  body: (node) => node.type === "variable_declarator" || node.type === "public_field_definition"
+  body: (node) => VALUE_BODIES.has(node.type)
     ? node.childForFieldName("value")?.childForFieldName("body") ?? null
     : node.childForFieldName("body"),
+  comments: new Set(["comment"]),
+};
+
+const JS_KINDS: Record<string, SymbolKind> = {
+  function_declaration: "fn",
+  generator_function_declaration: "fn",
+  class_declaration: "class",
+};
+
+const javascript: FamilyRules = {
+  ...typescript,
+  kind(node) {
+    if (Object.hasOwn(JS_KINDS, node.type)) return JS_KINDS[node.type]!;
+    if (node.type === "method_definition") return node.parent?.type === "class_body" ? "method" : null;
+    if (node.type === "variable_declarator" && hasFunctionValue(node)) return "fn";
+    if (node.type === "field_definition" && hasFunctionValue(node)) return "method";
+    if (isDefaultExport(node)) return node.type === "function_expression" ? "fn" : node.type === "class" ? "class" : null;
+    return null;
+  },
+  passThrough: (node) => TS_DECLARATIONS.has(node.type) || node.type === "export_statement" ? node.namedChildren : null,
+  name(node) {
+    if (isDefaultExport(node)) return "default";
+    return node.childForFieldName(node.type === "field_definition" ? "property" : "name")?.text ?? "";
+  },
+  scope: (node) => javascript.name(node),
+};
+
+const python: FamilyRules = {
+  kind(node, parent) {
+    switch (node.type) {
+      case "function_definition":
+        return parent === "class" ? "method" : "fn";
+      case "class_definition":
+        return "class";
+      case "type_alias_statement":
+        return "type";
+    }
+    return null;
+  },
+  container: (_node, kind) => kind === "class",
+  passThrough(node) {
+    const definition = node.type === "decorated_definition" ? node.childForFieldName("definition") : null;
+    return definition ? [definition] : null;
+  },
+  widen: (node) => ({ start: node.parent?.type === "decorated_definition" ? node.parent : node, head: node }),
+  name: (node) => node.childForFieldName(node.type === "type_alias_statement" ? "left" : "name")?.text ?? "",
+  scope: (node) => python.name(node),
+  body: (node) => node.childForFieldName("body"),
+  comments: new Set(["comment"]),
+};
+
+const GO_SPEC_KINDS: Record<string, SymbolKind> = { struct_type: "struct", interface_type: "interface" };
+/** A `type_spec` or `type_alias` alone in its `type_declaration`, not grouped in `type ( … )`. */
+const isLoneGoSpec = (node: Node) =>
+  node.parent?.type === "type_declaration" && !node.parent.children.some((child) => child.type === "(");
+
+const go: FamilyRules = {
+  kind(node) {
+    switch (node.type) {
+      case "function_declaration":
+        return "fn";
+      case "method_declaration":
+        return "method";
+      case "type_spec":
+        return GO_SPEC_KINDS[node.childForFieldName("type")?.type ?? ""] ?? "type";
+      case "type_alias":
+        return "type";
+    }
+    return null;
+  },
+  container: () => false,
+  passThrough: (node) => node.type === "type_declaration" ? node.namedChildren : null,
+  widen(node) {
+    const head = isLoneGoSpec(node) ? node.parent! : node;
+    return { start: head, head };
+  },
+  name(node) {
+    const name = node.childForFieldName("name")?.text ?? "";
+    if (node.type !== "method_declaration") return name;
+    const receiver = node.childForFieldName("receiver")?.namedChildren.find((c) => c.type === "parameter_declaration");
+    const type = receiver?.childForFieldName("type")?.text ?? "";
+    return `${type.replace(/^\*\s*/, "").replace(/\[[\s\S]*$/, "")}.${name}`;
+  },
+  scope: (node) => go.name(node),
+  body(node) {
+    if (node.type !== "type_spec") return node.childForFieldName("body");
+    const type = node.childForFieldName("type");
+    if (type?.type === "struct_type") return type.namedChildren.find((c) => c.type === "field_declaration_list") ?? null;
+    if (type?.type === "interface_type") return type.children.find((c) => c.type === "{") ?? null;
+    return null;
+  },
   comments: new Set(["comment"]),
 };
 
@@ -217,7 +310,7 @@ function firstTypeIdentifier(node: Node | null): Node | null {
   return null;
 }
 
-const RULES: Partial<Record<Grammar, FamilyRules>> = { typescript, tsx: typescript, cpp };
+const RULES: Partial<Record<Grammar, FamilyRules>> = { typescript, tsx: typescript, javascript, python, go, cpp };
 
 /** A node's last line, 1-based: a node that ends at column 0 of a later row ends on the row before. */
 function endLine(node: Node): number {
@@ -233,10 +326,20 @@ function docStart(node: Node, start: Node, head: Node, rules: FamilyRules): numb
     while (from.parent && rules.passThrough(from.parent) !== null && from.parent.startPosition.row === start.startPosition.row) from = from.parent;
   }
   let first = start.startPosition.row + 1;
-  for (let sib = from.previousSibling; sib && rules.comments.has(sib.type) && endLine(sib) === first - 1; sib = sib.previousSibling) {
+  let sib = from.previousSibling;
+  // A container body's first member: its comment run sits in the container, before the body (Python, Ruby).
+  if (sib === null && from.parent?.parent?.childForFieldName("body")?.equals(from.parent)) sib = from.parent.previousSibling;
+  for (; sib && rules.comments.has(sib.type) && endLine(sib) === first - 1; sib = sib.previousSibling) {
     first = sib.startPosition.row + 1;
   }
   return first;
+}
+
+/** Where a head before `body` ends: after the last non-comment node before it, so a comment between head and body stays out. */
+function headEnd(body: Node, rules: FamilyRules): number {
+  let sib = body.previousSibling;
+  while (sib && rules.comments.has(sib.type)) sib = sib.previousSibling;
+  return sib ? sib.endIndex : body.startIndex;
 }
 
 /** Criterion 21's head: whitespace collapsed, no space inside brackets, trimmed, one trailing `{` dropped. */
@@ -268,7 +371,7 @@ function walk(nodes: Node[], parent: { kind: SymbolKind; qualifier: string } | n
       end: endLine(headNode),
       docStart: docStart(node, start, headNode, rules),
       indent: /^[ \t]*/.exec(text.slice(lineStart, headNode.startIndex))![0],
-      head: headText(text.slice(headNode.startIndex, body ? body.startIndex : headNode.endIndex)),
+      head: headText(text.slice(headNode.startIndex, body ? headEnd(body, rules) : headNode.endIndex)),
       fold: body === null ? "none" : text.startsWith("{", body.startIndex) ? "brace" : "other",
       children: body && rules.container(node, kind) ? walk(body.namedChildren, { kind, qualifier }, rules, text) : [],
     });

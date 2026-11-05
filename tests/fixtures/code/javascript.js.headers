@@ -1,0 +1,13 @@
+src/javascript.js:2-4 fn add
+src/javascript.js:6-8 fn count
+src/javascript.js:10-18 class Counter
+src/javascript.js:12-14 method Counter.bump
+src/javascript.js:15-17 method Counter.reset
+src/javascript.js:20-22 fn f
+src/javascript.js:25-27 fn g
+src/javascript.js:29-31 fn default
+src/javascript.js:33-37 class Store
+src/javascript.js:34-36 method Store.get
+src/javascript.js:39-39 fn App
+src/javascript.js:41-41 class default
+src/javascript.js:47-50 fn outer

@@ -80,6 +80,9 @@ describe("unfold", () => {
       "src/k.ts": ["k1", "k1", "k2", "k3", "k4", "k5", "k6"].map((k) => `function ${k}(): void {}\n`).join(""),
       "src/r.ts": "namespace A {\n  export function run(): void {}\n}\nnamespace B {\n  export function run(): void {}\n}\nfunction run(): void {}\n",
       "src/cpp.cpp": fs.readFileSync(path.join(FIXTURES, "cpp.cpp"), "utf8"),
+      "src/doc.py": "# doc\n@deco\ndef f(): pass\n",
+      "src/doc2.py": "class A:\n    # doc for m\n    def m(self): pass\n",
+      "src/doc.go": "package p\n\n// Foo is a thing.\ntype Foo struct {\n\tx int\n}\n",
     });
     const unfold = (file: string, query: string) => runCli(root, ["unfold", file, query]);
 
@@ -116,6 +119,16 @@ describe("unfold", () => {
     const declared = "src/cpp.cpp:91-91 method GUI.ExtruderGroup.SetTitle";
     expect(cppHeaders("SetTitle")).toEqual([0, ["src/cpp.cpp:86-87 method GUI.HoverLabel.SetTitle", declared, outOfLine]]);
     expect(cppHeaders("ExtruderGroup::SetTitle")).toEqual([0, [declared, outOfLine]]);
+    expect(unfold("src/doc.py", "f")).toMatchObject({ status: 0, stdout: "src/doc.py:2-3 fn f\n1│# doc\n2│@deco\n3│def f(): pass\n" });
+    expect(runCli(root, ["outline", "src/doc2.py"])).toMatchObject({ status: 0, stdout: "src/doc2.py\n1-3│class A:\n3-3│    def m(self): …\n" });
+    expect(unfold("src/doc2.py", "A.m")).toMatchObject({
+      status: 0,
+      stdout: "src/doc2.py:3-3 method A.m\n2│    # doc for m\n3│    def m(self): pass\n",
+    });
+    expect(unfold("src/doc.go", "Foo")).toMatchObject({
+      status: 0,
+      stdout: "src/doc.go:4-6 struct Foo\n3│// Foo is a thing.\n4│type Foo struct {\n5│\tx int\n6│}\n",
+    });
   }, 30_000);
 });
 
@@ -211,7 +224,7 @@ describe("without the code reader", () => {
   }, 30_000);
 });
 
-const FAMILIES = ["typescript.ts", "tsx.tsx", "cpp.cpp"];
+const FAMILIES = ["typescript.ts", "tsx.tsx", "cpp.cpp", "javascript.js", "python.py", "go.go"];
 
 describe("families", () => {
   for (const fixture of FAMILIES) {
