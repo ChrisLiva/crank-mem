@@ -44,7 +44,6 @@ const STARTUP_URL = /^http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]{64})$/;
 const FIXTURE_INDEX = path.join(REPO_ROOT, "tests/fixtures/dashboard-dist/index.html");
 const FIXTURE_APP_JS = path.join(REPO_ROOT, "tests/fixtures/dashboard-dist/assets/app.js");
 
-/** `root` (a fresh temp dir by default) inited with `home` as its crank home, as a realpath. */
 function registryFile(home: string): string {
   return path.join(home, "projects.json");
 }

@@ -518,6 +518,7 @@ export function dashboardFixture(stamp: string | null): string {
   return dir;
 }
 
+/** `root` (a fresh temp dir by default) inited with `home` as its crank home, as a realpath. */
 export function registeredProject(home: string, root = tempDir("crank-dash-proj-")): string {
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
