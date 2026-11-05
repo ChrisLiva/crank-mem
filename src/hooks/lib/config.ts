@@ -14,8 +14,14 @@ export const MAX_FILE_SIZE_BYTES = 1024 * 1024;
 // Hidden paths (.git, .claude, .codex, .crank itself, …) are excluded by the
 // always-on dot rule in isExcluded, so only non-hidden names belong here.
 export const DEFAULT_EXCLUDES = [
-  "node_modules", "dist", "build", "coverage", "__pycache__", "target",
-  "*.min.js", "*.min.css",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  "__pycache__",
+  "target",
+  "*.min.js",
+  "*.min.css",
 ];
 
 export interface CrankConfig {
@@ -100,11 +106,13 @@ export function loadConfig(crankDir: string): CrankConfig {
     const value = raw[key];
     if (value === undefined || key === "digest") continue;
     if (key === "excludes") {
-      if (Array.isArray(value) && value.every((v) => typeof v === "string")) config.excludes = value;
+      if (Array.isArray(value) && value.every((v) => typeof v === "string"))
+        config.excludes = value;
     } else if (key === "git") {
       if (GIT_MODES.includes(value as CrankConfig["git"])) config.git = value as CrankConfig["git"];
     } else if (key === "runtime") {
-      if (RUNTIMES.includes(value as CrankConfig["runtime"])) config.runtime = value as CrankConfig["runtime"];
+      if (RUNTIMES.includes(value as CrankConfig["runtime"]))
+        config.runtime = value as CrankConfig["runtime"];
     } else if (
       typeof value === typeof config[key] &&
       (typeof value !== "number" || (Number.isFinite(value) && value > 0))
@@ -121,7 +129,9 @@ export function loadConfig(crankDir: string): CrankConfig {
 
 function loadDigest(crankDir: string): boolean {
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(crankDir, LOCAL_CONFIG_FILE), "utf-8"));
+    const parsed: unknown = JSON.parse(
+      fs.readFileSync(path.join(crankDir, LOCAL_CONFIG_FILE), "utf-8"),
+    );
     return isObj(parsed) && parsed.digest === true;
   } catch {
     return false;
@@ -139,7 +149,16 @@ export function saveConfig(crankDir: string, config: CrankConfig): void {
 // ── Sensitive filter (always on, regardless of config) ──────────────────────
 
 const SENSITIVE_EXTENSIONS = new Set([
-  ".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks", ".ppk", ".kdbx", ".tfstate",
+  ".pem",
+  ".key",
+  ".p8",
+  ".p12",
+  ".pfx",
+  ".keystore",
+  ".jks",
+  ".ppk",
+  ".kdbx",
+  ".tfstate",
 ]);
 const SENSITIVE_BASENAMES = new Set([".npmrc", ".netrc", ".htpasswd", ".pgpass"]);
 
@@ -150,8 +169,17 @@ const SENSITIVE_BASENAMES = new Set([".npmrc", ".netrc", ".htpasswd", ".pgpass"]
 export const SENSITIVE_GLOBS: readonly string[] = [
   ...[...SENSITIVE_BASENAMES].map((b) => `**/${b}`),
   ...[...SENSITIVE_EXTENSIONS].map((ext) => `**/*${ext}`),
-  "**/.env", "**/.env.*", "**/id_rsa*", "**/id_dsa*", "**/id_ecdsa*", "**/id_ed25519*", "**/*credential*",
-  "**/secrets.json", "**/secrets.yaml", "**/secrets.yml", "**/secrets.toml",
+  "**/.env",
+  "**/.env.*",
+  "**/id_rsa*",
+  "**/id_dsa*",
+  "**/id_ecdsa*",
+  "**/id_ed25519*",
+  "**/*credential*",
+  "**/secrets.json",
+  "**/secrets.yaml",
+  "**/secrets.yml",
+  "**/secrets.toml",
 ];
 
 export function isSensitiveFile(basename: string): boolean {

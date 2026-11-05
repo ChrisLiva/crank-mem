@@ -11,8 +11,23 @@ import { LOCAL_CONFIG_FILE } from "../src/hooks/lib/config.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import { MEMORY_OLDER_NOTE, memoryPath } from "../src/hooks/lib/memory.ts";
 import {
-  appendRecords, children, cleanup, digestProject, journey, laterRecords, makeCrankHome, makeCrankProject, plantMemory, rerun, runCli,
-  runHook, search, seedMemory, stop, temps, tempDir,
+  appendRecords,
+  children,
+  cleanup,
+  digestProject,
+  journey,
+  laterRecords,
+  makeCrankHome,
+  makeCrankProject,
+  plantMemory,
+  rerun,
+  runCli,
+  runHook,
+  search,
+  seedMemory,
+  stop,
+  temps,
+  tempDir,
 } from "./helpers.ts";
 import { okStream, okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
@@ -42,7 +57,10 @@ const V1_GET =
 
 /** A project with digests on in config.local.json and the files the version-1 rows cite. */
 function project(): string {
-  const root = makeCrankProject({ "src/lock.ts": "export const LOCK_RETRY_MS = 2000;\n", "src/scan.ts": "export {};\n" });
+  const root = makeCrankProject({
+    "src/lock.ts": "export const LOCK_RETRY_MS = 2000;\n",
+    "src/scan.ts": "export {};\n",
+  });
   temps.push(root);
   fs.writeFileSync(path.join(root, ".crank", LOCAL_CONFIG_FILE), JSON.stringify({ digest: true }));
   return root;
@@ -55,8 +73,11 @@ function writeV1Store(root: string): void {
   db.exec("PRAGMA journal_mode=WAL");
   db.exec(V1_DDL);
   db.exec("PRAGMA user_version = 1");
-  db.prepare("INSERT INTO sessions (id, agent, transcript_path) VALUES (?, ?, ?)")
-    .run("v1-session", "claude", "/t/v1-session.jsonl");
+  db.prepare("INSERT INTO sessions (id, agent, transcript_path) VALUES (?, ?, ?)").run(
+    "v1-session",
+    "claude",
+    "/t/v1-session.jsonl",
+  );
   db.prepare(
     `INSERT INTO digests (id, session_id, created_at, model, cost_usd, request, investigated, learned, completed, next_steps)
      VALUES (1, 'v1-session', 1767441600000, 'haiku', 0.01, 'r', 'i', 'l', 'c', 'n')`,
@@ -66,20 +87,33 @@ function writeV1Store(root: string): void {
      VALUES (?, 1, ?, ?, ?, ?, ?, ?)`,
   );
   observation.run(
-    1, "discovery", "Lock retry is two seconds", "withLock retries EEXIST for two seconds.",
-    JSON.stringify(["LOCK_RETRY_MS is 2000"]), "v1-hash-1", 1767355200000,
+    1,
+    "discovery",
+    "Lock retry is two seconds",
+    "withLock retries EEXIST for two seconds.",
+    JSON.stringify(["LOCK_RETRY_MS is 2000"]),
+    "v1-hash-1",
+    1767355200000,
   );
   observation.run(
-    2, "bugfix", "Scanner skips symlinks", "walkProject no longer follows symlinked directories.",
-    JSON.stringify([]), "v1-hash-2", 1767441600000,
+    2,
+    "bugfix",
+    "Scanner skips symlinks",
+    "walkProject no longer follows symlinked directories.",
+    JSON.stringify([]),
+    "v1-hash-2",
+    1767441600000,
   );
-  const file = db.prepare("INSERT INTO observation_files (path, observation_id, kind) VALUES (?, ?, ?)");
+  const file = db.prepare(
+    "INSERT INTO observation_files (path, observation_id, kind) VALUES (?, ?, ?)",
+  );
   file.run("src/lock.ts", 1, "read");
   file.run("src/scan.ts", 2, "modified");
   const unit = new Float32Array(384);
   unit[0] = 1;
-  db.prepare("INSERT INTO observation_vectors (observation_id, model, vector) VALUES (1, ?, ?)")
-    .run(EMBED_MODEL, new Uint8Array(unit.buffer));
+  db.prepare(
+    "INSERT INTO observation_vectors (observation_id, model, vector) VALUES (1, ?, ?)",
+  ).run(EMBED_MODEL, new Uint8Array(unit.buffer));
   db.close();
 }
 
@@ -160,29 +194,47 @@ describe("older stores", () => {
     temps.push(home);
     const env = { CRANK_HOME: home };
 
-    const start = runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root)), root, env);
+    const start = runHook(
+      "src/hooks/session-start.ts",
+      JSON.stringify(claudeSessionStart(root)),
+      root,
+      env,
+    );
     expect(start.status).toBe(0);
     const ctx: string = JSON.parse(start.stdout).hookSpecificOutput.additionalContext;
     expect(ctx.split("\n")).toContain(`_Note: ${MEMORY_OLDER_NOTE}_`);
     expect(ctx).not.toContain("## Recent memory");
     expect(ctx).not.toContain(RECALL_BULLET);
 
-    for (const args of [["search", "lock"], ["timeline", "1"], ["get", "1"]]) {
+    for (const args of [
+      ["search", "lock"],
+      ["timeline", "1"],
+      ["get", "1"],
+    ]) {
       const r = runCli(root, args);
       expect(r.status).toBe(1);
       expect(r.stderr).toBe(MEMORY_OLDER_NOTE + "\n");
     }
 
     const read = runHook(
-      "src/hooks/post-read.ts", JSON.stringify(claudePostRead(root, path.join(root, "src/lock.ts"), "/t/s.jsonl")), root, env,
+      "src/hooks/post-read.ts",
+      JSON.stringify(claudePostRead(root, path.join(root, "src/lock.ts"), "/t/s.jsonl")),
+      root,
+      env,
     );
     expect(read.status).toBe(0);
     expect(read.stdout).toBe("");
 
-    expect(runCli(root, ["stats"]).stdout.split("\n"))
-      .toContain("  memory:           older than this version; run crank-mem upgrade");
+    expect(runCli(root, ["stats"]).stdout.split("\n")).toContain(
+      "  memory:           older than this version; run crank-mem upgrade",
+    );
 
-    const sub = runHook("src/hooks/subagent-start.ts", JSON.stringify(claudeSubagentStart(root)), root, env);
+    const sub = runHook(
+      "src/hooks/subagent-start.ts",
+      JSON.stringify(claudeSubagentStart(root)),
+      root,
+      env,
+    );
     expect(sub.status).toBe(0);
     expect(sub.stdout).not.toContain(RECALL_BULLET);
   });
@@ -206,7 +258,10 @@ describe("maintenance", () => {
 
   /** Seeds rows A and B, then flags A stale and adds one pending proposal. */
   function seedRetention(root: string): { a: number; b: number } {
-    const [a, b] = seedMemory(root, [{ title: "Retention canary alpha" }, { title: "Retention canary bravo" }]) as [number, number];
+    const [a, b] = seedMemory(root, [
+      { title: "Retention canary alpha" },
+      { title: "Retention canary bravo" },
+    ]) as [number, number];
     seedMemory(root, [], {
       stale: [{ id: a, reason: "replaced" }],
       proposals: [{ kind: "memory", bullet: "**Keep**: proposals survive retention" }],
@@ -234,7 +289,9 @@ describe("maintenance", () => {
     // Job 3: due, so it snapshots, then deletes A and nothing else.
     appendRecords(j.transcript, records("r3"));
     stop(j);
-    expect(rerun(j, 10_000, {}, ["--maintain-every-ms", "1", "--stale-keep-ms", "1"]).status).toBe(0);
+    expect(rerun(j, 10_000, {}, ["--maintain-every-ms", "1", "--stale-keep-ms", "1"]).status).toBe(
+      0,
+    );
     const names = snapshots(root);
     expect(names).toHaveLength(2);
     expect(names.every((n) => DAILY.test(n))).toBe(true);
@@ -264,7 +321,10 @@ describe("maintenance", () => {
       fs.writeFileSync(path.join(dir, name), "");
     }
 
-    expect(journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], { args: ["--maintain-every-ms", "1"] }).job.status).toBe(0);
+    expect(
+      journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], { args: ["--maintain-every-ms", "1"] })
+        .job.status,
+    ).toBe(0);
     const names = snapshots(root).sort();
     expect(names.slice(0, -1)).toEqual(["2026-01-01T00-00-00-000Z-v1.db", ...days.slice(1)]);
     expect(names).toHaveLength(8);
@@ -288,7 +348,9 @@ describe("maintenance", () => {
       { args: ["--stale-keep-ms", "1"] },
     );
     expect(j.job.status).toBe(0);
-    expect(j.job.stderr.split("\n").filter((l) => l.startsWith("crank-mem: maintenance skipped ("))).toHaveLength(1);
+    expect(
+      j.job.stderr.split("\n").filter((l) => l.startsWith("crank-mem: maintenance skipped (")),
+    ).toHaveLength(1);
     expect(staleSearch(root)).toContain(`#${a} `);
     expect(j.fake.calls().length).toBe(2);
     expect(runCli(root, ["stats"]).stdout).toMatch(/^  consolidation:    \d+s ago \(ok\)$/m);
@@ -312,7 +374,9 @@ describe("maintenance", () => {
       return root;
     };
 
-    expect(snapshots(planted("2026-01-01T00-00-00-000Z-v1.db"))).toEqual(["2026-01-01T00-00-00-000Z-v1.db"]);
+    expect(snapshots(planted("2026-01-01T00-00-00-000Z-v1.db"))).toEqual([
+      "2026-01-01T00-00-00-000Z-v1.db",
+    ]);
 
     const names = snapshots(planted("memory.db.1.1.tmp"));
     expect(names).toHaveLength(1);
@@ -324,7 +388,12 @@ describe("restore-memory", () => {
   const DAILY = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
 
   /** Job 1 stores SAMPLE_DIGEST (row X) and writes snapshot S1; then row Y lands after it. Paths use the realpath spelling. */
-  function restoreProject(): { root: string; real: string; s1: string; j: ReturnType<typeof journey> } {
+  function restoreProject(): {
+    root: string;
+    real: string;
+    s1: string;
+    j: ReturnType<typeof journey>;
+  } {
     const root = project();
     const j = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]);
     expect(j.job.status).toBe(0);
@@ -360,7 +429,11 @@ describe("restore-memory", () => {
   test("a bad source, or a failed save of the current store, changes nothing", () => {
     const { root, s1, j } = restoreProject();
     const calls = j.fake.calls().length;
-    const sha = () => crypto.createHash("sha256").update(fs.readFileSync(memoryPath(root))).digest("hex");
+    const sha = () =>
+      crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(memoryPath(root)))
+        .digest("hex");
     const before = { sha: sha(), names: snapshots(root) };
     const tmp = tempDir("crank-restore-src-");
 
@@ -378,8 +451,12 @@ describe("restore-memory", () => {
       [half, "\n"],
     ] as const) {
       const run = runCli(root, ["restore-memory", file]);
-      expect([file, run.status, run.stderr.startsWith(`crank-mem: cannot restore from ${file}: `), run.stderr.endsWith(ending)])
-        .toEqual([file, 1, true, true]);
+      expect([
+        file,
+        run.status,
+        run.stderr.startsWith(`crank-mem: cannot restore from ${file}: `),
+        run.stderr.endsWith(ending),
+      ]).toEqual([file, 1, true, true]);
       expect({ sha: sha(), names: snapshots(root) }).toEqual(before);
     }
 
@@ -398,13 +475,17 @@ describe("restore-memory", () => {
     fs.mkdirSync(path.join(empty, ".crank/backups/memory"), { recursive: true });
     const none = runCli(empty, ["restore-memory"]);
     expect(none.status).toBe(1);
-    expect(none.stderr).toBe(`crank-mem: no snapshot in ${fs.realpathSync(empty)}/.crank/backups/memory.\n`);
+    expect(none.stderr).toBe(
+      `crank-mem: no snapshot in ${fs.realpathSync(empty)}/.crank/backups/memory.\n`,
+    );
   });
 
   /** A child that holds BEGIN IMMEDIATE on the store for `ms`, resolved once it prints `locked`; `exited` settles when it ends. */
   async function holdStore(root: string, ms: number): Promise<{ exited: Promise<number | null> }> {
     const script = path.join(tempDir("crank-holder-"), "hold.ts");
-    fs.writeFileSync(script, `
+    fs.writeFileSync(
+      script,
+      `
 const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
 const db = new DatabaseSync(${JSON.stringify(memoryPath(root))});
 db.exec("BEGIN IMMEDIATE");
@@ -412,8 +493,12 @@ process.stdout.write("locked\\n");
 await new Promise((r) => setTimeout(r, ${ms}));
 db.exec("COMMIT");
 db.close();
-`);
-    const child = spawn(process.execPath, [script], { detached: true, stdio: ["ignore", "pipe", "inherit"] });
+`,
+    );
+    const child = spawn(process.execPath, [script], {
+      detached: true,
+      stdio: ["ignore", "pipe", "inherit"],
+    });
     children.push(child);
     const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
     await new Promise<void>((resolve, reject) => {
@@ -488,7 +573,9 @@ db.close();
     const damaged = snapshots(root).filter((n) => n.endsWith(".damaged"));
     expect(damaged).toHaveLength(1);
     expect(damaged[0]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.damaged$/);
-    expect(run.stdout).toBe(`restored memory.db from ${s1}\n  the previous store is at ${path.join(dir, damaged[0]!)}\n`);
+    expect(run.stdout).toBe(
+      `restored memory.db from ${s1}\n  the previous store is at ${path.join(dir, damaged[0]!)}\n`,
+    );
     expect(fs.readFileSync(path.join(dir, damaged[0]!), "utf8")).toBe("garbage");
     expect(search(root, "EEXIST")).toContain("Lock file writes retry on EEXIST");
     expect([...fs.readFileSync(memoryPath(root)).subarray(18, 20)]).toEqual([2, 2]);
@@ -521,7 +608,10 @@ db.close();
     const calls = j.fake.calls();
     expect(calls).toHaveLength(digested + 1);
     expect(calls.at(-1)!.stdin).toBe(
-      digestRequest(later.text, SAMPLE_DIGEST.summary, { cerebrum: "## User Preferences\n\n## Memory", existing: [] }).input,
+      digestRequest(later.text, SAMPLE_DIGEST.summary, {
+        cerebrum: "## User Preferences\n\n## Memory",
+        existing: [],
+      }).input,
     );
   });
 
@@ -532,6 +622,8 @@ db.close();
 
     const help = runCli(os.tmpdir(), ["restore-memory", "--help"]);
     expect(help.status).toBe(0);
-    expect(help.stdout).toBe("Usage: crank-mem restore-memory [<file>]\n\nPut a memory.db snapshot back.\n");
+    expect(help.stdout).toBe(
+      "Usage: crank-mem restore-memory [<file>]\n\nPut a memory.db snapshot back.\n",
+    );
   });
 });

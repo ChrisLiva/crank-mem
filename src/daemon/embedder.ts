@@ -6,7 +6,12 @@ import { crankHome } from "../hooks/lib/user-state.ts";
 // import, so every command that never embeds runs without it installed.
 
 export const EMBED_MODEL = "Xenova/all-MiniLM-L6-v2";
-export const MODEL_FILES = ["config.json", "tokenizer.json", "tokenizer_config.json", "onnx/model_quantized.onnx"];
+export const MODEL_FILES = [
+  "config.json",
+  "tokenizer.json",
+  "tokenizer_config.json",
+  "onnx/model_quantized.onnx",
+];
 
 const FETCH_TIMEOUT_MS = 60_000;
 
@@ -51,7 +56,8 @@ export async function embed(
   try {
     const out = await extractor(texts, { pooling: "mean", normalize: true });
     const data = out.data;
-    if (!(data instanceof Float32Array)) throw new Error(`embedder returned ${data.constructor.name}, not Float32Array`);
+    if (!(data instanceof Float32Array))
+      throw new Error(`embedder returned ${data.constructor.name}, not Float32Array`);
     const dim = out.dims[1] ?? 0;
     return texts.map((_, i) => data.slice(i * dim, (i + 1) * dim));
   } finally {

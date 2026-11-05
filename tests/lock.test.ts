@@ -20,7 +20,11 @@ describe("withLock", () => {
 
   test("releases on throw", () => {
     const dir = tmpDir();
-    expect(() => withLock(dir, 1000, () => { throw new Error("boom"); })).toThrow("boom");
+    expect(() =>
+      withLock(dir, 1000, () => {
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
     expect(fs.existsSync(path.join(dir, LOCK))).toBe(false);
   });
 
@@ -29,7 +33,7 @@ describe("withLock", () => {
     // A live pid (this process) with a fresh timestamp — not stealable.
     fs.writeFileSync(
       path.join(dir, LOCK),
-      JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() })
+      JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() }),
     );
     const start = Date.now();
     const result = withLock(dir, 200, () => 42);
@@ -41,7 +45,11 @@ describe("withLock", () => {
     const dir = tmpDir();
     fs.writeFileSync(
       path.join(dir, LOCK),
-      JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() - 60_000 })
+      JSON.stringify({
+        pid: process.pid,
+        hostname: os.hostname(),
+        acquiredAt: Date.now() - 60_000,
+      }),
     );
     expect(withLock(dir, 2000, () => "stolen")).toBe("stolen");
   });
@@ -51,7 +59,7 @@ describe("withLock", () => {
     // pid 1 exists but we can't signal it... use an unlikely-live pid instead.
     fs.writeFileSync(
       path.join(dir, LOCK),
-      JSON.stringify({ pid: 99999999, hostname: os.hostname(), acquiredAt: Date.now() })
+      JSON.stringify({ pid: 99999999, hostname: os.hostname(), acquiredAt: Date.now() }),
     );
     expect(withLock(dir, 2000, () => "stolen")).toBe("stolen");
   });

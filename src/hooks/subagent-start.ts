@@ -1,9 +1,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook } from "./lib/hook-io.ts";
+import {
+  readStdin,
+  parsePayload,
+  findProjectRoot,
+  emitAdditionalContext,
+  runAdvisoryHook,
+} from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex } from "./lib/store.ts";
-import { CODE_BULLET, excerptOf, INJECTION_HEADING, RECALL_BULLET, recallApplies } from "./lib/injection.ts";
+import {
+  CODE_BULLET,
+  excerptOf,
+  INJECTION_HEADING,
+  RECALL_BULLET,
+  recallApplies,
+} from "./lib/injection.ts";
 import { CEREBRUM_FILE } from "./lib/cerebrum-files.ts";
 import { enableDebug } from "./lib/debug.ts";
 import { digestGate } from "./lib/spool.ts";

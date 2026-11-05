@@ -11,7 +11,10 @@ export type CerebrumEdit =
   | { op: "replace"; bulletId: number; bullet: string; reason: string; proposal: number | null }
   | { op: "remove"; bulletId: number; reason: string };
 
-export type NumberedCerebrum = { headings: string[]; bullets: { id: number; heading: string; text: string }[] };
+export type NumberedCerebrum = {
+  headings: string[];
+  bullets: { id: number; heading: string; text: string }[];
+};
 
 type NumberedBlock = { lines: string[]; id: number | null; heading: string | null };
 
@@ -25,7 +28,10 @@ function changedEnd(lines: string[]): number {
 }
 
 const joinTrimmed = (lines: string[]): string =>
-  lines.map((l) => l.trim()).filter((l) => l !== "").join(" ");
+  lines
+    .map((l) => l.trim())
+    .filter((l) => l !== "")
+    .join(" ");
 
 /** Every block of `md`, with each bullet under a `## ` section numbered from 1. */
 function walk(md: string): NumberedBlock[] {
@@ -35,7 +41,8 @@ function walk(md: string): NumberedBlock[] {
   for (const block of parseBlocks(md.split("\n"))) {
     if (block.kind === "other") {
       out.push({ lines: block.lines, id: null, heading });
-      for (const line of block.lines) if (line.startsWith(SECTION)) heading = line.slice(SECTION.length).trim();
+      for (const line of block.lines)
+        if (line.startsWith(SECTION)) heading = line.slice(SECTION.length).trim();
     } else {
       out.push({ lines: block.lines, id: heading === null ? null : next++, heading });
     }
@@ -44,11 +51,16 @@ function walk(md: string): NumberedBlock[] {
 }
 
 export function numberBullets(md: string): NumberedCerebrum {
-  const headings = md.split("\n").filter((l) => l.startsWith(SECTION)).map((l) => l.slice(SECTION.length).trim());
+  const headings = md
+    .split("\n")
+    .filter((l) => l.startsWith(SECTION))
+    .map((l) => l.slice(SECTION.length).trim());
   const bullets = walk(md).flatMap((b) => {
     if (b.id === null || b.heading === null) return [];
     const lines = b.lines.slice(0, changedEnd(b.lines));
-    return [{ id: b.id, heading: b.heading, text: joinTrimmed([lines[0]!.slice(2), ...lines.slice(1)]) }];
+    return [
+      { id: b.id, heading: b.heading, text: joinTrimmed([lines[0]!.slice(2), ...lines.slice(1)]) },
+    ];
   });
   return { headings, bullets };
 }
@@ -64,7 +76,9 @@ function writeBullet(bullet: string, today: string): string {
 /** Where an add under `heading` goes in `lines`, or -1 when no `## ` line matches. */
 function insertionPoint(lines: string[], heading: string): number {
   const want = heading.trim().toLowerCase();
-  const start = lines.findIndex((l) => l.startsWith(SECTION) && l.slice(SECTION.length).trim().toLowerCase() === want);
+  const start = lines.findIndex(
+    (l) => l.startsWith(SECTION) && l.slice(SECTION.length).trim().toLowerCase() === want,
+  );
   if (start < 0) return -1;
   let end = lines.findIndex((l, i) => i > start && l.startsWith(SECTION));
   if (end < 0) end = lines.length;
@@ -77,8 +91,11 @@ function insertionPoint(lines: string[], heading: string): number {
   return at;
 }
 
-export function applyEdits(md: string, edits: CerebrumEdit[], today: string):
-  { md: string; archived: string[]; skipped: CerebrumEdit[] } {
+export function applyEdits(
+  md: string,
+  edits: CerebrumEdit[],
+  today: string,
+): { md: string; archived: string[]; skipped: CerebrumEdit[] } {
   const blocks = walk(md);
   const archived: string[] = [];
   const skipped = new Set<number>();
@@ -93,7 +110,9 @@ export function applyEdits(md: string, edits: CerebrumEdit[], today: string):
     }
     changed.add(edit.bulletId);
     const end = changedEnd(block.lines);
-    archived.push(`${block.lines.slice(0, end).join("\n")}\n  - archived ${today}: ${redact(edit.reason)}`);
+    archived.push(
+      `${block.lines.slice(0, end).join("\n")}\n  - archived ${today}: ${redact(edit.reason)}`,
+    );
     block.lines = [...(written === null ? [] : [written]), ...block.lines.slice(end)];
   }
   let lines = blocks.flatMap((b) => b.lines);
@@ -102,7 +121,11 @@ export function applyEdits(md: string, edits: CerebrumEdit[], today: string):
     const written = writeBullet(edit.bullet, today);
     const at = written === "" ? -1 : insertionPoint(lines, edit.heading);
     const next = at < 0 ? [] : [...lines.slice(0, at), written, ...lines.slice(at)];
-    if (at < 0 || next.length > PRUNE_LINE_LIMIT || estimateProseTokens(next.join("\n")) > PRUNE_TOKEN_LIMIT) {
+    if (
+      at < 0 ||
+      next.length > PRUNE_LINE_LIMIT ||
+      estimateProseTokens(next.join("\n")) > PRUNE_TOKEN_LIMIT
+    ) {
       skipped.add(i);
       continue;
     }

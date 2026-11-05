@@ -6,8 +6,15 @@ import { git, gitCommit, makeCrankHome, runCli, runHook, spoolFiles } from "./he
 import { claudeStop } from "./fixtures/payloads.ts";
 import { defaultConfig } from "../src/hooks/lib/config.ts";
 import {
-  STOP_FILE, clearStopState, crankHome, ensureCrankHome, readStopState, writeJsonAtomic, writeTextAtomic,
-  writeStopState, type StopState,
+  STOP_FILE,
+  clearStopState,
+  crankHome,
+  ensureCrankHome,
+  readStopState,
+  writeJsonAtomic,
+  writeTextAtomic,
+  writeStopState,
+  type StopState,
 } from "../src/hooks/lib/user-state.ts";
 import { digestGate } from "../src/hooks/lib/spool.ts";
 
@@ -102,7 +109,9 @@ describe("digest in git projects", () => {
     expect(git(root, "status", "--short")).toBe("");
     const home = makeCrankHome();
     const payload = { ...claudeStop(worktree), transcript_path: "/x/wt-1.jsonl" };
-    expect(runHook("src/hooks/stop.ts", JSON.stringify(payload), worktree, { CRANK_HOME: home }).status).toBe(0);
+    expect(
+      runHook("src/hooks/stop.ts", JSON.stringify(payload), worktree, { CRANK_HOME: home }).status,
+    ).toBe(0);
     expect(spoolFiles(home)).toEqual([]);
   });
 });
@@ -145,7 +154,11 @@ describe("user state under the crank home", () => {
     expect(digestGate({ ...defaultConfig(), digest: false }, false, root).running).toBe(false);
     expect(digestGate(on, true, root).running).toBe(false);
     expect(digestGate(on, false, root).running).toBe(true);
-    const stop: StopState = { reason: "login", atMs: 1_730_000_000_123.456, detail: "Not logged in · ünïcode" };
+    const stop: StopState = {
+      reason: "login",
+      atMs: 1_730_000_000_123.456,
+      detail: "Not logged in · ünïcode",
+    };
     writeStopState(stop);
     expect(readStopState()).toEqual(stop);
     expect(digestGate(on, false, root).running).toBe(false);
@@ -196,6 +209,8 @@ describe("user state under the crank home", () => {
 
 describe("help", () => {
   test("usage lists the digest command", () => {
-    expect(runCli(tempDir("crank-digest-help-"), ["--help"]).stdout).toContain("digest          Turn background digests on or off, or resume them\n");
+    expect(runCli(tempDir("crank-digest-help-"), ["--help"]).stdout).toContain(
+      "digest          Turn background digests on or off, or resume them\n",
+    );
   });
 });

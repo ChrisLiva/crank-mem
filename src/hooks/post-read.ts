@@ -1,7 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, memoryPaths, type HookPayload,
+  readStdin,
+  parsePayload,
+  findProjectRoot,
+  emitAdditionalContext,
+  runAdvisoryHook,
+  memoryPaths,
+  type HookPayload,
 } from "./lib/hook-io.ts";
 import { CRANK_DIR, loadConfig } from "./lib/config.ts";
 import { debugEvent, enableDebug, safePath } from "./lib/debug.ts";
@@ -20,8 +26,10 @@ const SEP = "\n\n";
 
 function readPaths(payload: HookPayload): string[] {
   const input = payload.tool_input ?? {};
-  if (payload.tool_name === "Read") return typeof input.file_path === "string" ? [input.file_path] : [];
-  if (payload.tool_name === "Bash") return typeof input.command === "string" ? shellReadPaths(input.command) : [];
+  if (payload.tool_name === "Read")
+    return typeof input.file_path === "string" ? [input.file_path] : [];
+  if (payload.tool_name === "Bash")
+    return typeof input.command === "string" ? shellReadPaths(input.command) : [];
   return [];
 }
 
@@ -57,7 +65,10 @@ async function main(): Promise<void> {
 
   const stem = transcriptStem(payload.transcript_path);
   if (!stem) return;
-  const agent = typeof payload.agent_id === "string" && /^[\w-]+$/.test(payload.agent_id) ? payload.agent_id : "main";
+  const agent =
+    typeof payload.agent_id === "string" && /^[\w-]+$/.test(payload.agent_id)
+      ? payload.agent_id
+      : "main";
 
   const rels = memoryPaths(root, cwd, paths);
   if (rels.length === 0) return;
@@ -76,7 +87,9 @@ async function main(): Promise<void> {
     for (const rel of rels.filter((r) => !seen.includes(r))) {
       const lines = opened.memory.fileHistory(rel, HISTORY_LINES);
       if (lines.length === 0) continue;
-      const tag = changedSince(path.join(root, rel), lines[0]!.createdAtMs) ? " [file changed since]" : "";
+      const tag = changedSince(path.join(root, rel), lines[0]!.createdAtMs)
+        ? " [file changed since]"
+        : "";
       const section = `History of ${rel}:${tag}\n` + lines.map(formatLine).join("\n");
       if (Buffer.byteLength([...sections, section].join(SEP)) > MAX_BYTES) break;
       sections.push(section);

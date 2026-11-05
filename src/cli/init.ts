@@ -8,11 +8,24 @@ import { cliVersion, REPO_ROOT } from "./version.ts";
 import { vendorHooks, templatePath } from "./vendor.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
-  crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, isCrankHookCommand,
-  addIgnoreLines, modeIgnoreFile, ensureCodexFeatures, unignoreCerebrum, ensureCrankGitignore, addAllowRule,
+  crankHooks,
+  mergeHooksIntoFile,
+  removeCrankHooksFromFile,
+  hasCrankHooks,
+  claudeSettingsFiles,
+  isCrankHookCommand,
+  addIgnoreLines,
+  modeIgnoreFile,
+  ensureCodexFeatures,
+  unignoreCerebrum,
+  ensureCrankGitignore,
+  addAllowRule,
 } from "./settings.ts";
 import {
-  crankTrust, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
+  crankTrust,
+  writeTrustEntries,
+  userCodexConfigPath,
+  CODEX_REVIEW_HINT,
 } from "./codex-trust.ts";
 import { defaultConfig, saveConfig, CRANK_DIR, type CrankConfig } from "../hooks/lib/config.ts";
 import { fullScan } from "../hooks/lib/scanner.ts";
@@ -37,7 +50,9 @@ export async function run(args: string[]): Promise<number> {
   const crankDir = path.join(root, CRANK_DIR);
 
   if (fs.existsSync(path.join(crankDir, "config.json"))) {
-    console.error("crank-mem: already initialized here — use `crank-mem upgrade` or `crank-mem uninstall`.");
+    console.error(
+      "crank-mem: already initialized here — use `crank-mem upgrade` or `crank-mem uninstall`.",
+    );
     return 1;
   }
 
@@ -62,11 +77,12 @@ export async function run(args: string[]): Promise<number> {
     }
   }
 
-  const gitMode: CrankConfig["git"] = (
-    typeof flags.git === "string" ? (flags.git as CrankConfig["git"])
-    : yes ? "exclude"
-    : await choose("Track .crank/ in git?", ["commit", "ignore", "exclude"], "exclude")
-  );
+  const gitMode: CrankConfig["git"] =
+    typeof flags.git === "string"
+      ? (flags.git as CrankConfig["git"])
+      : yes
+        ? "exclude"
+        : await choose("Track .crank/ in git?", ["commit", "ignore", "exclude"], "exclude");
 
   const adrPath = typeof flags.adr === "string" ? flags.adr : "docs/adr";
 
@@ -76,15 +92,27 @@ export async function run(args: string[]): Promise<number> {
     codexMode = flags.codex;
   } else if (fs.existsSync(codexHooksJson)) {
     // Pre-existing .codex wiring is a conflict — default to leaving it alone.
-    codexMode = yes ? "skip" : await choose(".codex/hooks.json exists — merge crank hooks into it?", ["merge", "skip"], "skip");
+    codexMode = yes
+      ? "skip"
+      : await choose(
+          ".codex/hooks.json exists — merge crank hooks into it?",
+          ["merge", "skip"],
+          "skip",
+        );
   } else {
     codexMode = "merge";
   }
 
   const codexTrust =
-    typeof flags["codex-trust"] === "string" ? flags["codex-trust"]
-    : yes ? "skip"
-    : await choose("Write Codex trusted_hash entries to ~/.codex/config.toml?", ["write", "skip"], "skip");
+    typeof flags["codex-trust"] === "string"
+      ? flags["codex-trust"]
+      : yes
+        ? "skip"
+        : await choose(
+            "Write Codex trusted_hash entries to ~/.codex/config.toml?",
+            ["write", "skip"],
+            "skip",
+          );
 
   // ── Backup dir and the paths init writes ─────────────────────────────────
   fs.mkdirSync(crankDir, { recursive: true });
@@ -132,7 +160,11 @@ export async function run(args: string[]): Promise<number> {
     if (ignoreFile) addIgnoreLines(ignoreFile, backup);
     // Another tool sharing .crank/ may have written its own .gitignore first.
     ensureCrankGitignore(crankDir, backup);
-    if (gitMode === "commit") ignoredBy = unignoreCerebrum(root, (f) => { backup(f); unignored.push(f); });
+    if (gitMode === "commit")
+      ignoredBy = unignoreCerebrum(root, (f) => {
+        backup(f);
+        unignored.push(f);
+      });
 
     // ── Seed cerebrum + first scan ─────────────────────────────────────────
     fs.copyFileSync(templatePath("cerebrum.md"), path.join(crankDir, CEREBRUM_FILE));
@@ -153,7 +185,8 @@ export async function run(args: string[]): Promise<number> {
   console.log(`crank-mem ${cliVersion()} initialized (runtime: ${runtime}, git: ${gitMode})`);
   console.log(`  indexed ${scanned?.meta.fileCount ?? "?"} files → .crank/anatomy.md`);
   console.log(`  Claude Code: hooks wired into ${path.relative(root, claudeSettings)}`);
-  if (duplicateWiring) console.log(`  removed duplicate crank hooks from ${path.relative(root, otherClaudeSettings)}`);
+  if (duplicateWiring)
+    console.log(`  removed duplicate crank hooks from ${path.relative(root, otherClaudeSettings)}`);
   if (codexMode === "merge") {
     console.log(`  Codex: hooks wired into .codex/hooks.json`);
     if (codexTrust === "write") {
@@ -164,8 +197,12 @@ export async function run(args: string[]): Promise<number> {
   } else {
     console.log(`  Codex: skipped`);
   }
-  for (const f of unignored) console.log(`  removed the crank-mem .crank/ ignore block from ${path.relative(root, f)}`);
-  if (ignoredBy) console.error(`crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`);
+  for (const f of unignored)
+    console.log(`  removed the crank-mem .crank/ ignore block from ${path.relative(root, f)}`);
+  if (ignoredBy)
+    console.error(
+      `crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`,
+    );
   console.log(`Next: start a Claude Code session here — project memory injects at session start.`);
   console.log(`Optional: install the audit skill — npx skills add ChrisLiva/crank-mem`);
   return 0;

@@ -29,7 +29,8 @@ const VENDOR_TOKENS: RegExp[] = [
 ];
 
 // A PEM private key block, replaced whole; a BEGIN with no END runs to the end of the text.
-const PEM = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g;
+const PEM =
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g;
 
 // Each keeps group 1 (the key and its punctuation) and masks group 2 (the value).
 // A value runs to the next whitespace, quote, backslash, comma or semicolon.

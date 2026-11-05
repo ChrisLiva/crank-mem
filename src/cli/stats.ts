@@ -8,7 +8,12 @@ import { composeInjection, fileCitations, injectionSources } from "../hooks/lib/
 import { auditSkillInstalled, installedAtMs, lastAuditMs } from "../hooks/lib/cerebrum-files.ts";
 import { hasCrankHooks } from "./settings.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
-import { codexHome, codexTrustStatus, userCodexConfigPath, CODEX_REVIEW_HINT } from "./codex-trust.ts";
+import {
+  codexHome,
+  codexTrustStatus,
+  userCodexConfigPath,
+  CODEX_REVIEW_HINT,
+} from "./codex-trust.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
 import { daemonAlive, readParked, readSpool } from "../hooks/lib/spool.ts";
 import { latestSnapshot, memoryPath, openMemory } from "../hooks/lib/memory.ts";
@@ -33,7 +38,12 @@ const ageOf = (ms: number): string => age(new Date(ms).toISOString());
  * occasional staleness and drift notes, so the budget that cuts bullets is the
  * real one.
  */
-function memoryLines(root: string, crankDir: string, config: CrankConfig, index: AnatomyIndex): string[] {
+function memoryLines(
+  root: string,
+  crankDir: string,
+  config: CrankConfig,
+  index: AnatomyIndex,
+): string[] {
   const lines: string[] = [];
   const sources = injectionSources(root, crankDir, config, index, false);
   const { cerebrumMd } = sources;
@@ -49,7 +59,12 @@ function memoryLines(root: string, crankDir: string, config: CrankConfig, index:
     // A bullet's date is the latest one it carries: a (supersedes …) date is older.
     // A string Date.parse rejects, such as MySQL's 0000-00-00, is not a date.
     const dates = e.hidden.map(
-      (b) => b.match(/\b\d{4}-\d{2}-\d{2}\b/g)?.filter((d) => !Number.isNaN(Date.parse(d))).sort().at(-1) ?? null,
+      (b) =>
+        b
+          .match(/\b\d{4}-\d{2}-\d{2}\b/g)
+          ?.filter((d) => !Number.isNaN(Date.parse(d)))
+          .sort()
+          .at(-1) ?? null,
     );
     const dated = dates.filter((d): d is string => d !== null).sort();
     const undated = dates.length - dated.length;
@@ -66,16 +81,25 @@ function memoryLines(root: string, crankDir: string, config: CrankConfig, index:
     // Only paths with a directory: a bare basename may live anywhere.
     const cited = [...new Set(fileCitations(cerebrumMd).filter((rel) => rel.includes("/")))];
     const existing = cited.filter((rel) => fs.existsSync(path.join(root, rel))).length;
-    lines.push(row("cited paths", cited.length ? `${existing} of ${cited.length} exist` : "none cited"));
+    lines.push(
+      row("cited paths", cited.length ? `${existing} of ${cited.length} exist` : "none cited"),
+    );
   }
 
   const audited = lastAuditMs(crankDir);
   const installed = installedAtMs(crankDir);
-  const skill = auditSkillInstalled(root, false) || auditSkillInstalled(root, true) ? "" : "; audit skill not installed";
+  const skill =
+    auditSkillInstalled(root, false) || auditSkillInstalled(root, true)
+      ? ""
+      : "; audit skill not installed";
   lines.push(
     row(
       "last audit",
-      (audited !== null ? ageOf(audited) : installed !== null ? `never (installed ${ageOf(installed)})` : "never") + skill,
+      (audited !== null
+        ? ageOf(audited)
+        : installed !== null
+          ? `never (installed ${ageOf(installed)})`
+          : "never") + skill,
     ),
   );
   return lines;
@@ -119,13 +143,17 @@ async function captureLines(root: string, config: CrankConfig): Promise<string[]
     lines.push(row("proposals", String(s.pendingProposals)));
     lines.push(row("stale", String(s.staleRows)));
     const last = s.lastConsolidation;
-    lines.push(row("consolidation", last === null ? "never" : `${ageOf(last.startedMs)} (${last.outcome})`));
+    lines.push(
+      row("consolidation", last === null ? "never" : `${ageOf(last.startedMs)} (${last.outcome})`),
+    );
   } else {
     lines.push(row("memory", MEMORY_STATE[opened.status]));
   }
   const latest = latestSnapshot(store);
   lines.push(row("last snapshot", latest === null ? "never" : ageOf(latest.atMs)));
-  lines.push(row("embedder", (await embedderReady()) ? "ready" : "not ready (run crank-mem setup)"));
+  lines.push(
+    row("embedder", (await embedderReady()) ? "ready" : "not ready (run crank-mem setup)"),
+  );
   return lines;
 }
 
@@ -145,9 +173,13 @@ export async function run(_args: string[]): Promise<number> {
   } catch {}
 
   console.log(`crank-mem stats`);
-  console.log(`  files indexed:    ${indexed}${index.meta.truncated ? ` (capped at max_files ${config.max_files})` : ""}`);
+  console.log(
+    `  files indexed:    ${indexed}${index.meta.truncated ? ` (capped at max_files ${config.max_files})` : ""}`,
+  );
   console.log(`  indexable files:  ${walked.length} (coverage ${coverage}%)`);
-  console.log(`  last scan:        ${age(index.meta.lastScanned)}${index.meta.partial ? " (partial)" : ""}`);
+  console.log(
+    `  last scan:        ${age(index.meta.lastScanned)}${index.meta.partial ? " (partial)" : ""}`,
+  );
   console.log(`  index size:       ${(indexSize / 1024).toFixed(1)} KB`);
   console.log(`  runtime:          ${config.runtime} (vendored ${config.vendored_version})`);
   console.log(`  injection budget: ${config.injection_budget_bytes} bytes`);
@@ -169,17 +201,21 @@ export async function run(_args: string[]): Promise<number> {
   console.log(
     gaps.roots === 0
       ? `  codex sessions:   no root threads${window}`
-      : `  codex sessions:   ${gaps.missed} of ${gaps.roots} root threads${window} got no injection`
+      : `  codex sessions:   ${gaps.missed} of ${gaps.roots} root threads${window} got no injection`,
   );
   console.log(
     `  codex hook trust: ${trust.current} of ${hashes} hashes current` +
-      `${trust.stale ? `, ${trust.stale} stale` : ""}${trust.missing ? `, ${trust.missing} missing` : ""}`
+      `${trust.stale ? `, ${trust.stale} stale` : ""}${trust.missing ? `, ${trust.missing} missing` : ""}`,
   );
   if (trust.projectTrustLevel === null) {
     // Codex may resolve trust from a parent directory; no probe has tested that (ADR 0002).
-    console.log(`  codex project:    no exact-path trust_level in ${userCodexConfigPath()}; a parent directory's entry may apply`);
+    console.log(
+      `  codex project:    no exact-path trust_level in ${userCodexConfigPath()}; a parent directory's entry may apply`,
+    );
   } else if (trust.projectTrustLevel !== "trusted") {
-    console.log(`  codex project:    trust_level = "${trust.projectTrustLevel}", so codex loads no .codex/ hooks here`);
+    console.log(
+      `  codex project:    trust_level = "${trust.projectTrustLevel}", so codex loads no .codex/ hooks here`,
+    );
   }
   if (trust.stale || trust.missing) for (const line of CODEX_REVIEW_HINT) console.log(line);
   return 0;

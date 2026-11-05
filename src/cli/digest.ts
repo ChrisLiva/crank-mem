@@ -24,7 +24,7 @@ export async function run(args: string[]): Promise<number> {
   console.log(
     sub === "on"
       ? "crank-mem: digests on. They run on your Claude login through `claude -p`."
-      : "crank-mem: digests off. Stored memory stays readable."
+      : "crank-mem: digests off. Stored memory stays readable.",
   );
   if (sub === "on" && !(await embedderReady())) {
     console.error("crank-mem: warning: search by meaning is not ready; run `crank-mem setup`.");

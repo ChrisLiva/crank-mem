@@ -1,13 +1,20 @@
 import {
-  OBSERVATION_TYPES, type DigestSummary, type Observation, type ObservationType, type ProposalKind,
+  OBSERVATION_TYPES,
+  type DigestSummary,
+  type Observation,
+  type ObservationType,
+  type ProposalKind,
 } from "../hooks/lib/memory.ts";
 import { isObj } from "../hooks/lib/hook-io.ts";
 
 export type Digest = {
   observations: {
     type: ObservationType;
-    title: string; narrative: string; facts: string[];
-    files_read: string[]; files_modified: string[];
+    title: string;
+    narrative: string;
+    facts: string[];
+    files_read: string[];
+    files_modified: string[];
   }[];
   summary: DigestSummary;
   proposals: { kind: ProposalKind; bullet: string }[];
@@ -16,7 +23,8 @@ export type Digest = {
 
 /** What the job knows beyond the transcript: cerebrum's body, and earlier rows about the files the delta touched. */
 export type DigestContext = {
-  cerebrum: string | null; existing: Pick<Observation, "id" | "type" | "title" | "narrative">[];
+  cerebrum: string | null;
+  existing: Pick<Observation, "id" | "type" | "title" | "narrative">[];
 };
 
 const PROPOSAL_KINDS: readonly ProposalKind[] = ["preference", "memory"];
@@ -62,12 +70,15 @@ const SUMMARY_KEYS = ["request", "investigated", "learned", "completed", "next_s
 // The ADR 0008 digest probe's schema.json (digest-probe/) plus the proposals and stale arrays its
 // 2026-11-04 amendment ran live; re-probe per ADR 0008 before changing it.
 const SCHEMA = {
-  type: "object", additionalProperties: false, required: ["observations", "summary", "proposals", "stale"],
+  type: "object",
+  additionalProperties: false,
+  required: ["observations", "summary", "proposals", "stale"],
   properties: {
     observations: {
       type: "array",
       items: {
-        type: "object", additionalProperties: false,
+        type: "object",
+        additionalProperties: false,
         required: ["type", "title", "narrative", "facts", "files_read", "files_modified"],
         properties: {
           type: { type: "string", enum: OBSERVATION_TYPES },
@@ -80,40 +91,60 @@ const SCHEMA = {
       },
     },
     summary: {
-      type: "object", additionalProperties: false, required: SUMMARY_KEYS,
+      type: "object",
+      additionalProperties: false,
+      required: SUMMARY_KEYS,
       properties: Object.fromEntries(SUMMARY_KEYS.map((key) => [key, { type: "string" }])),
     },
     proposals: {
       type: "array",
       items: {
-        type: "object", additionalProperties: false, required: ["kind", "bullet"],
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "bullet"],
         properties: { kind: { type: "string", enum: PROPOSAL_KINDS }, bullet: { type: "string" } },
       },
     },
     stale: {
       type: "array",
       items: {
-        type: "object", additionalProperties: false, required: ["id", "reason"],
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "reason"],
         properties: { id: { type: "integer" }, reason: { type: "string" } },
       },
     },
   },
 };
 
-const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === "string");
+const isStrings = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((s) => typeof s === "string");
 
 function isObservation(v: unknown): boolean {
-  return isObj(v) && OBSERVATION_TYPES.includes(v.type as ObservationType) && typeof v.title === "string" &&
-    typeof v.narrative === "string" && isStrings(v.facts) && isStrings(v.files_read) && isStrings(v.files_modified);
+  return (
+    isObj(v) &&
+    OBSERVATION_TYPES.includes(v.type as ObservationType) &&
+    typeof v.title === "string" &&
+    typeof v.narrative === "string" &&
+    isStrings(v.facts) &&
+    isStrings(v.files_read) &&
+    isStrings(v.files_modified)
+  );
 }
 
 const isProposal = (v: unknown): boolean =>
   isObj(v) && PROPOSAL_KINDS.includes(v.kind as ProposalKind) && typeof v.bullet === "string";
 
-const isStaleFlag = (v: unknown): boolean => isObj(v) && Number.isInteger(v.id) && typeof v.reason === "string";
+const isStaleFlag = (v: unknown): boolean =>
+  isObj(v) && Number.isInteger(v.id) && typeof v.reason === "string";
 
 function validate(value: unknown): value is Digest {
-  if (!isObj(value) || !Array.isArray(value.observations) || !value.observations.every(isObservation)) return false;
+  if (
+    !isObj(value) ||
+    !Array.isArray(value.observations) ||
+    !value.observations.every(isObservation)
+  )
+    return false;
   if (!Array.isArray(value.proposals) || !value.proposals.every(isProposal)) return false;
   if (!Array.isArray(value.stale) || !value.stale.every(isStaleFlag)) return false;
   const summary = value.summary;
@@ -126,14 +157,31 @@ export const oneLine = (text: string) => text.replace(/\s+/g, " ");
  * The model request for one transcript delta. The input's blocks, each ending in a blank line, come in order:
  * this session's last summary, cerebrum, earlier rows about the touched files, then the delta.
  */
-export function digestRequest(delta: string, previous: DigestSummary | null, context: DigestContext): {
-  system: string; input: string; schema: object; validate: (value: unknown) => value is Digest;
+export function digestRequest(
+  delta: string,
+  previous: DigestSummary | null,
+  context: DigestContext,
+): {
+  system: string;
+  input: string;
+  schema: object;
+  validate: (value: unknown) => value is Digest;
 } {
-  const prior = previous === null
-    ? ""
-    : "[PRIOR SUMMARY]\n" + SUMMARY_KEYS.map((key) => `${key}: ${previous[key]}\n`).join("") + "\n";
+  const prior =
+    previous === null
+      ? ""
+      : "[PRIOR SUMMARY]\n" +
+        SUMMARY_KEYS.map((key) => `${key}: ${previous[key]}\n`).join("") +
+        "\n";
   const cerebrum = context.cerebrum === null ? "" : `[CEREBRUM]\n${context.cerebrum}\n\n`;
-  const rows = context.existing.map((o) => `#${o.id} ${o.type} ${oneLine(o.title)}: ${oneLine(o.narrative)}`);
+  const rows = context.existing.map(
+    (o) => `#${o.id} ${o.type} ${oneLine(o.title)}: ${oneLine(o.narrative)}`,
+  );
   const existing = rows.length === 0 ? "" : `[EXISTING OBSERVATIONS]\n${rows.join("\n")}\n\n`;
-  return { system: SYSTEM, input: prior + cerebrum + existing + "[TRANSCRIPT]\n" + delta, schema: SCHEMA, validate };
+  return {
+    system: SYSTEM,
+    input: prior + cerebrum + existing + "[TRANSCRIPT]\n" + delta,
+    schema: SCHEMA,
+    validate,
+  };
 }

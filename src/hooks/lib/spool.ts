@@ -4,7 +4,13 @@ import * as path from "node:path";
 import type { CrankConfig } from "./config.ts";
 import { debugEvent } from "./debug.ts";
 import type { HookPayload } from "./hook-io.ts";
-import { crankHome, ensureCrankHome, readStopState, writeJsonAtomic, type StopState } from "./user-state.ts";
+import {
+  crankHome,
+  ensureCrankHome,
+  readStopState,
+  writeJsonAtomic,
+  type StopState,
+} from "./user-state.ts";
 
 // The digest spool: one <crank home>/spool/<stem>.json per Claude session that
 // has work to digest, keyed by the transcript's basename. Stop and SessionEnd
@@ -13,7 +19,12 @@ import { crankHome, ensureCrankHome, readStopState, writeJsonAtomic, type StopSt
 
 /** `cwd` is the session's working directory. */
 export type SpoolEntry = {
-  transcriptPath: string; projectRoot: string; cwd: string; agent: "claude"; ended: boolean; updatedAt: number;
+  transcriptPath: string;
+  projectRoot: string;
+  cwd: string;
+  agent: "claude";
+  ended: boolean;
+  updatedAt: number;
 };
 export type SpoolItem = { stem: string; entry: SpoolEntry };
 
@@ -44,20 +55,42 @@ export function transcriptStem(transcriptPath: unknown): string | null {
 }
 
 /** Write the entry for a transcript, replacing any parked copy so the session is digested again. */
-export function writeSignal(transcriptPath: string, projectRoot: string, ended: boolean, cwd: string): void {
+export function writeSignal(
+  transcriptPath: string,
+  projectRoot: string,
+  ended: boolean,
+  cwd: string,
+): void {
   const stem = transcriptStem(transcriptPath);
   if (!stem) return;
   ensureCrankHome();
   deleteParked(stem);
-  const entry: SpoolEntry = { transcriptPath, projectRoot, cwd, agent: "claude", ended, updatedAt: Date.now() };
+  const entry: SpoolEntry = {
+    transcriptPath,
+    projectRoot,
+    cwd,
+    agent: "claude",
+    ended,
+    updatedAt: Date.now(),
+  };
   writeJsonAtomic(path.join(spoolDir(), stem + EXT), entry);
 }
 
 /** The hooks' entry point: signal when the project turned digests on. Never throws. */
-export function signalDigest(payload: HookPayload, projectRoot: string, config: CrankConfig, ended: boolean): void {
+export function signalDigest(
+  payload: HookPayload,
+  projectRoot: string,
+  config: CrankConfig,
+  ended: boolean,
+): void {
   if (!config.digest || typeof payload.transcript_path !== "string") return;
   try {
-    writeSignal(payload.transcript_path, projectRoot, ended, typeof payload.cwd === "string" ? payload.cwd : projectRoot);
+    writeSignal(
+      payload.transcript_path,
+      projectRoot,
+      ended,
+      typeof payload.cwd === "string" ? payload.cwd : projectRoot,
+    );
     if (readStopState() === null) ensureDaemon(config);
   } catch (err) {
     debugEvent("signal-failed", { error: err instanceof Error ? err.message : String(err) });
@@ -79,7 +112,8 @@ export function daemonAlive(): boolean {
   }
   try {
     const state = JSON.parse(text) as Partial<DaemonState> | null;
-    if (typeof state?.heartbeatMs === "number") return Date.now() - state.heartbeatMs <= HEARTBEAT_MAX_MS;
+    if (typeof state?.heartbeatMs === "number")
+      return Date.now() - state.heartbeatMs <= HEARTBEAT_MAX_MS;
   } catch {
     // Fall through to the file's age.
   }
@@ -100,7 +134,11 @@ export function ensureDaemon(config: Pick<CrankConfig, "clone_root">): void {
     if (!config.clone_root || daemonAlive()) return;
     const bin = path.join(config.clone_root, "bin", "crank-mem");
     if (!fs.existsSync(bin)) return;
-    const child = spawn(bin, ["daemon"], { cwd: config.clone_root, detached: true, stdio: "ignore" });
+    const child = spawn(bin, ["daemon"], {
+      cwd: config.clone_root,
+      detached: true,
+      stdio: "ignore",
+    });
     child.on("error", () => {});
     child.unref();
   } catch (err) {
@@ -144,12 +182,19 @@ export function readSpool(): SpoolItem[] {
  * at turn end, so a long turn keeps an old updatedAt while its transcript
  * grows. `drained`: no entry for this project waits (parked ones do not count).
  */
-export type DigestGate = { running: boolean; stop: StopState | null; stalled: boolean; drained: boolean };
+export type DigestGate = {
+  running: boolean;
+  stop: StopState | null;
+  stalled: boolean;
+  drained: boolean;
+};
 
 export function digestGate(config: CrankConfig, codex: boolean, root: string): DigestGate {
   if (!config.digest) return { running: false, stop: null, stalled: false, drained: true };
   const stop = readStopState();
-  const pending = readSpool().map(({ entry }) => entry).filter((entry) => entry.projectRoot === root);
+  const pending = readSpool()
+    .map(({ entry }) => entry)
+    .filter((entry) => entry.projectRoot === root);
   const cutoff = Date.now() - CAPTURE_STALL_MS;
   const stalled = pending.some((entry) => {
     if (!(entry.updatedAt < cutoff)) return false;
@@ -159,7 +204,12 @@ export function digestGate(config: CrankConfig, codex: boolean, root: string): D
       return true;
     }
   });
-  return { running: !codex && stop === null && !stalled, stop, stalled, drained: pending.length === 0 };
+  return {
+    running: !codex && stop === null && !stalled,
+    stop,
+    stalled,
+    drained: pending.length === 0,
+  };
 }
 
 export function readParked(): SpoolItem[] {
@@ -182,7 +232,9 @@ export function settleEntry(stem: string, updatedAt: number, how: "delete" | "pa
   }
   let same = false;
   try {
-    same = (JSON.parse(fs.readFileSync(claim, "utf-8")) as Partial<SpoolEntry> | null)?.updatedAt === updatedAt;
+    same =
+      (JSON.parse(fs.readFileSync(claim, "utf-8")) as Partial<SpoolEntry> | null)?.updatedAt ===
+      updatedAt;
   } catch {
     // Unparseable: not the entry the job read.
   }

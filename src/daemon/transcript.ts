@@ -7,14 +7,27 @@ import { shellReadPaths } from "../hooks/lib/shell-reads.ts";
 import { redact, stripBlocks } from "./redact.ts";
 
 /** `paths`: raw path strings the delta's tool calls name, each once, in first-seen order. */
-export type Distilled = { text: string; next: Position | null; truncated: boolean; records: number; paths: string[] };
+export type Distilled = {
+  text: string;
+  next: Position | null;
+  truncated: boolean;
+  records: number;
+  paths: string[];
+};
 
 const INPUT_CAP = 500;
 const RESULT_CAP = 500;
 const LONG_RESULT_CAP = 4000;
 const LONG_RESULT_TOOLS = new Set(["Agent", "Task", "Workflow"]);
 const SKIPPED_TOOLS = new Set([
-  "ToolSearch", "Skill", "TodoWrite", "ListMcpResourcesTool", "ListAgents", "Monitor", "ScheduleWakeup", "TaskStop",
+  "ToolSearch",
+  "Skill",
+  "TodoWrite",
+  "ListMcpResourcesTool",
+  "ListAgents",
+  "Monitor",
+  "ScheduleWakeup",
+  "TaskStop",
 ]);
 const SENSITIVE = "[sensitive file omitted]";
 const BLOCK_SEP = "\n\n";
@@ -88,7 +101,9 @@ function readRecords(file: string): Rec[] {
 }
 
 function positionOf(r: Rec): Position | null {
-  return typeof r.uuid === "string" && typeof r.timestamp === "string" ? { uuid: r.uuid, timestamp: r.timestamp } : null;
+  return typeof r.uuid === "string" && typeof r.timestamp === "string"
+    ? { uuid: r.uuid, timestamp: r.timestamp }
+    : null;
 }
 
 function coveredRecords(all: Rec[], after: Position | null): Rec[] {
@@ -120,7 +135,11 @@ function indexCalls(all: Rec[]): Map<string, Call> {
     for (const b of blocksOf(r)) {
       if (b.type !== "tool_use" || typeof b.id !== "string") continue;
       const name = typeof b.name === "string" ? b.name : "unknown";
-      calls.set(b.id, { name, skip: SKIPPED_TOOLS.has(name), sensitive: touchesSensitiveFile(name, b.input) });
+      calls.set(b.id, {
+        name,
+        skip: SKIPPED_TOOLS.has(name),
+        sensitive: touchesSensitiveFile(name, b.input),
+      });
     }
   }
   return calls;
@@ -147,7 +166,8 @@ function cut(text: string, max: number): string {
 function renderRecord(r: Rec, calls: Map<string, Call>): string[] {
   const role = r.type === "user" ? "[USER]" : "[ASSISTANT]";
   const content = contentOf(r);
-  const blocks: Block[] = typeof content === "string" ? [{ type: "text", text: content }] : blocksOf(r);
+  const blocks: Block[] =
+    typeof content === "string" ? [{ type: "text", text: content }] : blocksOf(r);
   const out: string[] = [];
   for (const b of blocks) {
     if (b.type === "text" && typeof b.text === "string") {
@@ -157,7 +177,9 @@ function renderRecord(r: Rec, calls: Map<string, Call>): string[] {
       const call = typeof b.id === "string" ? calls.get(b.id) : undefined;
       const name = call?.name ?? (typeof b.name === "string" ? b.name : "unknown");
       if (call?.skip) continue;
-      const body = call?.sensitive ? SENSITIVE : cut(clean(JSON.stringify(b.input ?? {})), INPUT_CAP);
+      const body = call?.sensitive
+        ? SENSITIVE
+        : cut(clean(JSON.stringify(b.input ?? {})), INPUT_CAP);
       out.push(`[TOOL_USE ${name}] ${body}`);
     } else if (b.type === "tool_result") {
       const call = typeof b.tool_use_id === "string" ? calls.get(b.tool_use_id) : undefined;
@@ -178,7 +200,9 @@ function resultText(content: unknown): string {
   return content
     .map((b: unknown) => {
       const block: Block = isObj(b) ? b : {};
-      return block.type === "text" && typeof block.text === "string" ? block.text : `[${String(block.type)}]`;
+      return block.type === "text" && typeof block.text === "string"
+        ? block.text
+        : `[${String(block.type)}]`;
     })
     .join("\n");
 }

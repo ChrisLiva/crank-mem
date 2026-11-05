@@ -4,7 +4,12 @@ import { ARCHIVE_FILE, CEREBRUM_FILE, backupCerebrum } from "../hooks/lib/cerebr
 import { CRANK_DIR } from "../hooks/lib/config.ts";
 import { isObj } from "../hooks/lib/hook-io.ts";
 import { basenameIndex, citationStatus } from "../hooks/lib/injection.ts";
-import { localDate, type ConsolidationOutcome, type Memory, type PendingWork } from "../hooks/lib/memory.ts";
+import {
+  localDate,
+  type ConsolidationOutcome,
+  type Memory,
+  type PendingWork,
+} from "../hooks/lib/memory.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
 import { writeStopState, writeTextAtomic } from "../hooks/lib/user-state.ts";
 import { applyEdits, numberBullets, type CerebrumEdit } from "./cerebrum-edit.ts";
@@ -33,19 +38,61 @@ Each bullet is one telegram-style line of about 200 characters at most, starts w
 Return a verdict for every proposal and flag, and only the edits you are sure of.`;
 
 const SCHEMA = {
-  type: "object", additionalProperties: false, required: ["edits", "proposals", "stale"], properties: {
-    edits: { type: "array", items: { type: "object", additionalProperties: false, required: ["op"], properties: {
-      op: { type: "string", enum: ["add", "replace", "remove"] }, heading: { type: "string" }, bullet_id: { type: "integer" },
-      bullet: { type: "string" }, proposal: { type: "integer" }, reason: { type: "string" } } } },
-    proposals: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "verdict", "reason"], properties: {
-      id: { type: "integer" }, verdict: { type: "string", enum: ["accepted", "rejected"] }, reason: { type: "string" } } } },
-    stale: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "verdict"], properties: {
-      id: { type: "integer" }, verdict: { type: "string", enum: ["confirmed", "cleared"] } } } },
+  type: "object",
+  additionalProperties: false,
+  required: ["edits", "proposals", "stale"],
+  properties: {
+    edits: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["op"],
+        properties: {
+          op: { type: "string", enum: ["add", "replace", "remove"] },
+          heading: { type: "string" },
+          bullet_id: { type: "integer" },
+          bullet: { type: "string" },
+          proposal: { type: "integer" },
+          reason: { type: "string" },
+        },
+      },
+    },
+    proposals: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "verdict", "reason"],
+        properties: {
+          id: { type: "integer" },
+          verdict: { type: "string", enum: ["accepted", "rejected"] },
+          reason: { type: "string" },
+        },
+      },
+    },
+    stale: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "verdict"],
+        properties: {
+          id: { type: "integer" },
+          verdict: { type: "string", enum: ["confirmed", "cleared"] },
+        },
+      },
+    },
   },
 };
 
 type OutputEdit = {
-  op: "add" | "replace" | "remove"; heading?: string; bullet_id?: number; bullet?: string; proposal?: number; reason?: string;
+  op: "add" | "replace" | "remove";
+  heading?: string;
+  bullet_id?: number;
+  bullet?: string;
+  proposal?: number;
+  reason?: string;
 };
 export type Consolidation = {
   edits: OutputEdit[];
@@ -53,30 +100,52 @@ export type Consolidation = {
   stale: { id: number; verdict: "confirmed" | "cleared" }[];
 };
 
-const optional = (v: Record<string, unknown>, key: string, ok: (x: unknown) => boolean) => v[key] === undefined || ok(v[key]);
+const optional = (v: Record<string, unknown>, key: string, ok: (x: unknown) => boolean) =>
+  v[key] === undefined || ok(v[key]);
 const isString = (x: unknown) => typeof x === "string";
 
 const isEdit = (v: unknown): boolean =>
-  isObj(v) && ["add", "replace", "remove"].includes(v.op as string) &&
-  optional(v, "heading", isString) && optional(v, "bullet_id", Number.isInteger) && optional(v, "bullet", isString) &&
-  optional(v, "proposal", Number.isInteger) && optional(v, "reason", isString);
+  isObj(v) &&
+  ["add", "replace", "remove"].includes(v.op as string) &&
+  optional(v, "heading", isString) &&
+  optional(v, "bullet_id", Number.isInteger) &&
+  optional(v, "bullet", isString) &&
+  optional(v, "proposal", Number.isInteger) &&
+  optional(v, "reason", isString);
 const isVerdict = (v: unknown): boolean =>
-  isObj(v) && Number.isInteger(v.id) && ["accepted", "rejected"].includes(v.verdict as string) && typeof v.reason === "string";
+  isObj(v) &&
+  Number.isInteger(v.id) &&
+  ["accepted", "rejected"].includes(v.verdict as string) &&
+  typeof v.reason === "string";
 const isStaleVerdict = (v: unknown): boolean =>
   isObj(v) && Number.isInteger(v.id) && ["confirmed", "cleared"].includes(v.verdict as string);
 
 /** The flat shape only: what the edits mean is checked against the sent work after the run. */
 function validate(value: unknown): value is Consolidation {
-  return isObj(value) && Array.isArray(value.edits) && value.edits.every(isEdit) &&
-    Array.isArray(value.proposals) && value.proposals.every(isVerdict) &&
-    Array.isArray(value.stale) && value.stale.every(isStaleVerdict);
+  return (
+    isObj(value) &&
+    Array.isArray(value.edits) &&
+    value.edits.every(isEdit) &&
+    Array.isArray(value.proposals) &&
+    value.proposals.every(isVerdict) &&
+    Array.isArray(value.stale) &&
+    value.stale.every(isStaleVerdict)
+  );
 }
 
 /** A titled input block, or "" when it has no lines. */
-const block = (title: string, lines: string[]) => (lines.length === 0 ? "" : `[${title}]\n${lines.join("\n")}\n`);
+const block = (title: string, lines: string[]) =>
+  lines.length === 0 ? "" : `[${title}]\n${lines.join("\n")}\n`;
 
-export function consolidationRequest(md: string, work: Pick<PendingWork, "proposals" | "stale">, due = new Set<number>()): {
-  system: string; input: string; schema: object; validate: (value: unknown) => value is Consolidation;
+export function consolidationRequest(
+  md: string,
+  work: Pick<PendingWork, "proposals" | "stale">,
+  due = new Set<number>(),
+): {
+  system: string;
+  input: string;
+  schema: object;
+  validate: (value: unknown) => value is Consolidation;
 } {
   const { headings, bullets } = numberBullets(md);
   const cerebrum: string[] = [];
@@ -90,9 +159,20 @@ export function consolidationRequest(md: string, work: Pick<PendingWork, "propos
   }
   const input = [
     block("CEREBRUM", cerebrum),
-    block("PROPOSALS", work.proposals.map((p) => `[P${p.id}] (${p.kind}) ${oneLine(p.bullet)}`)),
-    block("STALE", work.stale.map((s) => `[O${s.id}] ${oneLine(s.title)}: ${oneLine(s.narrative)} | flagged: ${oneLine(s.reason)}`)),
-  ].filter((b) => b !== "").join("\n");
+    block(
+      "PROPOSALS",
+      work.proposals.map((p) => `[P${p.id}] (${p.kind}) ${oneLine(p.bullet)}`),
+    ),
+    block(
+      "STALE",
+      work.stale.map(
+        (s) =>
+          `[O${s.id}] ${oneLine(s.title)}: ${oneLine(s.narrative)} | flagged: ${oneLine(s.reason)}`,
+      ),
+    ),
+  ]
+    .filter((b) => b !== "")
+    .join("\n");
   return { system: SYSTEM, input, schema: SCHEMA, validate };
 }
 
@@ -101,15 +181,24 @@ function narrow(e: OutputEdit, sent: Set<number>): CerebrumEdit | null {
   if (e.proposal !== undefined && !sent.has(e.proposal)) return null;
   const proposal = e.proposal ?? null;
   if (e.op === "add") {
-    return e.heading !== undefined && e.bullet !== undefined ? { op: "add", heading: e.heading, bullet: e.bullet, proposal } : null;
+    return e.heading !== undefined && e.bullet !== undefined
+      ? { op: "add", heading: e.heading, bullet: e.bullet, proposal }
+      : null;
   }
   if (e.bullet_id === undefined || e.reason === undefined) return null;
   if (e.op === "remove") return { op: "remove", bulletId: e.bullet_id, reason: e.reason };
-  return e.bullet !== undefined ? { op: "replace", bulletId: e.bullet_id, bullet: e.bullet, reason: e.reason, proposal } : null;
+  return e.bullet !== undefined
+    ? { op: "replace", bulletId: e.bullet_id, bullet: e.bullet, reason: e.reason, proposal }
+    : null;
 }
 
 /** The ids of the bullets citing a file that is missing or modified since the last ok run (or the bullet's date, before one). */
-function dueBullets(root: string, crankDir: string, md: string, sinceMs: number | null): Set<number> {
+function dueBullets(
+  root: string,
+  crankDir: string,
+  md: string,
+  sinceMs: number | null,
+): Set<number> {
   const index = loadIndex(crankDir);
   const byName = basenameIndex(index);
   const due = new Set<number>();
@@ -125,8 +214,11 @@ function dueBullets(root: string, crankDir: string, md: string, sinceMs: number 
  * the checked edits to cerebrum.md. "not-due" when the project has no cerebrum, nothing waits, or
  * the last run started less than `everyMs` ago.
  */
-export async function consolidate(root: string, memory: Memory, opts: { everyMs: number; timeoutMs: number }):
-  Promise<ConsolidationOutcome | "not-due"> {
+export async function consolidate(
+  root: string,
+  memory: Memory,
+  opts: { everyMs: number; timeoutMs: number },
+): Promise<ConsolidationOutcome | "not-due"> {
   const crankDir = path.join(root, CRANK_DIR);
   const file = path.join(crankDir, CEREBRUM_FILE);
   if (!fs.existsSync(file)) return "not-due";
@@ -137,11 +229,21 @@ export async function consolidate(root: string, memory: Memory, opts: { everyMs:
   if (work.lastStartMs !== null && Date.now() - work.lastStartMs < opts.everyMs) return "not-due";
 
   const startedMs = Date.now();
-  const r = await askClaude(consolidationRequest(md, work, due), { timeoutMs: opts.timeoutMs, project: root });
+  const r = await askClaude(consolidationRequest(md, work, due), {
+    timeoutMs: opts.timeoutMs,
+    project: root,
+  });
   const sentProposals = new Set(work.proposals.map((p) => p.id));
   if (r.kind !== "ok") {
-    if (r.kind === "stopped") writeStopState({ reason: r.reason, atMs: Date.now(), detail: r.detail });
-    memory.recordConsolidation({ outcome: r.kind, startedMs, model: null, costUsd: 0, sent: [...sentProposals] });
+    if (r.kind === "stopped")
+      writeStopState({ reason: r.reason, atMs: Date.now(), detail: r.detail });
+    memory.recordConsolidation({
+      outcome: r.kind,
+      startedMs,
+      model: null,
+      costUsd: 0,
+      sent: [...sentProposals],
+    });
     return r.kind;
   }
 
@@ -173,7 +275,9 @@ export async function consolidate(root: string, memory: Memory, opts: { everyMs:
     }
   }
   memory.recordConsolidation({
-    ...run, outcome: "ok", sent: [...sentProposals],
+    ...run,
+    outcome: "ok",
+    sent: [...sentProposals],
     decided: r.output.proposals
       .filter((p) => sentProposals.has(p.id) && !(p.verdict === "accepted" && failed.has(p.id)))
       .map((p) => ({ id: p.id, state: p.verdict, reason: redact(p.reason) })),

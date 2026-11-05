@@ -5,7 +5,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  digestProject, makeCrankHome, makeModelHome, plantMemory, runCli, seedMemory, spoolEntry, stopDigests, type CliRun,
+  digestProject,
+  makeCrankHome,
+  makeModelHome,
+  plantMemory,
+  runCli,
+  seedMemory,
+  spoolEntry,
+  stopDigests,
+  type CliRun,
 } from "./helpers.ts";
 import { crankHooks } from "../src/cli/settings.ts";
 import { crankTrust } from "../src/cli/codex-trust.ts";
@@ -33,7 +41,9 @@ describe("scan", () => {
     const run = cli(root, "scan");
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("2 files indexed");
-    const index = JSON.parse(fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"));
+    const index = JSON.parse(
+      fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"),
+    );
     expect(index.files["b.ts"]).toBeDefined();
   });
   test("errors when not initialized", () => {
@@ -68,7 +78,10 @@ describe("stats", () => {
 
 describe("stats: memory health", () => {
   const DAY = 86_400_000;
-  const memory = Array.from({ length: 10 }, (_, i) => `- **m${i}**: note ${i} (2026-09-${String(10 + i)})`);
+  const memory = Array.from(
+    { length: 10 },
+    (_, i) => `- **m${i}**: note ${i} (2026-09-${String(10 + i)})`,
+  );
   const CEREBRUM = [
     "# Cerebrum",
     "",
@@ -112,7 +125,10 @@ describe("stats: memory health", () => {
   test("a hidden bullet whose only date does not parse counts as undated", () => {
     const root = memoryProject();
     const file = path.join(root, ".crank/cerebrum.md");
-    fs.writeFileSync(file, CEREBRUM.replace("- undated note", "- MySQL zero date `0000-00-00` breaks the importer"));
+    fs.writeFileSync(
+      file,
+      CEREBRUM.replace("- undated note", "- MySQL zero date `0000-00-00` breaks the importer"),
+    );
     const run = cli(root, "stats");
     expect(run.status).toBe(0);
     expect(run.stdout).toMatch(/oldest hidden: {4}2026-09-10 \(\d+d ago\), 1 undated\n/);
@@ -121,7 +137,9 @@ describe("stats: memory health", () => {
   test("dates the last audit by its manifest-less backup dir and says when the skill is missing", () => {
     const root = memoryProject();
     const fresh = cli(root, "stats").stdout;
-    expect(fresh).toMatch(/last audit: {7}never \(installed \d+s ago\); audit skill not installed\n/);
+    expect(fresh).toMatch(
+      /last audit: {7}never \(installed \d+s ago\); audit skill not installed\n/,
+    );
 
     const audit = path.join(root, ".crank/backups/20260814-165019");
     fs.mkdirSync(audit);
@@ -137,7 +155,8 @@ describe("stats: memory health", () => {
 
 describe("stats: capture health", () => {
   // The capture rows in their order, each label padded to the value column.
-  const CAPTURE_ROWS = /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|proposals|stale|consolidation|memory|last snapshot): .*\n)+ {2}embedder: /;
+  const CAPTURE_ROWS =
+    /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|proposals|stale|consolidation|memory|last snapshot): .*\n)+ {2}embedder: /;
 
   function digestOn(root: string): void {
     expect(runCli(root, ["digest", "on"]).status).toBe(0);
@@ -172,7 +191,9 @@ describe("stats: capture health", () => {
       path.join(home, "daemon.json"),
       JSON.stringify({ pid: process.pid, version: "0.8.0", heartbeatMs: Date.now() }),
     );
-    expect(runCli(root, ["stats"], { CRANK_HOME: home }).stdout).toContain("  daemon:           alive\n");
+    expect(runCli(root, ["stats"], { CRANK_HOME: home }).stdout).toContain(
+      "  daemon:           alive\n",
+    );
 
     const ready = runCli(root, ["stats"], { CRANK_HOME: makeModelHome() }).stdout;
     expect(ready).toContain("  embedder:         ready\n");
@@ -189,12 +210,17 @@ describe("stats: capture health", () => {
 
   test("counts pending proposals and stale rows after the month cost", () => {
     const root = initedProject();
-    const [a] = seedMemory(root, [{ title: "Lock retry is two seconds" }, { title: "Lock files live in .crank" }]) as [number];
+    const [a] = seedMemory(root, [
+      { title: "Lock retry is two seconds" },
+      { title: "Lock files live in .crank" },
+    ]) as [number];
     seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
     seedMemory(root, [], { proposals: [{ kind: "memory", bullet: "- **P**: x" }] });
     const out = cli(root, "stats").stdout;
     expect(out).toMatch(CAPTURE_ROWS);
-    expect(out).toMatch(/\n {2}month cost: .*\n {2}proposals: {8}1\n {2}stale: {12}1\n {2}consolidation: {4}never\n {2}last snapshot: {4}never\n {2}embedder: /);
+    expect(out).toMatch(
+      /\n {2}month cost: .*\n {2}proposals: {8}1\n {2}stale: {12}1\n {2}consolidation: {4}never\n {2}last snapshot: {4}never\n {2}embedder: /,
+    );
   });
 
   test("shows the last consolidation after the stale row, and counts its cost in the month", () => {
@@ -205,7 +231,13 @@ describe("stats: capture health", () => {
     if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
     try {
       opened.memory.recordConsolidation({
-        outcome: "ok", startedMs: Date.now(), model: "m", costUsd: 0.003, sent: [], decided: [], verdicts: [],
+        outcome: "ok",
+        startedMs: Date.now(),
+        model: "m",
+        costUsd: 0.003,
+        sent: [],
+        decided: [],
+        verdicts: [],
       });
     } finally {
       opened.memory.close();
@@ -236,7 +268,9 @@ describe("stats: capture health", () => {
     expect(fresh).not.toContain("month cost:");
 
     plantMemory(root, "newer");
-    expect(cli(root, "stats").stdout).toContain("  memory:           newer than this version; run crank-mem upgrade\n");
+    expect(cli(root, "stats").stdout).toContain(
+      "  memory:           newer than this version; run crank-mem upgrade\n",
+    );
 
     fs.rmSync(path.join(root, ".crank/memory.db"));
     plantMemory(root, "unreadable");
@@ -248,17 +282,30 @@ describe("stats: capture health", () => {
 
 describe("stats: codex wiring", () => {
   // A rollout file as Codex writes it: session_meta first, then the thread's records (ADR 0006).
-  function rollout(codexHome: string, name: string, meta: Record<string, unknown>, records: object[]): void {
+  function rollout(
+    codexHome: string,
+    name: string,
+    meta: Record<string, unknown>,
+    records: object[],
+  ): void {
     const ts = String(meta.timestamp);
     const dir = path.join(codexHome, "sessions", ts.slice(0, 4), ts.slice(5, 7), ts.slice(8, 10));
     fs.mkdirSync(dir, { recursive: true });
-    const lines = [{ timestamp: ts, type: "session_meta", payload: meta }, ...records].map((r) => JSON.stringify(r));
+    const lines = [{ timestamp: ts, type: "session_meta", payload: meta }, ...records].map((r) =>
+      JSON.stringify(r),
+    );
     fs.writeFileSync(path.join(dir, `rollout-${name}.jsonl`), lines.join("\n") + "\n");
   }
   const turn = { type: "turn_context", payload: {} };
   const injection = {
     type: "response_item",
-    payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "## crank-mem (project memory)\n\nThis project keeps" }] },
+    payload: {
+      type: "message",
+      role: "developer",
+      content: [
+        { type: "input_text", text: "## crank-mem (project memory)\n\nThis project keeps" },
+      ],
+    },
   };
 
   function wiredProject(): { root: string; codexHome: string } {
@@ -273,17 +320,32 @@ describe("stats: codex wiring", () => {
   test("counts root threads since install that got no injection", () => {
     const { root, codexHome } = wiredProject();
     const later = new Date(Date.now() + 60_000).toISOString();
-    rollout(codexHome, "injected", { cwd: root, timestamp: later, thread_source: "user" }, [turn, injection]);
+    rollout(codexHome, "injected", { cwd: root, timestamp: later, thread_source: "user" }, [
+      turn,
+      injection,
+    ]);
     rollout(codexHome, "missed", { cwd: root, timestamp: later, thread_source: "user" }, [turn]);
     // Not counted: a thread with no turn, a sub-agent, another project, a thread before install.
-    rollout(codexHome, "aborted", { cwd: root, timestamp: later, thread_source: "code_review" }, []);
-    rollout(codexHome, "sub", { cwd: root, timestamp: later, parent_thread_id: "p", thread_source: "subagent" }, [turn]);
+    rollout(
+      codexHome,
+      "aborted",
+      { cwd: root, timestamp: later, thread_source: "code_review" },
+      [],
+    );
+    rollout(
+      codexHome,
+      "sub",
+      { cwd: root, timestamp: later, parent_thread_id: "p", thread_source: "subagent" },
+      [turn],
+    );
     rollout(codexHome, "other", { cwd: "/elsewhere", timestamp: later }, [turn]);
     rollout(codexHome, "old", { cwd: root, timestamp: "2020-01-01T00:00:00.000Z" }, [turn]);
 
     const run = cliWithCodexHome(codexHome, root, "stats");
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("codex sessions:   1 of 2 root threads since install got no injection");
+    expect(run.stdout).toContain(
+      "codex sessions:   1 of 2 root threads since install got no injection",
+    );
     expect(run.stdout).toMatch(/\n {2}embedder: .*\n(?:.*\n)* {2}codex sessions: /);
   });
 
@@ -292,7 +354,7 @@ describe("stats: codex wiring", () => {
     const [first] = crankTrust(path.join(root, ".codex/hooks.json")).entries;
     fs.writeFileSync(
       path.join(codexHome, "config.toml"),
-      `[projects."${root}"]\ntrust_level = "trusted"\n\n[hooks.state."${first!.key}"]\ntrusted_hash = "sha256:${"0".repeat(64)}"\n`
+      `[projects."${root}"]\ntrust_level = "trusted"\n\n[hooks.state."${first!.key}"]\ntrusted_hash = "sha256:${"0".repeat(64)}"\n`,
     );
     const run = cliWithCodexHome(codexHome, root, "stats");
     expect(run.status).toBe(0);
@@ -307,7 +369,7 @@ describe("stats: codex wiring", () => {
     const entries = crankTrust(path.join(root, ".codex/hooks.json")).entries;
     fs.writeFileSync(
       path.join(codexHome, "config.toml"),
-      entries.map((e) => `[hooks.state."${e.key}"]\ntrusted_hash = "${e.hash}"\n`).join("\n")
+      entries.map((e) => `[hooks.state."${e.key}"]\ntrusted_hash = "${e.hash}"\n`).join("\n"),
     );
     const run = cliWithCodexHome(codexHome, root, "stats");
     expect(run.stdout).toContain("codex hook trust: 2 of 2 hashes current\n");
@@ -319,9 +381,14 @@ describe("stats: codex wiring", () => {
 
   test("an exact-path trust_level other than trusted is reported as blocking the hooks", () => {
     const { root, codexHome } = wiredProject();
-    fs.writeFileSync(path.join(codexHome, "config.toml"), `[projects."${root}"]\ntrust_level = "untrusted"\n`);
+    fs.writeFileSync(
+      path.join(codexHome, "config.toml"),
+      `[projects."${root}"]\ntrust_level = "untrusted"\n`,
+    );
     const run = cliWithCodexHome(codexHome, root, "stats");
-    expect(run.stdout).toContain(`codex project:    trust_level = "untrusted", so codex loads no .codex/ hooks here`);
+    expect(run.stdout).toContain(
+      `codex project:    trust_level = "untrusted", so codex loads no .codex/ hooks here`,
+    );
   });
 
   test("an install without Codex wiring says so and reads no rollouts", () => {
@@ -362,14 +429,20 @@ describe("upgrade", () => {
     const after = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     expect(after.injection_budget_bytes).toBe(1234);
     expect(after.vendored_version).not.toBe("0.0.1");
-    expect(fs.readFileSync(path.join(crankDir, "hooks/session-start.ts"), "utf-8")).not.toContain("stale vendored copy");
+    expect(fs.readFileSync(path.join(crankDir, "hooks/session-start.ts"), "utf-8")).not.toContain(
+      "stale vendored copy",
+    );
     expect(fs.readFileSync(path.join(crankDir, "cerebrum.md"), "utf-8")).toContain("custom memory");
-    expect(fs.readFileSync(path.join(crankDir, "journal.md"), "utf-8")).toContain("shipped the thing");
+    expect(fs.readFileSync(path.join(crankDir, "journal.md"), "utf-8")).toContain(
+      "shipped the thing",
+    );
     expect(fs.readFileSync(path.join(crankDir, "anatomy-index.json"), "utf-8")).toBe(indexBefore);
     // old hooks were backed up
     const backups = fs.readdirSync(path.join(crankDir, "backups")).sort();
     const latest = backups[backups.length - 1]!;
-    expect(fs.readFileSync(path.join(crankDir, "backups", latest, "hooks/session-start.ts"), "utf-8")).toContain("stale vendored copy");
+    expect(
+      fs.readFileSync(path.join(crankDir, "backups", latest, "hooks/session-start.ts"), "utf-8"),
+    ).toContain("stale vendored copy");
   });
 
   // Crank commands in the settings file the git mode does not use, plus wiring
@@ -380,7 +453,8 @@ describe("upgrade", () => {
     const shared = path.join(root, ".claude/settings.json");
     const bare = (agent: "claude" | "codex") => {
       const hooks = crankHooks("bun", agent);
-      for (const groups of Object.values(hooks)) for (const g of groups) for (const h of g.hooks) h.command = h.command.split(" || ")[1]!;
+      for (const groups of Object.values(hooks))
+        for (const g of groups) for (const h of g.hooks) h.command = h.command.split(" || ")[1]!;
       return { hooks };
     };
     fs.writeFileSync(local, JSON.stringify(bare("claude")));
@@ -395,7 +469,9 @@ describe("upgrade", () => {
     expect(run.stdout).toContain("nothing else to do");
     expect(JSON.parse(fs.readFileSync(local, "utf-8")).hooks).toEqual(crankHooks("bun", "claude"));
     expect(JSON.parse(fs.readFileSync(shared, "utf-8"))).toEqual({});
-    expect(JSON.parse(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf-8")).hooks).toEqual(crankHooks("bun", "codex"));
+    expect(
+      JSON.parse(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf-8")).hooks,
+    ).toEqual(crankHooks("bun", "codex"));
 
     // Converged: a second run changes nothing and leaves no new backup.
     const backups = fs.readdirSync(path.join(root, ".crank/backups")).length;
@@ -416,7 +492,14 @@ describe("upgrade", () => {
     expect(run.stdout).toContain("  added the crank-mem rules to permissions.allow");
     const after = JSON.parse(fs.readFileSync(local, "utf-8"));
     expect(after.permissions).toEqual({
-      allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"],
+      allow: [
+        "Bash(ls:*)",
+        "Bash(crank-mem search *)",
+        "Bash(crank-mem timeline *)",
+        "Bash(crank-mem get *)",
+        "Bash(crank-mem outline *)",
+        "Bash(crank-mem unfold *)",
+      ],
       deny: ["x"],
     });
     expect(after.hooks).toEqual(settings.hooks);
@@ -428,7 +511,14 @@ describe("upgrade", () => {
     expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(withRule);
 
     // An install holding only the three recall rules gains the two code-reading rules.
-    settings.permissions = { allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)"] };
+    settings.permissions = {
+      allow: [
+        "Bash(ls:*)",
+        "Bash(crank-mem search *)",
+        "Bash(crank-mem timeline *)",
+        "Bash(crank-mem get *)",
+      ],
+    };
     fs.writeFileSync(local, JSON.stringify(settings, null, 2) + "\n");
     const three = cli(root, "upgrade");
     expect(three.status).toBe(0);
@@ -451,7 +541,8 @@ describe("upgrade", () => {
     const local = path.join(root, ".claude/settings.local.json");
     const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
     delete settings.hooks.SubagentStart;
-    settings.hooks.Stop[0].hooks[0].command = 'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts # mine';
+    settings.hooks.Stop[0].hooks[0].command =
+      'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts # mine';
     fs.writeFileSync(local, JSON.stringify(settings));
 
     const run = cli(root, "upgrade");
@@ -472,7 +563,9 @@ describe("upgrade", () => {
     const local = path.join(root, ".claude/settings.local.json");
     const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
     delete settings.hooks.SessionEnd;
-    settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter((g: { matcher?: string }) => g.matcher !== "Read|Bash");
+    settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
+      (g: { matcher?: string }) => g.matcher !== "Read|Bash",
+    );
     fs.writeFileSync(local, JSON.stringify(settings));
     fs.rmSync(path.join(crankDir, "hooks/post-read.ts"));
     seedMemory(root, [{ title: "Kept across upgrade" }]);
@@ -487,7 +580,10 @@ describe("upgrade", () => {
     const wired = crankHooks("bun", "claude");
     expect(after.SessionEnd).toHaveLength(1);
     expect(after.SessionEnd).toEqual(wired.SessionEnd);
-    expect(after.PostToolUse.map((g: { matcher?: string }) => g.matcher)).toEqual(["Write|Edit|MultiEdit", "Read|Bash"]);
+    expect(after.PostToolUse.map((g: { matcher?: string }) => g.matcher)).toEqual([
+      "Write|Edit|MultiEdit",
+      "Read|Bash",
+    ]);
     expect(after.PostToolUse).toEqual(wired.PostToolUse);
     expect(fs.existsSync(path.join(crankDir, "hooks/post-read.ts"))).toBe(true);
     expect(sha()).toBe(before);
@@ -496,7 +592,9 @@ describe("upgrade", () => {
   test("leaves a hooks.json without crank entries alone", () => {
     const root = initedProject();
     fs.mkdirSync(path.join(root, ".codex"));
-    const own = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "echo mine" }] }] } });
+    const own = JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "echo mine" }] }] },
+    });
     fs.writeFileSync(path.join(root, ".codex/hooks.json"), own);
     expect(cli(root, "upgrade").status).toBe(0);
     expect(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf-8")).toBe(own);
@@ -520,9 +618,14 @@ describe("upgrade", () => {
 
   // 0.8.1 and earlier seeded the cerebrum with a protocol preamble; frozen here.
   function frozenPreamble(): string {
-    const text = fs.readFileSync(path.join(import.meta.dir, "../src/templates/cerebrum-preamble-0.8.1.md"), "utf-8");
+    const text = fs.readFileSync(
+      path.join(import.meta.dir, "../src/templates/cerebrum-preamble-0.8.1.md"),
+      "utf-8",
+    );
     expect(Buffer.byteLength(text)).toBe(375);
-    expect(crypto.createHash("sha256").update(text).digest("hex")).toBe("3439e3f1b33c1c6286c0f1537a324567e5515a1a0d63e3f05c414de73452850d");
+    expect(crypto.createHash("sha256").update(text).digest("hex")).toBe(
+      "3439e3f1b33c1c6286c0f1537a324567e5515a1a0d63e3f05c414de73452850d",
+    );
     return text;
   }
 
@@ -536,13 +639,17 @@ describe("upgrade", () => {
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout.split("\n")).toContain("  replaced the template preamble of .crank/cerebrum.md");
+    expect(run.stdout.split("\n")).toContain(
+      "  replaced the template preamble of .crank/cerebrum.md",
+    );
     expect(fs.readFileSync(cerebrum, "utf-8")).toBe("# Cerebrum\n\n" + body);
 
     const backups = path.join(crankDir, "backups");
     const newest = path.join(backups, fs.readdirSync(backups).sort().at(-1)!);
     const manifest = JSON.parse(fs.readFileSync(path.join(newest, "manifest.json"), "utf-8"));
-    const entry = manifest.entries.find((e: { original: string }) => e.original.endsWith("/.crank/cerebrum.md"));
+    const entry = manifest.entries.find((e: { original: string }) =>
+      e.original.endsWith("/.crank/cerebrum.md"),
+    );
     expect(fs.readFileSync(path.join(newest, entry.backupFile), "utf-8")).toBe(old);
 
     const names = fs.readdirSync(backups);
@@ -576,7 +683,9 @@ describe("upgrade", () => {
     try {
       const run = cli(root, "upgrade");
       expect(run.status).toBe(0);
-      expect(run.stderr).toContain("crank-mem: could not replace the template preamble of .crank/cerebrum.md (");
+      expect(run.stderr).toContain(
+        "crank-mem: could not replace the template preamble of .crank/cerebrum.md (",
+      );
       expect(fs.readFileSync(cerebrum, "utf-8")).toBe(unedited);
     } finally {
       fs.chmodSync(backups, 0o755);
@@ -589,10 +698,13 @@ describe("vendored hooks run standalone", () => {
     const root = initedProject();
     const res = spawnSync("bun", [path.join(root, ".crank/hooks/session-start.ts")], {
       input: JSON.stringify({ hook_event_name: "SessionStart", cwd: root, source: "startup" }),
-      encoding: "utf-8", timeout: 15_000,
+      encoding: "utf-8",
+      timeout: 15_000,
     });
     expect(res.status).toBe(0);
-    expect(JSON.parse(res.stdout).hookSpecificOutput.additionalContext).toContain("`.crank/anatomy.md` indexes 1 file(s)");
+    expect(JSON.parse(res.stdout).hookSpecificOutput.additionalContext).toContain(
+      "`.crank/anatomy.md` indexes 1 file(s)",
+    );
   });
 });
 
@@ -608,7 +720,23 @@ function tree(dir: string): Record<string, string> {
 }
 
 describe("flags", () => {
-  const COMMANDS = ["init", "scan", "digest", "search", "timeline", "get", "outline", "unfold", "restore-memory", "setup", "stats", "upgrade", "uninstall", "daemon", "job"];
+  const COMMANDS = [
+    "init",
+    "scan",
+    "digest",
+    "search",
+    "timeline",
+    "get",
+    "outline",
+    "unfold",
+    "restore-memory",
+    "setup",
+    "stats",
+    "upgrade",
+    "uninstall",
+    "daemon",
+    "job",
+  ];
 
   test("--help and -h print the command's usage and change nothing", () => {
     const root = initedProject();
@@ -617,7 +745,12 @@ describe("flags", () => {
     for (const cmd of COMMANDS) {
       for (const help of ["--help", "-h"]) {
         const run = runCli(root, [cmd, help], { CRANK_HOME: home });
-        expect([cmd, help, run.status, run.stdout.startsWith(`Usage: crank-mem ${cmd}`)]).toEqual([cmd, help, 0, true]);
+        expect([cmd, help, run.status, run.stdout.startsWith(`Usage: crank-mem ${cmd}`)]).toEqual([
+          cmd,
+          help,
+          0,
+          true,
+        ]);
       }
     }
     expect(tree(root)).toEqual(before);
@@ -651,7 +784,13 @@ describe("flags", () => {
 
     const root = initedProject();
     const before = tree(root);
-    for (const args of [["uninstall", "--yes", "--force"], ["upgrade", "--dry-run"], ["scan", "--full"], ["init", "--git=commit"], ["job", "s1", "--bogus"]]) {
+    for (const args of [
+      ["uninstall", "--yes", "--force"],
+      ["upgrade", "--dry-run"],
+      ["scan", "--full"],
+      ["init", "--git=commit"],
+      ["job", "s1", "--bogus"],
+    ]) {
       const run = cli(root, ...args);
       expect([args, run.status]).toEqual([args, 1]);
       expect(run.stderr).toContain(`unknown flag ${args.at(-1)}`);

@@ -62,13 +62,23 @@ describe("distill on the fixture transcript", () => {
 
   test("a result in a delta keeps its tool name when its call came before after", () => {
     // u06 is the Read call; u07 its result.
-    expect(distill(FIXTURE, pos(6), 400_000).text.startsWith("[TOOL_RESULT Read] export function sync(opts)")).toBe(true);
+    expect(
+      distill(FIXTURE, pos(6), 400_000).text.startsWith(
+        "[TOOL_RESULT Read] export function sync(opts)",
+      ),
+    ).toBe(true);
   });
 
   test("an empty file distills to nothing", () => {
     const file = path.join(tempDir(), "empty.jsonl");
     fs.writeFileSync(file, "");
-    expect(distill(file, null, 400_000)).toEqual({ text: "", next: null, truncated: false, records: 0, paths: [] });
+    expect(distill(file, null, 400_000)).toEqual({
+      text: "",
+      next: null,
+      truncated: false,
+      records: 0,
+      paths: [],
+    });
   });
 });
 
@@ -77,7 +87,9 @@ describe("redaction and caps", () => {
     const command = "x".repeat(460) + " password=" + "h".repeat(40);
     expect(JSON.stringify({ command }).length).toBe(524);
     const d = distill(writeTranscript([bashCall(command)]), null, 400_000);
-    expect(d.text).toBe("[TOOL_USE Bash] " + JSON.stringify({ command: "x".repeat(460) + " password=[redacted]" }));
+    expect(d.text).toBe(
+      "[TOOL_USE Bash] " + JSON.stringify({ command: "x".repeat(460) + " password=[redacted]" }),
+    );
     expect(d.text).not.toContain("hh");
     expect(d.text).not.toContain("chars cut");
   });
@@ -95,12 +107,22 @@ describe("after", () => {
 
   test("falls back to later timestamps when the uuid is gone", () => {
     const byUuid = distill(FIXTURE, pos(AGENT_RESULT), 400_000);
-    const byTime = distill(FIXTURE, { uuid: "gone", timestamp: pos(AGENT_RESULT).timestamp }, 400_000);
+    const byTime = distill(
+      FIXTURE,
+      { uuid: "gone", timestamp: pos(AGENT_RESULT).timestamp },
+      400_000,
+    );
     expect(byTime).toEqual(byUuid);
   });
 
   test("after the last record gives nothing", () => {
-    expect(distill(FIXTURE, pos(29), 400_000)).toEqual({ text: "", next: null, truncated: false, records: 0, paths: [] });
+    expect(distill(FIXTURE, pos(29), 400_000)).toEqual({
+      text: "",
+      next: null,
+      truncated: false,
+      records: 0,
+      paths: [],
+    });
   });
 });
 
@@ -108,7 +130,13 @@ describe("maxChars", () => {
   test("cuts at a record boundary", () => {
     const texts = ["a", "b", "c"].map((c) => c.repeat(300));
     const d = distill(writeTranscript(texts.map(userText)), null, 700);
-    expect(d).toEqual({ text: `[USER]\n${texts[0]}\n\n[USER]\n${texts[1]}`, next: pos(2), truncated: true, records: 2, paths: [] });
+    expect(d).toEqual({
+      text: `[USER]\n${texts[0]}\n\n[USER]\n${texts[1]}`,
+      next: pos(2),
+      truncated: true,
+      records: 2,
+      paths: [],
+    });
   });
 
   test("sends a single over-limit record alone, cut with a note", () => {
@@ -129,7 +157,13 @@ describe("paths", () => {
       toolCall("Bash", { command: "cat src/b.ts src/c.ts" }, "t4"),
       toolCall("Read", { file_path: "/r/src/a.ts" }, "t5"),
     ]);
-    expect(distill(file, null, 400_000).paths).toEqual(["/r/src/a.ts", "src", "nb.ipynb", "src/b.ts", "src/c.ts"]);
+    expect(distill(file, null, 400_000).paths).toEqual([
+      "/r/src/a.ts",
+      "src",
+      "nb.ipynb",
+      "src/b.ts",
+      "src/c.ts",
+    ]);
   });
 
   test("leaves out paths from records at or before after, and from the record maxChars holds back", () => {
@@ -150,7 +184,10 @@ describe("subagent transcripts", () => {
     for (const dir of ["subagents", "s1/subagents"]) {
       const sub = path.join(path.dirname(file), dir);
       fs.mkdirSync(sub, { recursive: true });
-      fs.writeFileSync(path.join(sub, "agent-a.jsonl"), JSON.stringify({ ...pos(2), ...userText("ZEBRAQUOKKA") }) + "\n");
+      fs.writeFileSync(
+        path.join(sub, "agent-a.jsonl"),
+        JSON.stringify({ ...pos(2), ...userText("ZEBRAQUOKKA") }) + "\n",
+      );
     }
     const d = distill(file, null, 400_000);
     expect(d.text).toBe("[USER]\nmain session prompt");

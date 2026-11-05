@@ -5,7 +5,12 @@ import * as path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type * as sqlite from "node:sqlite";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
-import { memoryPath, openMemory, type DigestInput, type NewObservation } from "../src/hooks/lib/memory.ts";
+import {
+  memoryPath,
+  openMemory,
+  type DigestInput,
+  type NewObservation,
+} from "../src/hooks/lib/memory.ts";
 import { DAEMON_FILE, type DaemonState } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
@@ -20,7 +25,7 @@ export function makeCrankProject(files: Record<string, string> = {}): string {
   saveConfig(path.join(root, ".crank"), defaultConfig());
   fs.copyFileSync(
     path.join(REPO_ROOT, "src/templates/cerebrum.md"),
-    path.join(root, ".crank/cerebrum.md")
+    path.join(root, ".crank/cerebrum.md"),
   );
   for (const [rel, content] of Object.entries(files)) {
     const abs = path.join(root, rel);
@@ -40,7 +45,18 @@ export function git(root: string, ...args: string[]): string {
 /** Stage everything in `root` and commit it as a fixed test identity, unsigned. */
 export function gitCommit(root: string, message: string): void {
   git(root, "add", "-A");
-  git(root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", message);
+  git(
+    root,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-qm",
+    message,
+  );
 }
 
 export interface HookRun {
@@ -54,7 +70,7 @@ export function runHook(
   script: string,
   stdin: string,
   cwd?: string,
-  env?: Record<string, string>
+  env?: Record<string, string>,
 ): HookRun {
   const result = spawnSync("bun", [path.join(REPO_ROOT, script)], {
     input: stdin,
@@ -119,7 +135,12 @@ let seedCount = 0;
 export function seedMemory(
   root: string,
   observations: Partial<NewObservation>[],
-  opts: { costUsd?: number; nextSteps?: string; proposals?: DigestInput["proposals"]; stale?: DigestInput["stale"] } = {}
+  opts: {
+    costUsd?: number;
+    nextSteps?: string;
+    proposals?: DigestInput["proposals"];
+    stale?: DigestInput["stale"];
+  } = {},
 ): number[] {
   const n = ++seedCount;
   const opened = openMemory(memoryPath(root), "write");
@@ -133,7 +154,13 @@ export function seedMemory(
       next: { uuid: `seed-${n}`, timestamp: new Date().toISOString() },
       model: "seed",
       costUsd: opts.costUsd ?? 0,
-      summary: { request: "s", investigated: "s", learned: "s", completed: "s", next_steps: opts.nextSteps ?? "none" },
+      summary: {
+        request: "s",
+        investigated: "s",
+        learned: "s",
+        completed: "s",
+        next_steps: opts.nextSteps ?? "none",
+      },
       observations: observations.map((o, i) => ({
         type: o.type ?? "discovery",
         title: o.title ?? `Observation ${i}`,
@@ -147,9 +174,14 @@ export function seedMemory(
     });
     const after = memory.stats("seed", 0).observations;
     if (after - before !== observations.length) {
-      throw new Error(`seedMemory: stored ${after - before} of ${observations.length} observations`);
+      throw new Error(
+        `seedMemory: stored ${after - before} of ${observations.length} observations`,
+      );
     }
-    return memory.recent(observations.length).map((line) => line.id).reverse();
+    return memory
+      .recent(observations.length)
+      .map((line) => line.id)
+      .reverse();
   } finally {
     memory.close();
   }
@@ -171,17 +203,28 @@ export function plantMemory(root: string, state: "newer" | "unreadable"): void {
 
 export type FakeScenario = {
   auth?: { stdout: string; exit: number } | "hang"; // default: the logged-in claude.ai stdout, exit 0
-  lines?: string[];       // stream-json lines printed on a -p run
-  raw?: string;           // printed instead of lines
-  exit?: number;          // default 0
-  sleepMs?: number;       // wait before printing
+  lines?: string[]; // stream-json lines printed on a -p run
+  raw?: string; // printed instead of lines
+  exit?: number; // default 0
+  sleepMs?: number; // wait before printing
   pauseAfterFirstMs?: number; // wait after printing the first line, before the rest
 };
-export type FakeCall = { argv: string[]; env: Record<string, string>; stdin: string; cwd: string; startMs: number; endMs: number | null };
+export type FakeCall = {
+  argv: string[];
+  env: Record<string, string>;
+  stdin: string;
+  cwd: string;
+  startMs: number;
+  endMs: number | null;
+};
 
 // The gating keys of live `claude auth status` at 2.1.316, without its account and path fields.
 const AUTH_LOGGED_IN = {
-  stdout: JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty" }, null, 2),
+  stdout: JSON.stringify(
+    { loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty" },
+    null,
+    2,
+  ),
   exit: 0,
 };
 
@@ -217,22 +260,34 @@ process.exit(s.exit ?? 0);
 
 function readJsonl(file: string): any[] {
   try {
-    return fs.readFileSync(file, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    return fs
+      .readFileSync(file, "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
   } catch {
     return [];
   }
 }
 
 /** A fake `claude` on PATH: the n-th `-p` call plays `scenarios[n]` (the last repeats) and records its argv, env, stdin and cwd. */
-export function fakeClaude(dir: string, scenarios: FakeScenario[]): { env: Record<string, string>; calls(): FakeCall[] } {
+export function fakeClaude(
+  dir: string,
+  scenarios: FakeScenario[],
+): { env: Record<string, string>; calls(): FakeCall[] } {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "claude"), FAKE_CLAUDE, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, "scenarios.json"), JSON.stringify(scenarios));
   return {
     env: { PATH: `${dir}:${process.env.PATH}` },
     calls() {
-      const ends = new Map<number, number>(readJsonl(path.join(dir, "ends.jsonl")).map((e) => [e.n, e.endMs]));
-      return readJsonl(path.join(dir, "calls.jsonl")).map((c, n) => ({ ...c, endMs: ends.get(n) ?? null }));
+      const ends = new Map<number, number>(
+        readJsonl(path.join(dir, "ends.jsonl")).map((e) => [e.n, e.endMs]),
+      );
+      return readJsonl(path.join(dir, "calls.jsonl")).map((c, n) => ({
+        ...c,
+        endMs: ends.get(n) ?? null,
+      }));
     },
   };
 }
@@ -244,7 +299,10 @@ export function digestProject(extraConfig: Record<string, unknown> = {}, temps?:
   saveConfig(path.join(root, ".crank"), { ...defaultConfig(), digest: true });
   if (Object.keys(extraConfig).length > 0) {
     const file = path.join(root, ".crank/config.json");
-    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), ...extraConfig }, null, 2));
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), ...extraConfig }, null, 2),
+    );
   }
   return root;
 }
@@ -260,14 +318,29 @@ export function spoolFiles(home: string): string[] {
 
 /** Record a `login` stop under a crank home, as the daemon does when claude is logged out. */
 export function stopDigests(home: string): void {
-  fs.writeFileSync(path.join(home, STOP_FILE), JSON.stringify({ reason: "login", atMs: Date.now(), detail: "Not logged in" }));
+  fs.writeFileSync(
+    path.join(home, STOP_FILE),
+    JSON.stringify({ reason: "login", atMs: Date.now(), detail: "Not logged in" }),
+  );
 }
 
 /** Write a spool entry under a crank home, or under spool/parked/ when `parked`. */
-export function spoolEntry(home: string, stem: string, projectRoot: string, updatedAt: number, parked = false): void {
+export function spoolEntry(
+  home: string,
+  stem: string,
+  projectRoot: string,
+  updatedAt: number,
+  parked = false,
+): void {
   const dir = parked ? path.join(home, "spool", "parked") : path.join(home, "spool");
   fs.mkdirSync(dir, { recursive: true });
-  const entry = { transcriptPath: `/t/${stem}.jsonl`, projectRoot, agent: "claude", ended: true, updatedAt };
+  const entry = {
+    transcriptPath: `/t/${stem}.jsonl`,
+    projectRoot,
+    agent: "claude",
+    ended: true,
+    updatedAt,
+  };
   fs.writeFileSync(path.join(dir, `${stem}.json`), JSON.stringify(entry));
 }
 
@@ -288,8 +361,15 @@ export function userRecord(uuid: string, timestamp: string, content: string): st
 /** An `assistant` transcript record holding one `Read` call of `filePath`, as one JSONL line. */
 export function readRecord(uuid: string, timestamp: string, filePath: string): string {
   return JSON.stringify({
-    type: "assistant", uuid, timestamp,
-    message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_" + uuid, name: "Read", input: { file_path: filePath } }] },
+    type: "assistant",
+    uuid,
+    timestamp,
+    message: {
+      role: "assistant",
+      content: [
+        { type: "tool_use", id: "toolu_" + uuid, name: "Read", input: { file_path: filePath } },
+      ],
+    },
   });
 }
 
@@ -309,11 +389,16 @@ export function readDaemon(crankHome: string): DaemonState | null {
 
 /** Spawn `<cloneRoot ?? REPO_ROOT>/bin/crank-mem daemon ...args`, detached, so the daemon leads its own process group. */
 export function startDaemon(
-  args: string[], env: Record<string, string>, cloneRoot?: string,
+  args: string[],
+  env: Record<string, string>,
+  cloneRoot?: string,
 ): { proc: ChildProcess; exited: Promise<number> } {
   const root = cloneRoot ?? REPO_ROOT;
   const proc = spawn(path.join(root, "bin/crank-mem"), ["daemon", ...args], {
-    cwd: root, env: { ...process.env, ...env }, detached: true, stdio: "ignore",
+    cwd: root,
+    env: { ...process.env, ...env },
+    detached: true,
+    stdio: "ignore",
   });
   const exited = new Promise<number>((resolve) => proc.once("exit", (code) => resolve(code ?? -1)));
   return { proc, exited };
@@ -335,7 +420,9 @@ export function realModelsDir(): string {
   const dir = path.join(os.homedir(), ".crank", "models");
   const missing = MODEL_FILES.filter((f) => !fs.existsSync(path.join(dir, EMBED_MODEL, f)));
   if (missing.length > 0) {
-    throw new Error(`the local search model is missing ${missing.join(", ")} under ${dir}; run \`crank-mem setup\` once`);
+    throw new Error(
+      `the local search model is missing ${missing.join(", ")} under ${dir}; run \`crank-mem setup\` once`,
+    );
   }
   return dir;
 }
@@ -349,19 +436,35 @@ export function makeModelHome(): string {
 
 /** Start tests/fixtures/model-server.ts as a child serving `dir`; `requests()` lists the paths it was asked for. */
 export async function startModelServer(
-  dir: string, mode: "ok" | "stall" | "slow",
+  dir: string,
+  mode: "ok" | "stall" | "slow",
 ): Promise<{ url: string; requests(): string[]; stop(): void }> {
   const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crank-modelsrv-")), "requests.log");
   fs.writeFileSync(log, "");
-  const proc = spawn(process.execPath, [path.join(REPO_ROOT, "tests/fixtures/model-server.ts"), "--dir", dir, "--mode", mode, "--log", log], {
-    stdio: ["ignore", "pipe", "inherit"],
-  });
+  const proc = spawn(
+    process.execPath,
+    [
+      path.join(REPO_ROOT, "tests/fixtures/model-server.ts"),
+      "--dir",
+      dir,
+      "--mode",
+      mode,
+      "--log",
+      log,
+    ],
+    {
+      stdio: ["ignore", "pipe", "inherit"],
+    },
+  );
   const stop = () => {
     proc.kill("SIGKILL");
   };
   const port = await new Promise<number>((resolve, reject) => {
     let out = "";
-    const timer = setTimeout(() => reject(new Error("model server did not print its port")), 10_000);
+    const timer = setTimeout(
+      () => reject(new Error("model server did not print its port")),
+      10_000,
+    );
     proc.stdout!.on("data", (chunk: Buffer) => {
       out += chunk.toString();
       const m = /^PORT (\d+)\n/.exec(out);
@@ -407,7 +510,13 @@ export function tempDir(prefix: string): string {
 }
 
 export type Journey = {
-  root: string; home: string; stem: string; transcript: string; fake: ReturnType<typeof fakeClaude>; job: CliRun; spool: string[];
+  root: string;
+  home: string;
+  stem: string;
+  transcript: string;
+  fake: ReturnType<typeof fakeClaude>;
+  job: CliRun;
+  spool: string[];
 };
 
 /**
@@ -418,8 +527,14 @@ export function journey(
   root: string,
   scenarios: FakeScenario[],
   opts: {
-    transcript?: string; env?: Record<string, string>; skipJob?: boolean; timeoutMs?: number | string; home?: string; stem?: string;
-    cwd?: string; args?: string[];
+    transcript?: string;
+    env?: Record<string, string>;
+    skipJob?: boolean;
+    timeoutMs?: number | string;
+    home?: string;
+    stem?: string;
+    cwd?: string;
+    args?: string[];
   } = {},
 ): Journey {
   const home = opts.home ?? makeCrankHome();
@@ -433,17 +548,35 @@ export function journey(
   const fake = fakeClaude(path.join(tmp, "bin"), scenarios);
   const hookEnv = { ...fake.env, CRANK_HOME: home };
   const cwd = opts.cwd ?? root;
-  expect(runHook("src/hooks/stop.ts", JSON.stringify({ ...claudeStop(cwd), transcript_path: transcript }), root, hookEnv).status).toBe(0);
-  expect(runHook("src/hooks/session-end.ts", JSON.stringify(claudeSessionEnd(cwd, transcript)), root, hookEnv).status).toBe(0);
+  expect(
+    runHook(
+      "src/hooks/stop.ts",
+      JSON.stringify({ ...claudeStop(cwd), transcript_path: transcript }),
+      root,
+      hookEnv,
+    ).status,
+  ).toBe(0);
+  expect(
+    runHook(
+      "src/hooks/session-end.ts",
+      JSON.stringify(claudeSessionEnd(cwd, transcript)),
+      root,
+      hookEnv,
+    ).status,
+  ).toBe(0);
   expect(spoolFiles(home)).toEqual([`${stem}.json`]);
   const j = { root, home, stem, transcript, fake };
-  const job = opts.skipJob ? { status: -1, stdout: "", stderr: "" } : rerun(j, opts.timeoutMs, opts.env, opts.args);
+  const job = opts.skipJob
+    ? { status: -1, stdout: "", stderr: "" }
+    : rerun(j, opts.timeoutMs, opts.env, opts.args);
   return { ...j, job, spool: spoolFiles(home) };
 }
 
 /** Run `job <stem>` again on a journey's project, home and fake. */
 export function rerun(
-  j: Pick<Journey, "root" | "home" | "fake"> & { stem?: string }, timeoutMs: number | string = 10_000, env: Record<string, string> = {},
+  j: Pick<Journey, "root" | "home" | "fake"> & { stem?: string },
+  timeoutMs: number | string = 10_000,
+  env: Record<string, string> = {},
   args: string[] = [],
 ): CliRun {
   const argv = ["job", j.stem ?? "s1", "--run-timeout-ms", String(timeoutMs), ...args];
@@ -481,21 +614,37 @@ export function laterRecords(tag = "later"): { records: string[]; text: string }
 /** Send the Stop hook for a journey's transcript, rewriting its spool entry. */
 export function stop(j: Pick<Journey, "root" | "home" | "fake" | "transcript">): void {
   const payload = JSON.stringify({ ...claudeStop(j.root), transcript_path: j.transcript });
-  expect(runHook("src/hooks/stop.ts", payload, j.root, { ...j.fake.env, CRANK_HOME: j.home }).status).toBe(0);
+  expect(
+    runHook("src/hooks/stop.ts", payload, j.root, { ...j.fake.env, CRANK_HOME: j.home }).status,
+  ).toBe(0);
 }
 
 /** Start `job s1` in its own process group, so a kill takes its claude child with it. */
-export function spawnJob(j: Pick<Journey, "root" | "home" | "fake">, args: string[] = []): Promise<number | null> {
-  const child = spawn(process.execPath, [path.join(REPO_ROOT, "src/cli/main.ts"), "job", "s1", "--run-timeout-ms", "10000", ...args], {
-    cwd: j.root, env: { ...process.env, ...j.fake.env, CRANK_HOME: j.home }, detached: true, stdio: "ignore",
-  });
+export function spawnJob(
+  j: Pick<Journey, "root" | "home" | "fake">,
+  args: string[] = [],
+): Promise<number | null> {
+  const child = spawn(
+    process.execPath,
+    [path.join(REPO_ROOT, "src/cli/main.ts"), "job", "s1", "--run-timeout-ms", "10000", ...args],
+    {
+      cwd: j.root,
+      env: { ...process.env, ...j.fake.env, CRANK_HOME: j.home },
+      detached: true,
+      stdio: "ignore",
+    },
+  );
   children.push(child);
   return new Promise((resolve) => child.once("exit", (code) => resolve(code)));
 }
 
 /** `crank-mem search` stdout; `home` is the CRANK_HOME it reads the model from (none by default). */
 export function search(root: string, query: string, home?: string): string {
-  const run = runCli(root, ["search", query], home === undefined ? undefined : { CRANK_HOME: home });
+  const run = runCli(
+    root,
+    ["search", query],
+    home === undefined ? undefined : { CRANK_HOME: home },
+  );
   expect(run.status).toBe(0);
   return run.stdout;
 }

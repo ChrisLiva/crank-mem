@@ -4,8 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { crankHooks, mergeHooksIntoFile } from "../src/cli/settings.ts";
 import {
-  trustEntries, staleTrustKeys, crankTrust,
-  writeTrustEntries, removeTrustEntries,
+  trustEntries,
+  staleTrustKeys,
+  crankTrust,
+  writeTrustEntries,
+  removeTrustEntries,
 } from "../src/cli/codex-trust.ts";
 
 function tmpFile(): string {
@@ -42,14 +45,22 @@ describe("trustEntries", () => {
   //    "timeout":10,"type":"command"}],"matcher":"apply_patch"}
   // A drift here means codex will treat crank's written trusted_hash as stale.
   test("matches codex's exact hash for a known identity", () => {
-    const vec = trustEntries("/p/hooks.json", {
-      PostToolUse: [{ matcher: "apply_patch", hooks: [{ type: "command", command: "echo hi", timeout: 10 }] }],
-      SessionStart: [{ hooks: [{ type: "command", command: "echo hi" }] }], // no timeout ⇒ default 600
-    }, () => true);
-    expect(vec.find((e) => e.key.includes("post_tool_use"))!.hash)
-      .toBe("sha256:7c55a9ad5e95bcfad72bedc1d3c6a75c42ed13550cba8520b9faf4e63017333a");
-    expect(vec.find((e) => e.key.includes("session_start"))!.hash)
-      .toBe("sha256:a245b9b8493f2be82aea06c373ef42709b417c1b701a54e5ab76ab728777f4ad");
+    const vec = trustEntries(
+      "/p/hooks.json",
+      {
+        PostToolUse: [
+          { matcher: "apply_patch", hooks: [{ type: "command", command: "echo hi", timeout: 10 }] },
+        ],
+        SessionStart: [{ hooks: [{ type: "command", command: "echo hi" }] }], // no timeout ⇒ default 600
+      },
+      () => true,
+    );
+    expect(vec.find((e) => e.key.includes("post_tool_use"))!.hash).toBe(
+      "sha256:7c55a9ad5e95bcfad72bedc1d3c6a75c42ed13550cba8520b9faf4e63017333a",
+    );
+    expect(vec.find((e) => e.key.includes("session_start"))!.hash).toBe(
+      "sha256:a245b9b8493f2be82aea06c373ef42709b417c1b701a54e5ab76ab728777f4ad",
+    );
   });
 });
 
@@ -57,9 +68,16 @@ describe("crankTrust", () => {
   test("crank group merged after a pre-existing user group gets its real index", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "crank-trust-"));
     const hooksJson = path.join(dir, "hooks.json");
-    fs.writeFileSync(hooksJson, JSON.stringify({
-      hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo user-hook" }] }] },
-    }, null, 2));
+    fs.writeFileSync(
+      hooksJson,
+      JSON.stringify(
+        {
+          hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo user-hook" }] }] },
+        },
+        null,
+        2,
+      ),
+    );
     mergeHooksIntoFile(hooksJson, crankHooks("bun", "codex"));
     const t = crankTrust(hooksJson);
     expect(t.entries.map((e) => e.key).sort()).toEqual([
@@ -93,7 +111,9 @@ describe("staleTrustKeys", () => {
     const codexOwn =
       'model = "gpt-5.6"\n[hooks.state."/proj/.codex/hooks.json:session_start:0:0"]\ntrusted_hash = "sha256:deadbeef"\n';
     fs.writeFileSync(f, codexOwn);
-    const hooks = { session_start: [{ hooks: [{ type: "command" as const, command: "codex-own-hook" }] }] };
+    const hooks = {
+      session_start: [{ hooks: [{ type: "command" as const, command: "codex-own-hook" }] }],
+    };
     const stale = staleTrustKeys("/proj/.codex/hooks.json", hooks, () => true);
     expect(stale).toEqual([]);
     removeTrustEntries(f, stale);
@@ -111,7 +131,10 @@ describe("write/removeTrustEntries", () => {
     const written = fs.readFileSync(f, "utf-8");
     expect(written).toContain('[hooks.state."/proj/.codex/hooks.json:session_start:0:0"]');
     expect(written).toContain(`trusted_hash = "${entries[0]!.hash}"`);
-    removeTrustEntries(f, entries.map((e) => e.key));
+    removeTrustEntries(
+      f,
+      entries.map((e) => e.key),
+    );
     expect(fs.readFileSync(f, "utf-8")).toBe(original);
   });
 
@@ -123,13 +146,20 @@ describe("write/removeTrustEntries", () => {
     writeTrustEntries(f, e2);
     const content = fs.readFileSync(f, "utf-8");
     expect(content.match(/session_start:0:0/g)!.length).toBe(1);
-    expect(content).toContain(e2[0]!.hash.startsWith("sha256:") ? e2.find((e) => e.key.includes("session_start"))!.hash : "");
+    expect(content).toContain(
+      e2[0]!.hash.startsWith("sha256:")
+        ? e2.find((e) => e.key.includes("session_start"))!.hash
+        : "",
+    );
   });
 
   test("a write sweeps the PascalCase orphan an older release left behind", () => {
     const f = tmpFile();
     const hooksJson = "/proj/.codex/hooks.json";
-    fs.writeFileSync(f, `[hooks.state."${hooksJson}:SessionStart:0:0"]\ntrusted_hash = "sha256:deadbeef"\n`);
+    fs.writeFileSync(
+      f,
+      `[hooks.state."${hooksJson}:SessionStart:0:0"]\ntrusted_hash = "sha256:deadbeef"\n`,
+    );
     const hooks = crankHooks("bun", "codex");
     writeTrustEntries(f, trustEntries(hooksJson, hooks), staleTrustKeys(hooksJson, hooks));
     const content = fs.readFileSync(f, "utf-8");

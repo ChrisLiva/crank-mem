@@ -6,11 +6,23 @@ import { vendorHooks, templatePath } from "./vendor.ts";
 import { openProject } from "./project.ts";
 import { newBackupDir, backupFile } from "./backups.ts";
 import {
-  crankTrust, writeTrustEntries, userCodexConfigPath, CODEX_REVIEW_HINT,
+  crankTrust,
+  writeTrustEntries,
+  userCodexConfigPath,
+  CODEX_REVIEW_HINT,
 } from "./codex-trust.ts";
 import {
-  crankHooks, mergeHooksIntoFile, removeCrankHooksFromFile, hasCrankHooks, claudeSettingsFiles, unignoreCerebrum,
-  ensureCrankGitignore, isCrankHookCommand, addIgnoreLines, modeIgnoreFile, addAllowRule,
+  crankHooks,
+  mergeHooksIntoFile,
+  removeCrankHooksFromFile,
+  hasCrankHooks,
+  claudeSettingsFiles,
+  unignoreCerebrum,
+  ensureCrankGitignore,
+  isCrankHookCommand,
+  addIgnoreLines,
+  modeIgnoreFile,
+  addAllowRule,
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
 import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
@@ -62,26 +74,36 @@ export async function run(_args: string[]): Promise<number> {
     if (mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), backup)) {
       console.log(`  re-wired Claude Code hooks in ${path.relative(root, wired)}`);
     }
-    if (addAllowRule(wired, backup)) console.log("  added the crank-mem rules to permissions.allow");
+    if (addAllowRule(wired, backup))
+      console.log("  added the crank-mem rules to permissions.allow");
     // Codex wiring was opt-in at init: leave a hooks.json without crank entries alone.
     if (hasCrankHooks(codexHooksJson)) {
-      codexRewired = mergeHooksIntoFile(codexHooksJson, crankHooks(config.runtime, "codex"), backup);
+      codexRewired = mergeHooksIntoFile(
+        codexHooksJson,
+        crankHooks(config.runtime, "codex"),
+        backup,
+      );
       if (codexRewired) {
         console.log(`  re-wired Codex hooks in .codex/hooks.json`);
         if (!config.codex_trust_written) for (const line of CODEX_REVIEW_HINT) console.log(line);
       }
     }
   } catch (err) {
-    console.error(`crank-mem: could not re-wire hooks (${err instanceof Error ? err.message : String(err)})`);
+    console.error(
+      `crank-mem: could not re-wire hooks (${err instanceof Error ? err.message : String(err)})`,
+    );
   }
 
   // An install from before the allowlist keeps a denylist that misses state
   // files added since, such as cerebrum-dedup.json, and every file another tool
   // sharing .crank/ writes.
   try {
-    if (ensureCrankGitignore(crankDir, backup)) console.log(`  wrote the allowlist .crank/.gitignore`);
+    if (ensureCrankGitignore(crankDir, backup))
+      console.log(`  wrote the allowlist .crank/.gitignore`);
   } catch (err) {
-    console.error(`crank-mem: could not write .crank/.gitignore (${err instanceof Error ? err.message : String(err)})`);
+    console.error(
+      `crank-mem: could not write .crank/.gitignore (${err instanceof Error ? err.message : String(err)})`,
+    );
   }
 
   // 0.8.1 and earlier seeded the cerebrum with a protocol preamble telling
@@ -94,14 +116,18 @@ export async function run(_args: string[]): Promise<number> {
     if (fs.existsSync(cerebrumPath)) {
       const { preamble, body } = splitPreamble(fs.readFileSync(cerebrumPath, "latin1"));
       if (preamble === fs.readFileSync(templatePath("cerebrum-preamble-0.8.1.md"), "latin1")) {
-        const fresh = splitPreamble(fs.readFileSync(templatePath(CEREBRUM_FILE), "latin1")).preamble;
+        const fresh = splitPreamble(
+          fs.readFileSync(templatePath(CEREBRUM_FILE), "latin1"),
+        ).preamble;
         backup(cerebrumPath);
         fs.writeFileSync(cerebrumPath, fresh + (body ?? ""), "latin1");
         console.log(`  replaced the template preamble of .crank/${CEREBRUM_FILE}`);
       }
     }
   } catch (err) {
-    console.error(`crank-mem: could not replace the template preamble of .crank/${CEREBRUM_FILE} (${err instanceof Error ? err.message : String(err)})`);
+    console.error(
+      `crank-mem: could not replace the template preamble of .crank/${CEREBRUM_FILE} (${err instanceof Error ? err.message : String(err)})`,
+    );
   }
 
   // An install switched to commit mode can still carry the ignore block its
@@ -112,9 +138,14 @@ export async function run(_args: string[]): Promise<number> {
         backup(f);
         console.log(`  removed the crank-mem .crank/ ignore block from ${path.relative(root, f)}`);
       });
-      if (ignoredBy) console.error(`crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`);
+      if (ignoredBy)
+        console.error(
+          `crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`,
+        );
     } catch (err) {
-      console.error(`crank-mem: could not check .crank/cerebrum.md against git ignores (${err instanceof Error ? err.message : String(err)})`);
+      console.error(
+        `crank-mem: could not check .crank/cerebrum.md against git ignores (${err instanceof Error ? err.message : String(err)})`,
+      );
     }
   }
 
@@ -123,9 +154,14 @@ export async function run(_args: string[]): Promise<number> {
   const ignoreFile = modeIgnoreFile(root, config.git);
   if (ignoreFile) {
     try {
-      if (addIgnoreLines(ignoreFile, backup)) console.log(`  added the crank-mem .crank/ ignore block to ${path.relative(root, ignoreFile)}`);
+      if (addIgnoreLines(ignoreFile, backup))
+        console.log(
+          `  added the crank-mem .crank/ ignore block to ${path.relative(root, ignoreFile)}`,
+        );
     } catch (err) {
-      console.error(`crank-mem: could not write ${path.relative(root, ignoreFile)} (${err instanceof Error ? err.message : String(err)})`);
+      console.error(
+        `crank-mem: could not write ${path.relative(root, ignoreFile)} (${err instanceof Error ? err.message : String(err)})`,
+      );
     }
   }
 
@@ -150,7 +186,9 @@ export async function run(_args: string[]): Promise<number> {
 
   const hooksDir = path.join(crankDir, "hooks");
   if (fs.existsSync(hooksDir)) {
-    fs.cpSync(hooksDir, path.join((backupDir ??= newBackupDir(crankDir)), "hooks"), { recursive: true });
+    fs.cpSync(hooksDir, path.join((backupDir ??= newBackupDir(crankDir)), "hooks"), {
+      recursive: true,
+    });
   }
 
   vendorHooks(crankDir);

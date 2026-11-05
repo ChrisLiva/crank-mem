@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { git, gitCommit, makeCrankProject, runHook, setMtime } from "./helpers.ts";
-import { claudePostWrite, claudePostEdit, codexApplyPatch, claudeSessionStart } from "./fixtures/payloads.ts";
+import {
+  claudePostWrite,
+  claudePostEdit,
+  codexApplyPatch,
+  claudeSessionStart,
+} from "./fixtures/payloads.ts";
 import { parseApplyPatch } from "../src/hooks/lib/apply-patch.ts";
 import { loadIndex } from "../src/hooks/lib/store.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
@@ -70,13 +75,17 @@ describe("post-write hook (black-box)", () => {
     saveConfig(path.join(root, ".crank"), { ...defaultConfig(), max_files: 2 });
     seedIndex(root);
     fs.writeFileSync(path.join(root, "z.ts"), "/** Zed. */\n");
-    expect(runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "z.ts")))).status).toBe(0);
+    expect(
+      runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "z.ts")))).status,
+    ).toBe(0);
     runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "z.ts"))));
     expect(loadIndex(path.join(root, ".crank")).files["z.ts"]!.writeCount).toBe(2);
     seedIndex(root);
     const index = loadIndex(path.join(root, ".crank"));
     expect(Object.keys(index.files).sort()).toEqual(["a.ts", "z.ts"]);
-    expect(fs.readFileSync(path.join(root, ".crank/anatomy.md"), "utf-8")).toContain("## Most active files\n\n- `z.ts` — Zed.");
+    expect(fs.readFileSync(path.join(root, ".crank/anatomy.md"), "utf-8")).toContain(
+      "## Most active files\n\n- `z.ts` — Zed.",
+    );
   });
 
   test("a write pin clears once the file is in the churn list", () => {
@@ -132,13 +141,17 @@ describe("post-write hook (black-box)", () => {
   });
 
   test("Codex apply_patch emits nothing, even with a stale cerebrum, and still re-indexes", () => {
-    const files = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`f${i}.ts`, `const x${i} = 1;`]));
+    const files = Object.fromEntries(
+      Array.from({ length: 25 }, (_, i) => [`f${i}.ts`, `const x${i} = 1;`]),
+    );
     const root = makeCrankProject(files);
     seedIndex(root);
     const cerebrum = path.join(root, ".crank/cerebrum.md");
     const memory = (...bullets: string[]) => ["# Cerebrum", "", "## Memory", ...bullets].join("\n");
-    const OLD = "- Fresh build dir fails: `OpenGL.framework` hits `-Werror=unguarded-availability-new` (2026-09-27).";
-    const NEW = "- GUI compile fails: OpenGL.framework, -Werror=unguarded-availability-new; use CMAKE_PROJECT_INCLUDE.";
+    const OLD =
+      "- Fresh build dir fails: `OpenGL.framework` hits `-Werror=unguarded-availability-new` (2026-09-27).";
+    const NEW =
+      "- GUI compile fails: OpenGL.framework, -Werror=unguarded-availability-new; use CMAKE_PROJECT_INCLUDE.";
     fs.writeFileSync(cerebrum, memory(OLD));
     setMtime(cerebrum, 1000);
     fs.mkdirSync(path.join(root, "src"));
@@ -155,7 +168,9 @@ describe("post-write hook (black-box)", () => {
     const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, both)));
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("");
-    expect(loadIndex(path.join(root, ".crank")).files["src/a.ts"]!.description).toBe("Added by codex.");
+    expect(loadIndex(path.join(root, ".crank")).files["src/a.ts"]!.description).toBe(
+      "Added by codex.",
+    );
 
     // A new bullet that overlaps an older one, written by a cerebrum-only patch.
     fs.writeFileSync(cerebrum, memory(OLD, NEW));
@@ -179,14 +194,22 @@ describe("post-write hook (black-box)", () => {
   test("relative apply_patch path resolves against session cwd, not project root", () => {
     const root = makeCrankProject({ "sub/dir/a.ts": "const a = 1;" });
     seedIndex(root);
-    fs.writeFileSync(path.join(root, "sub/dir/fresh.ts"), "/** Fresh in subdir. */\nexport const f = 1;\n");
+    fs.writeFileSync(
+      path.join(root, "sub/dir/fresh.ts"),
+      "/** Fresh in subdir. */\nexport const f = 1;\n",
+    );
     const payload = {
-      ...(codexApplyPatch(root, "*** Begin Patch\n*** Add File: fresh.ts\n+x\n*** End Patch") as object),
+      ...(codexApplyPatch(
+        root,
+        "*** Begin Patch\n*** Add File: fresh.ts\n+x\n*** End Patch",
+      ) as object),
       cwd: path.join(root, "sub/dir"),
     };
     const run = runHook(HOOK, JSON.stringify(payload));
     expect(run.status).toBe(0);
-    expect(loadIndex(path.join(root, ".crank")).files["sub/dir/fresh.ts"]!.description).toBe("Fresh in subdir.");
+    expect(loadIndex(path.join(root, ".crank")).files["sub/dir/fresh.ts"]!.description).toBe(
+      "Fresh in subdir.",
+    );
   });
 
   test("oversized file is skipped", () => {
@@ -216,7 +239,10 @@ describe("post-write hook (black-box)", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     seedIndex(root);
     fs.writeFileSync(path.join(root, "model.weights"), Buffer.from([0x93, 0x4e, 0x55, 0x00, 0x01]));
-    const run = runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "model.weights"))));
+    const run = runHook(
+      HOOK,
+      JSON.stringify(claudePostWrite(root, path.join(root, "model.weights"))),
+    );
     expect(run.status).toBe(0);
     expect(loadIndex(path.join(root, ".crank")).files["model.weights"]).toBeUndefined();
   });
@@ -232,7 +258,11 @@ describe("post-write hook (black-box)", () => {
   test("unrelated tool: exit 0, no change", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     seedIndex(root);
-    const payload = { ...(claudePostWrite(root, path.join(root, "a.ts")) as object), tool_name: "Bash", tool_input: { command: "ls" } };
+    const payload = {
+      ...(claudePostWrite(root, path.join(root, "a.ts")) as object),
+      tool_name: "Bash",
+      tool_input: { command: "ls" },
+    };
     const run = runHook(HOOK, JSON.stringify(payload));
     expect(run.status).toBe(0);
   });

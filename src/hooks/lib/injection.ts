@@ -5,7 +5,13 @@ import { ISO_DATE, parseBullets } from "./bullets.ts";
 import { SOURCE_EXTENSIONS } from "./scanner.ts";
 import { symbolsSupported } from "./symbols.ts";
 import { CEREBRUM_FILE } from "./cerebrum-files.ts";
-import { MEMORY_NEWER_NOTE, MEMORY_OLDER_NOTE, formatLine, memoryPath, openMemory } from "./memory.ts";
+import {
+  MEMORY_NEWER_NOTE,
+  MEMORY_OLDER_NOTE,
+  formatLine,
+  memoryPath,
+  openMemory,
+} from "./memory.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
 import type { CrankConfig } from "./config.ts";
 import type { AnatomyIndex } from "./store.ts";
@@ -64,7 +70,10 @@ const SYMBOL_GAPS_NAMED = 3;
  */
 function anatomyPointer(index: AnatomyIndex, codex: boolean): string {
   const { fileCount, truncated, candidateCount } = index.meta;
-  const counted = truncated && candidateCount !== undefined ? `${fileCount} of ${candidateCount}` : `${fileCount}`;
+  const counted =
+    truncated && candidateCount !== undefined
+      ? `${fileCount} of ${candidateCount}`
+      : `${fileCount}`;
   // A truncated walk keeps candidateCount only when it came from git's ranked
   // listing; the fallback directory walk stops uncounted, in path order.
   const coverage = !truncated
@@ -75,14 +84,17 @@ function anatomyPointer(index: AnatomyIndex, codex: boolean): string {
   const gaps = new Map<string, number>();
   for (const rel of Object.keys(index.files)) {
     const ext = path.extname(rel).toLowerCase();
-    if (SOURCE_EXTENSIONS.has(ext) && !symbolsSupported(ext)) gaps.set(ext, (gaps.get(ext) ?? 0) + 1);
+    if (SOURCE_EXTENSIONS.has(ext) && !symbolsSupported(ext))
+      gaps.set(ext, (gaps.get(ext) ?? 0) + 1);
   }
   const named = [...gaps]
     .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1))
     .slice(0, SYMBOL_GAPS_NAMED)
     .map(([ext]) => ext);
   const symbols = named.length ? ` (no symbol ranges for ${named.join(", ")} files)` : "";
-  const slice = codex ? "`sed -n 'START,ENDp' file`" : "Read with offset/limit, or `sed -n 'START,ENDp' file`";
+  const slice = codex
+    ? "`sed -n 'START,ENDp' file`"
+    : "Read with offset/limit, or `sed -n 'START,ENDp' file`";
   return `- \`.crank/anatomy.md\` indexes ${counted} file(s) with descriptions, token sizes,
   and per-symbol line ranges${symbols}.
   ${coverage}
@@ -100,7 +112,12 @@ const RECENT_MEMORY_ROWS = 50;
 function instructions(index: AnatomyIndex, codex: boolean, recall: boolean): string {
   const lead =
     "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`.";
-  const bullets = [anatomyPointer(index, codex), CODE_BULLET, ...(recall ? [RECALL_BULLET] : []), PROOF_AND_ADR_BULLETS];
+  const bullets = [
+    anatomyPointer(index, codex),
+    CODE_BULLET,
+    ...(recall ? [RECALL_BULLET] : []),
+    PROOF_AND_ADR_BULLETS,
+  ];
   return `${INJECTION_HEADING}\n\n${lead}\n\n${bullets.join("\n")}`;
 }
 
@@ -143,11 +160,16 @@ export function recallApplies(running: boolean, status: Recall["status"]): boole
 /** Notes on the health of memory capture for this project, most urgent first. Never throws. */
 export function captureNotes(gate: DigestGate, status: Recall["status"]): string[] {
   const notes: string[] = [];
-  if (gate.stop) notes.push(`crank-mem digests stopped (${gate.stop.reason}): run \`crank-mem digest resume\` once that is fixed.`);
+  if (gate.stop)
+    notes.push(
+      `crank-mem digests stopped (${gate.stop.reason}): run \`crank-mem digest resume\` once that is fixed.`,
+    );
   if (status === "newer") notes.push(MEMORY_NEWER_NOTE);
   if (status === "older") notes.push(MEMORY_OLDER_NOTE);
   if (gate.stalled) {
-    notes.push("crank-mem: a session here has waited over 2 hours for its digest; see `crank-mem stats`.");
+    notes.push(
+      "crank-mem: a session here has waited over 2 hours for its digest; see `crank-mem stats`.",
+    );
   }
   return notes;
 }
@@ -199,7 +221,12 @@ export interface Excerpt {
  * kind takes more bytes, so a 2,048-byte budget still carries a memory bullet
  * when preferences alone would fill it. ADR 0007 records the measurements.
  */
-export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles, balanced = false): Excerpt {
+export function excerptOf(
+  md: string,
+  budgetBytes: number,
+  cited?: CitedFiles,
+  balanced = false,
+): Excerpt {
   const prefsLines: string[] = [];
   const memoryLines: string[] = [];
   let bucket: string[] | null = null;
@@ -222,10 +249,13 @@ export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles, b
   while (prefs.length && estimateProseTokens(prefs.join("\n")) > PREFS_TOKEN_CAP) {
     prefsIndex.push(indexEntry(prefs.shift()!));
   }
-  const memoryIndex = memory.splice(0, Math.max(0, memory.length - MEMORY_RECENT_COUNT)).map(indexEntry);
+  const memoryIndex = memory
+    .splice(0, Math.max(0, memory.length - MEMORY_RECENT_COUNT))
+    .map(indexEntry);
   if (cited) {
     const byName = basenameIndex(cited.index);
-    for (const list of [prefs, memory]) list.forEach((b, i) => (list[i] = b + citationTags(b, cited, byName)));
+    for (const list of [prefs, memory])
+      list.forEach((b, i) => (list[i] = b + citationTags(b, cited, byName)));
   }
 
   const render = (): string => {
@@ -241,8 +271,12 @@ export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles, b
 
   const size = (list: string[]): number => bytes(list.join("\n"));
   let text = render();
-  while (text && (estimateProseTokens(text) > CEREBRUM_INJECT_TOKEN_CAP || bytes(text) > budgetBytes)) {
-    const indexOver = balanced || !memory.length || size(memoryIndex) > MEMORY_INDEX_ALLOWANCE_BYTES;
+  while (
+    text &&
+    (estimateProseTokens(text) > CEREBRUM_INJECT_TOKEN_CAP || bytes(text) > budgetBytes)
+  ) {
+    const indexOver =
+      balanced || !memory.length || size(memoryIndex) > MEMORY_INDEX_ALLOWANCE_BYTES;
     if (memoryIndex.length && indexOver) memoryIndex.shift();
     else if (balanced && prefsIndex.length) prefsIndex.shift();
     else if (memory.length && !(balanced && size(prefs) > size(memory))) {
@@ -259,7 +293,10 @@ export function excerptOf(md: string, budgetBytes: number, cited?: CitedFiles, b
     shown: prefs.length + memory.length,
     prefsTotal,
     prefsShown: prefs.length,
-    hidden: [...allPrefs.slice(0, prefsTotal - prefs.length), ...allMemory.slice(0, allMemory.length - memory.length)],
+    hidden: [
+      ...allPrefs.slice(0, prefsTotal - prefs.length),
+      ...allMemory.slice(0, allMemory.length - memory.length),
+    ],
   };
 }
 
@@ -386,7 +423,11 @@ export function composeInjection(
   const running = sources.running ?? false;
   const recall = sources.recall;
   const parts: string[] = [
-    instructions(sources.index, sources.codex ?? false, recall ? recallApplies(running, recall.status) : false),
+    instructions(
+      sources.index,
+      sources.codex ?? false,
+      recall ? recallApplies(running, recall.status) : false,
+    ),
   ];
   let used = bytes(parts[0]!);
 
@@ -417,7 +458,10 @@ export function composeInjection(
   const adrSection = sources.adrFilenames.length
     ? [
         `## ADRs (${sources.adrPath}/ — settled decisions)`,
-        ...[...sources.adrFilenames].sort().slice(-ADR_RECENT_COUNT).map((f) => `- ${f}`),
+        ...[...sources.adrFilenames]
+          .sort()
+          .slice(-ADR_RECENT_COUNT)
+          .map((f) => `- ${f}`),
       ].join("\n")
     : null;
   // Reserve only what the ADR list can actually claim. A list too long to fit

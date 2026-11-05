@@ -36,10 +36,15 @@ export type HooksMap = Record<string, HookGroup[]>;
 
 type Agent = "claude" | "codex";
 
-function commandParts(runtime: CrankConfig["runtime"], script: string, agent: Agent): { runner: string; p: string } {
+function commandParts(
+  runtime: CrankConfig["runtime"],
+  script: string,
+  agent: Agent,
+): { runner: string; p: string } {
   const runner = runtime === "bun" ? "bun" : "node --disable-warning=ExperimentalWarning";
   // Claude expands $CLAUDE_PROJECT_DIR; Codex runs hooks with the project cwd.
-  const p = agent === "claude" ? `"$CLAUDE_PROJECT_DIR"/.crank/hooks/${script}` : `.crank/hooks/${script}`;
+  const p =
+    agent === "claude" ? `"$CLAUDE_PROJECT_DIR"/.crank/hooks/${script}` : `.crank/hooks/${script}`;
   return { runner, p };
 }
 
@@ -74,10 +79,23 @@ export function crankHooks(runtime: CrankConfig["runtime"], agent: Agent): Hooks
   const matcher = agent === "claude" ? "Write|Edit|MultiEdit" : "apply_patch";
   const map: HooksMap = {
     SessionStart: [
-      { hooks: [{ type: "command", command: hookCommand(runtime, "session-start.ts", agent), timeout: 10 }] },
+      {
+        hooks: [
+          {
+            type: "command",
+            command: hookCommand(runtime, "session-start.ts", agent),
+            timeout: 10,
+          },
+        ],
+      },
     ],
     PostToolUse: [
-      { matcher, hooks: [{ type: "command", command: hookCommand(runtime, "post-write.ts", agent), timeout: 10 }] },
+      {
+        matcher,
+        hooks: [
+          { type: "command", command: hookCommand(runtime, "post-write.ts", agent), timeout: 10 },
+        ],
+      },
     ],
   };
   // File history, Stop, SessionEnd and SubagentStart are Claude-only; Codex has no digests.
@@ -85,18 +103,32 @@ export function crankHooks(runtime: CrankConfig["runtime"], agent: Agent): Hooks
     // After the write group, so PostToolUse[0] stays the write matcher.
     map.PostToolUse!.push({
       matcher: "Read|Bash",
-      hooks: [{ type: "command", command: hookCommand(runtime, "post-read.ts", agent), timeout: 10 }],
+      hooks: [
+        { type: "command", command: hookCommand(runtime, "post-read.ts", agent), timeout: 10 },
+      ],
     });
     map.Stop = [
-      { hooks: [{ type: "command", command: hookCommand(runtime, "stop.ts", agent), timeout: 10 }] },
+      {
+        hooks: [{ type: "command", command: hookCommand(runtime, "stop.ts", agent), timeout: 10 }],
+      },
     ];
     map.SessionEnd = [
-      { hooks: [{ type: "command", command: hookCommand(runtime, "session-end.ts", agent), timeout: 10 }] },
+      {
+        hooks: [
+          { type: "command", command: hookCommand(runtime, "session-end.ts", agent), timeout: 10 },
+        ],
+      },
     ];
     map.SubagentStart = [
       {
         matcher: SUBAGENT_MATCHER,
-        hooks: [{ type: "command", command: hookCommand(runtime, "subagent-start.ts", agent), timeout: 10 }],
+        hooks: [
+          {
+            type: "command",
+            command: hookCommand(runtime, "subagent-start.ts", agent),
+            timeout: 10,
+          },
+        ],
       },
     ];
   }
@@ -115,7 +147,9 @@ function writeJson(file: string, value: unknown): void {
 /** The script a command runs from .crank/hooks/, or undefined. */
 function hookScript(command: string | undefined): string | undefined {
   if (!isCrankHookCommand(command)) return undefined;
-  return command!.slice(command!.indexOf(CRANK_HOOK_MARKER) + CRANK_HOOK_MARKER.length).split(/[\s"']/)[0];
+  return command!
+    .slice(command!.indexOf(CRANK_HOOK_MARKER) + CRANK_HOOK_MARKER.length)
+    .split(/[\s"']/)[0];
 }
 
 /**
@@ -128,7 +162,11 @@ function hookScript(command: string | undefined): string | undefined {
  * when something changed, calling `beforeWrite` first; returns whether it
  * wrote.
  */
-export function mergeHooksIntoFile(file: string, add: HooksMap, beforeWrite?: (file: string) => void): boolean {
+export function mergeHooksIntoFile(
+  file: string,
+  add: HooksMap,
+  beforeWrite?: (file: string) => void,
+): boolean {
   const root: Record<string, unknown> = fs.existsSync(file) ? readJson(file) : {};
   const before = JSON.stringify(root);
   const hooks = (root.hooks ?? {}) as Record<string, unknown>;
@@ -163,7 +201,9 @@ export function hasCrankHooks(file: string): boolean {
   try {
     const hooks = readJson(file).hooks as Record<string, HookGroup[]> | undefined;
     return Object.values(hooks ?? {}).some(
-      (groups) => Array.isArray(groups) && groups.some((g) => (g.hooks ?? []).some((h) => isCrankHookCommand(h.command)))
+      (groups) =>
+        Array.isArray(groups) &&
+        groups.some((g) => (g.hooks ?? []).some((h) => isCrankHookCommand(h.command))),
     );
   } catch {
     return false;
@@ -171,7 +211,10 @@ export function hasCrankHooks(file: string): boolean {
 }
 
 /** The Claude settings file a git mode wires, and the other one, which must hold no crank hooks. */
-export function claudeSettingsFiles(root: string, git: CrankConfig["git"]): { wired: string; other: string } {
+export function claudeSettingsFiles(
+  root: string,
+  git: CrankConfig["git"],
+): { wired: string; other: string } {
   const shared = path.join(root, ".claude", "settings.json");
   const local = path.join(root, ".claude", "settings.local.json");
   return git === "commit" ? { wired: shared, other: local } : { wired: local, other: shared };
@@ -200,9 +243,7 @@ export function removeCrankHooksFromFile(
   let changed = false;
   for (const [event, groups] of Object.entries(hooks)) {
     if (!Array.isArray(groups)) continue;
-    const kept = groups.filter(
-      (g) => !(g.hooks ?? []).some((h) => matches(h.command))
-    );
+    const kept = groups.filter((g) => !(g.hooks ?? []).some((h) => matches(h.command)));
     if (kept.length !== groups.length) {
       changed = true;
       if (kept.length === 0) delete hooks[event];
@@ -305,7 +346,8 @@ export function addIgnoreLines(file: string, beforeWrite?: (file: string) => voi
 /** The file that holds a git mode's ignore block, or null: commit mode has none, and exclude mode needs a .git directory. */
 export function modeIgnoreFile(root: string, git: "commit" | "ignore" | "exclude"): string | null {
   if (git === "ignore") return path.join(root, ".gitignore");
-  if (git === "exclude" && fs.existsSync(path.join(root, ".git"))) return path.join(root, ".git", "info", "exclude");
+  if (git === "exclude" && fs.existsSync(path.join(root, ".git")))
+    return path.join(root, ".git", "info", "exclude");
   return null;
 }
 
@@ -333,7 +375,10 @@ export const CRANK_GITIGNORE =
  * a restore never deletes the allowlist and exposes a kept .crank/ to git.
  * Returns whether it wrote.
  */
-export function ensureCrankGitignore(crankDir: string, beforeWrite: (file: string) => void): boolean {
+export function ensureCrankGitignore(
+  crankDir: string,
+  beforeWrite: (file: string) => void,
+): boolean {
   const file = path.join(crankDir, ".gitignore");
   const exists = fs.existsSync(file);
   if (exists && fs.readFileSync(file, "utf-8") === CRANK_GITIGNORE) return false;
@@ -354,13 +399,15 @@ export function unignoreCerebrum(root: string, beforeStrip: (file: string) => vo
   if (!top) return null;
   for (;;) {
     const [, source, line, pattern] =
-      git("check-ignore", "-v", "--", ".crank/cerebrum.md").stdout?.match(/^(.*):(\d+):(.*)\t/) ?? [];
+      git("check-ignore", "-v", "--", ".crank/cerebrum.md").stdout?.match(/^(.*):(\d+):(.*)\t/) ??
+      [];
     // No match, or a re-including `!` match, which -v also reports with exit 0.
     if (!source || !pattern || pattern.startsWith("!")) return null;
     // check-ignore names sources relative to the repo top, not the cwd.
     const file = path.resolve(top, source);
     const content = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
-    if (pattern !== IGNORE_LINE || !content.includes(IGNORE_BLOCK)) return `${source}:${line} (${pattern})`;
+    if (pattern !== IGNORE_LINE || !content.includes(IGNORE_BLOCK))
+      return `${source}:${line} (${pattern})`;
     beforeStrip(file);
     removeIgnoreLines(file);
   }

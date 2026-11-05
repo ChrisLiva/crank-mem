@@ -15,7 +15,8 @@ const SPECIFIER_PATTERNS = [
 ];
 
 function tsFiles(dir: string): string[] {
-  return fs.readdirSync(dir, { recursive: true, encoding: "utf-8" })
+  return fs
+    .readdirSync(dir, { recursive: true, encoding: "utf-8" })
     .filter((rel) => rel.endsWith(".ts"))
     .map((rel) => path.join(dir, rel));
 }
@@ -28,10 +29,12 @@ function violations(file: string): string[] {
     for (const match of text.matchAll(pattern)) {
       const spec = match[1]!;
       const lineStart = text.lastIndexOf("\n", match.index) + 1;
-      const legal = spec === "node:sqlite"
-        ? text.startsWith("import type", lineStart)
-        : spec.startsWith("node:") ||
-          (spec.startsWith(".") && !path.relative(HOOKS_DIR, path.resolve(path.dirname(file), spec)).startsWith(".."));
+      const legal =
+        spec === "node:sqlite"
+          ? text.startsWith("import type", lineStart)
+          : spec.startsWith("node:") ||
+            (spec.startsWith(".") &&
+              !path.relative(HOOKS_DIR, path.resolve(path.dirname(file), spec)).startsWith(".."));
       const line = text.slice(0, match.index).split("\n").length;
       if (!legal) found.push(`${path.relative(REPO_ROOT, file)}:${line}: ${spec}`);
     }

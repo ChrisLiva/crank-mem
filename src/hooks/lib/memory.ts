@@ -15,10 +15,15 @@ export const SCHEMA_VERSION = 2;
 export const MEMORY_FILE = "memory.db";
 /** Snapshots of the store, relative to the folder that holds it. */
 export const SNAPSHOT_DIR = path.join("backups", "memory");
-export const MEMORY_OLDER_NOTE = "crank-mem: memory.db predates this version; run `crank-mem upgrade`.";
-export const MEMORY_NEWER_NOTE = "crank-mem: memory.db is newer than this version; run `crank-mem upgrade`.";
+export const MEMORY_OLDER_NOTE =
+  "crank-mem: memory.db predates this version; run `crank-mem upgrade`.";
+export const MEMORY_NEWER_NOTE =
+  "crank-mem: memory.db is newer than this version; run `crank-mem upgrade`.";
 export const MEMORY_UNREADABLE_NOTE = "crank-mem: .crank/memory.db is not a readable database.";
-export type MemoryReader = Omit<Memory, "appendDigest" | "recordRejection" | "putVectors" | "recordConsolidation" | "maintain">;
+export type MemoryReader = Omit<
+  Memory,
+  "appendDigest" | "recordRejection" | "putVectors" | "recordConsolidation" | "maintain"
+>;
 export type MemoryRead =
   | { status: "open"; memory: MemoryReader }
   | { status: "missing" | "older" | "newer" | "unreadable" };
@@ -29,47 +34,90 @@ export type MemoryWrite =
   | { status: "unmigrated"; detail: string };
 
 /** SCHEMA_V1's observations.type CHECK repeats this list as a literal; schema v1 freezes it. */
-export const OBSERVATION_TYPES = ["bugfix", "feature", "refactor", "change", "discovery", "decision"] as const;
+export const OBSERVATION_TYPES = [
+  "bugfix",
+  "feature",
+  "refactor",
+  "change",
+  "discovery",
+  "decision",
+] as const;
 export type ObservationType = (typeof OBSERVATION_TYPES)[number];
 export type Position = { uuid: string; timestamp: string };
 export type SessionKey = { id: string; agent: "claude"; transcriptPath: string };
-export type DigestSummary = { request: string; investigated: string; learned: string; completed: string; next_steps: string };
+export type DigestSummary = {
+  request: string;
+  investigated: string;
+  learned: string;
+  completed: string;
+  next_steps: string;
+};
 export type NewObservation = {
-  type: ObservationType; title: string; narrative: string; facts: string[];
-  filesRead: string[]; filesModified: string[];
+  type: ObservationType;
+  title: string;
+  narrative: string;
+  facts: string[];
+  filesRead: string[];
+  filesModified: string[];
 };
 export type ProposalKind = "preference" | "memory";
 export type DigestInput = {
-  session: SessionKey; expected: Position | null; next: Position;
-  model: string; costUsd: number; summary: DigestSummary; observations: NewObservation[];
+  session: SessionKey;
+  expected: Position | null;
+  next: Position;
+  model: string;
+  costUsd: number;
+  summary: DigestSummary;
+  observations: NewObservation[];
   proposals: { kind: ProposalKind; bullet: string }[];
   stale: { id: number; reason: string }[];
 };
-export type ObservationLine = { id: number; createdAtMs: number; type: ObservationType; title: string; stale: boolean };
+export type ObservationLine = {
+  id: number;
+  createdAtMs: number;
+  type: ObservationType;
+  title: string;
+  stale: boolean;
+};
 export type Observation = ObservationLine & {
-  sessionId: string; narrative: string; facts: string[]; filesRead: string[]; filesModified: string[];
+  sessionId: string;
+  narrative: string;
+  facts: string[];
+  filesRead: string[];
+  filesModified: string[];
   staleFlag: { atMs: number; reason: string } | null;
 };
 export type SearchHit = ObservationLine;
 export type SearchQuery = {
-  text: string; vector: { model: string; values: Float32Array } | null; limit: number;
-  type: ObservationType | null; sinceMs: number | null; file: string | null; stale: boolean;
+  text: string;
+  vector: { model: string; values: Float32Array } | null;
+  limit: number;
+  type: ObservationType | null;
+  sinceMs: number | null;
+  file: string | null;
+  stale: boolean;
 };
 export type MemoryStats = {
-  observations: number; unembedded: number; lastDigestMs: number | null; costUsdSince: number;
-  pendingProposals: number; staleRows: number;
+  observations: number;
+  unembedded: number;
+  lastDigestMs: number | null;
+  costUsdSince: number;
+  pendingProposals: number;
+  staleRows: number;
   lastConsolidation: { startedMs: number; outcome: ConsolidationOutcome } | null;
 };
 export type ConsolidationOutcome = "ok" | "conflict" | "rejected" | "retry" | "stopped";
 export type PendingWork = {
   proposals: { id: number; kind: ProposalKind; bullet: string }[];
   stale: { id: number; title: string; narrative: string; reason: string }[];
-  lastStartMs: number | null; lastOkStartMs: number | null;
+  lastStartMs: number | null;
+  lastOkStartMs: number | null;
 };
 type RunBase = { startedMs: number; model: string | null; costUsd: number };
 export type ConsolidationRecord =
   | (RunBase & {
-      outcome: "ok"; sent: number[];
+      outcome: "ok";
+      sent: number[];
       decided: { id: number; state: "accepted" | "rejected"; reason: string }[];
       verdicts: { id: number; verdict: "confirmed" | "cleared" }[];
     })
@@ -101,7 +149,10 @@ export interface Memory {
    * flagged stale more than `staleKeepMs` ago, and trims the snapshot folder. Null when not due; throws,
    * before any delete, when the snapshot fails.
    */
-  maintain(opts: { everyMs: number; staleKeepMs: number }): { snapshot: string; deleted: number } | null;
+  maintain(opts: {
+    everyMs: number;
+    staleKeepMs: number;
+  }): { snapshot: string; deleted: number } | null;
   close(): void;
 }
 
@@ -173,7 +224,9 @@ export function memoryPath(root: string): string {
   const r = runGit(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], 500);
   if ("error" in r) return own;
   const main = path.dirname(r.stdout.trim());
-  return fs.existsSync(path.join(main, CRANK_DIR, "config.json")) ? path.join(main, CRANK_DIR, MEMORY_FILE) : own;
+  return fs.existsSync(path.join(main, CRANK_DIR, "config.json"))
+    ? path.join(main, CRANK_DIR, MEMORY_FILE)
+    : own;
 }
 
 export function openMemory(file: string, mode: "read"): MemoryRead;
@@ -208,7 +261,11 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
       } else {
         // VACUUM INTO cannot run inside migrate's transaction, so the snapshot comes first.
         try {
-          writeSnapshot(db, path.join(path.dirname(file), SNAPSHOT_DIR), `${snapshotStamp()}-v${v}.db`);
+          writeSnapshot(
+            db,
+            path.join(path.dirname(file), SNAPSHOT_DIR),
+            `${snapshotStamp()}-v${v}.db`,
+          );
         } catch (err) {
           db.close();
           return { status: "unmigrated", detail: errorMessage(err) };
@@ -223,7 +280,11 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
     }
     return { status: "open", memory: createMemory(db, file), migratedFrom };
   } catch {
-    try { db?.close(); } catch { /* already closed or never opened */ }
+    try {
+      db?.close();
+    } catch {
+      /* already closed or never opened */
+    }
     return { status: "unreadable" };
   }
 }
@@ -253,7 +314,11 @@ function snapshotStamp(): string {
 export function latestSnapshot(storeFile: string): { file: string; atMs: number } | null {
   const dir = path.join(path.dirname(storeFile), SNAPSHOT_DIR);
   try {
-    const name = fs.readdirSync(dir).filter((n) => n.endsWith(".db")).sort().at(-1);
+    const name = fs
+      .readdirSync(dir)
+      .filter((n) => n.endsWith(".db"))
+      .sort()
+      .at(-1);
     if (name === undefined) return null;
     const file = path.join(dir, name);
     return { file, atMs: fs.statSync(file).mtimeMs };
@@ -305,9 +370,11 @@ function snapshotProblem(src: sqlite.DatabaseSync): string | null {
  * Copies `snapshotFile` over `storeFile`, first saving the current store as a daily snapshot.
  * savedAs: where the previous store went, null when there was none.
  */
-export async function restoreMemory(storeFile: string, snapshotFile: string): Promise<
-  | { status: "restored"; savedAs: string | null }
-  | { status: "invalid" | "busy"; detail: string }
+export async function restoreMemory(
+  storeFile: string,
+  snapshotFile: string,
+): Promise<
+  { status: "restored"; savedAs: string | null } | { status: "invalid" | "busy"; detail: string }
 > {
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
   if (!mod) throw new Error("node:sqlite is unavailable");
@@ -340,7 +407,8 @@ export async function restoreMemory(storeFile: string, snapshotFile: string): Pr
         fs.mkdirSync(dir, { recursive: true });
         fs.renameSync(storeFile, savedAs);
         for (const suffix of ["-wal", "-shm"]) {
-          if (fs.existsSync(storeFile + suffix)) fs.renameSync(storeFile + suffix, savedAs + suffix);
+          if (fs.existsSync(storeFile + suffix))
+            fs.renameSync(storeFile + suffix, savedAs + suffix);
         }
       }
     }
@@ -350,7 +418,8 @@ export async function restoreMemory(storeFile: string, snapshotFile: string): Pr
         await mod.backup(src, storeFile);
         break;
       } catch {
-        if (Date.now() - firstMs >= RESTORE_WAIT_MS) return { status: "busy", detail: "memory.db stayed locked for 10 s" };
+        if (Date.now() - firstMs >= RESTORE_WAIT_MS)
+          return { status: "busy", detail: "memory.db stayed locked for 10 s" };
         await new Promise((resolve) => setTimeout(resolve, RESTORE_RETRY_MS));
       }
     }
@@ -384,7 +453,11 @@ function migrate(db: sqlite.DatabaseSync): number | null | "newer" {
     db.exec("COMMIT");
     return v;
   } catch (err) {
-    try { db.exec("ROLLBACK"); } catch { /* no open transaction */ }
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      /* no open transaction */
+    }
     throw err;
   }
 }
@@ -393,11 +466,15 @@ type Row = Record<string, unknown>;
 
 const LINE_COLUMNS = "o.id, o.created_at, o.type, o.title, o.stale_at";
 const NEWEST_FIRST = "ORDER BY o.created_at DESC, o.id DESC";
-const UNEMBEDDED = "NOT EXISTS (SELECT 1 FROM observation_vectors v WHERE v.observation_id = o.id AND v.model = ?)";
+const UNEMBEDDED =
+  "NOT EXISTS (SELECT 1 FROM observation_vectors v WHERE v.observation_id = o.id AND v.model = ?)";
 
 function toLine(row: Row): ObservationLine {
   return {
-    id: Number(row.id), createdAtMs: Number(row.created_at), type: row.type as ObservationType, title: String(row.title),
+    id: Number(row.id),
+    createdAtMs: Number(row.created_at),
+    type: row.type as ObservationType,
+    title: String(row.title),
     stale: row.stale_at !== null,
   };
 }
@@ -425,7 +502,11 @@ function newestFirst(a: ObservationLine, b: ObservationLine): number {
 
 /** Quotes every whitespace-separated term so raw input never parses as FTS5 syntax; "" when there are none. */
 function ftsQuery(text: string, joiner: " " | " OR "): string {
-  return text.split(/\s+/).filter(Boolean).map((term) => `"${term.replaceAll('"', '""')}"`).join(joiner);
+  return text
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((term) => `"${term.replaceAll('"', '""')}"`)
+    .join(joiner);
 }
 
 function dot(a: Float32Array, b: Float32Array): number {
@@ -436,7 +517,10 @@ function dot(a: Float32Array, b: Float32Array): number {
 
 /** sha256 hex of the text, lowercased, with whitespace runs collapsed and trimmed. */
 function normalizedHash(text: string): string {
-  return crypto.createHash("sha256").update(text.toLowerCase().replace(/\s+/g, " ").trim()).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(text.toLowerCase().replace(/\s+/g, " ").trim())
+    .digest("hex");
 }
 
 /** An observation's dedupe key: its normalized title and narrative. */
@@ -454,8 +538,10 @@ function samePosition(a: Position | null, b: Position | null): boolean {
 }
 
 function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
-  const one = (sql: string, ...params: sqlite.SQLInputValue[]) => db.prepare(sql).get(...params) as Row | undefined;
-  const all = (sql: string, ...params: sqlite.SQLInputValue[]) => db.prepare(sql).all(...params) as Row[];
+  const one = (sql: string, ...params: sqlite.SQLInputValue[]) =>
+    db.prepare(sql).get(...params) as Row | undefined;
+  const all = (sql: string, ...params: sqlite.SQLInputValue[]) =>
+    db.prepare(sql).all(...params) as Row[];
 
   function transaction<T>(fn: () => T): T {
     db.exec("BEGIN IMMEDIATE");
@@ -464,7 +550,11 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       db.exec("COMMIT");
       return result;
     } catch (err) {
-      try { db.exec("ROLLBACK"); } catch { /* no open transaction */ }
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        /* no open transaction */
+      }
       throw err;
     }
   }
@@ -490,8 +580,11 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       );
       if (!row) return null;
       return {
-        request: String(row.request), investigated: String(row.investigated), learned: String(row.learned),
-        completed: String(row.completed), next_steps: String(row.next_steps),
+        request: String(row.request),
+        investigated: String(row.investigated),
+        learned: String(row.learned),
+        completed: String(row.completed),
+        next_steps: String(row.next_steps),
       };
     },
 
@@ -507,32 +600,51 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
              position_uuid = excluded.position_uuid, position_ts = excluded.position_ts, rejections = 0`,
         ).run(session.id, session.agent, session.transcriptPath, next.uuid, next.timestamp);
         const now = Date.now();
-        const digestId = db.prepare(
-          `INSERT INTO digests (session_id, created_at, model, cost_usd, request, investigated, learned, completed, next_steps)
+        const digestId = db
+          .prepare(
+            `INSERT INTO digests (session_id, created_at, model, cost_usd, request, investigated, learned, completed, next_steps)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          session.id, now, input.model, input.costUsd, summary.request, summary.investigated,
-          summary.learned, summary.completed, summary.next_steps,
-        ).lastInsertRowid;
+          )
+          .run(
+            session.id,
+            now,
+            input.model,
+            input.costUsd,
+            summary.request,
+            summary.investigated,
+            summary.learned,
+            summary.completed,
+            summary.next_steps,
+          ).lastInsertRowid;
         // ON CONFLICT names the unique column so a CHECK violation still throws; OR IGNORE would swallow it.
         const insertObservation = db.prepare(
           `INSERT INTO observations (digest_id, type, title, narrative, facts, content_hash, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(content_hash) DO NOTHING`,
         );
-        const insertFile = db.prepare("INSERT OR IGNORE INTO observation_files (path, observation_id, kind) VALUES (?, ?, ?)");
+        const insertFile = db.prepare(
+          "INSERT OR IGNORE INTO observation_files (path, observation_id, kind) VALUES (?, ?, ?)",
+        );
         for (const o of input.observations) {
           const inserted = insertObservation.run(
-            digestId, o.type, o.title, o.narrative, JSON.stringify(o.facts), contentHash(o.title, o.narrative), now,
+            digestId,
+            o.type,
+            o.title,
+            o.narrative,
+            JSON.stringify(o.facts),
+            contentHash(o.title, o.narrative),
+            now,
           );
           if (inserted.changes === 0) continue;
           for (const file of o.filesRead) insertFile.run(file, inserted.lastInsertRowid, "read");
-          for (const file of o.filesModified) insertFile.run(file, inserted.lastInsertRowid, "modified");
+          for (const file of o.filesModified)
+            insertFile.run(file, inserted.lastInsertRowid, "modified");
         }
         const insertProposal = db.prepare(
           `INSERT INTO proposals (digest_id, kind, bullet, bullet_hash, created_at)
            VALUES (?, ?, ?, ?, ?) ON CONFLICT(bullet_hash) DO NOTHING`,
         );
-        for (const p of input.proposals) insertProposal.run(digestId, p.kind, p.bullet, bulletHash(p.bullet), now);
+        for (const p of input.proposals)
+          insertProposal.run(digestId, p.kind, p.bullet, bulletHash(p.bullet), now);
         // A row keeps its first flag.
         const flag = db.prepare(
           "UPDATE observations SET stale_at = ?, stale_reason = ?, stale_reviewed = 0 WHERE id = ? AND stale_at IS NULL",
@@ -547,7 +659,9 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       const row = one(
         `INSERT INTO sessions (id, agent, transcript_path, rejections) VALUES (?, ?, ?, 1)
          ON CONFLICT(id) DO UPDATE SET rejections = rejections + 1 RETURNING rejections`,
-        session.id, session.agent, session.transcriptPath,
+        session.id,
+        session.agent,
+        session.transcriptPath,
       );
       return Number(row!.rejections);
     },
@@ -556,13 +670,19 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       return all(
         `SELECT o.id, o.title, o.narrative FROM observations o WHERE ${UNEMBEDDED}
          ORDER BY o.created_at, o.id LIMIT ?`,
-        model, limit,
-      ).map((row) => ({ id: Number(row.id), text: `${String(row.title)}\n${String(row.narrative)}` }));
+        model,
+        limit,
+      ).map((row) => ({
+        id: Number(row.id),
+        text: `${String(row.title)}\n${String(row.narrative)}`,
+      }));
     },
 
     putVectors(model, rows) {
       transaction(() => {
-        const put = db.prepare("INSERT OR REPLACE INTO observation_vectors (observation_id, model, vector) VALUES (?, ?, ?)");
+        const put = db.prepare(
+          "INSERT OR REPLACE INTO observation_vectors (observation_id, model, vector) VALUES (?, ?, ?)",
+        );
         for (const { id, vector } of rows) {
           put.run(id, model, new Uint8Array(vector.buffer, vector.byteOffset, vector.byteLength));
         }
@@ -574,8 +694,14 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     search(query) {
       const filters: string[] = query.stale ? [] : ["o.stale_at IS NULL"];
       const params: sqlite.SQLInputValue[] = [];
-      if (query.type !== null) { filters.push("o.type = ?"); params.push(query.type); }
-      if (query.sinceMs !== null) { filters.push("o.created_at >= ?"); params.push(query.sinceMs); }
+      if (query.type !== null) {
+        filters.push("o.type = ?");
+        params.push(query.type);
+      }
+      if (query.sinceMs !== null) {
+        filters.push("o.created_at >= ?");
+        params.push(query.sinceMs);
+      }
       if (query.file !== null) {
         filters.push("o.id IN (SELECT observation_id FROM observation_files WHERE path = ?)");
         params.push(query.file);
@@ -588,7 +714,9 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
           `SELECT ${LINE_COLUMNS} FROM observations_fts JOIN observations o ON o.id = observations_fts.rowid
            WHERE observations_fts MATCH ?${where}
            ORDER BY bm25(observations_fts), o.created_at DESC, o.id DESC LIMIT ?`,
-          match, ...params, LIST_DEPTH,
+          match,
+          ...params,
+          LIST_DEPTH,
         ).map(toLine);
       };
       const vector = query.vector;
@@ -599,12 +727,19 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       const byVector = all(
         `SELECT ${LINE_COLUMNS}, v.vector FROM observation_vectors v JOIN observations o ON o.id = v.observation_id
          WHERE v.model = ?${where}`,
-        vector.model, ...params,
-      ).map((row) => {
-        const bytes = row.vector as Uint8Array;
-        const stored = new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
-        return { line: toLine(row), score: dot(stored, vector.values) };
-      }).sort((x, y) => y.score - x.score || newestFirst(x.line, y.line)).slice(0, LIST_DEPTH).map((s) => s.line);
+        vector.model,
+        ...params,
+      )
+        .map((row) => {
+          const bytes = row.vector as Uint8Array;
+          const stored = new Float32Array(
+            bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+          );
+          return { line: toLine(row), score: dot(stored, vector.values) };
+        })
+        .sort((x, y) => y.score - x.score || newestFirst(x.line, y.line))
+        .slice(0, LIST_DEPTH)
+        .map((s) => s.line);
       const fused = new Map<number, { line: ObservationLine; score: number }>();
       for (const list of [keyword(" "), byVector]) {
         list.forEach((line, i) => {
@@ -625,12 +760,16 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       const at = Number(anchor.created_at);
       const before = all(
         `SELECT ${LINE_COLUMNS} FROM observations o WHERE (o.created_at, o.id) < (?, ?) ${NEWEST_FIRST} LIMIT ?`,
-        at, id, depth,
+        at,
+        id,
+        depth,
       ).reverse();
       const after = all(
         `SELECT ${LINE_COLUMNS} FROM observations o WHERE (o.created_at, o.id) > (?, ?)
          ORDER BY o.created_at, o.id LIMIT ?`,
-        at, id, depth,
+        at,
+        id,
+        depth,
       );
       return [...before, anchor, ...after].map(toLine);
     },
@@ -644,7 +783,10 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
           id,
         );
         if (!row) continue;
-        const files = all("SELECT path, kind FROM observation_files WHERE observation_id = ? ORDER BY path", id);
+        const files = all(
+          "SELECT path, kind FROM observation_files WHERE observation_id = ? ORDER BY path",
+          id,
+        );
         found.push({
           ...toLine(row),
           sessionId: String(row.session_id),
@@ -652,14 +794,20 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
           facts: JSON.parse(String(row.facts)) as string[],
           filesRead: files.filter((f) => f.kind === "read").map((f) => String(f.path)),
           filesModified: files.filter((f) => f.kind === "modified").map((f) => String(f.path)),
-          staleFlag: row.stale_at === null ? null : { atMs: Number(row.stale_at), reason: String(row.stale_reason) },
+          staleFlag:
+            row.stale_at === null
+              ? null
+              : { atMs: Number(row.stale_at), reason: String(row.stale_reason) },
         });
       }
       return found;
     },
 
     recent(limit) {
-      return all(`SELECT ${LINE_COLUMNS} FROM observations o WHERE o.stale_at IS NULL ${NEWEST_FIRST} LIMIT ?`, limit).map(toLine);
+      return all(
+        `SELECT ${LINE_COLUMNS} FROM observations o WHERE o.stale_at IS NULL ${NEWEST_FIRST} LIMIT ?`,
+        limit,
+      ).map(toLine);
     },
 
     latestNextSteps() {
@@ -674,7 +822,8 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
         `SELECT ${LINE_COLUMNS} FROM observations o
          WHERE o.stale_at IS NULL AND o.id IN (SELECT observation_id FROM observation_files WHERE path = ?)
          ${NEWEST_FIRST} LIMIT ?`,
-        relPath, limit,
+        relPath,
+        limit,
       ).map(toLine);
     },
 
@@ -691,7 +840,9 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
         "SELECT COALESCE(SUM(cost_usd), 0) AS cost FROM consolidations WHERE started_at >= ?",
         sinceMs,
       )!;
-      const last = one("SELECT started_at, outcome FROM consolidations ORDER BY started_at DESC, id DESC LIMIT 1");
+      const last = one(
+        "SELECT started_at, outcome FROM consolidations ORDER BY started_at DESC, id DESC LIMIT 1",
+      );
       const flags = one(
         `SELECT (SELECT COUNT(*) FROM proposals WHERE state = 'pending') AS proposals,
                 (SELECT COUNT(*) FROM observations WHERE stale_at IS NOT NULL) AS stale`,
@@ -713,13 +864,20 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       const proposals = all(
         "SELECT id, kind, bullet FROM proposals WHERE state = 'pending' ORDER BY created_at, id LIMIT ?",
         limit,
-      ).map((row) => ({ id: Number(row.id), kind: row.kind as ProposalKind, bullet: String(row.bullet) }));
+      ).map((row) => ({
+        id: Number(row.id),
+        kind: row.kind as ProposalKind,
+        bullet: String(row.bullet),
+      }));
       const stale = all(
         `SELECT id, title, narrative, stale_reason FROM observations
          WHERE stale_at IS NOT NULL AND stale_reviewed = 0 ORDER BY stale_at, id LIMIT ?`,
         limit,
       ).map((row) => ({
-        id: Number(row.id), title: String(row.title), narrative: String(row.narrative), reason: String(row.stale_reason),
+        id: Number(row.id),
+        title: String(row.title),
+        narrative: String(row.narrative),
+        reason: String(row.stale_reason),
       }));
       const runs = one(
         `SELECT MAX(started_at) AS last, MAX(started_at) FILTER (WHERE outcome = 'ok') AS lastOk FROM consolidations`,
@@ -731,17 +889,22 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     recordConsolidation(run) {
       transaction(() => {
         const now = Date.now();
-        db.prepare("INSERT INTO consolidations (started_at, finished_at, outcome, model, cost_usd) VALUES (?, ?, ?, ?, ?)")
-          .run(run.startedMs, now, run.outcome, run.model, run.costUsd);
+        db.prepare(
+          "INSERT INTO consolidations (started_at, finished_at, outcome, model, cost_usd) VALUES (?, ?, ?, ?, ?)",
+        ).run(run.startedMs, now, run.outcome, run.model, run.costUsd);
         if (run.outcome === "conflict") return;
-        const attempt = db.prepare("UPDATE proposals SET attempts = attempts + 1 WHERE id = ? AND state = 'pending'");
+        const attempt = db.prepare(
+          "UPDATE proposals SET attempts = attempts + 1 WHERE id = ? AND state = 'pending'",
+        );
         for (const id of run.sent) attempt.run(id);
         if (run.outcome === "ok") {
           const decide = db.prepare(
             "UPDATE proposals SET state = ?, reason = ?, decided_at = ? WHERE id = ? AND state = 'pending'",
           );
           for (const d of run.decided) decide.run(d.state, d.reason, now, d.id);
-          const confirm = db.prepare("UPDATE observations SET stale_reviewed = 1 WHERE id = ? AND stale_at IS NOT NULL");
+          const confirm = db.prepare(
+            "UPDATE observations SET stale_reviewed = 1 WHERE id = ? AND stale_at IS NOT NULL",
+          );
           const clear = db.prepare(
             "UPDATE observations SET stale_at = NULL, stale_reason = NULL, stale_reviewed = 0 WHERE id = ?",
           );
@@ -762,13 +925,24 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       const deleted = transaction(() => {
         const cutoff = Date.now() - staleKeepMs;
         const expired = "SELECT id FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?";
-        db.prepare(`DELETE FROM observation_files WHERE observation_id IN (${expired})`).run(cutoff);
-        db.prepare(`DELETE FROM observation_vectors WHERE observation_id IN (${expired})`).run(cutoff);
-        return Number(db.prepare("DELETE FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?").run(cutoff).changes);
+        db.prepare(`DELETE FROM observation_files WHERE observation_id IN (${expired})`).run(
+          cutoff,
+        );
+        db.prepare(`DELETE FROM observation_vectors WHERE observation_id IN (${expired})`).run(
+          cutoff,
+        );
+        return Number(
+          db
+            .prepare("DELETE FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?")
+            .run(cutoff).changes,
+        );
       });
       const names = fs.readdirSync(dir);
       const daily = names.filter((n) => DAILY_SNAPSHOT.test(n)).sort();
-      for (const n of [...daily.slice(0, -DAILY_KEEP), ...names.filter((n) => n.endsWith(".tmp"))]) {
+      for (const n of [
+        ...daily.slice(0, -DAILY_KEEP),
+        ...names.filter((n) => n.endsWith(".tmp")),
+      ]) {
         fs.rmSync(path.join(dir, n), { force: true });
       }
       return { snapshot, deleted };

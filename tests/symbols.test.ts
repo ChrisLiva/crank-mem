@@ -50,14 +50,22 @@ describe("extractSymbols — TypeScript", () => {
       "const x = (1 + 2) * 3;",
       "const cfg: Record<string, number> = {};",
     ].join("\n");
-    expect(extractSymbols(src, ".ts").map((s) => s.name)).toEqual(["bytes", "load", "handler", "pick"]);
+    expect(extractSymbols(src, ".ts").map((s) => s.name)).toEqual([
+      "bytes",
+      "load",
+      "handler",
+      "pick",
+    ]);
   });
 });
 
 describe("extractSymbols — Python", () => {
   test("finds def and class", () => {
     const syms = extractSymbols("def foo():\n    pass\n\nclass Bar:\n    pass\n", ".py");
-    expect(syms.map((s) => [s.name, s.kind])).toEqual([["foo", "fn"], ["Bar", "class"]]);
+    expect(syms.map((s) => [s.name, s.kind])).toEqual([
+      ["foo", "fn"],
+      ["Bar", "class"],
+    ]);
   });
 });
 
@@ -66,7 +74,10 @@ describe("extractSymbols — Go", () => {
     const src = "func Foo() {}\nfunc (r *R) Bar() {}\ntype Baz struct {}\ntype Qux interface {}\n";
     const syms = extractSymbols(src, ".go");
     expect(syms.map((s) => [s.name, s.kind])).toEqual([
-      ["Foo", "fn"], ["Bar", "fn"], ["Baz", "class"], ["Qux", "section"],
+      ["Foo", "fn"],
+      ["Bar", "fn"],
+      ["Baz", "class"],
+      ["Qux", "section"],
     ]);
   });
 });
@@ -76,7 +87,10 @@ describe("extractSymbols — Rust", () => {
     const src = "pub fn foo() {}\nstruct Bar;\npub enum Baz { A }\nimpl Bar {}\n";
     const syms = extractSymbols(src, ".rs");
     expect(syms.map((s) => [s.name, s.kind])).toEqual([
-      ["foo", "fn"], ["Bar", "class"], ["Baz", "class"], ["Bar", "section"],
+      ["foo", "fn"],
+      ["Bar", "class"],
+      ["Baz", "class"],
+      ["Bar", "section"],
     ]);
   });
 });

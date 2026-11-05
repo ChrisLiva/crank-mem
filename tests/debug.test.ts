@@ -13,7 +13,7 @@ const THROWING = "tests/fixtures/throwing-hook.ts";
 function holdLock(root: string): void {
   fs.writeFileSync(
     path.join(root, ".crank/anatomy-index.lock"),
-    JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() + 60_000 })
+    JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() + 60_000 }),
   );
 }
 
@@ -200,7 +200,9 @@ describe("debug logging (black-box)", () => {
 
     const run = runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("`.crank/anatomy.md` indexes 1 file(s)");
+    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain(
+      "`.crank/anatomy.md` indexes 1 file(s)",
+    );
   });
 
   test("an oversized log is restarted rather than grown without bound", () => {

@@ -8,7 +8,8 @@ import { flushDebug } from "./debug.ts";
 
 export type Obj = Record<string, unknown>;
 
-export const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+export const isObj = (v: unknown): v is Obj =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Read all of stdin (hooks receive one JSON payload then EOF). */
 export async function readStdin(): Promise<string> {
@@ -42,7 +43,10 @@ export function parsePayload(raw: string): HookPayload | null {
  */
 export function isCodexPayload(payload: HookPayload): boolean {
   if (typeof payload.turn_id === "string") return true;
-  return typeof payload.transcript_path === "string" && path.basename(payload.transcript_path).startsWith("rollout-");
+  return (
+    typeof payload.transcript_path === "string" &&
+    path.basename(payload.transcript_path).startsWith("rollout-")
+  );
 }
 
 /**
@@ -80,7 +84,7 @@ export function memoryPaths(root: string, cwd: string, paths: string[]): string[
 /** Emit model-visible context via hookSpecificOutput (both agents). */
 export function emitAdditionalContext(hookEventName: string, context: string): void {
   process.stdout.write(
-    JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: context } })
+    JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: context } }),
   );
 }
 

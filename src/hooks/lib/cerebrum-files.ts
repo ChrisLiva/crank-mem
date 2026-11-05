@@ -45,14 +45,18 @@ export function backupCerebrum(crankDir: string, text: string): string | null {
     const dir = path.join(crankDir, BACKUP_DIR);
     fs.mkdirSync(dir, { recursive: true });
     // ISO stamps sort chronologically, so the last name is the newest copy.
-    const copies = fs.readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+    const copies = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".md"))
+      .sort();
     let name = copies[copies.length - 1];
     if (!name || fs.readFileSync(path.join(dir, name), "utf-8") !== text) {
       name = new Date().toISOString().replace(/[:.]/g, "-") + ".md";
       fs.writeFileSync(path.join(dir, name), text);
       copies.push(name);
     }
-    for (const old of copies.slice(0, -BACKUP_KEEP)) fs.rmSync(path.join(dir, old), { force: true });
+    for (const old of copies.slice(0, -BACKUP_KEEP))
+      fs.rmSync(path.join(dir, old), { force: true });
     return path.join(".crank", BACKUP_DIR, name);
   } catch (err) {
     debugEvent("cerebrum-backup-failed", {
@@ -119,7 +123,10 @@ export function lastAuditMs(crankDir: string): number | null {
 export function manifestDirs(crankDir: string): string[] {
   const base = path.join(crankDir, "backups");
   try {
-    return fs.readdirSync(base).filter((d) => fs.existsSync(path.join(base, d, "manifest.json"))).sort();
+    return fs
+      .readdirSync(base)
+      .filter((d) => fs.existsSync(path.join(base, d, "manifest.json")))
+      .sort();
   } catch {
     return [];
   }
@@ -128,11 +135,15 @@ export function manifestDirs(crankDir: string): string[] {
 /** Install time in ms: the stamp of the oldest backup dir with a manifest (init writes it), or null. Never throws. */
 export function installedAtMs(crankDir: string): number | null {
   const first = manifestDirs(crankDir)[0];
-  const ms = first ? Date.parse(first.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d+)Z$/, "T$1:$2:$3.$4Z")) : NaN;
+  const ms = first
+    ? Date.parse(first.replace(/T(\d\d)-(\d\d)-(\d\d)-(\d+)Z$/, "T$1:$2:$3.$4Z"))
+    : NaN;
   return Number.isNaN(ms) ? null : ms;
 }
 
 /** Whether the audit skill is installed in the project for this agent: `.agents/skills/` on Codex, `.claude/skills/` on Claude. */
 export function auditSkillInstalled(projectRoot: string, codex: boolean): boolean {
-  return fs.existsSync(path.join(projectRoot, codex ? ".agents" : ".claude", "skills", AUDIT_SKILL, "SKILL.md"));
+  return fs.existsSync(
+    path.join(projectRoot, codex ? ".agents" : ".claude", "skills", AUDIT_SKILL, "SKILL.md"),
+  );
 }

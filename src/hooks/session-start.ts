@@ -1,6 +1,11 @@
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload,
+  readStdin,
+  parsePayload,
+  findProjectRoot,
+  emitAdditionalContext,
+  runAdvisoryHook,
+  isCodexPayload,
 } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex, commitIndex } from "./lib/store.ts";
@@ -64,7 +69,7 @@ async function main(): Promise<void> {
       driftNote: drift ?? undefined,
       captureNotes: captureNotes(sources.gate, sources.recall.status),
     },
-    config.injection_budget_bytes
+    config.injection_budget_bytes,
   ).text;
 
   emitAdditionalContext("SessionStart", context);

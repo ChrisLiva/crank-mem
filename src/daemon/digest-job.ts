@@ -67,7 +67,9 @@ export async function run(args: string[]): Promise<number> {
 }
 
 async function digest(
-  memory: Memory, stem: string, entry: SpoolEntry,
+  memory: Memory,
+  stem: string,
+  entry: SpoolEntry,
   opts: { timeoutMs: number; everyMs: number; maintainEveryMs: number; staleKeepMs: number },
 ): Promise<number> {
   const { timeoutMs, maintainEveryMs, staleKeepMs } = opts;
@@ -82,7 +84,9 @@ async function digest(
     return 0;
   }
   const context = digestContext(memory, entry, d.paths);
-  const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem), context), { timeoutMs });
+  const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem), context), {
+    timeoutMs,
+  });
   if (r.kind === "retry") return 1;
   if (r.kind === "stopped") {
     writeStopState({ reason: r.reason, atMs: Date.now(), detail: r.detail });
@@ -97,8 +101,17 @@ async function digest(
     return 1;
   }
   const outcome = memory.appendDigest({
-    session, expected: pos, next: d.next, model: r.model, costUsd: r.costUsd,
-    ...stored(r.output, entry.projectRoot, entry.cwd, context.existing.map((o) => o.id)),
+    session,
+    expected: pos,
+    next: d.next,
+    model: r.model,
+    costUsd: r.costUsd,
+    ...stored(
+      r.output,
+      entry.projectRoot,
+      entry.cwd,
+      context.existing.map((o) => o.id),
+    ),
   });
   if (outcome === "appended") {
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
@@ -106,12 +119,16 @@ async function digest(
     try {
       memory.maintain({ everyMs: maintainEveryMs, staleKeepMs });
     } catch (err) {
-      console.error(`crank-mem: maintenance skipped (${err instanceof Error ? err.message : String(err)})`);
+      console.error(
+        `crank-mem: maintenance skipped (${err instanceof Error ? err.message : String(err)})`,
+      );
     }
     try {
       await consolidate(entry.projectRoot, memory, opts);
     } catch (err) {
-      process.stderr.write(`crank-mem: consolidation skipped (${err instanceof Error ? err.message : String(err)})\n`);
+      process.stderr.write(
+        `crank-mem: consolidation skipped (${err instanceof Error ? err.message : String(err)})\n`,
+      );
     }
   }
   return 0;
@@ -124,7 +141,10 @@ async function digest(
 function digestContext(memory: Memory, entry: SpoolEntry, paths: string[]): DigestContext {
   let cerebrum: string | null = null;
   try {
-    cerebrum = splitPreamble(fs.readFileSync(path.join(entry.projectRoot, CRANK_DIR, CEREBRUM_FILE), "utf8")).body?.trimEnd() ?? null;
+    cerebrum =
+      splitPreamble(
+        fs.readFileSync(path.join(entry.projectRoot, CRANK_DIR, CEREBRUM_FILE), "utf8"),
+      ).body?.trimEnd() ?? null;
   } catch {
     // no cerebrum: the digest runs on the transcript and history alone
   }
@@ -136,7 +156,9 @@ function digestContext(memory: Memory, entry: SpoolEntry, paths: string[]): Dige
     }
     if (ids.size === HISTORY_TOTAL) break;
   }
-  const existing = memory.get([...ids]).map(({ id, type, title, narrative }) => ({ id, type, title, narrative }));
+  const existing = memory
+    .get([...ids])
+    .map(({ id, type, title, narrative }) => ({ id, type, title, narrative }));
   return { cerebrum, existing };
 }
 
@@ -145,10 +167,18 @@ async function embedPending(memory: Memory): Promise<void> {
   try {
     const rows = memory.unembedded(EMBED_MODEL, EMBED_BATCH);
     if (rows.length === 0) return;
-    const vectors = await embed(rows.map((r) => r.text), { remote: false });
-    memory.putVectors(EMBED_MODEL, rows.map((r, i) => ({ id: r.id, vector: vectors[i]! })));
+    const vectors = await embed(
+      rows.map((r) => r.text),
+      { remote: false },
+    );
+    memory.putVectors(
+      EMBED_MODEL,
+      rows.map((r, i) => ({ id: r.id, vector: vectors[i]! })),
+    );
   } catch (err) {
-    console.error(`crank-mem: embedding skipped (${err instanceof Error ? err.message : String(err)})`);
+    console.error(
+      `crank-mem: embedding skipped (${err instanceof Error ? err.message : String(err)})`,
+    );
   }
 }
 
@@ -162,16 +192,25 @@ function stored(output: Digest, root: string, cwd: string, shownIds: number[]) {
   const files = (paths: string[]) => memoryPaths(root, cwd, paths.map(redact));
   return {
     summary: {
-      request: redact(s.request), investigated: redact(s.investigated), learned: redact(s.learned),
-      completed: redact(s.completed), next_steps: redact(s.next_steps),
+      request: redact(s.request),
+      investigated: redact(s.investigated),
+      learned: redact(s.learned),
+      completed: redact(s.completed),
+      next_steps: redact(s.next_steps),
     },
     observations: output.observations.map((o) => ({
-      type: o.type, title: redact(o.title), narrative: redact(o.narrative), facts: o.facts.map(redact),
-      filesRead: files(o.files_read), filesModified: files(o.files_modified),
+      type: o.type,
+      title: redact(o.title),
+      narrative: redact(o.narrative),
+      facts: o.facts.map(redact),
+      filesRead: files(o.files_read),
+      filesModified: files(o.files_modified),
     })),
     proposals: output.proposals
       .map((p) => ({ kind: p.kind, bullet: redact(p.bullet).trim() }))
       .filter((p) => p.bullet !== ""),
-    stale: output.stale.filter((f) => shownIds.includes(f.id)).map((f) => ({ id: f.id, reason: redact(f.reason) })),
+    stale: output.stale
+      .filter((f) => shownIds.includes(f.id))
+      .map((f) => ({ id: f.id, reason: redact(f.reason) })),
   };
 }

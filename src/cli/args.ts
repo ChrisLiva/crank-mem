@@ -1,6 +1,9 @@
 // Tiny flag parser: --key value and boolean --flag.
 
-export function parseArgs(argv: string[], valueFlags: string[]): { flags: Record<string, string | boolean>; rest: string[] } {
+export function parseArgs(
+  argv: string[],
+  valueFlags: string[],
+): { flags: Record<string, string | boolean>; rest: string[] } {
   const flags: Record<string, string | boolean> = {};
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -20,9 +23,15 @@ export function parseArgs(argv: string[], valueFlags: string[]): { flags: Record
 }
 
 /** The first flag in argv that is neither one of `valueFlags` nor one of `boolFlags`, or null. */
-export function unknownFlag(argv: string[], valueFlags: string[], boolFlags: string[]): string | null {
+export function unknownFlag(
+  argv: string[],
+  valueFlags: string[],
+  boolFlags: string[],
+): string | null {
   const known = [...valueFlags, ...boolFlags];
-  return Object.keys(parseArgs(argv, valueFlags).flags).find((name) => !known.includes(name)) ?? null;
+  return (
+    Object.keys(parseArgs(argv, valueFlags).flags).find((name) => !known.includes(name)) ?? null
+  );
 }
 
 /** A numeric flag's value, or the default when it is absent, valueless (`true`) or not a positive number. */

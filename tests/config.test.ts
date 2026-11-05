@@ -3,7 +3,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  isExcluded, isSensitiveFile, loadConfig, saveConfig, defaultConfig, DEFAULT_EXCLUDES, CONFIG_FILE, LOCAL_CONFIG_FILE,
+  isExcluded,
+  isSensitiveFile,
+  loadConfig,
+  saveConfig,
+  defaultConfig,
+  DEFAULT_EXCLUDES,
+  CONFIG_FILE,
+  LOCAL_CONFIG_FILE,
 } from "../src/hooks/lib/config.ts";
 
 function dirWithConfig(json: string): string {
@@ -14,9 +21,14 @@ function dirWithConfig(json: string): string {
 
 describe("loadConfig sanitization", () => {
   test("wrong-typed fields fall back to defaults, valid fields kept", () => {
-    const dir = dirWithConfig(JSON.stringify({
-      excludes: "oops", max_files: "many", injection_budget_bytes: 2000, adr_path: "adr",
-    }));
+    const dir = dirWithConfig(
+      JSON.stringify({
+        excludes: "oops",
+        max_files: "many",
+        injection_budget_bytes: 2000,
+        adr_path: "adr",
+      }),
+    );
     const config = loadConfig(dir);
     expect(config.excludes).toEqual(DEFAULT_EXCLUDES);
     expect(config.max_files).toBe(defaultConfig().max_files);
@@ -35,7 +47,9 @@ describe("loadConfig sanitization", () => {
   });
 
   test("the retired token budget is dropped, not carried through", () => {
-    const dir = dirWithConfig(JSON.stringify({ injection_budget_tokens: 5000, my_own_key: "kept" }));
+    const dir = dirWithConfig(
+      JSON.stringify({ injection_budget_tokens: 5000, my_own_key: "kept" }),
+    );
     const config = loadConfig(dir) as unknown as Record<string, unknown>;
     expect(config.injection_budget_tokens).toBeUndefined();
     expect(config.injection_budget_bytes).toBe(defaultConfig().injection_budget_bytes);
@@ -81,8 +95,18 @@ describe("loadConfig sanitization", () => {
 
 describe("isSensitiveFile", () => {
   test("flags env files, keys, credentials", () => {
-    for (const f of [".env", ".env.local", "server.pem", "id_rsa", "id_ed25519.pub",
-      "aws-credentials.json", "secrets.yaml", ".npmrc", "app.key", "terraform.tfstate"]) {
+    for (const f of [
+      ".env",
+      ".env.local",
+      "server.pem",
+      "id_rsa",
+      "id_ed25519.pub",
+      "aws-credentials.json",
+      "secrets.yaml",
+      ".npmrc",
+      "app.key",
+      "terraform.tfstate",
+    ]) {
       expect(isSensitiveFile(f)).toBe(true);
     }
   });

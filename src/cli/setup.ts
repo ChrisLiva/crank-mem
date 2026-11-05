@@ -27,8 +27,15 @@ export function installPackages(): InstallResult {
     r = spawnTool("npm", ["install", "--ignore-scripts", "--no-package-lock"]);
   }
   if (!r.error && r.status === 0) return { ok: true, tool };
-  const lastLine = (r.stderr ?? "").split("\n").map((l) => l.trim()).filter(Boolean).pop();
-  return { ok: false, detail: lastLine ?? r.error?.message ?? `${tool} exited ${r.status ?? r.signal}` };
+  const lastLine = (r.stderr ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .pop();
+  return {
+    ok: false,
+    detail: lastLine ?? r.error?.message ?? `${tool} exited ${r.status ?? r.signal}`,
+  };
 }
 
 export async function run(args: string[]): Promise<number> {
@@ -52,7 +59,9 @@ export async function run(args: string[]): Promise<number> {
   try {
     await embed(["warm up"], { remote: true, host, fetchTimeoutMs });
   } catch (err) {
-    console.error(`crank-mem: could not download the model (${err instanceof Error ? err.message : String(err)})`);
+    console.error(
+      `crank-mem: could not download the model (${err instanceof Error ? err.message : String(err)})`,
+    );
     return 1;
   }
   console.log(`crank-mem: downloaded ${EMBED_MODEL} to ${dir}`);

@@ -10,7 +10,8 @@ export async function run(args: string[]): Promise<number> {
   const project = openNearestProject();
   if (project === null) return 1;
   const store = memoryPath(project.root);
-  const source = args[0] !== undefined ? path.resolve(process.cwd(), args[0]) : latestSnapshot(store)?.file;
+  const source =
+    args[0] !== undefined ? path.resolve(process.cwd(), args[0]) : latestSnapshot(store)?.file;
   if (source === undefined) {
     console.error(`crank-mem: no snapshot in ${path.join(path.dirname(store), SNAPSHOT_DIR)}.`);
     return 1;
@@ -19,12 +20,16 @@ export async function run(args: string[]): Promise<number> {
   try {
     result = await restoreMemory(store, source);
   } catch (err) {
-    console.error(`crank-mem: cannot restore: ${err instanceof Error ? err.message : String(err)}.`);
+    console.error(
+      `crank-mem: cannot restore: ${err instanceof Error ? err.message : String(err)}.`,
+    );
     return 1;
   }
   if (result.status !== "restored") {
     console.error(
-      result.status === "invalid" ? `crank-mem: cannot restore from ${source}: ${result.detail}` : `crank-mem: cannot restore: ${result.detail}.`,
+      result.status === "invalid"
+        ? `crank-mem: cannot restore from ${source}: ${result.detail}`
+        : `crank-mem: cannot restore: ${result.detail}.`,
     );
     return 1;
   }

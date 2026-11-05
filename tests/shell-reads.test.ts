@@ -31,6 +31,7 @@ describe("shellReadPaths", () => {
       ["crank-mem outline", []],
       ["crank-mem outline --from 40", []],
     ];
-    for (const [command, paths] of table) expect([command, shellReadPaths(command)]).toEqual([command, paths]);
+    for (const [command, paths] of table)
+      expect([command, shellReadPaths(command)]).toEqual([command, paths]);
   });
 });

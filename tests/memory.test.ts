@@ -36,7 +36,12 @@ function obs(over: Partial<NewObservation> & { title: string; narrative: string 
   return { type: "discovery", facts: [], filesRead: [], filesModified: [], ...over };
 }
 
-function digest(sessionId: string, expected: Position | null, next: Position, over: Partial<DigestInput> = {}): DigestInput {
+function digest(
+  sessionId: string,
+  expected: Position | null,
+  next: Position,
+  over: Partial<DigestInput> = {},
+): DigestInput {
   return {
     session: { id: sessionId, agent: "claude", transcriptPath: `/t/${sessionId}.jsonl` },
     expected,
@@ -163,27 +168,31 @@ describe("appendDigest", () => {
     const before = Date.now();
     const input = obs({
       type: "decision",
-      title: "Lock → retry ünïcode \"quoted\"",
+      title: 'Lock → retry ünïcode "quoted"',
       narrative: "Line one\nline two 🙂",
       facts: ["fact, with comma", "[bracket]", ""],
       filesRead: ["src/ä b.ts"],
       filesModified: ["src/c.ts"],
     });
-    expect(memory.appendDigest(digest("stem-1", null, P1, { observations: [input] }))).toBe("appended");
+    expect(memory.appendDigest(digest("stem-1", null, P1, { observations: [input] }))).toBe(
+      "appended",
+    );
     const [line] = memory.recent(50);
     expect(line).toBeDefined();
     expect(line!.type).toBe("decision");
     expect(line!.title).toBe(input.title);
     expect(line!.createdAtMs).toBeGreaterThanOrEqual(before);
-    expect(memory.get([line!.id])).toEqual([{
-      ...line!,
-      sessionId: "stem-1",
-      narrative: input.narrative,
-      facts: input.facts,
-      filesRead: input.filesRead,
-      filesModified: input.filesModified,
-      staleFlag: null,
-    }]);
+    expect(memory.get([line!.id])).toEqual([
+      {
+        ...line!,
+        sessionId: "stem-1",
+        narrative: input.narrative,
+        facts: input.facts,
+        filesRead: input.filesRead,
+        filesModified: input.filesModified,
+        staleFlag: null,
+      },
+    ]);
     expect(memory.fileHistory("src/ä b.ts", 5)).toEqual([line!]);
     memory.close();
     open.length = 0;
@@ -196,10 +205,18 @@ describe("appendDigest", () => {
   test("checks the expected position and writes nothing when stale", () => {
     const memory = writable();
     expect(memory.position("s")).toBeNull();
-    expect(memory.appendDigest(digest("s", null, P1, { observations: [obs({ title: "a", narrative: "b" })] }))).toBe("appended");
+    expect(
+      memory.appendDigest(
+        digest("s", null, P1, { observations: [obs({ title: "a", narrative: "b" })] }),
+      ),
+    ).toBe("appended");
     expect(memory.position("s")).toEqual(P1);
     const before = memory.recent(50);
-    expect(memory.appendDigest(digest("s", null, P2, { observations: [obs({ title: "c", narrative: "d" })] }))).toBe("stale");
+    expect(
+      memory.appendDigest(
+        digest("s", null, P2, { observations: [obs({ title: "c", narrative: "d" })] }),
+      ),
+    ).toBe("stale");
     expect(memory.recent(50)).toEqual(before);
     expect(memory.position("s")).toEqual(P1);
     expect(memory.appendDigest(digest("s", { uuid: "u-1", timestamp: "other" }, P2))).toBe("stale");
@@ -209,11 +226,19 @@ describe("appendDigest", () => {
 
   test("a throw mid-digest rolls back every row", () => {
     const memory = writable();
-    memory.appendDigest(digest("s", null, P1, { observations: [obs({ title: "a", narrative: "b" })] }));
+    memory.appendDigest(
+      digest("s", null, P1, { observations: [obs({ title: "a", narrative: "b" })] }),
+    );
     const before = memory.recent(50);
-    const bad = { ...obs({ title: "x", narrative: "y" }), type: "nope" } as unknown as NewObservation;
-    expect(() => memory.appendDigest(digest("s", P1, P2, { observations: [obs({ title: "ok", narrative: "fine" }), bad] })))
-      .toThrow();
+    const bad = {
+      ...obs({ title: "x", narrative: "y" }),
+      type: "nope",
+    } as unknown as NewObservation;
+    expect(() =>
+      memory.appendDigest(
+        digest("s", P1, P2, { observations: [obs({ title: "ok", narrative: "fine" }), bad] }),
+      ),
+    ).toThrow();
     expect(memory.recent(50)).toEqual(before);
     expect(memory.position("s")).toEqual(P1);
     expect(memory.appendDigest(digest("s", P1, P2))).toBe("appended");
@@ -221,9 +246,18 @@ describe("appendDigest", () => {
 
   test("a path listed twice is stored once", () => {
     const memory = writable();
-    const result = memory.appendDigest(digest("s", null, P1, {
-      observations: [obs({ title: "t", narrative: "n", filesRead: ["src/a.ts", "src/a.ts"], filesModified: ["src/a.ts"] })],
-    }));
+    const result = memory.appendDigest(
+      digest("s", null, P1, {
+        observations: [
+          obs({
+            title: "t",
+            narrative: "n",
+            filesRead: ["src/a.ts", "src/a.ts"],
+            filesModified: ["src/a.ts"],
+          }),
+        ],
+      }),
+    );
     expect(result).toBe("appended");
     const [got] = memory.get([memory.recent(1)[0]!.id]);
     expect(got!.filesRead).toEqual(["src/a.ts"]);
@@ -232,16 +266,22 @@ describe("appendDigest", () => {
 
   test("an observation with the same normalized title and narrative adds no row", () => {
     const memory = writable();
-    memory.appendDigest(digest("s", null, P1, {
-      observations: [
-        obs({ title: "Lock  Retry", narrative: "A", filesRead: ["src/a.ts"] }),
-        obs({ title: "lock retry", narrative: "a", filesRead: ["src/dup.ts"] }),
-        obs({ title: "Other", narrative: "B" }),
-      ],
-    }));
+    memory.appendDigest(
+      digest("s", null, P1, {
+        observations: [
+          obs({ title: "Lock  Retry", narrative: "A", filesRead: ["src/a.ts"] }),
+          obs({ title: "lock retry", narrative: "a", filesRead: ["src/dup.ts"] }),
+          obs({ title: "Other", narrative: "B" }),
+        ],
+      }),
+    );
     expect(memory.recent(50).length).toBe(2);
     expect(memory.fileHistory("src/dup.ts", 5)).toEqual([]);
-    expect(memory.appendDigest(digest("s", P1, P2, { observations: [obs({ title: " LOCK retry ", narrative: "a " })] }))).toBe("appended");
+    expect(
+      memory.appendDigest(
+        digest("s", P1, P2, { observations: [obs({ title: " LOCK retry ", narrative: "a " })] }),
+      ),
+    ).toBe("appended");
     expect(memory.recent(50).length).toBe(2);
   });
 });
@@ -252,12 +292,18 @@ describe("proposals and stale flags", () => {
 
   test("a digest that loses its position race stores no proposal and no flag", () => {
     const memory = writable();
-    memory.appendDigest(digest("s", null, P1, { observations: [obs({ title: "x", narrative: "n" })] }));
+    memory.appendDigest(
+      digest("s", null, P1, { observations: [obs({ title: "x", narrative: "n" })] }),
+    );
     const x = memory.recent(1)[0]!.id;
-    expect(memory.appendDigest(digest("s", { uuid: "u-1", timestamp: "other" }, P2, {
-      proposals: [{ kind: "memory", bullet: "- **Lock**: retry 2 s" }],
-      stale: [{ id: x, reason: "gone" }],
-    }))).toBe("stale");
+    expect(
+      memory.appendDigest(
+        digest("s", { uuid: "u-1", timestamp: "other" }, P2, {
+          proposals: [{ kind: "memory", bullet: "- **Lock**: retry 2 s" }],
+          stale: [{ id: x, reason: "gone" }],
+        }),
+      ),
+    ).toBe("stale");
     expect(memory.stats("m", 0).pendingProposals).toBe(0);
     expect(memory.get([x])[0]!.staleFlag).toBeNull();
   });
@@ -266,9 +312,18 @@ describe("proposals and stale flags", () => {
     const memory = writable();
     const propose = (n: number, bullet: string) => {
       const prev = n === 1 ? null : { uuid: `p-${n - 1}`, timestamp: "t" };
-      expect(memory.appendDigest(digest("s", prev, { uuid: `p-${n}`, timestamp: "t" }, {
-        proposals: [{ kind: "memory", bullet }],
-      }))).toBe("appended");
+      expect(
+        memory.appendDigest(
+          digest(
+            "s",
+            prev,
+            { uuid: `p-${n}`, timestamp: "t" },
+            {
+              proposals: [{ kind: "memory", bullet }],
+            },
+          ),
+        ),
+      ).toBe("appended");
     };
     propose(1, "- **Lock**: retry 2 s (2026-11-01)");
     propose(2, "- **lock**:   retry  2 s (2026-11-04)");
@@ -280,16 +335,23 @@ describe("proposals and stale flags", () => {
 
   test("a second flag on a stale row keeps the first", async () => {
     const memory = writable();
-    memory.appendDigest(digest("s", null, P1, { observations: [obs({ title: "x", narrative: "n" })] }));
+    memory.appendDigest(
+      digest("s", null, P1, { observations: [obs({ title: "x", narrative: "n" })] }),
+    );
     const x = memory.recent(1)[0]!.id;
     const before = Date.now();
-    expect(memory.appendDigest(digest("s", P1, P2, { stale: [{ id: x, reason: "first" }] }))).toBe("appended");
+    expect(memory.appendDigest(digest("s", P1, P2, { stale: [{ id: x, reason: "first" }] }))).toBe(
+      "appended",
+    );
     const first = memory.get([x])[0]!.staleFlag;
     expect(first?.reason).toBe("first");
     expect(first!.atMs).toBeGreaterThanOrEqual(before);
     await sleep(2);
-    expect(memory.appendDigest(digest("s", P2, { uuid: "u-3", timestamp: "t" }, { stale: [{ id: x, reason: "second" }] })))
-      .toBe("appended");
+    expect(
+      memory.appendDigest(
+        digest("s", P2, { uuid: "u-3", timestamp: "t" }, { stale: [{ id: x, reason: "second" }] }),
+      ),
+    ).toBe("appended");
     expect(memory.get([x])[0]!.staleFlag).toEqual(first);
     expect(memory.stats("m", 0).staleRows).toBe(1);
   });
@@ -315,11 +377,25 @@ describe("consolidation work", () => {
   async function seeded() {
     const memory = writable();
     const append = chain(memory);
-    append({ observations: [obs({ title: "Row A", narrative: "lock waits ünïcode" }), obs({ title: "Row B", narrative: "spool narrative" })] });
-    const [a, b] = memory.recent(2).map((line) => line.id).reverse() as [number, number];
-    append({ proposals: [{ kind: "memory", bullet: B1 }], stale: [{ id: b, reason: "B moved — 2026-11-02" }] });
+    append({
+      observations: [
+        obs({ title: "Row A", narrative: "lock waits ünïcode" }),
+        obs({ title: "Row B", narrative: "spool narrative" }),
+      ],
+    });
+    const [a, b] = memory
+      .recent(2)
+      .map((line) => line.id)
+      .reverse() as [number, number];
+    append({
+      proposals: [{ kind: "memory", bullet: B1 }],
+      stale: [{ id: b, reason: "B moved — 2026-11-02" }],
+    });
     await sleep(2);
-    append({ proposals: [{ kind: "preference", bullet: B2 }], stale: [{ id: a, reason: "A gone" }] });
+    append({
+      proposals: [{ kind: "preference", bullet: B2 }],
+      stale: [{ id: a, reason: "A gone" }],
+    });
     await sleep(2);
     append({ proposals: [{ kind: "memory", bullet: B3 }] });
     const [p1, p2, p3] = memory.pending(20).proposals.map((p) => p.id) as [number, number, number];
@@ -329,7 +405,10 @@ describe("consolidation work", () => {
   test("pending returns proposals and stale rows oldest first, capped per list", async () => {
     const { memory, p1, p2, s1, s2 } = await seeded();
     expect(memory.pending(2)).toEqual({
-      proposals: [{ id: p1, kind: "memory", bullet: B1 }, { id: p2, kind: "preference", bullet: B2 }],
+      proposals: [
+        { id: p1, kind: "memory", bullet: B1 },
+        { id: p2, kind: "preference", bullet: B2 },
+      ],
       stale: [
         { id: s1, title: "Row B", narrative: "spool narrative", reason: "B moved — 2026-11-02" },
         { id: s2, title: "Row A", narrative: "lock waits ünïcode", reason: "A gone" },
@@ -344,9 +423,19 @@ describe("consolidation work", () => {
     const { memory, p1, p2, p3, s1, s2 } = await seeded();
     const t = Date.now() - 0.25;
     memory.recordConsolidation({
-      outcome: "ok", startedMs: t, model: "m", costUsd: 0.003, sent: [p1, p2, p3],
-      decided: [{ id: p1, state: "accepted", reason: "r1" }, { id: p2, state: "rejected", reason: "r2" }],
-      verdicts: [{ id: s1, verdict: "confirmed" }, { id: s2, verdict: "cleared" }],
+      outcome: "ok",
+      startedMs: t,
+      model: "m",
+      costUsd: 0.003,
+      sent: [p1, p2, p3],
+      decided: [
+        { id: p1, state: "accepted", reason: "r1" },
+        { id: p2, state: "rejected", reason: "r2" },
+      ],
+      verdicts: [
+        { id: s1, verdict: "confirmed" },
+        { id: s2, verdict: "cleared" },
+      ],
     });
     const work = memory.pending(20);
     expect(work.proposals).toEqual([{ id: p3, kind: "memory", bullet: B3 }]);
@@ -354,7 +443,15 @@ describe("consolidation work", () => {
     expect(memory.get([s1])[0]!.stale).toBe(true);
     expect(work.stale).toEqual([]);
     expect(memory.get([s2])[0]!.staleFlag).toBeNull();
-    const query: SearchQuery = { text: "Row A", vector: null, limit: 5, type: null, sinceMs: null, file: null, stale: false };
+    const query: SearchQuery = {
+      text: "Row A",
+      vector: null,
+      limit: 5,
+      type: null,
+      sinceMs: null,
+      file: null,
+      stale: false,
+    };
     expect(memory.search(query).map((hit) => hit.id)).toEqual([s2]);
     expect(work.lastOkStartMs).toBe(t);
     expect(work.lastStartMs).toBe(t);
@@ -371,11 +468,26 @@ describe("consolidation work", () => {
         { kind: "preference", bullet: "- **R**: drop it (2026-11-01)" },
       ],
     });
-    const [q1, q2, q3, r] = memory.pending(20).proposals.map((p) => p.id) as [number, number, number, number];
+    const [q1, q2, q3, r] = memory.pending(20).proposals.map((p) => p.id) as [
+      number,
+      number,
+      number,
+      number,
+    ];
     const base = { model: "m", costUsd: 0 };
     let started = Date.now();
-    const okRun = (sent: number[], decided: { id: number; state: "accepted" | "rejected"; reason: string }[] = []) =>
-      memory.recordConsolidation({ ...base, startedMs: ++started, outcome: "ok", sent, decided, verdicts: [] });
+    const okRun = (
+      sent: number[],
+      decided: { id: number; state: "accepted" | "rejected"; reason: string }[] = [],
+    ) =>
+      memory.recordConsolidation({
+        ...base,
+        startedMs: ++started,
+        outcome: "ok",
+        sent,
+        decided,
+        verdicts: [],
+      });
     const pendingIds = () => memory.pending(20).proposals.map((p) => p.id);
 
     memory.recordConsolidation({ ...base, startedMs: ++started, outcome: "conflict" });
@@ -392,7 +504,12 @@ describe("consolidation work", () => {
     expect(pendingIds()).toEqual([q3]);
     expect(memory.stats("m", 0).pendingProposals).toBe(1);
 
-    append({ proposals: [{ kind: "preference", bullet: "- **R**: drop it (2026-11-04)" }, { kind: "memory", bullet: "- **Q1**: one (2026-11-04)" }] });
+    append({
+      proposals: [
+        { kind: "preference", bullet: "- **R**: drop it (2026-11-04)" },
+        { kind: "memory", bullet: "- **Q1**: one (2026-11-04)" },
+      ],
+    });
     expect(pendingIds()).toEqual([q3]);
     expect(memory.stats("m", 0).pendingProposals).toBe(1);
   });
@@ -401,13 +518,35 @@ describe("consolidation work", () => {
     const memory = writable();
     const t = Date.now();
     chain(memory)({ costUsd: 0.002 });
-    memory.recordConsolidation({ outcome: "ok", startedMs: t, model: "m", costUsd: 0.003, sent: [], decided: [], verdicts: [] });
-    memory.recordConsolidation({ outcome: "conflict", startedMs: t - 10_000, model: null, costUsd: 0.004 });
+    memory.recordConsolidation({
+      outcome: "ok",
+      startedMs: t,
+      model: "m",
+      costUsd: 0.003,
+      sent: [],
+      decided: [],
+      verdicts: [],
+    });
+    memory.recordConsolidation({
+      outcome: "conflict",
+      startedMs: t - 10_000,
+      model: null,
+      costUsd: 0.004,
+    });
     const stats = memory.stats("m", t - 5_000);
     expect(Math.abs(stats.costUsdSince - 0.005)).toBeLessThan(1e-9);
     expect(stats.lastConsolidation).toEqual({ startedMs: t, outcome: "ok" });
-    memory.recordConsolidation({ outcome: "stopped", startedMs: t, model: "m", costUsd: 0, sent: [] });
-    expect(memory.stats("m", t - 5_000).lastConsolidation).toEqual({ startedMs: t, outcome: "stopped" });
+    memory.recordConsolidation({
+      outcome: "stopped",
+      startedMs: t,
+      model: "m",
+      costUsd: 0,
+      sent: [],
+    });
+    expect(memory.stats("m", t - 5_000).lastConsolidation).toEqual({
+      startedMs: t,
+      outcome: "stopped",
+    });
   });
 });
 
@@ -429,33 +568,85 @@ describe("read methods", () => {
     const memory = writable();
     expect(memory.latestNextSteps()).toBeNull();
     expect(memory.stats("m1", 0)).toEqual({
-      observations: 0, unembedded: 0, lastDigestMs: null, costUsdSince: 0, pendingProposals: 0, staleRows: 0,
+      observations: 0,
+      unembedded: 0,
+      lastDigestMs: null,
+      costUsdSince: 0,
+      pendingProposals: 0,
+      staleRows: 0,
       lastConsolidation: null,
     });
     const n1 = { uuid: "a", timestamp: "2026-11-02T10:00:00.000Z" };
-    const summary = (next_steps: string) => ({ request: "r", investigated: "i", learned: "l", completed: "c", next_steps });
-    memory.appendDigest(digest("s1", null, n1, {
-      costUsd: 0.01, summary: summary("None."),
-      observations: [obs({ type: "bugfix", title: "T1", narrative: "N1", facts: ["f1"], filesRead: ["src/a.ts"] })],
-    }));
+    const summary = (next_steps: string) => ({
+      request: "r",
+      investigated: "i",
+      learned: "l",
+      completed: "c",
+      next_steps,
+    });
+    memory.appendDigest(
+      digest("s1", null, n1, {
+        costUsd: 0.01,
+        summary: summary("None."),
+        observations: [
+          obs({
+            type: "bugfix",
+            title: "T1",
+            narrative: "N1",
+            facts: ["f1"],
+            filesRead: ["src/a.ts"],
+          }),
+        ],
+      }),
+    );
     expect(memory.latestNextSteps()).toBeNull();
     await sleep(2);
     const t2 = Date.now();
-    const d2 = { request: "R2", investigated: "I2", learned: "L2", completed: "C2", next_steps: " none " };
-    memory.appendDigest(digest("s1", n1, { uuid: "b", timestamp: "2026-11-02T10:01:00.000Z" }, {
-      costUsd: 0.02, summary: d2,
-      observations: [obs({ type: "feature", title: "T2", narrative: "N2", filesRead: ["src/a.ts"], filesModified: ["src/a.ts"] })],
-    }));
+    const d2 = {
+      request: "R2",
+      investigated: "I2",
+      learned: "L2",
+      completed: "C2",
+      next_steps: " none ",
+    };
+    memory.appendDigest(
+      digest(
+        "s1",
+        n1,
+        { uuid: "b", timestamp: "2026-11-02T10:01:00.000Z" },
+        {
+          costUsd: 0.02,
+          summary: d2,
+          observations: [
+            obs({
+              type: "feature",
+              title: "T2",
+              narrative: "N2",
+              filesRead: ["src/a.ts"],
+              filesModified: ["src/a.ts"],
+            }),
+          ],
+        },
+      ),
+    );
     expect(memory.latestNextSteps()).toBeNull();
     await sleep(2);
     const t3 = Date.now();
-    memory.appendDigest(digest("s2", null, { uuid: "c", timestamp: "2026-11-02T10:02:00.000Z" }, {
-      costUsd: 0.04, summary: summary("Ship it."),
-      observations: [
-        obs({ type: "change", title: "T3", narrative: "N3", filesModified: ["src/b.ts"] }),
-        obs({ type: "decision", title: "T4", narrative: "N4" }),
-      ],
-    }));
+    memory.appendDigest(
+      digest(
+        "s2",
+        null,
+        { uuid: "c", timestamp: "2026-11-02T10:02:00.000Z" },
+        {
+          costUsd: 0.04,
+          summary: summary("Ship it."),
+          observations: [
+            obs({ type: "change", title: "T3", narrative: "N3", filesModified: ["src/b.ts"] }),
+            obs({ type: "decision", title: "T4", narrative: "N4" }),
+          ],
+        },
+      ),
+    );
     expect(memory.latestNextSteps()).toBe("Ship it.");
 
     const ids = (rows: { id: number }[] | null) => rows?.map((r) => r.id) ?? null;
@@ -464,7 +655,12 @@ describe("read methods", () => {
     expect(ids(memory.timeline(4, 5))).toEqual([1, 2, 3, 4]);
     expect(memory.timeline(99, 1)).toBeNull();
     expect(ids(memory.get([3, 99, 1]))).toEqual([3, 1]);
-    expect(memory.get([1])[0]).toMatchObject({ sessionId: "s1", facts: ["f1"], filesRead: ["src/a.ts"], filesModified: [] });
+    expect(memory.get([1])[0]).toMatchObject({
+      sessionId: "s1",
+      facts: ["f1"],
+      filesRead: ["src/a.ts"],
+      filesModified: [],
+    });
     expect(ids(memory.fileHistory("src/a.ts", 5))).toEqual([2, 1]);
     expect(ids(memory.fileHistory("src/a.ts", 1))).toEqual([2]);
     expect(memory.latestSummary("s1")).toEqual(d2);
@@ -492,12 +688,16 @@ describe("read methods", () => {
 describe("formatLine", () => {
   test("renders id, local date, type and title", () => {
     const createdAtMs = new Date(2026, 0, 2, 3, 4).getTime();
-    expect(formatLine({ id: 7, createdAtMs, type: "bugfix", title: "X", stale: false })).toBe("#7 2026-01-02 bugfix X");
+    expect(formatLine({ id: 7, createdAtMs, type: "bugfix", title: "X", stale: false })).toBe(
+      "#7 2026-01-02 bugfix X",
+    );
   });
 
   test("tags a stale row after its type", () => {
     const createdAtMs = new Date(2026, 0, 2, 3, 4).getTime();
-    expect(formatLine({ id: 7, createdAtMs, type: "bugfix", title: "X", stale: true })).toBe("#7 2026-01-02 bugfix [stale] X");
+    expect(formatLine({ id: 7, createdAtMs, type: "bugfix", title: "X", stale: true })).toBe(
+      "#7 2026-01-02 bugfix [stale] X",
+    );
   });
 });
 
@@ -510,11 +710,23 @@ describe("search", () => {
     const before = memory.recent(1)[0]?.id ?? 0;
     const sessionId = `seed-${++digests}`;
     memory.appendDigest(digest(sessionId, null, P, { observations }));
-    return memory.recent(observations.length).map((r) => r.id).filter((id) => id > before).reverse();
+    return memory
+      .recent(observations.length)
+      .map((r) => r.id)
+      .filter((id) => id > before)
+      .reverse();
   }
 
   function query(over: Partial<SearchQuery> & { text: string }): SearchQuery {
-    return { vector: null, limit: 10, type: null, sinceMs: null, file: null, stale: false, ...over };
+    return {
+      vector: null,
+      limit: 10,
+      type: null,
+      sinceMs: null,
+      file: null,
+      stale: false,
+      ...over,
+    };
   }
 
   const vec = (...values: number[]) => new Float32Array(values);
@@ -526,23 +738,34 @@ describe("search", () => {
       obs({ title: "zebra row", narrative: "plain" }),
       obs({ title: "third row", narrative: "plain" }),
     ]) as [number, number, number];
-    memory.putVectors("m1", [{ id: a, vector: vec(1, 0, 0) }, { id: b, vector: vec(0.8, 0.6, 0) }, { id: c, vector: vec(0, 1, 0) }]);
+    memory.putVectors("m1", [
+      { id: a, vector: vec(1, 0, 0) },
+      { id: b, vector: vec(0.8, 0.6, 0) },
+      { id: c, vector: vec(0, 1, 0) },
+    ]);
     return { a, b, c };
   }
 
   test("fuses the keyword and vector lists by reciprocal rank", () => {
     const memory = writable();
     const { a, b, c } = abc(memory);
-    const hits = memory.search(query({ text: "zebra", vector: { model: "m1", values: vec(1, 0, 0) } }));
+    const hits = memory.search(
+      query({ text: "zebra", vector: { model: "m1", values: vec(1, 0, 0) } }),
+    );
     expect(ids(hits)).toEqual([b, a, c]);
     expect(hits[0]).toEqual(memory.recent(10).find((r) => r.id === b)!);
   });
 
   test("an equal fused score goes to the newest row", () => {
     const memory = writable();
-    const [x, y] = seed(memory, [obs({ title: "older row", narrative: "n" }), obs({ title: "zebra row", narrative: "n" })]) as [number, number];
+    const [x, y] = seed(memory, [
+      obs({ title: "older row", narrative: "n" }),
+      obs({ title: "zebra row", narrative: "n" }),
+    ]) as [number, number];
     memory.putVectors("m1", [{ id: x, vector: vec(1, 0, 0) }]);
-    expect(ids(memory.search(query({ text: "zebra", vector: { model: "m1", values: vec(1, 0, 0) } })))).toEqual([y, x]);
+    expect(
+      ids(memory.search(query({ text: "zebra", vector: { model: "m1", values: vec(1, 0, 0) } }))),
+    ).toEqual([y, x]);
   });
 
   test("an empty keyword list leaves vector order, and each list stops at 50", () => {
@@ -550,32 +773,53 @@ describe("search", () => {
     const { a, b, c } = abc(memory);
     const near = { model: "m1", values: vec(1, 0, 0) };
     expect(ids(memory.search(query({ text: "qqqq", vector: near })))).toEqual([a, b, c]);
-    const many = seed(memory, Array.from({ length: 57 }, (_, i) => obs({ title: `bulk ${i}`, narrative: "n" })));
-    memory.putVectors("m1", many.map((id, i) => ({ id, vector: vec(1, i, 0) })));
+    const many = seed(
+      memory,
+      Array.from({ length: 57 }, (_, i) => obs({ title: `bulk ${i}`, narrative: "n" })),
+    );
+    memory.putVectors(
+      "m1",
+      many.map((id, i) => ({ id, vector: vec(1, i, 0) })),
+    );
     expect(memory.search(query({ text: "qqqq", vector: near, limit: 100 })).length).toBe(50);
   });
 
   test("without a usable vector, keyword search runs AND, then OR when AND finds nothing", () => {
     const memory = writable();
-    const [first, second] = seed(memory, [obs({ title: "alpha beta", narrative: "n" }), obs({ title: "beta gamma", narrative: "n" })]) as [number, number];
+    const [first, second] = seed(memory, [
+      obs({ title: "alpha beta", narrative: "n" }),
+      obs({ title: "beta gamma", narrative: "n" }),
+    ]) as [number, number];
     expect(ids(memory.search(query({ text: "alpha delta" })))).toEqual([first]);
     memory.putVectors("m1", [{ id: first, vector: vec(1, 0, 0) }]);
-    const hits = memory.search(query({ text: "beta", vector: { model: "other", values: vec(1, 0, 0) } }));
+    const hits = memory.search(
+      query({ text: "beta", vector: { model: "other", values: vec(1, 0, 0) } }),
+    );
     expect(ids(hits).sort()).toEqual([first, second].sort());
   });
 
   test("type, since and file filter both lists, and limit caps the result", async () => {
     const memory = writable();
-    const [r1] = seed(memory, [obs({ type: "bugfix", title: "kiwi one", narrative: "n", filesRead: ["src/a.ts"] })]) as [number];
+    const [r1] = seed(memory, [
+      obs({ type: "bugfix", title: "kiwi one", narrative: "n", filesRead: ["src/a.ts"] }),
+    ]) as [number];
     await sleep(2);
     const t2 = Date.now();
     const [r2, r3] = seed(memory, [
       obs({ type: "feature", title: "kiwi two", narrative: "n", filesModified: ["src/b.ts"] }),
       obs({ type: "bugfix", title: "plain three", narrative: "n", filesRead: ["src/b.ts"] }),
     ]) as [number, number];
-    memory.putVectors("m1", [{ id: r1, vector: vec(1, 0, 0) }, { id: r2, vector: vec(0, 1, 0) }, { id: r3, vector: vec(1, 0, 0) }]);
+    memory.putVectors("m1", [
+      { id: r1, vector: vec(1, 0, 0) },
+      { id: r2, vector: vec(0, 1, 0) },
+      { id: r3, vector: vec(1, 0, 0) },
+    ]);
     const hybrid = (over: Partial<SearchQuery>) =>
-      ids(memory.search(query({ text: "kiwi", vector: { model: "m1", values: vec(1, 0, 0) }, ...over }))).sort();
+      ids(
+        memory.search(
+          query({ text: "kiwi", vector: { model: "m1", values: vec(1, 0, 0) }, ...over }),
+        ),
+      ).sort();
     expect(hybrid({})).toEqual([r1, r2, r3].sort());
     expect(hybrid({ type: "bugfix" })).toEqual([r1, r3].sort());
     expect(hybrid({ type: "feature" })).toEqual([r2]);

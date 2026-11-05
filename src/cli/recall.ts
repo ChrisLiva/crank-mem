@@ -1,21 +1,38 @@
 import { EMBED_MODEL, embed, modelPresent } from "../daemon/embedder.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 import {
-  formatLine, localDate, memoryPath, openMemory, MEMORY_NEWER_NOTE, MEMORY_OLDER_NOTE, MEMORY_UNREADABLE_NOTE, OBSERVATION_TYPES,
-  type MemoryReader, type Observation, type ObservationType, type SearchQuery,
+  formatLine,
+  localDate,
+  memoryPath,
+  openMemory,
+  MEMORY_NEWER_NOTE,
+  MEMORY_OLDER_NOTE,
+  MEMORY_UNREADABLE_NOTE,
+  OBSERVATION_TYPES,
+  type MemoryReader,
+  type Observation,
+  type ObservationType,
+  type SearchQuery,
 } from "../hooks/lib/memory.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";
 
 export const NO_MEMORY_NOTE = "crank-mem: no memory exists yet.";
-const KEYWORD_ONLY_NOTE = "crank-mem: keyword search only; run `crank-mem setup` for search by meaning.";
+const KEYWORD_ONLY_NOTE =
+  "crank-mem: keyword search only; run `crank-mem setup` for search by meaning.";
 
-const STATE_NOTES = { older: MEMORY_OLDER_NOTE, newer: MEMORY_NEWER_NOTE, unreadable: MEMORY_UNREADABLE_NOTE } as const;
+const STATE_NOTES = {
+  older: MEMORY_OLDER_NOTE,
+  newer: MEMORY_NEWER_NOTE,
+  unreadable: MEMORY_UNREADABLE_NOTE,
+} as const;
 
 /** A missing store is an empty result for search (stdout, exit 0) and an error for the rest. */
 async function withMemory(
-  root: string, missingIsEmpty: boolean, fn: (memory: MemoryReader) => number | Promise<number>,
+  root: string,
+  missingIsEmpty: boolean,
+  fn: (memory: MemoryReader) => number | Promise<number>,
 ): Promise<number> {
   const opened = openMemory(memoryPath(root), "read");
   if (opened.status === "missing") {
@@ -50,16 +67,24 @@ function localMidnight(value: string): number | null {
   return date.getTime();
 }
 
-const isObservationType = (value: string): value is ObservationType => OBSERVATION_TYPES.some((t) => t === value);
+const isObservationType = (value: string): value is ObservationType =>
+  OBSERVATION_TYPES.some((t) => t === value);
 
 export async function search(args: string[]): Promise<number> {
   const { flags, rest } = parseArgs(args, COMMANDS.search.value);
   // An unknown flag is query text, so `search --max-turns` finds that option.
   const known = [...COMMANDS.search.value, ...COMMANDS.search.bool];
-  const extra = Object.keys(flags).filter((key) => key !== "" && !known.includes(key)).map((key) => `--${key}`);
+  const extra = Object.keys(flags)
+    .filter((key) => key !== "" && !known.includes(key))
+    .map((key) => `--${key}`);
   const text = [...rest, ...extra].join(" ");
-  const usage = () => { console.error(COMMANDS.search.usage); return 1; };
-  const [limit, type, since, file] = [flags.limit, flags.type, flags.since, flags.file].map(stringFlag);
+  const usage = () => {
+    console.error(COMMANDS.search.usage);
+    return 1;
+  };
+  const [limit, type, since, file] = [flags.limit, flags.type, flags.since, flags.file].map(
+    stringFlag,
+  );
   if (!text.trim()) return usage();
   if (limit === null || type === null || since === null || file === null) return usage();
   if (limit !== undefined && !/^[1-9]\d*$/.test(limit)) return usage();
@@ -75,9 +100,13 @@ export async function search(args: string[]): Promise<number> {
     const embeddable = memory.hasVectors(EMBED_MODEL);
     if (!embeddable && !modelPresent()) console.error(KEYWORD_ONLY_NOTE);
     const hits = memory.search({
-      text, vector: embeddable ? await queryVector(text, host) : null,
+      text,
+      vector: embeddable ? await queryVector(text, host) : null,
       limit: limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT),
-      type: type ?? null, sinceMs, file: relFile, stale: flags.stale === true,
+      type: type ?? null,
+      sinceMs,
+      file: relFile,
+      stale: flags.stale === true,
     });
     for (const hit of hits) console.log(formatLine(hit));
     return 0;
@@ -128,7 +157,9 @@ function formatObservation(o: Observation): string {
     `session: ${o.sessionId}`,
     ...(o.staleFlag ? [`stale: ${localDate(o.staleFlag.atMs)} ${o.staleFlag.reason}`] : []),
     `narrative: ${o.narrative}`,
-    o.facts.length > 0 ? ["facts:", ...o.facts.map((fact) => `- ${fact}`)].join("\n") : "facts: (none)",
+    o.facts.length > 0
+      ? ["facts:", ...o.facts.map((fact) => `- ${fact}`)].join("\n")
+      : "facts: (none)",
     `files read: ${list(o.filesRead)}`,
     `files modified: ${list(o.filesModified)}`,
   ].join("\n");

@@ -4,9 +4,18 @@ import * as path from "node:path";
 import { NO_MEMORY_NOTE } from "../src/cli/recall.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
 import { memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
-import { makeCrankHome, makeCrankProject, makeModelHome, realModelsDir, runCli, seedMemory, startModelServer } from "./helpers.ts";
+import {
+  makeCrankHome,
+  makeCrankProject,
+  makeModelHome,
+  realModelsDir,
+  runCli,
+  seedMemory,
+  startModelServer,
+} from "./helpers.ts";
 
-const KEYWORD_ONLY_NOTE = "crank-mem: keyword search only; run `crank-mem setup` for search by meaning.";
+const KEYWORD_ONLY_NOTE =
+  "crank-mem: keyword search only; run `crank-mem setup` for search by meaning.";
 
 const temps: string[] = [];
 afterEach(() => {
@@ -33,7 +42,9 @@ describe("search by meaning (black-box)", () => {
     const home = temp(makeCrankHome());
     const empty = temp(makeCrankProject());
     expect(runCli(empty, ["search", "alpha", "delta"], { CRANK_HOME: home })).toMatchObject({
-      status: 0, stdout: `${NO_MEMORY_NOTE}\n`, stderr: "",
+      status: 0,
+      stdout: `${NO_MEMORY_NOTE}\n`,
+      stderr: "",
     });
 
     const root = temp(makeCrankProject());
@@ -53,10 +64,16 @@ describe("search by meaning (black-box)", () => {
     }
     const root = temp(makeCrankProject());
     const [id] = seedMemory(root, [{ title: "alpha beta" }]);
-    expect(runCli(root, ["search", "alpha"], { CRANK_HOME: home })).toMatchObject({ status: 0, stderr: "" });
+    expect(runCli(root, ["search", "alpha"], { CRANK_HOME: home })).toMatchObject({
+      status: 0,
+      stderr: "",
+    });
 
     plantVector(root, id!);
-    expect(runCli(root, ["search", "alpha"], { CRANK_HOME: home })).toMatchObject({ status: 0, stderr: `${KEYWORD_ONLY_NOTE}\n` });
+    expect(runCli(root, ["search", "alpha"], { CRANK_HOME: home })).toMatchObject({
+      status: 0,
+      stderr: `${KEYWORD_ONLY_NOTE}\n`,
+    });
   }, 30_000);
 
   test("search makes no network call, with or without the model", async () => {
@@ -66,7 +83,9 @@ describe("search by meaning (black-box)", () => {
       const [id] = seedMemory(root, [{ title: "Lock file writes retry on EEXIST" }]);
       plantVector(root, id!);
       for (const home of [temp(makeCrankHome()), temp(makeModelHome())]) {
-        const run = runCli(root, ["search", "EEXIST", "--model-host", server.url], { CRANK_HOME: home });
+        const run = runCli(root, ["search", "EEXIST", "--model-host", server.url], {
+          CRANK_HOME: home,
+        });
         expect(run.status).toBe(0);
         expect(run.stdout).toMatch(/ Lock file writes retry on EEXIST\n$/);
       }

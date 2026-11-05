@@ -1,6 +1,11 @@
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, runAdvisoryHook, repoRelative, type HookPayload,
+  readStdin,
+  parsePayload,
+  findProjectRoot,
+  runAdvisoryHook,
+  repoRelative,
+  type HookPayload,
 } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { commitIndex } from "./lib/store.ts";
@@ -44,8 +49,7 @@ function toWriteOps(payload: HookPayload, root: string, cwd: string): WriteScan 
 
   // A directory is enough to answer "why wasn't my file indexed?", and no
   // filename means no sensitive basename can reach the log.
-  const dirOf = (p: string): string =>
-    path.dirname(path.isAbsolute(p) ? p : path.resolve(cwd, p));
+  const dirOf = (p: string): string => path.dirname(path.isAbsolute(p) ? p : path.resolve(cwd, p));
 
   if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") {
     const p = toolInput.file_path;

@@ -7,9 +7,22 @@ import { REPO_ROOT, cliVersion } from "../cli/version.ts";
 import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { trySteal } from "../hooks/lib/lock.ts";
 import {
-  DAEMON_FILE, daemonAlive, deleteEntry, deleteParked, readParked, readSpool, type DaemonState, type SpoolItem,
+  DAEMON_FILE,
+  daemonAlive,
+  deleteEntry,
+  deleteParked,
+  readParked,
+  readSpool,
+  type DaemonState,
+  type SpoolItem,
 } from "../hooks/lib/spool.ts";
-import { SEEN_DIR, crankHome, ensureCrankHome, readStopState, writeJsonAtomic } from "../hooks/lib/user-state.ts";
+import {
+  SEEN_DIR,
+  crankHome,
+  ensureCrankHome,
+  readStopState,
+  writeJsonAtomic,
+} from "../hooks/lib/user-state.ts";
 import { RUN_TIMEOUT_MS } from "./gateway.ts";
 
 // `crank-mem daemon`: one per user, owning <crank home>/daemon.json. Each sweep
@@ -27,7 +40,15 @@ const QUIET_MS = 30 * 60_000;
 const MID_SESSION_MS = 2 * 3_600_000;
 const SEEN_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 
-type Options = { sweepMs: number; idleMs: number; retryMs: number; retryCapMs: number; runTimeoutMs: number | null; midSessionMs: number; once: boolean };
+type Options = {
+  sweepMs: number;
+  idleMs: number;
+  retryMs: number;
+  retryCapMs: number;
+  runTimeoutMs: number | null;
+  midSessionMs: number;
+  once: boolean;
+};
 
 export async function run(args: string[]): Promise<number> {
   const { flags } = parseArgs(args, COMMANDS.daemon.value);
@@ -36,7 +57,10 @@ export async function run(args: string[]): Promise<number> {
     idleMs: positive(flags["idle-ms"], IDLE_MS),
     retryMs: positive(flags["retry-ms"], RETRY_MS),
     retryCapMs: positive(flags["retry-cap-ms"], RETRY_CAP_MS),
-    runTimeoutMs: flags["run-timeout-ms"] === undefined ? null : positive(flags["run-timeout-ms"], RUN_TIMEOUT_MS),
+    runTimeoutMs:
+      flags["run-timeout-ms"] === undefined
+        ? null
+        : positive(flags["run-timeout-ms"], RUN_TIMEOUT_MS),
     midSessionMs: positive(flags["mid-session-ms"], MID_SESSION_MS),
     once: flags.once === true,
   };
@@ -137,7 +161,9 @@ class Daemon {
     try {
       writeJsonAtomic(this.file, state(this.startVersion));
     } catch (err) {
-      console.error(`crank-mem daemon: heartbeat failed: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(
+        `crank-mem daemon: heartbeat failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     try {
       // The clone was upgraded under us: finish the current job, then let the next start load the new code.
@@ -150,16 +176,25 @@ class Daemon {
       const seenMs = Date.now();
       for (const item of readSpool()) {
         if (!fs.existsSync(item.entry.transcriptPath)) deleteEntry(item.stem);
-        else if (!this.midSessionFromMs.has(item.stem)) this.midSessionFromMs.set(item.stem, seenMs);
+        else if (!this.midSessionFromMs.has(item.stem))
+          this.midSessionFromMs.set(item.stem, seenMs);
       }
       if (!this.stopping && this.job === null) {
         const now = Date.now();
-        const unheld = readSpool().filter((item) => (this.holds.get(item.stem)?.untilMs ?? 0) <= now);
-        const next = eligible(unheld, { fromMs: this.midSessionFromMs, everyMs: this.opts.midSessionMs }, now);
+        const unheld = readSpool().filter(
+          (item) => (this.holds.get(item.stem)?.untilMs ?? 0) <= now,
+        );
+        const next = eligible(
+          unheld,
+          { fromMs: this.midSessionFromMs, everyMs: this.opts.midSessionMs },
+          now,
+        );
         if (next) this.startJob(next.stem);
       }
     } catch (err) {
-      console.error(`crank-mem daemon: sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(
+        `crank-mem daemon: sweep failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     if (this.job !== null) {
       this.busySince = Date.now();
@@ -173,8 +208,12 @@ class Daemon {
 
   private startJob(stem: string): void {
     const argv = ["job", stem];
-    if (this.opts.runTimeoutMs !== null) argv.push("--run-timeout-ms", String(this.opts.runTimeoutMs));
-    const child = spawn(path.join(REPO_ROOT, "bin", "crank-mem"), argv, { cwd: REPO_ROOT, stdio: "ignore" });
+    if (this.opts.runTimeoutMs !== null)
+      argv.push("--run-timeout-ms", String(this.opts.runTimeoutMs));
+    const child = spawn(path.join(REPO_ROOT, "bin", "crank-mem"), argv, {
+      cwd: REPO_ROOT,
+      stdio: "ignore",
+    });
     this.job = new Promise<void>((resolve) => {
       let ended = false;
       const done = (code: number | null) => {
@@ -234,7 +273,9 @@ function pruneProjects(): void {
 
 /** The oldest entry that ended, whose transcript has been quiet for QUIET_MS, or whose mid-session window has passed. */
 function eligible(
-  items: SpoolItem[], midSession: { fromMs: Map<string, number>; everyMs: number }, now: number,
+  items: SpoolItem[],
+  midSession: { fromMs: Map<string, number>; everyMs: number },
+  now: number,
 ): SpoolItem | undefined {
   const quietBefore = now - QUIET_MS;
   const ready = items.filter((item) => {
@@ -245,7 +286,9 @@ function eligible(
     } catch {
       return false;
     }
-    return mtimeMs < quietBefore || now - (midSession.fromMs.get(item.stem) ?? now) >= midSession.everyMs;
+    return (
+      mtimeMs < quietBefore || now - (midSession.fromMs.get(item.stem) ?? now) >= midSession.everyMs
+    );
   });
   return ready.sort((a, b) => a.entry.updatedAt - b.entry.updatedAt)[0];
 }

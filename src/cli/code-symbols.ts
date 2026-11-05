@@ -11,32 +11,73 @@ type Language = import("web-tree-sitter").Language;
 type Node = import("web-tree-sitter").Node;
 
 export type Grammar =
-  | "typescript" | "tsx" | "javascript" | "python" | "go" | "rust" | "cpp"
-  | "bash" | "java" | "c-sharp" | "ruby" | "php" | "powershell";
+  | "typescript"
+  | "tsx"
+  | "javascript"
+  | "python"
+  | "go"
+  | "rust"
+  | "cpp"
+  | "bash"
+  | "java"
+  | "c-sharp"
+  | "ruby"
+  | "php"
+  | "powershell";
 export type SymbolKind =
-  | "fn" | "method" | "class" | "struct" | "interface" | "trait"
-  | "enum" | "namespace" | "module" | "impl" | "type";
+  | "fn"
+  | "method"
+  | "class"
+  | "struct"
+  | "interface"
+  | "trait"
+  | "enum"
+  | "namespace"
+  | "module"
+  | "impl"
+  | "type";
 export interface CodeSymbol {
-  name: string; qualified: string; kind: SymbolKind;
-  start: number; end: number; docStart: number;
-  indent: string; head: string; fold: "brace" | "other" | "none";
+  name: string;
+  qualified: string;
+  kind: SymbolKind;
+  start: number;
+  end: number;
+  docStart: number;
+  indent: string;
+  head: string;
+  fold: "brace" | "other" | "none";
   children: CodeSymbol[];
 }
 
 const GRAMMARS: Record<string, Grammar> = {
-  ".ts": "typescript", ".mts": "typescript", ".cts": "typescript",
+  ".ts": "typescript",
+  ".mts": "typescript",
+  ".cts": "typescript",
   ".tsx": "tsx",
-  ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-  ".py": "python", ".pyi": "python",
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".mjs": "javascript",
+  ".cjs": "javascript",
+  ".py": "python",
+  ".pyi": "python",
   ".go": "go",
   ".rs": "rust",
-  ".c": "cpp", ".h": "cpp", ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp",
-  ".sh": "bash", ".bash": "bash",
+  ".c": "cpp",
+  ".h": "cpp",
+  ".cc": "cpp",
+  ".cpp": "cpp",
+  ".cxx": "cpp",
+  ".hpp": "cpp",
+  ".hh": "cpp",
+  ".hxx": "cpp",
+  ".sh": "bash",
+  ".bash": "bash",
   ".java": "java",
   ".cs": "c-sharp",
   ".rb": "ruby",
   ".php": "php",
-  ".ps1": "powershell", ".psm1": "powershell",
+  ".ps1": "powershell",
+  ".psm1": "powershell",
 };
 
 /** The grammar for a path's extension, case-insensitive, or null. */
@@ -52,7 +93,9 @@ export async function codeSymbols(text: string, grammar: Grammar): Promise<CodeS
   try {
     ts = await import("web-tree-sitter");
     await ts.Parser.init();
-    const wasm = createRequire(import.meta.url).resolve(`@vscode/tree-sitter-wasm/wasm/tree-sitter-${grammar}.wasm`);
+    const wasm = createRequire(import.meta.url).resolve(
+      `@vscode/tree-sitter-wasm/wasm/tree-sitter-${grammar}.wasm`,
+    );
     language = await ts.Language.load(wasm);
   } catch {
     return null;
@@ -98,33 +141,53 @@ const TS_KINDS: Record<string, SymbolKind> = {
   internal_module: "namespace",
   module: "module",
 };
-const TS_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "interface", "namespace", "module"]);
-const TS_PASS_THROUGH = new Set(["export_statement", "ambient_declaration", "lexical_declaration", "variable_declaration"]);
+const TS_CONTAINERS: ReadonlySet<SymbolKind> = new Set([
+  "class",
+  "interface",
+  "namespace",
+  "module",
+]);
+const TS_PASS_THROUGH = new Set([
+  "export_statement",
+  "ambient_declaration",
+  "lexical_declaration",
+  "variable_declaration",
+]);
 const TS_DECLARATIONS = new Set(["lexical_declaration", "variable_declaration"]);
 const FUNCTION_VALUES = new Set(["arrow_function", "function_expression"]);
 /** Symbols whose body is their field `value`'s field `body`. */
-const VALUE_BODIES = new Set(["variable_declarator", "public_field_definition", "field_definition"]);
-const hasFunctionValue = (node: Node) => FUNCTION_VALUES.has(node.childForFieldName("value")?.type ?? "");
+const VALUE_BODIES = new Set([
+  "variable_declarator",
+  "public_field_definition",
+  "field_definition",
+]);
+const hasFunctionValue = (node: Node) =>
+  FUNCTION_VALUES.has(node.childForFieldName("value")?.type ?? "");
 /** `export default function () {}` or `export default class {}`: the node is its export's field `value`. */
 const isDefaultExport = (node: Node) =>
-  node.parent?.type === "export_statement" && node.parent.childForFieldName("value")?.equals(node) === true;
+  node.parent?.type === "export_statement" &&
+  node.parent.childForFieldName("value")?.equals(node) === true;
 
 const typescript: FamilyRules = {
   kind(node) {
     if (Object.hasOwn(TS_KINDS, node.type)) return TS_KINDS[node.type]!;
     if (node.type === "variable_declarator" && hasFunctionValue(node)) return "fn";
     if (node.type === "public_field_definition" && hasFunctionValue(node)) return "method";
-    if (isDefaultExport(node)) return node.type === "function_expression" ? "fn" : node.type === "class" ? "class" : null;
+    if (isDefaultExport(node))
+      return node.type === "function_expression" ? "fn" : node.type === "class" ? "class" : null;
     return null;
   },
   container: (kind) => TS_CONTAINERS.has(kind),
   passThrough(node) {
     if (TS_PASS_THROUGH.has(node.type)) return node.namedChildren;
-    return node.type === "expression_statement" ? node.namedChildren.filter((child) => child.type === "internal_module") : null;
+    return node.type === "expression_statement"
+      ? node.namedChildren.filter((child) => child.type === "internal_module")
+      : null;
   },
   widen(node) {
     let head = node;
-    if (head.type === "variable_declarator" && TS_DECLARATIONS.has(head.parent?.type ?? "")) head = head.parent!;
+    if (head.type === "variable_declarator" && TS_DECLARATIONS.has(head.parent?.type ?? ""))
+      head = head.parent!;
     if (head.parent?.type === "export_statement") head = head.parent;
     let start = head;
     while (start.previousSibling?.type === "decorator") start = start.previousSibling;
@@ -133,13 +196,15 @@ const typescript: FamilyRules = {
   name(node) {
     if (isDefaultExport(node)) return "default";
     const name = node.childForFieldName("name");
-    if (node.type === "module" && name?.type === "string") return name.namedChildren.find((c) => c.type === "string_fragment")?.text ?? "";
+    if (node.type === "module" && name?.type === "string")
+      return name.namedChildren.find((c) => c.type === "string_fragment")?.text ?? "";
     return name?.text ?? "";
   },
   scope: (node) => typescript.name(node),
-  body: (node) => VALUE_BODIES.has(node.type)
-    ? node.childForFieldName("value")?.childForFieldName("body") ?? null
-    : node.childForFieldName("body"),
+  body: (node) =>
+    VALUE_BODIES.has(node.type)
+      ? (node.childForFieldName("value")?.childForFieldName("body") ?? null)
+      : node.childForFieldName("body"),
   comments: new Set(["comment"]),
 };
 
@@ -153,16 +218,21 @@ const javascript: FamilyRules = {
   ...typescript,
   kind(node) {
     if (Object.hasOwn(JS_KINDS, node.type)) return JS_KINDS[node.type]!;
-    if (node.type === "method_definition") return node.parent?.type === "class_body" ? "method" : null;
+    if (node.type === "method_definition")
+      return node.parent?.type === "class_body" ? "method" : null;
     if (node.type === "variable_declarator" && hasFunctionValue(node)) return "fn";
     if (node.type === "field_definition" && hasFunctionValue(node)) return "method";
-    if (isDefaultExport(node)) return node.type === "function_expression" ? "fn" : node.type === "class" ? "class" : null;
+    if (isDefaultExport(node))
+      return node.type === "function_expression" ? "fn" : node.type === "class" ? "class" : null;
     return null;
   },
-  passThrough: (node) => TS_DECLARATIONS.has(node.type) || node.type === "export_statement" ? node.namedChildren : null,
+  passThrough: (node) =>
+    TS_DECLARATIONS.has(node.type) || node.type === "export_statement" ? node.namedChildren : null,
   name(node) {
     if (isDefaultExport(node)) return "default";
-    return node.childForFieldName(node.type === "field_definition" ? "property" : "name")?.text ?? "";
+    return (
+      node.childForFieldName(node.type === "field_definition" ? "property" : "name")?.text ?? ""
+    );
   },
   scope: (node) => javascript.name(node),
 };
@@ -181,20 +251,29 @@ const python: FamilyRules = {
   },
   container: (kind) => kind === "class",
   passThrough(node) {
-    const definition = node.type === "decorated_definition" ? node.childForFieldName("definition") : null;
+    const definition =
+      node.type === "decorated_definition" ? node.childForFieldName("definition") : null;
     return definition ? [definition] : null;
   },
-  widen: (node) => ({ start: node.parent?.type === "decorated_definition" ? node.parent : node, head: node }),
-  name: (node) => node.childForFieldName(node.type === "type_alias_statement" ? "left" : "name")?.text ?? "",
+  widen: (node) => ({
+    start: node.parent?.type === "decorated_definition" ? node.parent : node,
+    head: node,
+  }),
+  name: (node) =>
+    node.childForFieldName(node.type === "type_alias_statement" ? "left" : "name")?.text ?? "",
   scope: (node) => python.name(node),
   body: (node) => node.childForFieldName("body"),
   comments: new Set(["comment"]),
 };
 
-const GO_SPEC_KINDS: Record<string, SymbolKind> = { struct_type: "struct", interface_type: "interface" };
+const GO_SPEC_KINDS: Record<string, SymbolKind> = {
+  struct_type: "struct",
+  interface_type: "interface",
+};
 /** A `type_spec` or `type_alias` alone in its `type_declaration`, not grouped in `type ( … )`. */
 const isLoneGoSpec = (node: Node) =>
-  node.parent?.type === "type_declaration" && !node.parent.children.some((child) => child.type === "(");
+  node.parent?.type === "type_declaration" &&
+  !node.parent.children.some((child) => child.type === "(");
 
 const go: FamilyRules = {
   kind(node) {
@@ -211,7 +290,7 @@ const go: FamilyRules = {
     return null;
   },
   container: () => false,
-  passThrough: (node) => node.type === "type_declaration" ? node.namedChildren : null,
+  passThrough: (node) => (node.type === "type_declaration" ? node.namedChildren : null),
   widen(node) {
     const head = isLoneGoSpec(node) ? node.parent! : node;
     return { start: head, head };
@@ -219,7 +298,9 @@ const go: FamilyRules = {
   name(node) {
     const name = node.childForFieldName("name")?.text ?? "";
     if (node.type !== "method_declaration") return name;
-    const receiver = node.childForFieldName("receiver")?.namedChildren.find((c) => c.type === "parameter_declaration");
+    const receiver = node
+      .childForFieldName("receiver")
+      ?.namedChildren.find((c) => c.type === "parameter_declaration");
     const type = receiver?.childForFieldName("type")?.text ?? "";
     return `${type.replace(/^\*\s*/, "").replace(/\[[\s\S]*$/, "")}.${name}`;
   },
@@ -227,7 +308,8 @@ const go: FamilyRules = {
   body(node) {
     if (node.type !== "type_spec") return node.childForFieldName("body");
     const type = node.childForFieldName("type");
-    if (type?.type === "struct_type") return type.namedChildren.find((c) => c.type === "field_declaration_list") ?? null;
+    if (type?.type === "struct_type")
+      return type.namedChildren.find((c) => c.type === "field_declaration_list") ?? null;
     if (type?.type === "interface_type") return type.children.find((c) => c.type === "{") ?? null;
     return null;
   },
@@ -242,13 +324,25 @@ const CPP_TYPES: Record<string, SymbolKind> = {
 };
 const CPP_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "struct", "namespace"]);
 const CPP_PASS_THROUGH = new Set([
-  "template_declaration", "linkage_specification", "declaration_list",
-  "preproc_if", "preproc_ifdef", "preproc_elif", "preproc_elifdef", "preproc_else",
+  "template_declaration",
+  "linkage_specification",
+  "declaration_list",
+  "preproc_if",
+  "preproc_ifdef",
+  "preproc_elif",
+  "preproc_elifdef",
+  "preproc_else",
 ]);
 const CPP_FUNCTION_NAMES = new Set([
-  "identifier", "field_identifier", "qualified_identifier", "destructor_name", "operator_name", "operator_cast",
+  "identifier",
+  "field_identifier",
+  "qualified_identifier",
+  "destructor_name",
+  "operator_name",
+  "operator_cast",
 ]);
-const isAnonymousNamespace = (node: Node) => node.type === "namespace_definition" && node.childForFieldName("name") === null;
+const isAnonymousNamespace = (node: Node) =>
+  node.type === "namespace_definition" && node.childForFieldName("name") === null;
 
 /**
  * The function name of a definition or declaration: its field `declarator`, unwrapped through
@@ -258,9 +352,13 @@ const isAnonymousNamespace = (node: Node) => node.type === "namespace_definition
 function cppFunctionName(node: Node): string | null {
   let declarator = node.childForFieldName("declarator");
   while (declarator?.type === "pointer_declarator" || declarator?.type === "reference_declarator") {
-    declarator = declarator.type === "pointer_declarator" ? declarator.childForFieldName("declarator") : declarator.namedChildren[0] ?? null;
+    declarator =
+      declarator.type === "pointer_declarator"
+        ? declarator.childForFieldName("declarator")
+        : (declarator.namedChildren[0] ?? null);
   }
-  if (declarator?.type === "operator_cast" && node.type === "function_definition") return declarator.text;
+  if (declarator?.type === "operator_cast" && node.type === "function_definition")
+    return declarator.text;
   if (declarator?.type !== "function_declarator") return null;
   const name = declarator.childForFieldName("declarator");
   return name && CPP_FUNCTION_NAMES.has(name.type) ? name.text : null;
@@ -282,19 +380,27 @@ const cpp: FamilyRules = {
         return "type";
     }
     if (!Object.hasOwn(CPP_TYPES, node.type)) return null;
-    return node.childForFieldName("name") && node.childForFieldName("body") ? CPP_TYPES[node.type]! : null;
+    return node.childForFieldName("name") && node.childForFieldName("body")
+      ? CPP_TYPES[node.type]!
+      : null;
   },
   container: (kind) => CPP_CONTAINERS.has(kind),
-  passThrough: (node) => CPP_PASS_THROUGH.has(node.type) || isAnonymousNamespace(node) ? node.namedChildren : null,
+  passThrough: (node) =>
+    CPP_PASS_THROUGH.has(node.type) || isAnonymousNamespace(node) ? node.namedChildren : null,
   widen(node) {
     const head = node.parent?.type === "template_declaration" ? node.parent : node;
     return { start: head, head };
   },
   name(node) {
-    if (node.type === "function_definition" || node.type === "declaration" || node.type === "field_declaration") {
+    if (
+      node.type === "function_definition" ||
+      node.type === "declaration" ||
+      node.type === "field_declaration"
+    ) {
       return cppFunctionName(node) ?? "";
     }
-    if (node.type === "type_definition") return firstTypeIdentifier(node.childForFieldName("declarator"))?.text ?? "";
+    if (node.type === "type_definition")
+      return firstTypeIdentifier(node.childForFieldName("declarator"))?.text ?? "";
     return node.childForFieldName("name")?.text ?? "";
   },
   scope: (node) => cpp.name(node),
@@ -346,13 +452,13 @@ const rust: FamilyRules = {
     const trait = node.childForFieldName("trait");
     return trait ? `${trait.text} for ${rustImplType(node)}` : rustImplType(node);
   },
-  scope: (node) => node.type === "impl_item" ? rustImplType(node) : rust.name(node),
+  scope: (node) => (node.type === "impl_item" ? rustImplType(node) : rust.name(node)),
   body: (node) => node.childForFieldName("body"),
   comments: new Set(["line_comment", "block_comment"]),
 };
 
 const bash: FamilyRules = {
-  kind: (node) => node.type === "function_definition" ? "fn" : null,
+  kind: (node) => (node.type === "function_definition" ? "fn" : null),
   container: () => false,
   passThrough: () => null,
   widen: (node) => ({ start: node, head: node }),
@@ -374,9 +480,9 @@ const JAVA_KINDS: Record<string, SymbolKind> = {
 const JAVA_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "interface", "enum"]);
 
 const java: FamilyRules = {
-  kind: (node) => Object.hasOwn(JAVA_KINDS, node.type) ? JAVA_KINDS[node.type]! : null,
+  kind: (node) => (Object.hasOwn(JAVA_KINDS, node.type) ? JAVA_KINDS[node.type]! : null),
   container: (kind) => JAVA_CONTAINERS.has(kind),
-  passThrough: (node) => node.type === "enum_body_declarations" ? node.namedChildren : null,
+  passThrough: (node) => (node.type === "enum_body_declarations" ? node.namedChildren : null),
   widen: (node) => ({ start: node, head: node }),
   name: (node) => node.childForFieldName("name")?.text ?? "",
   scope: (node) => java.name(node),
@@ -399,12 +505,17 @@ const CSHARP_KINDS: Record<string, SymbolKind> = {
   operator_declaration: "method",
   indexer_declaration: "method",
 };
-const CSHARP_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["namespace", "class", "struct", "interface"]);
+const CSHARP_CONTAINERS: ReadonlySet<SymbolKind> = new Set([
+  "namespace",
+  "class",
+  "struct",
+  "interface",
+]);
 
 const csharp: FamilyRules = {
-  kind: (node) => Object.hasOwn(CSHARP_KINDS, node.type) ? CSHARP_KINDS[node.type]! : null,
+  kind: (node) => (Object.hasOwn(CSHARP_KINDS, node.type) ? CSHARP_KINDS[node.type]! : null),
   container: (kind) => CSHARP_CONTAINERS.has(kind),
-  passThrough: (node) => node.type === "declaration_list" ? node.namedChildren : null,
+  passThrough: (node) => (node.type === "declaration_list" ? node.namedChildren : null),
   widen: (node) => ({ start: node, head: node }),
   name(node) {
     switch (node.type) {
@@ -425,7 +536,10 @@ const csharp: FamilyRules = {
 /** A method in `class << self`: its parent is the singleton class's body. */
 const inRubySingletonClass = (node: Node) => node.parent?.parent?.type === "singleton_class";
 /** `private def pm; end`: the `call` whose argument list holds the method. */
-const rubyWrappingCall = (node: Node) => node.parent?.type === "argument_list" && node.parent.parent?.type === "call" ? node.parent.parent : null;
+const rubyWrappingCall = (node: Node) =>
+  node.parent?.type === "argument_list" && node.parent.parent?.type === "call"
+    ? node.parent.parent
+    : null;
 
 const ruby: FamilyRules = {
   kind(node, parent) {
@@ -447,12 +561,15 @@ const ruby: FamilyRules = {
       const args = node.childForFieldName("arguments")?.namedChildren ?? [];
       return args.filter((child) => child.type === "method" || child.type === "singleton_method");
     }
-    return node.type === "singleton_class" ? node.childForFieldName("body")?.namedChildren ?? [] : null;
+    return node.type === "singleton_class"
+      ? (node.childForFieldName("body")?.namedChildren ?? [])
+      : null;
   },
   widen: (node) => ({ start: rubyWrappingCall(node) ?? node, head: node }),
   name(node) {
     const name = node.childForFieldName("name")?.text ?? "";
-    if (node.type === "singleton_method") return `${node.childForFieldName("object")?.text ?? ""}.${name}`;
+    if (node.type === "singleton_method")
+      return `${node.childForFieldName("object")?.text ?? ""}.${name}`;
     return node.type === "method" && inRubySingletonClass(node) ? `self.${name}` : name;
   },
   scope: (node) => ruby.name(node),
@@ -469,11 +586,17 @@ const PHP_KINDS: Record<string, SymbolKind> = {
   method_declaration: "method",
   namespace_definition: "namespace",
 };
-const PHP_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "interface", "trait", "enum", "namespace"]);
+const PHP_CONTAINERS: ReadonlySet<SymbolKind> = new Set([
+  "class",
+  "interface",
+  "trait",
+  "enum",
+  "namespace",
+]);
 
 const php: FamilyRules = {
   ...java,
-  kind: (node) => Object.hasOwn(PHP_KINDS, node.type) ? PHP_KINDS[node.type]! : null,
+  kind: (node) => (Object.hasOwn(PHP_KINDS, node.type) ? PHP_KINDS[node.type]! : null),
   container: (kind) => PHP_CONTAINERS.has(kind),
   passThrough: () => null,
   comments: new Set(["comment"]),
@@ -486,22 +609,43 @@ const PS_KINDS: Record<string, SymbolKind> = {
   enum_statement: "enum",
 };
 /** Statements whose body is their anonymous `{` child, having no body field. */
-const PS_BRACE_BODIES = new Set(["function_statement", "class_statement", "class_method_definition"]);
+const PS_BRACE_BODIES = new Set([
+  "function_statement",
+  "class_statement",
+  "class_method_definition",
+]);
 
 const powershell: FamilyRules = {
-  kind: (node) => Object.hasOwn(PS_KINDS, node.type) ? PS_KINDS[node.type]! : null,
+  kind: (node) => (Object.hasOwn(PS_KINDS, node.type) ? PS_KINDS[node.type]! : null),
   container: (kind) => kind === "class",
-  passThrough: (node) => node.type === "statement_list" ? node.namedChildren : null,
+  passThrough: (node) => (node.type === "statement_list" ? node.namedChildren : null),
   widen: (node) => ({ start: node, head: node }),
-  name: (node) => (node.children.find((c) => c.type === "function_name") ?? node.children.find((c) => c.type === "simple_name"))?.text ?? "",
+  name: (node) =>
+    (
+      node.children.find((c) => c.type === "function_name") ??
+      node.children.find((c) => c.type === "simple_name")
+    )?.text ?? "",
   scope: (node) => powershell.name(node),
-  body: (node) => PS_BRACE_BODIES.has(node.type) ? node.children.find((c) => c.type === "{") ?? null : null,
+  body: (node) =>
+    PS_BRACE_BODIES.has(node.type) ? (node.children.find((c) => c.type === "{") ?? null) : null,
   members: (node, body) => node.namedChildren.filter((child) => child.startIndex >= body.endIndex),
   comments: new Set(["comment"]),
 };
 
 const RULES: Record<Grammar, FamilyRules> = {
-  typescript, tsx: typescript, javascript, python, go, cpp, rust, bash, java, "c-sharp": csharp, ruby, php, powershell,
+  typescript,
+  tsx: typescript,
+  javascript,
+  python,
+  go,
+  cpp,
+  rust,
+  bash,
+  java,
+  "c-sharp": csharp,
+  ruby,
+  php,
+  powershell,
 };
 
 /** A node's last line, 1-based: a node that ends at column 0 of a later row ends on the row before. */
@@ -515,13 +659,23 @@ function docStart(node: Node, start: Node, head: Node, rules: FamilyRules): numb
   let from = start;
   if (start.equals(head)) {
     from = node;
-    while (from.parent && rules.passThrough(from.parent) !== null && from.parent.startPosition.row === start.startPosition.row) from = from.parent;
+    while (
+      from.parent &&
+      rules.passThrough(from.parent) !== null &&
+      from.parent.startPosition.row === start.startPosition.row
+    )
+      from = from.parent;
   }
   let first = start.startPosition.row + 1;
   let sib = from.previousSibling;
   // A container body's first member: its comment run sits in the container, before the body (Python, Ruby).
-  if (sib === null && from.parent?.parent?.childForFieldName("body")?.equals(from.parent)) sib = from.parent.previousSibling;
-  for (; sib && rules.comments.has(sib.type) && endLine(sib) === first - 1; sib = sib.previousSibling) {
+  if (sib === null && from.parent?.parent?.childForFieldName("body")?.equals(from.parent))
+    sib = from.parent.previousSibling;
+  for (
+    ;
+    sib && rules.comments.has(sib.type) && endLine(sib) === first - 1;
+    sib = sib.previousSibling
+  ) {
     first = sib.startPosition.row + 1;
   }
   return first;
@@ -536,11 +690,19 @@ function headEnd(body: Node, rules: FamilyRules): number {
 
 /** Criterion 21's head: whitespace collapsed, no space inside brackets, trimmed, one trailing `{` dropped. */
 function headText(raw: string): string {
-  const text = oneLine(raw).replace(/([([]) /g, "$1").replace(/,? ([)\]])/g, "$1").trim();
+  const text = oneLine(raw)
+    .replace(/([([]) /g, "$1")
+    .replace(/,? ([)\]])/g, "$1")
+    .trim();
   return (text.endsWith("{") ? text.slice(0, -1) : text).trim();
 }
 
-function walk(nodes: Node[], parent: { kind: SymbolKind; qualifier: string } | null, rules: FamilyRules, text: string): CodeSymbol[] {
+function walk(
+  nodes: Node[],
+  parent: { kind: SymbolKind; qualifier: string } | null,
+  rules: FamilyRules,
+  text: string,
+): CodeSymbol[] {
   const symbols: CodeSymbol[] = [];
   for (const node of nodes) {
     const kind = rules.kind(node, parent?.kind ?? null);
@@ -563,11 +725,19 @@ function walk(nodes: Node[], parent: { kind: SymbolKind; qualifier: string } | n
       end: endLine(headNode),
       docStart: docStart(node, start, headNode, rules),
       indent: /^[ \t]*/.exec(text.slice(lineStart, headNode.startIndex))![0],
-      head: headText(text.slice(headNode.startIndex, body ? headEnd(body, rules) : headNode.endIndex)),
+      head: headText(
+        text.slice(headNode.startIndex, body ? headEnd(body, rules) : headNode.endIndex),
+      ),
       fold: body === null ? "none" : text.startsWith("{", body.startIndex) ? "brace" : "other",
-      children: body && rules.container(kind)
-        ? walk(rules.members?.(node, body) ?? body.namedChildren, { kind, qualifier }, rules, text)
-        : [],
+      children:
+        body && rules.container(kind)
+          ? walk(
+              rules.members?.(node, body) ?? body.namedChildren,
+              { kind, qualifier },
+              rules,
+              text,
+            )
+          : [],
     });
   }
   return symbols;

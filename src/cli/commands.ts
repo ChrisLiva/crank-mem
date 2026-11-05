@@ -20,7 +20,8 @@ export interface CommandSpec {
 export const COMMANDS = {
   init: {
     summary: "Wire hooks into this project and run the first scan",
-    usage: "Usage: crank-mem init [--yes] [--git commit|ignore|exclude] [--adr <dir>] [--codex merge|skip] [--codex-trust write|skip]",
+    usage:
+      "Usage: crank-mem init [--yes] [--git commit|ignore|exclude] [--adr <dir>] [--codex merge|skip] [--codex-trust write|skip]",
     value: ["git", "adr", "codex", "codex-trust"],
     bool: ["yes"],
   },
@@ -33,7 +34,8 @@ export const COMMANDS = {
   },
   search: {
     summary: "Search stored memory by meaning or keyword",
-    usage: "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path] [--stale]",
+    usage:
+      "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path] [--stale]",
     value: ["limit", "type", "since", "file", "model-host"],
     bool: ["stale"],
     unknownIsText: true,
@@ -44,22 +46,42 @@ export const COMMANDS = {
     value: ["depth"],
     bool: [],
   },
-  get: { summary: "Print stored observations in full", usage: "Usage: crank-mem get <id...>", value: [], bool: [] },
+  get: {
+    summary: "Print stored observations in full",
+    usage: "Usage: crank-mem get <id...>",
+    value: [],
+    bool: [],
+  },
   outline: {
     summary: "Print a source file's symbols with their bodies folded",
     usage: "Usage: crank-mem outline <file> [--from <line>]",
     value: ["from"],
     bool: [],
   },
-  unfold: { summary: "Print one symbol's full source", usage: "Usage: crank-mem unfold <file> <symbol|line>", value: [], bool: [] },
-  "restore-memory": { summary: "Put a memory.db snapshot back", usage: "Usage: crank-mem restore-memory [<file>]", value: [], bool: [] },
+  unfold: {
+    summary: "Print one symbol's full source",
+    usage: "Usage: crank-mem unfold <file> <symbol|line>",
+    value: [],
+    bool: [],
+  },
+  "restore-memory": {
+    summary: "Put a memory.db snapshot back",
+    usage: "Usage: crank-mem restore-memory [<file>]",
+    value: [],
+    bool: [],
+  },
   setup: {
     summary: "Install packages and download the local search model",
     usage: "Usage: crank-mem setup",
     value: ["model-host", "fetch-timeout-ms"],
     bool: [],
   },
-  stats: { summary: "Index coverage, memory health and Codex hook status", usage: "Usage: crank-mem stats", value: [], bool: [] },
+  stats: {
+    summary: "Index coverage, memory health and Codex hook status",
+    usage: "Usage: crank-mem stats",
+    value: [],
+    bool: [],
+  },
   upgrade: {
     summary: "Re-vendor hooks and repair their wiring after a git pull",
     usage: "Usage: crank-mem upgrade",
@@ -95,7 +117,9 @@ export function commandHelp(spec: CommandSpec): string {
 
 /** `crank-mem --help`: every command with a summary. */
 export function usage(): string {
-  const listed = Object.entries(COMMANDS as Record<string, CommandSpec>).filter(([, spec]) => spec.summary);
+  const listed = Object.entries(COMMANDS as Record<string, CommandSpec>).filter(
+    ([, spec]) => spec.summary,
+  );
   const width = Math.max(...listed.map(([name]) => name.length)) + 2;
   const lines = listed.map(([name, spec]) => `  ${name.padEnd(width)}${spec.summary}`);
   return [

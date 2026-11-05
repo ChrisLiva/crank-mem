@@ -4,8 +4,24 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  REPO_ROOT, appendRecords, digestProject, fakeClaude, killDaemon, laterRecords, makeCrankHome, readDaemon, runCli, runHook,
-  setMtime, spoolFiles, startDaemon, stopDigests, userRecord, waitFor, type FakeCall, type FakeScenario,
+  REPO_ROOT,
+  appendRecords,
+  digestProject,
+  fakeClaude,
+  killDaemon,
+  laterRecords,
+  makeCrankHome,
+  readDaemon,
+  runCli,
+  runHook,
+  setMtime,
+  spoolFiles,
+  startDaemon,
+  stopDigests,
+  userRecord,
+  waitFor,
+  type FakeCall,
+  type FakeScenario,
 } from "./helpers.ts";
 import { digestRequest } from "../src/daemon/digest-prompt.ts";
 import { okStream, refusalStream, status500Stream } from "./fixtures/claude-scenarios.ts";
@@ -13,7 +29,10 @@ import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
 const FIXTURE = path.join(REPO_ROOT, "tests/fixtures/transcript.jsonl");
-const EXPECTED = fs.readFileSync(path.join(REPO_ROOT, "tests/fixtures/transcript.expected.txt"), "utf8");
+const EXPECTED = fs.readFileSync(
+  path.join(REPO_ROOT, "tests/fixtures/transcript.expected.txt"),
+  "utf8",
+);
 const OK: FakeScenario = { lines: okStream(SAMPLE_DIGEST) };
 const FAIL: FakeScenario = { lines: status500Stream() };
 const MINUTE = 60_000;
@@ -50,11 +69,15 @@ afterEach(async () => {
     killDaemon(home);
   }
   for (const pid of daemonPids) {
-    try { process.kill(-pid, "SIGKILL"); } catch {}
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
   }
   for (const h of handles.splice(0)) {
     if (h.proc.exitCode === null && h.proc.signalCode === null) {
-      try { process.kill(-h.proc.pid!, "SIGKILL"); } catch {}
+      try {
+        process.kill(-h.proc.pid!, "SIGKILL");
+      } catch {}
     }
     await h.exited;
   }
@@ -70,7 +93,8 @@ afterEach(async () => {
 });
 
 afterAll(() => {
-  for (const pid of daemonPids) expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+  for (const pid of daemonPids)
+    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
 });
 
 function tempDir(prefix: string): string {
@@ -90,7 +114,11 @@ function setup(scenarios: FakeScenario[] = [OK]): Env {
   return { home, fake, env: { ...fake.env, CRANK_HOME: home } };
 }
 
-function daemon(args: string[], e: Env, cloneRoot?: string): { proc: ChildProcess; exited: Promise<number> } {
+function daemon(
+  args: string[],
+  e: Env,
+  cloneRoot?: string,
+): { proc: ChildProcess; exited: Promise<number> } {
   const h = startDaemon(args, e.env, cloneRoot);
   handles.push(h);
   daemonPids.add(h.proc.pid!);
@@ -99,7 +127,10 @@ function daemon(args: string[], e: Env, cloneRoot?: string): { proc: ChildProces
 
 function plantDaemon(home: string, pid: number, heartbeatMs: number): void {
   planted.add(pid);
-  fs.writeFileSync(path.join(home, "daemon.json"), JSON.stringify({ pid, version: "0.8.0", heartbeatMs }));
+  fs.writeFileSync(
+    path.join(home, "daemon.json"),
+    JSON.stringify({ pid, version: "0.8.0", heartbeatMs }),
+  );
 }
 
 /** The pid of a child that already exited. */
@@ -120,11 +151,19 @@ function sleepMs(ms: number): Promise<void> {
 function transcriptCopy(stem: string, marker?: string): string {
   const file = path.join(tempDir("crank-t-"), `${stem}.jsonl`);
   fs.copyFileSync(FIXTURE, file);
-  if (marker) appendRecords(file, [userRecord(`${marker}-1`, "2026-01-03T00:00:00.000Z", `Note for ${marker}.`)]);
+  if (marker)
+    appendRecords(file, [
+      userRecord(`${marker}-1`, "2026-01-03T00:00:00.000Z", `Note for ${marker}.`),
+    ]);
   return file;
 }
 
-function plantEntry(home: string, stem: string, entry: { transcriptPath: string; projectRoot: string; ended: boolean; updatedAt?: number }, parked = false): string {
+function plantEntry(
+  home: string,
+  stem: string,
+  entry: { transcriptPath: string; projectRoot: string; ended: boolean; updatedAt?: number },
+  parked = false,
+): string {
   const file = path.join(home, "spool", parked ? "parked" : "", `${stem}.json`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ agent: "claude", updatedAt: Date.now(), ...entry }));
@@ -209,20 +248,46 @@ describe("daemon sweeps", () => {
     const root = digestProject({}, temps);
     const e = setup();
     const transcript = transcriptCopy("s1");
-    expect(runHook("src/hooks/stop.ts", JSON.stringify({ ...claudeStop(root), transcript_path: transcript }), root, e.env).status).toBe(0);
-    expect(runHook("src/hooks/session-end.ts", JSON.stringify(claudeSessionEnd(root, transcript)), root, e.env).status).toBe(0);
+    expect(
+      runHook(
+        "src/hooks/stop.ts",
+        JSON.stringify({ ...claudeStop(root), transcript_path: transcript }),
+        root,
+        e.env,
+      ).status,
+    ).toBe(0);
+    expect(
+      runHook(
+        "src/hooks/session-end.ts",
+        JSON.stringify(claudeSessionEnd(root, transcript)),
+        root,
+        e.env,
+      ).status,
+    ).toBe(0);
     expect(spoolFiles(e.home)).toEqual(["s1.json"]);
 
     const run = runCli(root, ["daemon", "--once"], {
       ...e.env,
-      ANTHROPIC_API_KEY: "k", ANTHROPIC_AUTH_TOKEN: "t", CLAUDE_CODE_OAUTH_TOKEN: "o", CLAUDE_CODE_USE_BEDROCK: "1",
-      ANTHROPIC_BASE_URL: "http://127.0.0.1:9", CLAUDE_CODE_MAX_RETRIES: "9",
+      ANTHROPIC_API_KEY: "k",
+      ANTHROPIC_AUTH_TOKEN: "t",
+      CLAUDE_CODE_OAUTH_TOKEN: "o",
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
+      CLAUDE_CODE_MAX_RETRIES: "9",
     });
     expect(run.status).toBe(0);
     expect(e.fake.calls().length).toBe(1);
     const call = e.fake.calls()[0]!;
-    expect(call.stdin).toBe("[CEREBRUM]\n## User Preferences\n\n## Memory\n\n[TRANSCRIPT]\n" + EXPECTED);
-    expect(Object.keys(call.env).sort()).toEqual(["CLAUDE_CODE_MAX_RETRIES", "HOME", "PATH", "TMPDIR", "USER"]);
+    expect(call.stdin).toBe(
+      "[CEREBRUM]\n## User Preferences\n\n## Memory\n\n[TRANSCRIPT]\n" + EXPECTED,
+    );
+    expect(Object.keys(call.env).sort()).toEqual([
+      "CLAUDE_CODE_MAX_RETRIES",
+      "HOME",
+      "PATH",
+      "TMPDIR",
+      "USER",
+    ]);
     expect(spoolFiles(e.home)).toEqual([]);
     expect(fs.existsSync(path.join(e.home, "daemon.json"))).toBe(false);
 
@@ -254,7 +319,11 @@ describe("daemon sweeps", () => {
   test("one sweep prunes off, removed and transcript-less entries and old seen files, with no model call", () => {
     const e = setup();
     const off = digestProject({}, temps);
-    plantEntry(e.home, "off", { transcriptPath: transcriptCopy("off"), projectRoot: off, ended: false });
+    plantEntry(e.home, "off", {
+      transcriptPath: transcriptCopy("off"),
+      projectRoot: off,
+      ended: false,
+    });
     expect(runCli(off, ["digest", "off"], e.env).status).toBe(0);
 
     const gone = digestProject({}, temps);
@@ -264,8 +333,17 @@ describe("daemon sweeps", () => {
     fs.rmSync(gone, { recursive: true, force: true });
 
     const on = digestProject({}, temps);
-    plantEntry(e.home, "missing", { transcriptPath: path.join(on, "nope.jsonl"), projectRoot: on, ended: false });
-    const keptParked = plantEntry(e.home, "kept", { transcriptPath: transcriptCopy("kept"), projectRoot: on, ended: true }, true);
+    plantEntry(e.home, "missing", {
+      transcriptPath: path.join(on, "nope.jsonl"),
+      projectRoot: on,
+      ended: false,
+    });
+    const keptParked = plantEntry(
+      e.home,
+      "kept",
+      { transcriptPath: transcriptCopy("kept"), projectRoot: on, ended: true },
+      true,
+    );
 
     const seen = path.join(e.home, "seen");
     fs.mkdirSync(seen);
@@ -286,8 +364,18 @@ describe("daemon sweeps", () => {
     const a = digestProject({}, temps);
     const b = digestProject({}, temps);
     const now = Date.now();
-    plantEntry(e.home, "sa", { transcriptPath: transcriptCopy("sa", "marker-A"), projectRoot: a, ended: true, updatedAt: now - 2_000 });
-    plantEntry(e.home, "sb", { transcriptPath: transcriptCopy("sb", "marker-B"), projectRoot: b, ended: true, updatedAt: now });
+    plantEntry(e.home, "sa", {
+      transcriptPath: transcriptCopy("sa", "marker-A"),
+      projectRoot: a,
+      ended: true,
+      updatedAt: now - 2_000,
+    });
+    plantEntry(e.home, "sb", {
+      transcriptPath: transcriptCopy("sb", "marker-B"),
+      projectRoot: b,
+      ended: true,
+      updatedAt: now,
+    });
     daemon(["--sweep-ms", "50"], e);
 
     await waitFor(() => e.fake.calls().length === 1, 10_000);
@@ -312,7 +400,11 @@ describe("daemon retry holds", () => {
   test("a failing stem waits --retry-ms, doubling each failure up to --retry-cap-ms", async () => {
     const e = setup([FAIL]);
     const root = digestProject({}, temps);
-    plantEntry(e.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
+    plantEntry(e.home, "s1", {
+      transcriptPath: transcriptCopy("s1"),
+      projectRoot: root,
+      ended: true,
+    });
     daemon(["--sweep-ms", "25", "--retry-ms", "200", "--retry-cap-ms", "800"], e);
     await waitFor(() => e.fake.calls().length >= 5, 15_000);
     const [g1, g2, g3, g4] = gaps(e.fake.calls().slice(0, 5));
@@ -329,7 +421,11 @@ describe("daemon retry holds", () => {
   test("a run past --run-timeout-ms is killed and retried, never parked", async () => {
     const e = setup([{ ...OK, sleepMs: 5_000 }]);
     const root = digestProject({}, temps);
-    plantEntry(e.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
+    plantEntry(e.home, "s1", {
+      transcriptPath: transcriptCopy("s1"),
+      projectRoot: root,
+      ended: true,
+    });
     daemon(["--sweep-ms", "25", "--run-timeout-ms", "1000", "--retry-ms", "200"], e);
     await waitFor(() => e.fake.calls().length >= 3, 6_000);
     for (const call of e.fake.calls()) expect(call.endMs).toBe(null);
@@ -341,8 +437,18 @@ describe("daemon retry holds", () => {
     const a = digestProject({}, temps);
     const b = digestProject({}, temps);
     const now = Date.now();
-    plantEntry(two.home, "sa", { transcriptPath: transcriptCopy("sa", "marker-A"), projectRoot: a, ended: true, updatedAt: now - 2_000 });
-    plantEntry(two.home, "sb", { transcriptPath: transcriptCopy("sb", "marker-B"), projectRoot: b, ended: true, updatedAt: now });
+    plantEntry(two.home, "sa", {
+      transcriptPath: transcriptCopy("sa", "marker-A"),
+      projectRoot: a,
+      ended: true,
+      updatedAt: now - 2_000,
+    });
+    plantEntry(two.home, "sb", {
+      transcriptPath: transcriptCopy("sb", "marker-B"),
+      projectRoot: b,
+      ended: true,
+      updatedAt: now,
+    });
     daemon(["--sweep-ms", "25", "--retry-ms", "400"], two);
     await waitFor(() => two.fake.calls().length >= 4, 10_000);
     const calls = two.fake.calls();
@@ -354,7 +460,11 @@ describe("daemon retry holds", () => {
 
     const one = setup([FAIL, { lines: refusalStream() }, FAIL, FAIL]);
     const root = digestProject({}, temps);
-    plantEntry(one.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
+    plantEntry(one.home, "s1", {
+      transcriptPath: transcriptCopy("s1"),
+      projectRoot: root,
+      ended: true,
+    });
     daemon(["--sweep-ms", "25", "--retry-ms", "400"], one);
     await waitFor(() => one.fake.calls().length >= 3, 10_000);
     const [g0, g1] = gaps(one.fake.calls());
@@ -374,7 +484,12 @@ describe("daemon exits", () => {
 
     const parked = setup();
     const root = digestProject({}, temps);
-    const entry = plantEntry(parked.home, "p", { transcriptPath: transcriptCopy("p"), projectRoot: root, ended: true }, true);
+    const entry = plantEntry(
+      parked.home,
+      "p",
+      { transcriptPath: transcriptCopy("p"), projectRoot: root, ended: true },
+      true,
+    );
     const d2 = daemon(["--idle-ms", "300", "--sweep-ms", "50"], parked);
     expect(await within(d2.exited, 2_000)).toBe(0);
     expect(fs.existsSync(path.join(parked.home, "daemon.json"))).toBe(false);
@@ -392,7 +507,11 @@ describe("daemon exits", () => {
   test("a stop file written while a job runs: the job finishes and the daemon exits", async () => {
     const e = setup([{ ...OK, sleepMs: 1_500 }]);
     const root = digestProject({}, temps);
-    plantEntry(e.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
+    plantEntry(e.home, "s1", {
+      transcriptPath: transcriptCopy("s1"),
+      projectRoot: root,
+      ended: true,
+    });
     const d = daemon(["--sweep-ms", "50"], e);
     await waitFor(() => e.fake.calls().length === 1, 10_000);
     stopDigests(e.home);
@@ -403,16 +522,30 @@ describe("daemon exits", () => {
 
   test("after its current job when package.json's version changes, starting no other job", async () => {
     const clone = tempDir("crank-clone-");
-    for (const name of ["src", "bin", "package.json"]) fs.cpSync(path.join(REPO_ROOT, name), path.join(clone, name), { recursive: true });
+    for (const name of ["src", "bin", "package.json"])
+      fs.cpSync(path.join(REPO_ROOT, name), path.join(clone, name), { recursive: true });
     const e = setup([{ ...OK, sleepMs: 1_500 }, OK]);
     const root = digestProject({ clone_root: clone }, temps);
     const now = Date.now();
-    plantEntry(e.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true, updatedAt: now - 1_000 });
-    plantEntry(e.home, "s2", { transcriptPath: transcriptCopy("s2"), projectRoot: root, ended: true, updatedAt: now });
+    plantEntry(e.home, "s1", {
+      transcriptPath: transcriptCopy("s1"),
+      projectRoot: root,
+      ended: true,
+      updatedAt: now - 1_000,
+    });
+    plantEntry(e.home, "s2", {
+      transcriptPath: transcriptCopy("s2"),
+      projectRoot: root,
+      ended: true,
+      updatedAt: now,
+    });
     const d = daemon(["--sweep-ms", "50"], e, clone);
     await waitFor(() => e.fake.calls().length === 1, 10_000);
     const pkg = path.join(clone, "package.json");
-    fs.writeFileSync(pkg, JSON.stringify({ ...JSON.parse(fs.readFileSync(pkg, "utf8")), version: "9.9.9" }));
+    fs.writeFileSync(
+      pkg,
+      JSON.stringify({ ...JSON.parse(fs.readFileSync(pkg, "utf8")), version: "9.9.9" }),
+    );
     expect(await within(d.exited, 5_000)).toBe(0);
     expect(e.fake.calls().length).toBe(1);
     expectOneRow(root, "EEXIST");
@@ -425,18 +558,30 @@ describe("daemon recovery", () => {
     const root = digestProject({ clone_root: REPO_ROOT }, temps);
     const e = setup();
     const transcript = transcriptCopy("s1");
-    const stop = () => runHook("src/hooks/stop.ts", JSON.stringify({ ...claudeStop(root), transcript_path: transcript }), root, e.env);
+    const stop = () =>
+      runHook(
+        "src/hooks/stop.ts",
+        JSON.stringify({ ...claudeStop(root), transcript_path: transcript }),
+        root,
+        e.env,
+      );
     expect(stop().status).toBe(0);
     await waitFor(() => daemonPid(e.home) !== undefined, 3_000);
     const killed = daemonPid(e.home)!;
     killDaemon(e.home);
     await waitFor(() => !alive(killed), 3_000);
-    fs.writeFileSync(path.join(e.home, "daemon.json"), JSON.stringify({ ...readDaemon(e.home), heartbeatMs: Date.now() - 120_000 }));
+    fs.writeFileSync(
+      path.join(e.home, "daemon.json"),
+      JSON.stringify({ ...readDaemon(e.home), heartbeatMs: Date.now() - 120_000 }),
+    );
     expect(spoolFiles(e.home)).toEqual(["s1.json"]);
 
     setMtime(transcript, Date.now() - 31 * MINUTE);
     expect(stop().status).toBe(0);
-    await waitFor(() => { const pid = daemonPid(e.home); return pid !== undefined && pid !== killed; }, 3_000);
+    await waitFor(() => {
+      const pid = daemonPid(e.home);
+      return pid !== undefined && pid !== killed;
+    }, 3_000);
     await waitFor(() => spoolFiles(e.home).length === 0, 5_000);
     expectOneRow(root, "EEXIST");
   }, 20_000);
@@ -445,7 +590,11 @@ describe("daemon recovery", () => {
     const root = digestProject({}, temps);
     const e = setup();
     stopDigests(e.home);
-    plantEntry(e.home, "s1", { transcriptPath: transcriptCopy("s1"), projectRoot: root, ended: true });
+    plantEntry(e.home, "s1", {
+      transcriptPath: transcriptCopy("s1"),
+      projectRoot: root,
+      ended: true,
+    });
     expect(runCli(root, ["daemon", "--once"], e.env).status).toBe(0);
     expect(e.fake.calls().length).toBe(0);
     expect(spoolFiles(e.home)).toEqual(["s1.json"]);
@@ -482,24 +631,39 @@ describe("mid-session digests", () => {
     const firstEndMs = e.fake.calls()[0]!.endMs!;
     const later = laterRecords();
     appendRecords(transcript, later.records);
-    plantEntry(e.home, "mid", { transcriptPath: transcript, projectRoot: root, ended: false, updatedAt: Date.now() });
+    plantEntry(e.home, "mid", {
+      transcriptPath: transcript,
+      projectRoot: root,
+      ended: false,
+      updatedAt: Date.now(),
+    });
     await waitFor(() => e.fake.calls().length === 2, 10_000);
     const second = e.fake.calls()[1]!;
     expect(second.startMs - firstEndMs).toBeGreaterThanOrEqual(1_500);
     expect(second.stdin).toBe(
-      digestRequest(later.text, SAMPLE_DIGEST.summary, { cerebrum: "## User Preferences\n\n## Memory", existing: [] }).input,
+      digestRequest(later.text, SAMPLE_DIGEST.summary, {
+        cerebrum: "## User Preferences\n\n## Memory",
+        existing: [],
+      }).input,
     );
   }, 30_000);
 
   test("a restarted daemon opens the window again at its first sweep", async () => {
     const e = setup();
     const root = digestProject({}, temps);
-    plantEntry(e.home, "mid", { transcriptPath: transcriptCopy("mid", "marker-A"), projectRoot: root, ended: false });
+    plantEntry(e.home, "mid", {
+      transcriptPath: transcriptCopy("mid", "marker-A"),
+      projectRoot: root,
+      ended: false,
+    });
     const first = daemon(MID, e);
     await sleepMs(800);
     killDaemon(e.home);
     await first.exited;
-    fs.writeFileSync(path.join(e.home, "daemon.json"), JSON.stringify({ ...readDaemon(e.home), heartbeatMs: Date.now() - 120_000 }));
+    fs.writeFileSync(
+      path.join(e.home, "daemon.json"),
+      JSON.stringify({ ...readDaemon(e.home), heartbeatMs: Date.now() - 120_000 }),
+    );
 
     const t1 = Date.now();
     daemon(MID, e);

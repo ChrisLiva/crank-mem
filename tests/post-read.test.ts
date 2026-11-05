@@ -3,7 +3,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { REPO_ROOT, makeCrankHome, makeCrankProject, plantMemory, runHook, seedMemory, setMtime, type HookRun } from "./helpers.ts";
+import {
+  REPO_ROOT,
+  makeCrankHome,
+  makeCrankProject,
+  plantMemory,
+  runHook,
+  seedMemory,
+  setMtime,
+  type HookRun,
+} from "./helpers.ts";
 import { claudePostBash, claudePostRead } from "./fixtures/payloads.ts";
 
 const HOOK = "src/hooks/post-read.ts";
@@ -12,9 +21,15 @@ const HOUR = 3_600_000;
 
 /** A project whose src/a.ts has `rows` observations, its mtime an hour before the seed. */
 function seeded(rows = 7, title = (i: number) => `Read a ${i}`): { root: string; seedMs: number } {
-  const root = makeCrankProject({ "src/a.ts": "export const a = 1;\n", "src/b.ts": "export const b = 1;\n" });
+  const root = makeCrankProject({
+    "src/a.ts": "export const a = 1;\n",
+    "src/b.ts": "export const b = 1;\n",
+  });
   const seedMs = Date.now();
-  seedMemory(root, Array.from({ length: rows }, (_, i) => ({ title: title(i), filesRead: ["src/a.ts"] })));
+  seedMemory(
+    root,
+    Array.from({ length: rows }, (_, i) => ({ title: title(i), filesRead: ["src/a.ts"] })),
+  );
   setMtime(path.join(root, "src/a.ts"), seedMs - HOUR);
   return { root, seedMs };
 }
@@ -45,7 +60,9 @@ describe("post-read file history", () => {
     const { root } = seeded();
     const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crank-homefile-")), "home");
     fs.writeFileSync(home, "a regular file");
-    const r = run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT), { CRANK_HOME: home });
+    const r = run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT), {
+      CRANK_HOME: home,
+    });
     expect(r.status).toBe(0);
     expect(r.stderr).toBe("");
     expect(context(r)).toStartWith("History of src/a.ts:\n#");
@@ -53,10 +70,14 @@ describe("post-read file history", () => {
 
   test("a Bash read names the same history as a Read", () => {
     const { root } = seeded();
-    const viaRead = context(run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)));
+    const viaRead = context(
+      run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)),
+    );
     const viaBash = context(run(root, claudePostBash(root, "sed -n '1,20p' src/a.ts", TRANSCRIPT)));
     expect(viaBash).toBe(viaRead);
-    const viaUnfold = context(run(root, claudePostBash(root, "crank-mem unfold src/a.ts f", TRANSCRIPT)));
+    const viaUnfold = context(
+      run(root, claudePostBash(root, "crank-mem unfold src/a.ts f", TRANSCRIPT)),
+    );
     expect(viaUnfold).toBe(viaRead);
   }, 20_000);
 
@@ -64,8 +85,14 @@ describe("post-read file history", () => {
     const root = makeCrankProject({ "src/a.ts": "a\n", "src/b.ts": "b\n" });
     const seedMs = Date.now();
     const long = (f: string) => (i: number) => `${f}${i} `.padEnd(200, "x");
-    seedMemory(root, Array.from({ length: 20 }, (_, i) => ({ title: long("a")(i), filesRead: ["src/a.ts"] })));
-    seedMemory(root, Array.from({ length: 20 }, (_, i) => ({ title: long("b")(i), filesRead: ["src/b.ts"] })));
+    seedMemory(
+      root,
+      Array.from({ length: 20 }, (_, i) => ({ title: long("a")(i), filesRead: ["src/a.ts"] })),
+    );
+    seedMemory(
+      root,
+      Array.from({ length: 20 }, (_, i) => ({ title: long("b")(i), filesRead: ["src/b.ts"] })),
+    );
     for (const f of ["src/a.ts", "src/b.ts"]) setMtime(path.join(root, f), seedMs - HOUR);
     const ctx = context(run(root, claudePostBash(root, "cat src/a.ts src/b.ts", TRANSCRIPT)));
     expect(ctx).toContain("History of src/a.ts:");
@@ -94,11 +121,17 @@ describe("post-read once per agent per session", () => {
     const { root } = seeded();
     const env = { CRANK_HOME: makeCrankHome() };
     const file = path.join(root, "src/a.ts");
-    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT), env))).toStartWith("History of src/a.ts:");
+    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT), env))).toStartWith(
+      "History of src/a.ts:",
+    );
     expect(run(root, claudePostRead(root, file, TRANSCRIPT), env).stdout).toBe("");
-    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT, "a1b2"), env))).toStartWith("History of src/a.ts:");
+    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT, "a1b2"), env))).toStartWith(
+      "History of src/a.ts:",
+    );
     const other = "/u/.claude/projects/-proj/7c2e9f14.jsonl";
-    expect(context(run(root, claudePostRead(root, file, other), env))).toStartWith("History of src/a.ts:");
+    expect(context(run(root, claudePostRead(root, file, other), env))).toStartWith(
+      "History of src/a.ts:",
+    );
   });
 });
 
@@ -107,11 +140,17 @@ describe("post-read change tag", () => {
     const { root, seedMs } = seeded();
     const file = path.join(root, "src/a.ts");
     setMtime(file, seedMs + HOUR);
-    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT)))).toStartWith("History of src/a.ts: [file changed since]\n#");
+    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT)))).toStartWith(
+      "History of src/a.ts: [file changed since]\n#",
+    );
     setMtime(file, seedMs - HOUR);
-    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT)))).toStartWith("History of src/a.ts:\n#");
+    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT)))).toStartWith(
+      "History of src/a.ts:\n#",
+    );
     seedMemory(root, [{ title: "Gone", filesRead: ["src/gone.ts"] }]);
-    expect(context(run(root, claudePostBash(root, "cat src/gone.ts", TRANSCRIPT)))).toStartWith("History of src/gone.ts:\n#");
+    expect(context(run(root, claudePostBash(root, "cat src/gone.ts", TRANSCRIPT)))).toStartWith(
+      "History of src/gone.ts:\n#",
+    );
   });
 });
 
@@ -122,7 +161,9 @@ describe("post-read stays silent", () => {
     const bare = makeCrankProject({ "src/a.ts": "a\n" });
     const garbage = makeCrankProject({ "src/a.ts": "a\n" });
     plantMemory(garbage, "unreadable");
-    const noTranscript: Record<string, unknown> = { ...claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT) };
+    const noTranscript: Record<string, unknown> = {
+      ...claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT),
+    };
     delete noTranscript.transcript_path;
     const cases: Array<[string, string, object]> = [
       ["grep", root, claudePostBash(root, "grep foo src/a.ts", TRANSCRIPT)],
@@ -148,9 +189,15 @@ describe("post-read under both runtimes", () => {
     const sidecars = () => [fs.existsSync(`${db}-wal`), fs.existsSync(`${db}-shm`)];
     expect(sidecars()).toEqual([false, false]);
     const input = JSON.stringify(claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT));
-    const viaNode = spawnSync("node", ["--disable-warning=ExperimentalWarning", path.join(REPO_ROOT, HOOK)], {
-      input, encoding: "utf-8", env: { ...process.env, CRANK_HOME: makeCrankHome() },
-    });
+    const viaNode = spawnSync(
+      "node",
+      ["--disable-warning=ExperimentalWarning", path.join(REPO_ROOT, HOOK)],
+      {
+        input,
+        encoding: "utf-8",
+        env: { ...process.env, CRANK_HOME: makeCrankHome() },
+      },
+    );
     expect(sidecars()).toEqual([false, false]);
     const viaBun = runHook(HOOK, input, root, { CRANK_HOME: makeCrankHome() });
     expect([viaNode.status, viaBun.status]).toEqual([0, 0]);

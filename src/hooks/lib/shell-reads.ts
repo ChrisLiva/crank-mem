@@ -67,7 +67,9 @@ export function shellReadPaths(command: string): string[] {
   const paths: string[] = [];
   for (const [name, ...rest] of segments(dropHeredocs(command))) {
     if (name === "crank-mem" && CODE_READERS.has(rest[0]!)) {
-      const file = rest.slice(1).find((w, i, words) => !w.startsWith("-") && words[i - 1] !== "--from");
+      const file = rest
+        .slice(1)
+        .find((w, i, words) => !w.startsWith("-") && words[i - 1] !== "--from");
       if (file !== undefined) paths.push(file);
       continue;
     }

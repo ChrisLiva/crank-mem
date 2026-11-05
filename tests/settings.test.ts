@@ -4,9 +4,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  crankHooks, hookCommand, mergeHooksIntoFile, removeCrankHooksFromFile,
-  addIgnoreLines, removeIgnoreLines, ensureCodexFeatures, removeCodexFeatures,
-  addAllowRule, removeAllowRule,
+  crankHooks,
+  hookCommand,
+  mergeHooksIntoFile,
+  removeCrankHooksFromFile,
+  addIgnoreLines,
+  removeIgnoreLines,
+  ensureCodexFeatures,
+  removeCodexFeatures,
+  addAllowRule,
+  removeAllowRule,
 } from "../src/cli/settings.ts";
 import { vendorHooks } from "../src/cli/vendor.ts";
 import { makeCrankProject } from "./helpers.ts";
@@ -21,13 +28,17 @@ describe("mergeHooksIntoFile", () => {
     const f = tmpFile();
     mergeHooksIntoFile(f, crankHooks("bun", "claude"));
     const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
-    expect(parsed.hooks.SessionStart[0].hooks[0].command).toContain(".crank/hooks/session-start.ts");
+    expect(parsed.hooks.SessionStart[0].hooks[0].command).toContain(
+      ".crank/hooks/session-start.ts",
+    );
     expect(parsed.hooks.PostToolUse[0].matcher).toBe("Write|Edit|MultiEdit");
     expect(parsed.hooks.Stop[0].hooks[0].command).toContain(".crank/hooks/stop.ts");
   });
 
   test("Stop is wired for Claude but not Codex", () => {
-    expect(crankHooks("bun", "claude").Stop![0]!.hooks[0]!.command).toContain(".crank/hooks/stop.ts");
+    expect(crankHooks("bun", "claude").Stop![0]!.hooks[0]!.command).toContain(
+      ".crank/hooks/stop.ts",
+    );
     expect(crankHooks("node", "codex").Stop).toBeUndefined();
   });
 
@@ -35,8 +46,10 @@ describe("mergeHooksIntoFile", () => {
     const [group] = crankHooks("bun", "claude").SubagentStart!;
     expect(group!.hooks[0]!.command).toContain(".crank/hooks/subagent-start.ts");
     const matcher = new RegExp(group!.matcher!);
-    for (const type of ["general-purpose", "Explore", "Plan", "workflow-subagent"]) expect(matcher.test(type)).toBe(true);
-    for (const type of ["my-reviewer", "Explorer", "general-purpose-2"]) expect(matcher.test(type)).toBe(false);
+    for (const type of ["general-purpose", "Explore", "Plan", "workflow-subagent"])
+      expect(matcher.test(type)).toBe(true);
+    for (const type of ["my-reviewer", "Explorer", "general-purpose-2"])
+      expect(matcher.test(type)).toBe(false);
     expect(crankHooks("bun", "codex").SubagentStart).toBeUndefined();
   });
 
@@ -44,7 +57,9 @@ describe("mergeHooksIntoFile", () => {
     const [write, read] = crankHooks("bun", "claude").PostToolUse!;
     expect(write!.matcher).toBe("Write|Edit|MultiEdit");
     expect(read!.matcher).toBe("Read|Bash");
-    expect(read!.hooks).toEqual([{ type: "command", command: hookCommand("bun", "post-read.ts", "claude"), timeout: 10 }]);
+    expect(read!.hooks).toEqual([
+      { type: "command", command: hookCommand("bun", "post-read.ts", "claude"), timeout: 10 },
+    ]);
     expect(crankHooks("bun", "codex").PostToolUse).toHaveLength(1);
   });
 
@@ -90,7 +105,7 @@ describe("mergeHooksIntoFile", () => {
     const hooks = crankHooks("node", "codex");
     expect(hooks.PostToolUse![0]!.matcher).toBe("apply_patch");
     expect(hooks.SessionStart![0]!.hooks[0]!.command).toBe(
-      "[ ! -f .crank/hooks/session-start.ts ] || node --disable-warning=ExperimentalWarning .crank/hooks/session-start.ts"
+      "[ ! -f .crank/hooks/session-start.ts ] || node --disable-warning=ExperimentalWarning .crank/hooks/session-start.ts",
     );
   });
 
@@ -99,7 +114,12 @@ describe("mergeHooksIntoFile", () => {
     const guarded = "[ ! -f .crank/hooks/session-start.ts ] || bun .crank/hooks/session-start.ts";
     for (const old of [bare, guarded]) {
       const f = tmpFile("hooks.json");
-      fs.writeFileSync(f, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: old }] }] } }));
+      fs.writeFileSync(
+        f,
+        JSON.stringify({
+          hooks: { SessionStart: [{ hooks: [{ type: "command", command: old }] }] },
+        }),
+      );
       mergeHooksIntoFile(f, crankHooks("bun", "codex"));
       const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
       expect(parsed.hooks.SessionStart.length).toBe(1);
@@ -109,23 +129,30 @@ describe("mergeHooksIntoFile", () => {
 
   test("refreshes crank's own forms in place and keeps a user-edited command", () => {
     const f = tmpFile();
-    const userStop = 'test -f "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts && bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts';
+    const userStop =
+      'test -f "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts && bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts';
     const bareStart = 'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/session-start.ts';
-    fs.writeFileSync(f, JSON.stringify({
-      hooks: {
-        SessionStart: [
-          { hooks: [{ type: "command", command: bareStart }] },
-          { hooks: [{ type: "command", command: "echo mine" }] },
-          { hooks: [{ type: "command", command: bareStart }] },
-        ],
-        Stop: [{ hooks: [{ type: "command", command: userStop }] }],
-      },
-    }));
+    fs.writeFileSync(
+      f,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { hooks: [{ type: "command", command: bareStart }] },
+            { hooks: [{ type: "command", command: "echo mine" }] },
+            { hooks: [{ type: "command", command: bareStart }] },
+          ],
+          Stop: [{ hooks: [{ type: "command", command: userStop }] }],
+        },
+      }),
+    );
     const want = crankHooks("bun", "claude");
     expect(mergeHooksIntoFile(f, want)).toBe(true);
     const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
     // First copy replaced where it stood, the second copy dropped.
-    expect(parsed.hooks.SessionStart).toEqual([want.SessionStart![0], { hooks: [{ type: "command", command: "echo mine" }] }]);
+    expect(parsed.hooks.SessionStart).toEqual([
+      want.SessionStart![0],
+      { hooks: [{ type: "command", command: "echo mine" }] },
+    ]);
     expect(parsed.hooks.Stop).toEqual([{ hooks: [{ type: "command", command: userStop }] }]);
     // The event with no group for its script is appended.
     expect(parsed.hooks.PostToolUse).toEqual(want.PostToolUse);
@@ -135,7 +162,11 @@ describe("mergeHooksIntoFile", () => {
     const f = tmpFile();
     mergeHooksIntoFile(f, crankHooks("bun", "claude"));
     let called = false;
-    expect(mergeHooksIntoFile(f, crankHooks("bun", "claude"), () => { called = true; })).toBe(false);
+    expect(
+      mergeHooksIntoFile(f, crankHooks("bun", "claude"), () => {
+        called = true;
+      }),
+    ).toBe(false);
     expect(called).toBe(false);
   });
 });
@@ -201,7 +232,20 @@ describe("addAllowRule", () => {
     const backedUp: string[] = [];
     expect(addAllowRule(f, (file) => backedUp.push(fs.readFileSync(file, "utf-8")))).toBe(true);
     const after = JSON.parse(fs.readFileSync(f, "utf-8"));
-    expect(after).toEqual({ model: "opus", permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"], deny: ["x"] } });
+    expect(after).toEqual({
+      model: "opus",
+      permissions: {
+        allow: [
+          "Bash(ls:*)",
+          "Bash(crank-mem search *)",
+          "Bash(crank-mem timeline *)",
+          "Bash(crank-mem get *)",
+          "Bash(crank-mem outline *)",
+          "Bash(crank-mem unfold *)",
+        ],
+        deny: ["x"],
+      },
+    });
     expect(backedUp).toHaveLength(1);
     expect(JSON.parse(backedUp[0]!).permissions.allow).toEqual(["Bash(ls:*)"]);
   });
@@ -217,20 +261,62 @@ describe("addAllowRule", () => {
   test("creates missing permissions and allow keys", () => {
     const missingFile = tmpFile();
     expect(addAllowRule(missingFile)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(missingFile, "utf-8"))).toEqual({ permissions: { allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"] } });
+    expect(JSON.parse(fs.readFileSync(missingFile, "utf-8"))).toEqual({
+      permissions: {
+        allow: [
+          "Bash(crank-mem search *)",
+          "Bash(crank-mem timeline *)",
+          "Bash(crank-mem get *)",
+          "Bash(crank-mem outline *)",
+          "Bash(crank-mem unfold *)",
+        ],
+      },
+    });
     const noAllow = writeSettings({ permissions: { deny: ["x"] } });
     expect(addAllowRule(noAllow)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(noAllow, "utf-8"))).toEqual({ permissions: { deny: ["x"], allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"] } });
+    expect(JSON.parse(fs.readFileSync(noAllow, "utf-8"))).toEqual({
+      permissions: {
+        deny: ["x"],
+        allow: [
+          "Bash(crank-mem search *)",
+          "Bash(crank-mem timeline *)",
+          "Bash(crank-mem get *)",
+          "Bash(crank-mem outline *)",
+          "Bash(crank-mem unfold *)",
+        ],
+      },
+    });
   });
   test("replaces the legacy Bash(crank-mem *) rule, keeping the user's other rules in place", () => {
-    const f = writeSettings({ permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)", "Bash(git *)"] } });
+    const f = writeSettings({
+      permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)", "Bash(git *)"] },
+    });
     expect(addAllowRule(f)).toBe(true);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({
-      permissions: { allow: ["Bash(ls:*)", "Bash(git *)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"] },
+      permissions: {
+        allow: [
+          "Bash(ls:*)",
+          "Bash(git *)",
+          "Bash(crank-mem search *)",
+          "Bash(crank-mem timeline *)",
+          "Bash(crank-mem get *)",
+          "Bash(crank-mem outline *)",
+          "Bash(crank-mem unfold *)",
+        ],
+      },
     });
   });
   test("leaves a non-object file or a malformed permissions or allow alone", () => {
-    for (const value of [[], null, "x", { permissions: [] }, { permissions: null }, { permissions: "x" }, { permissions: { allow: "x" } }, { permissions: { allow: {} } }]) {
+    for (const value of [
+      [],
+      null,
+      "x",
+      { permissions: [] },
+      { permissions: null },
+      { permissions: "x" },
+      { permissions: { allow: "x" } },
+      { permissions: { allow: {} } },
+    ]) {
       const f = writeSettings(value);
       const bytes = fs.readFileSync(f, "utf-8");
       expect(addAllowRule(f)).toBe(false);
@@ -269,14 +355,39 @@ describe("removeAllowRule", () => {
     expect(fs.readFileSync(f, "utf-8")).toBe("{}\n");
   });
   test("keeps permissions when other keys remain", () => {
-    const f = writeSettings({ permissions: { allow: ["Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"], deny: ["x"] } });
+    const f = writeSettings({
+      permissions: {
+        allow: [
+          "Bash(crank-mem search *)",
+          "Bash(crank-mem timeline *)",
+          "Bash(crank-mem get *)",
+          "Bash(crank-mem outline *)",
+          "Bash(crank-mem unfold *)",
+        ],
+        deny: ["x"],
+      },
+    });
     expect(removeAllowRule(f)).toBe(true);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({ permissions: { deny: ["x"] } });
   });
   test("drops the legacy rule alongside the crank-mem rules", () => {
-    const f = writeSettings({ permissions: { allow: ["Bash(ls:*)", "Bash(crank-mem *)", "Bash(crank-mem search *)", "Bash(crank-mem timeline *)", "Bash(crank-mem get *)", "Bash(crank-mem outline *)", "Bash(crank-mem unfold *)"] } });
+    const f = writeSettings({
+      permissions: {
+        allow: [
+          "Bash(ls:*)",
+          "Bash(crank-mem *)",
+          "Bash(crank-mem search *)",
+          "Bash(crank-mem timeline *)",
+          "Bash(crank-mem get *)",
+          "Bash(crank-mem outline *)",
+          "Bash(crank-mem unfold *)",
+        ],
+      },
+    });
     expect(removeAllowRule(f)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({ permissions: { allow: ["Bash(ls:*)"] } });
+    expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({
+      permissions: { allow: ["Bash(ls:*)"] },
+    });
   });
 });
 

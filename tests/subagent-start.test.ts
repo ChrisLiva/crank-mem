@@ -24,7 +24,9 @@ function setDigest(root: string, digest: boolean): void {
 }
 
 function context(root: string): string {
-  const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(root, "Explore")), undefined, { CRANK_HOME: HOME });
+  const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(root, "Explore")), undefined, {
+    CRANK_HOME: HOME,
+  });
   expect(run.status).toBe(0);
   const out = JSON.parse(run.stdout);
   expect(out.hookSpecificOutput.hookEventName).toBe("SubagentStart");
@@ -45,8 +47,12 @@ describe("subagent-start hook (black-box)", () => {
       expect(lines[1]).toBe(
         "- Excerpt of `.crank/cerebrum.md`, this project's memory; grep it for more. Memory is not proof: verify a claim against the cited file before relying on it.",
       );
-      expect(lines.filter((l) => l.startsWith("### "))).toEqual(["### User Preferences", "### Memory"]);
-      for (const dropped of ["journal.md", "agent-kept", "append at its end", "consolidate"]) expect(ctx).not.toContain(dropped);
+      expect(lines.filter((l) => l.startsWith("### "))).toEqual([
+        "### User Preferences",
+        "### Memory",
+      ]);
+      for (const dropped of ["journal.md", "agent-kept", "append at its end", "consolidate"])
+        expect(ctx).not.toContain(dropped);
       expect(ctx).toContain("- **Tabs**: user wants tabs");
       expect(ctx).toContain("- **Build**: `make -j8` OOMs on CI");
       return lines;
@@ -88,8 +94,10 @@ describe("subagent-start hook (black-box)", () => {
     // Digests running keep the excerpt, drop the upkeep pointers, and add recall.
     setDigest(root, true);
     const running = context(root);
-    for (const kept of ["this project's memory;", RECALL_BULLET, "### Memory\n"]) expect(running).toContain(kept);
-    for (const dropped of ["journal.md", "agent-kept", "append at its end"]) expect(running).not.toContain(dropped);
+    for (const kept of ["this project's memory;", RECALL_BULLET, "### Memory\n"])
+      expect(running).toContain(kept);
+    for (const dropped of ["journal.md", "agent-kept", "append at its end"])
+      expect(running).not.toContain(dropped);
     const runningExcerpt = running.slice(running.indexOf("\n\n") + 2);
     expect(Buffer.byteLength(runningExcerpt, "utf-8")).toBeLessThanOrEqual(2048);
   });
@@ -106,8 +114,11 @@ describe("subagent-start hook (black-box)", () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "crank-none-"));
     const noCerebrum = makeCrankProject();
     fs.rmSync(path.join(noCerebrum, ".crank/cerebrum.md"));
-    for (const root of [fresh, noCerebrum]) expect(context(root)).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}`);
-    const none = runHook(HOOK, JSON.stringify(claudeSubagentStart(outside)), undefined, { CRANK_HOME: HOME });
+    for (const root of [fresh, noCerebrum])
+      expect(context(root)).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}`);
+    const none = runHook(HOOK, JSON.stringify(claudeSubagentStart(outside)), undefined, {
+      CRANK_HOME: HOME,
+    });
     expect(none.status).toBe(0);
     expect(none.stdout).toBe("");
     const garbage = runHook(HOOK, "not json", undefined, { CRANK_HOME: HOME });

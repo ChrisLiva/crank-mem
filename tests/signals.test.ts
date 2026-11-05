@@ -4,11 +4,27 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import {
-  REPO_ROOT, digestProject, fakeClaude, killDaemon, makeCrankHome, makeCrankProject, readDaemon, runHook, setMtime, spoolEntry,
-  spoolFiles, waitFor,
+  REPO_ROOT,
+  digestProject,
+  fakeClaude,
+  killDaemon,
+  makeCrankHome,
+  makeCrankProject,
+  readDaemon,
+  runHook,
+  setMtime,
+  spoolEntry,
+  spoolFiles,
+  waitFor,
 } from "./helpers.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
-import { deleteEntry, deleteParked, readParked, readSpool, settleEntry } from "../src/hooks/lib/spool.ts";
+import {
+  deleteEntry,
+  deleteParked,
+  readParked,
+  readSpool,
+  settleEntry,
+} from "../src/hooks/lib/spool.ts";
 
 const STOP = "src/hooks/stop.ts";
 const SESSION_END = "src/hooks/session-end.ts";
@@ -34,7 +50,13 @@ describe("digest signals (black-box)", () => {
     const run = stop(root, home);
     expect(run.status).toBe(0);
     const entry = readEntry(home);
-    expect(entry).toMatchObject({ transcriptPath: TRANSCRIPT, projectRoot: root, cwd: root, agent: "claude", ended: false });
+    expect(entry).toMatchObject({
+      transcriptPath: TRANSCRIPT,
+      projectRoot: root,
+      cwd: root,
+      agent: "claude",
+      ended: false,
+    });
     expect(typeof entry.updatedAt).toBe("number");
     expect(Math.abs(Date.now() - (entry.updatedAt as number))).toBeLessThan(60_000);
   });
@@ -42,10 +64,16 @@ describe("digest signals (black-box)", () => {
   test("SessionEnd marks the entry ended, and a later Stop reopens it", () => {
     const root = digestProject();
     const home = makeCrankHome();
-    const end = runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, { CRANK_HOME: home });
+    const end = runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, {
+      CRANK_HOME: home,
+    });
     expect(end.status).toBe(0);
     expect(end.stdout).toBe("");
-    expect(readEntry(home)).toMatchObject({ transcriptPath: TRANSCRIPT, projectRoot: root, ended: true });
+    expect(readEntry(home)).toMatchObject({
+      transcriptPath: TRANSCRIPT,
+      projectRoot: root,
+      ended: true,
+    });
 
     expect(stop(root, home).status).toBe(0);
     expect(readEntry(home).ended).toBe(false);
@@ -64,17 +92,28 @@ describe("digest signals (black-box)", () => {
     const root = makeCrankProject();
     const home = makeCrankHome();
     expect(stop(root, home).status).toBe(0);
-    expect(runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, { CRANK_HOME: home }).status).toBe(0);
+    expect(
+      runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, {
+        CRANK_HOME: home,
+      }).status,
+    ).toBe(0);
     expect(fs.existsSync(path.join(home, "spool"))).toBe(false);
   });
 
   test("a digest: true committed in config.json alone writes no spool entry", () => {
     const root = makeCrankProject();
     const file = path.join(root, ".crank/config.json");
-    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf-8")), digest: true }, null, 2));
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf-8")), digest: true }, null, 2),
+    );
     const home = makeCrankHome();
     expect(stop(root, home).status).toBe(0);
-    expect(runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, { CRANK_HOME: home }).status).toBe(0);
+    expect(
+      runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, {
+        CRANK_HOME: home,
+      }).status,
+    ).toBe(0);
     expect(spoolFiles(home)).toEqual([]);
   });
 
@@ -88,7 +127,10 @@ describe("digest signals (black-box)", () => {
   ])("transcript_path %s", (_label, transcriptPath, count) => {
     const root = digestProject();
     const home = makeCrankHome();
-    const payload: Record<string, unknown> = { ...claudeStop(root), transcript_path: transcriptPath };
+    const payload: Record<string, unknown> = {
+      ...claudeStop(root),
+      transcript_path: transcriptPath,
+    };
     if (transcriptPath === undefined) delete payload.transcript_path;
     expect(runHook(STOP, JSON.stringify(payload), root, { CRANK_HOME: home }).status).toBe(0);
     expect(spoolFiles(home).length).toBe(count);
@@ -97,10 +139,15 @@ describe("digest signals (black-box)", () => {
   test("with CRANK_HOME empty, the entry lands under ~/.crank, created 0700", () => {
     const root = digestProject();
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "crank-userhome-"));
-    const run = runHook(STOP, JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT }), root, {
-      CRANK_HOME: "",
-      HOME: tmp,
-    });
+    const run = runHook(
+      STOP,
+      JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT }),
+      root,
+      {
+        CRANK_HOME: "",
+        HOME: tmp,
+      },
+    );
     expect(run.status).toBe(0);
     expect(fs.existsSync(path.join(tmp, ".crank/spool/abc-1.json"))).toBe(true);
     expect(fs.statSync(path.join(tmp, ".crank")).mode & 0o777).toBe(0o700);
@@ -111,17 +158,19 @@ describe("digest signals (black-box)", () => {
     const home = makeCrankHome();
     const payload = JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT });
     const statuses = await Promise.all(
-      Array.from({ length: 8 }, () =>
-        new Promise<number | null>((resolve) => {
-          const child = spawn("bun", [path.join(REPO_ROOT, STOP)], {
-            cwd: root,
-            env: { ...process.env, CRANK_HOME: home },
-            stdio: ["pipe", "ignore", "ignore"],
-          });
-          child.on("close", resolve);
-          child.stdin.end(payload);
-        })
-      )
+      Array.from(
+        { length: 8 },
+        () =>
+          new Promise<number | null>((resolve) => {
+            const child = spawn("bun", [path.join(REPO_ROOT, STOP)], {
+              cwd: root,
+              env: { ...process.env, CRANK_HOME: home },
+              stdio: ["pipe", "ignore", "ignore"],
+            });
+            child.on("close", resolve);
+            child.stdin.end(payload);
+          }),
+      ),
     );
     expect(statuses).toEqual(Array(8).fill(0));
     expect(readEntry(home).transcriptPath).toBe(TRANSCRIPT);
@@ -151,7 +200,16 @@ describe("digest signals (black-box)", () => {
     }
     const parked = path.join(home, "spool/parked/abc-1.json");
     fs.mkdirSync(path.dirname(parked), { recursive: true });
-    fs.writeFileSync(parked, JSON.stringify({ transcriptPath: TRANSCRIPT, projectRoot: root, agent: "claude", ended: true, updatedAt: 1 }));
+    fs.writeFileSync(
+      parked,
+      JSON.stringify({
+        transcriptPath: TRANSCRIPT,
+        projectRoot: root,
+        agent: "claude",
+        ended: true,
+        updatedAt: 1,
+      }),
+    );
 
     expect(stop(root, home).status).toBe(0);
     expect(fs.existsSync(parked)).toBe(false);
@@ -244,12 +302,15 @@ afterEach(async () => {
     killDaemon(home);
   }
   for (const pid of daemonPids) {
-    try { process.kill(-pid, "SIGKILL"); } catch {}
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
   }
   await waitFor(() => [...daemonPids].every((pid) => !alive(pid)), 5_000);
 });
 afterAll(() => {
-  for (const pid of daemonPids) expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+  for (const pid of daemonPids)
+    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
 });
 
 /** A crank home whose daemon afterEach kills, and a fake claude for any job that daemon runs. */
@@ -267,7 +328,12 @@ describe("hook-started daemon (black-box)", () => {
   test("a Stop with digest on starts a daemon that outlives the hook", async () => {
     const root = digestProject({ clone_root: REPO_ROOT });
     const { home, env } = daemonEnv();
-    const run = runHook(STOP, JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT }), root, env);
+    const run = runHook(
+      STOP,
+      JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT }),
+      root,
+      env,
+    );
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("");
     await waitFor(() => daemonPid(home) !== undefined, 3_000);
@@ -278,25 +344,38 @@ describe("hook-started daemon (black-box)", () => {
     const root = digestProject({ clone_root: REPO_ROOT });
     const { home, env } = daemonEnv();
     const finished = spawnSync(process.execPath, ["-e", "0"]).pid;
-    fs.writeFileSync(path.join(home, "daemon.json"), JSON.stringify({ pid: finished, version: "0.8.0", heartbeatMs: Date.now() - 120_000 }));
+    fs.writeFileSync(
+      path.join(home, "daemon.json"),
+      JSON.stringify({ pid: finished, version: "0.8.0", heartbeatMs: Date.now() - 120_000 }),
+    );
     const run = runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, env);
     expect(run.status).toBe(0);
-    await waitFor(() => { const pid = daemonPid(home); return pid !== undefined && pid !== finished; }, 3_000);
+    await waitFor(() => {
+      const pid = daemonPid(home);
+      return pid !== undefined && pid !== finished;
+    }, 3_000);
     expect(alive(daemonPid(home)!)).toBe(true);
   }, 10_000);
 
   test("a stop file or digest off starts no daemon", async () => {
     const stopped = daemonEnv();
-    fs.writeFileSync(path.join(stopped.home, "digest-state.json"), JSON.stringify({ reason: "login", atMs: 1, detail: "x" }));
+    fs.writeFileSync(
+      path.join(stopped.home, "digest-state.json"),
+      JSON.stringify({ reason: "login", atMs: 1, detail: "x" }),
+    );
     const on = digestProject({ clone_root: REPO_ROOT });
-    const payload = (root: string) => JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT });
+    const payload = (root: string) =>
+      JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT });
     expect(runHook(STOP, payload(on), on, stopped.env).status).toBe(0);
     expect(spoolFiles(stopped.home)).toEqual(["abc-1.json"]);
 
     const off = daemonEnv();
     const offRoot = makeCrankProject();
     const file = path.join(offRoot, ".crank/config.json");
-    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), clone_root: REPO_ROOT }));
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), clone_root: REPO_ROOT }),
+    );
     expect(runHook(STOP, payload(offRoot), offRoot, off.env).status).toBe(0);
 
     await sleepMs(1_500);
@@ -309,14 +388,23 @@ describe("hook-started daemon (black-box)", () => {
   test.each([
     ["empty", ""],
     ["a missing directory", "/nonexistent/crank-mem-clone"],
-  ])("clone_root %s starts nothing, and the hook still signals", async (_label, cloneRoot) => {
-    const root = digestProject({ clone_root: cloneRoot });
-    const { home, env } = daemonEnv();
-    const run = runHook(STOP, JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT }), root, env);
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
-    expect(spoolFiles(home)).toEqual(["abc-1.json"]);
-    await sleepMs(1_500);
-    expect(fs.existsSync(path.join(home, "daemon.json"))).toBe(false);
-  }, 10_000);
+  ])(
+    "clone_root %s starts nothing, and the hook still signals",
+    async (_label, cloneRoot) => {
+      const root = digestProject({ clone_root: cloneRoot });
+      const { home, env } = daemonEnv();
+      const run = runHook(
+        STOP,
+        JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT }),
+        root,
+        env,
+      );
+      expect(run.status).toBe(0);
+      expect(run.stdout).toBe("");
+      expect(spoolFiles(home)).toEqual(["abc-1.json"]);
+      await sleepMs(1_500);
+      expect(fs.existsSync(path.join(home, "daemon.json"))).toBe(false);
+    },
+    10_000,
+  );
 });
