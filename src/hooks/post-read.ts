@@ -15,6 +15,7 @@ import { formatLine, memoryPath, openMemory } from "./lib/memory.ts";
 import { shellReadPaths } from "./lib/shell-reads.ts";
 import { transcriptStem } from "./lib/spool.ts";
 import { SEEN_DIR, crankHome, ensureCrankHome, writeJsonAtomic } from "./lib/user-state.ts";
+import { hookActor, recordUsage } from "./lib/usage.ts";
 
 // PostToolUse hook for Claude's Read and Bash, Claude Code only (ADR 0009).
 // When the agent reads a file memory has observations on, it adds that file's
@@ -81,33 +82,54 @@ async function main(): Promise<void> {
   const opened = openMemory(file, "read");
   if (opened.status !== "open") return;
 
+  const unseen = rels.filter((r) => !seen.includes(r));
   const sections: string[] = [];
-  const marked: string[] = [];
+  const shown: { path: string; ids: number[] }[] = [];
+  const empty: string[] = [];
+  let cut: string[] = [];
   try {
-    for (const rel of rels.filter((r) => !seen.includes(r))) {
+    for (const [i, rel] of unseen.entries()) {
       const lines = opened.memory.fileHistory(rel, HISTORY_LINES);
-      if (lines.length === 0) continue;
+      if (lines.length === 0) {
+        empty.push(rel);
+        continue;
+      }
       const tag = changedSince(path.join(root, rel), lines[0]!.createdAtMs)
         ? " [file changed since]"
         : "";
       const section = `History of ${rel}:${tag}\n` + lines.map(formatLine).join("\n");
-      if (Buffer.byteLength([...sections, section].join(SEP)) > MAX_BYTES) break;
+      if (Buffer.byteLength([...sections, section].join(SEP)) > MAX_BYTES) {
+        cut = unseen.slice(i);
+        break;
+      }
       sections.push(section);
-      marked.push(rel);
+      shown.push({ path: rel, ids: lines.map((l) => l.id) });
     }
   } finally {
     opened.memory.close();
   }
-  if (sections.length === 0) return;
 
-  try {
-    ensureCrankHome();
-    writeJsonAtomic(seenFile, [...seen, ...marked]);
-  } catch {
-    // A lost marker costs only a repeat of this history.
+  const context = sections.join(SEP);
+  if (sections.length > 0) {
+    const marked = shown.map((s) => s.path);
+    try {
+      ensureCrankHome();
+      writeJsonAtomic(seenFile, [...seen, ...marked]);
+    } catch {
+      // A lost marker costs only a repeat of this history.
+    }
+    emitAdditionalContext("PostToolUse", context);
+    debugEvent("file-history", { paths: marked.map(safePath) });
   }
-  emitAdditionalContext("PostToolUse", sections.join(SEP));
-  debugEvent("file-history", { paths: marked.map(safePath) });
+  recordUsage(root, hookActor(payload), {
+    channel: "file-history",
+    tool: payload.tool_name!,
+    shown,
+    empty,
+    seen: rels.filter((r) => seen.includes(r)),
+    cut,
+    bytes: Buffer.byteLength(context, "utf-8"),
+  });
 }
 
 await runAdvisoryHook("post-read", main);

@@ -12,6 +12,8 @@ export const USAGE_FILE = "usage.jsonl";
 export const USAGE_ROTATED_FILE = "usage.1.jsonl";
 /** An append that would take usage.jsonl past this first renames it to USAGE_ROTATED_FILE. */
 export const USAGE_MAX_BYTES = 4 * 1024 * 1024;
+/** Every list in a line, nested ones included, keeps only its first USAGE_MAX_LIST entries. */
+const USAGE_MAX_LIST = 100;
 
 export type UsageActor = { agent: "claude" | "codex" | "manual"; session: string | null };
 
@@ -93,11 +95,19 @@ export type UsageEvent =
 
 export type UsageLine = UsageEvent & UsageActor & { v: 1; ts: number };
 
+function capLists(value: unknown): unknown {
+  if (Array.isArray(value)) return value.slice(0, USAGE_MAX_LIST).map(capLists);
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, capLists(v)]));
+  }
+  return value;
+}
+
 /** Append one usage line for `root`'s store, rotating the file first when the line would take it past USAGE_MAX_BYTES. Never throws. */
 export function recordUsage(root: string, actor: UsageActor, event: UsageEvent): void {
   try {
     const file = path.join(path.dirname(memoryPath(root)), USAGE_FILE);
-    const line = JSON.stringify({ v: 1, ts: Date.now(), ...actor, ...event }) + "\n";
+    const line = JSON.stringify(capLists({ v: 1, ts: Date.now(), ...actor, ...event })) + "\n";
     let size = 0;
     try {
       size = fs.statSync(file).size;

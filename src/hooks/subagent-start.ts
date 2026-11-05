@@ -20,6 +20,7 @@ import { CEREBRUM_FILE } from "./lib/cerebrum-files.ts";
 import { enableDebug } from "./lib/debug.ts";
 import { digestGate } from "./lib/spool.ts";
 import { memoryPath, memoryStatus } from "./lib/memory.ts";
+import { hookActor, recordUsage } from "./lib/usage.ts";
 
 // SubagentStart hook (Claude Code only). SessionStart never fires inside a
 // subagent, and this channel reaches the subagent but not its parent (ADR
@@ -68,6 +69,12 @@ async function main(): Promise<void> {
   if (recall) lines.push(RECALL_BULLET);
   if (excerpt) lines.push("", excerpt);
   emitAdditionalContext("SubagentStart", lines.join("\n"));
+  recordUsage(root, hookActor(payload), {
+    channel: "subagent-start",
+    agentType: typeof payload.agent_type === "string" ? payload.agent_type : null,
+    excerptBytes: Buffer.byteLength(excerpt, "utf-8"),
+    recallPointer: recall,
+  });
   console.error("crank-mem: injected project memory (subagent)");
 }
 
