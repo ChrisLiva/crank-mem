@@ -476,7 +476,11 @@ describe("refusals", () => {
     fs.symlinkSync(outside, path.join(root, "src/link.ts"));
     fs.symlinkSync(path.join(root, "src/.env"), path.join(root, "src/notes.ts"));
     fs.mkdirSync(path.join(root, "src/x.ts"));
-    const tree = () => fs.readdirSync(root, { recursive: true }).sort();
+    const tree = () =>
+      fs
+        .readdirSync(root, { recursive: true })
+        .filter((p) => p !== path.join(".crank", "usage.jsonl"))
+        .sort();
     const before = tree();
     const refuses = (file: string, line: string) => {
       expect([file, runCli(root, ["outline", file])]).toEqual([

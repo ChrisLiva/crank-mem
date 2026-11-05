@@ -1,4 +1,5 @@
 import { EMBED_MODEL, embed, modelPresent } from "../daemon/embedder.ts";
+import { redact } from "../daemon/redact.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 import {
   formatLine,
@@ -14,6 +15,7 @@ import {
   type ObservationType,
   type SearchQuery,
 } from "../hooks/lib/memory.ts";
+import { cliActor, recordUsage } from "../hooks/lib/usage.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";
@@ -70,7 +72,11 @@ function localMidnight(value: string): number | null {
 const isObservationType = (value: string): value is ObservationType =>
   OBSERVATION_TYPES.some((t) => t === value);
 
+/** The longest query text a search usage line records. */
+const QUERY_CHARS = 500;
+
 export async function search(args: string[]): Promise<number> {
+  const started = Date.now();
   const { flags, rest } = parseArgs(args, COMMANDS.search.value);
   // An unknown flag is query text, so `search --max-turns` finds that option.
   const known = [...COMMANDS.search.value, ...COMMANDS.search.bool];
@@ -102,16 +108,30 @@ export async function search(args: string[]): Promise<number> {
     if ((!embeddable && !modelPresent()) || (embeddable && vector === null)) {
       console.error(KEYWORD_ONLY_NOTE);
     }
+    const applied = limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT);
+    const stale = flags.stale === true;
     const hits = memory.search({
       text,
       vector,
-      limit: limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT),
+      limit: applied,
       type: type ?? null,
       sinceMs,
       file: relFile,
-      stale: flags.stale === true,
+      stale,
     });
     for (const hit of hits) console.log(formatLine(hit));
+    recordUsage(project.root, cliActor(), {
+      channel: "search",
+      query: redact(text).slice(0, QUERY_CHARS),
+      limit: applied,
+      type: type ?? null,
+      since: since ?? null,
+      file: relFile,
+      stale,
+      mode: vector === null ? "keyword" : "hybrid",
+      ids: hits.map((hit) => hit.id),
+      ms: Date.now() - started,
+    });
     return 0;
   });
 }
@@ -149,6 +169,12 @@ export async function timeline(args: string[]): Promise<number> {
   if (!project) return 1;
   return withMemory(project.root, false, (memory) => {
     const lines = memory.timeline(Number(id), Number(depth));
+    recordUsage(project.root, cliActor(), {
+      channel: "timeline",
+      anchor: Number(id),
+      depth: Number(depth),
+      ids: lines === null ? null : lines.map((line) => line.id),
+    });
     if (lines === null) {
       console.error(`crank-mem: no observation #${id}.`);
       return 1;
@@ -183,7 +209,13 @@ export async function get(args: string[]): Promise<number> {
   const project = openNearestProject();
   if (!project) return 1;
   return withMemory(project.root, false, (memory) => {
-    const found = memory.get(args.slice(0, MAX_GET).map(Number));
+    const requested = args.slice(0, MAX_GET).map(Number);
+    const found = memory.get(requested);
+    recordUsage(project.root, cliActor(), {
+      channel: "get",
+      requested,
+      found: found.map((o) => o.id),
+    });
     if (found.length === 0) {
       console.error("crank-mem: no observation found.");
       return 1;

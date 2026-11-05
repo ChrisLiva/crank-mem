@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -8,9 +9,11 @@ import {
   makeCrankHome,
   makeCrankProject,
   plantMemory,
+  REPO_ROOT,
   runCli,
   runHook,
   seedMemory,
+  tempDir,
 } from "./helpers.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import {
@@ -36,6 +39,24 @@ function usageLines(root: string): Array<Record<string, any>> {
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l));
+}
+
+/** The number of lines in the project's usage.jsonl, 0 when it is absent. */
+function lineCount(root: string): number {
+  const file = path.join(root, ".crank/usage.jsonl");
+  return fs.existsSync(file) ? usageLines(root).length : 0;
+}
+
+/** The ids of a run's printed `#<id>` lines, in order. */
+function printedIds(stdout: string): number[] {
+  return [...stdout.matchAll(/^#(\d+) /gm)].map((m) => Number(m[1]));
+}
+
+const CLAUDE_SHELL = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "sess-1" };
+
+/** A crank-mem command run from a Claude Code shell with session sess-1. */
+function claudeCli(root: string, args: string[], env: Record<string, string> = {}) {
+  return runCli(root, args, { ...CLAUDE_SHELL, ...env });
 }
 
 /** A commit-mode main checkout with a linked worktree beside it. */
@@ -359,6 +380,24 @@ describe("usage capture: rotation, failure and placement", () => {
     }
   });
 
+  test("a usage line that cannot be written changes neither search's nor outline's output", () => {
+    const root = makeCrankProject({ "a.ts": THREE });
+    seedMemory(root, [{ title: "Delta note" }]);
+    const both = () => [claudeCli(root, ["search", "delta"]), claudeCli(root, ["outline", "a.ts"])];
+    const written = both();
+    expect(usageLines(root)).toHaveLength(2);
+    fs.rmSync(path.join(root, ".crank/usage.jsonl"));
+    fs.mkdirSync(path.join(root, ".crank/usage.jsonl"));
+    const unwritable = both();
+    for (const [i, a] of written.entries()) {
+      const b = unwritable[i]!;
+      expect([a.status, b.status]).toEqual([0, 0]);
+      expect(a.stdout).not.toBe("");
+      expect(b.stdout).toBe(a.stdout);
+      expect(b.stderr).toBe(a.stderr);
+    }
+  }, 30_000);
+
   test("a commit-mode linked worktree records into its main checkout's usage.jsonl", () => {
     const { root, worktree } = commitModeProject();
     expect(sessionStart(worktree, claudeSessionStart(worktree)).status).toBe(0);
@@ -377,4 +416,271 @@ describe("usage capture: rotation, failure and placement", () => {
     expect(fs.existsSync(path.join(root, ".crank/usage.jsonl"))).toBe(false);
     expect(fs.existsSync(path.join(root, ".crank/usage.1.jsonl"))).toBe(false);
   });
+});
+
+describe("usage capture: the search, timeline and get lines", () => {
+  test("a search whose store opens records its flags, mode and hit ids", () => {
+    const root = makeCrankProject({ "src/a.ts": "export const a = 1;\n" });
+    seedMemory(root, [
+      { type: "bugfix", title: "Alpha fix", filesModified: ["src/a.ts"] },
+      { type: "bugfix", title: "Alpha other", filesModified: ["src/b.ts"] },
+      { type: "decision", title: "Alpha decision", filesModified: ["src/a.ts"] },
+    ]);
+    const args = ["search", "Alpha", "--limit", "99", "--type", "bugfix", "--since", "2020-01-01"];
+    const run = claudeCli(root, [...args, "--file", "src/a.ts", "--stale"]);
+    expect(run.status).toBe(0);
+    const ids = printedIds(run.stdout);
+    expect(ids).toHaveLength(1);
+    const [line] = usageLines(root);
+    expect(line!.ms).toBeGreaterThanOrEqual(0);
+    expect(line).toEqual({
+      v: 1,
+      ts: line!.ts,
+      agent: "claude",
+      session: "sess-1",
+      channel: "search",
+      query: "Alpha",
+      limit: 50,
+      type: "bugfix",
+      since: "2020-01-01",
+      file: "src/a.ts",
+      stale: true,
+      mode: "keyword",
+      ids,
+      ms: line!.ms,
+    });
+
+    expect(claudeCli(root, ["search", "Alpha"]).status).toBe(0);
+    expect(usageLines(root)[1]).toMatchObject({
+      limit: 10,
+      type: null,
+      since: null,
+      file: null,
+      stale: false,
+    });
+    expect(claudeCli(root, ["search", "zzz-none"]).stdout).toBe("");
+    expect(usageLines(root)[2]!.ids).toEqual([]);
+    const key = "AKIA" + "IOSFODNN7EXAMPL" + "E";
+    expect(claudeCli(root, ["search", `key ${key}`]).status).toBe(0);
+    const redacted: string = usageLines(root)[3]!.query;
+    expect(redacted.startsWith("key ")).toBe(true);
+    expect(redacted).not.toContain(key);
+    expect(claudeCli(root, ["search", "q".repeat(600)]).status).toBe(0);
+    expect(usageLines(root)[4]!.query).toBe("q".repeat(500));
+  }, 30_000);
+
+  test("a search records its shell's actor, and writes no line before its store opens", () => {
+    const root = makeCrankProject();
+    seedMemory(root, [{ title: "Beta note" }]);
+    runCli(root, ["search", "beta"], { CLAUDECODE: "", CLAUDE_CODE_SESSION_ID: "" });
+    runCli(root, ["search", "beta"], { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "" });
+    claudeCli(root, ["search", "beta", "--file", ".env"]);
+    const lines = usageLines(root);
+    expect(lines.map((l) => [l.agent, l.session])).toEqual([
+      ["manual", null],
+      ["claude", null],
+      ["claude", "sess-1"],
+    ]);
+    expect(lines[2]!.file).toBeNull();
+
+    const bare = makeCrankProject();
+    expect(claudeCli(bare, ["search", "beta"]).status).toBe(0);
+    const newer = makeCrankProject();
+    plantMemory(newer, "newer");
+    expect(claudeCli(newer, ["search", "beta"]).status).toBe(1);
+    expect(claudeCli(root, ["search", ""]).status).toBe(1);
+    expect(claudeCli(root, ["search", "beta", "--file", "/elsewhere/a.ts"]).status).toBe(0);
+    expect([lineCount(bare), lineCount(newer), lineCount(root)]).toEqual([0, 0, 3]);
+  }, 30_000);
+
+  test("timeline and get record their anchor or ids and what they printed", () => {
+    const root = makeCrankProject();
+    const seeded = seedMemory(
+      root,
+      Array.from({ length: 6 }, (_, i) => ({ title: `Gamma ${i}` })),
+    );
+    const anchor = seeded[3]!;
+    const timeline = claudeCli(root, ["timeline", String(anchor), "--depth", "2"]);
+    expect(timeline.status).toBe(0);
+    const unknown = claudeCli(root, ["timeline", "999"]);
+    expect(unknown.status).toBe(1);
+    const get = claudeCli(root, ["get", String(seeded[0]), String(seeded[1]), "999"]);
+    expect(get.status).toBe(0);
+    const many = Array.from({ length: 25 }, (_, i) => String(i + 1));
+    expect(claudeCli(root, ["get", ...many]).status).toBe(0);
+
+    const [t, u, g, m] = usageLines(root);
+    const actor = { v: 1, agent: "claude", session: "sess-1" };
+    expect(t).toEqual({
+      ...actor,
+      ts: t!.ts,
+      channel: "timeline",
+      anchor,
+      depth: 2,
+      ids: printedIds(timeline.stdout),
+    });
+    expect(t!.ids.length).toBeGreaterThan(1);
+    expect(u).toEqual({
+      ...actor,
+      ts: u!.ts,
+      channel: "timeline",
+      anchor: 999,
+      depth: 5,
+      ids: null,
+    });
+    expect(g).toEqual({
+      ...actor,
+      ts: g!.ts,
+      channel: "get",
+      requested: [seeded[0], seeded[1], 999],
+      found: [seeded[0], seeded[1]],
+    });
+    expect(printedIds(get.stdout)).toEqual([seeded[0]!, seeded[1]!]);
+    expect(m!.requested).toEqual(many.slice(0, 20).map(Number));
+
+    const bare = makeCrankProject();
+    expect(claudeCli(bare, ["timeline", "1"]).status).toBe(1);
+    expect(claudeCli(bare, ["get", "1"]).status).toBe(1);
+    expect(claudeCli(root, ["timeline", "x"]).status).toBe(1);
+    expect(claudeCli(root, ["get", "x"]).status).toBe(1);
+    expect([lineCount(bare), lineCount(root)]).toEqual([0, 4]);
+  }, 30_000);
+});
+
+const THREE = "export function one() {}\nexport function two() {}\nexport function three() {}\n";
+
+describe("usage capture: the outline and unfold lines", () => {
+  test("an outline records the rows it listed, its length and whether CAP cut it", () => {
+    const many = Array.from({ length: 3000 }, (_, i) => `export function f${i}() {}\n`).join("");
+    const root = makeCrankProject({ "a.ts": THREE, "src/many.ts": many });
+    const run = claudeCli(root, ["outline", "a.ts"]);
+    expect(run.status).toBe(0);
+    const [line] = usageLines(root);
+    expect(line!.ms).toBeGreaterThanOrEqual(0);
+    expect(line).toEqual({
+      v: 1,
+      ts: line!.ts,
+      agent: "claude",
+      session: "sess-1",
+      channel: "outline",
+      path: "a.ts",
+      from: null,
+      matches: 3,
+      chars: run.stdout.length,
+      capped: false,
+      outcome: "ok",
+      ms: line!.ms,
+    });
+
+    const cut = claudeCli(root, ["outline", "src/many.ts"]);
+    const rows = cut.stdout.split("\n").filter(Boolean);
+    expect(rows.at(-1)).toMatch(/^… \d+ more symbols from L\d+/);
+    const capped = usageLines(root)[1]!;
+    expect(capped).toMatchObject({ path: "src/many.ts", capped: true, outcome: "ok" });
+    expect(capped.matches).toBe(rows.length - 2);
+    expect(capped.chars).toBe(cut.stdout.length);
+  }, 30_000);
+
+  test("unfold records its symbol and matches, and each refusal records its outcome", () => {
+    const big = `export function big() {\n${"  const x = 1;\n".repeat(2200)}}\n`;
+    const root = makeCrankProject({
+      "a.ts": THREE,
+      "big.ts": big,
+      "notes.xyz": "notes\n",
+      ".env": "SECRET=1\n",
+    });
+    fs.mkdirSync(path.join(root, "src/x.ts"), { recursive: true });
+    const outside = path.join(tempDir("crank-usage-outside-"), "outside.ts");
+    fs.writeFileSync(outside, THREE);
+    const ok = claudeCli(root, ["unfold", "a.ts", "one"]);
+    expect(ok.status).toBe(0);
+    claudeCli(root, ["unfold", "big.ts", "big"]);
+    claudeCli(root, ["unfold", "missing.ts", "x"]);
+    claudeCli(root, ["unfold", "a.ts", "nope"]);
+    claudeCli(root, ["outline", "notes.xyz"]);
+    claudeCli(root, ["outline", path.relative(root, outside)]);
+    claudeCli(root, ["outline", ".env"]);
+    claudeCli(root, ["outline", "src/x.ts"]);
+    claudeCli(root, ["outline", "a.ts", "--from", "2"]);
+    const before = lineCount(root);
+    expect(claudeCli(root, ["outline"]).status).toBe(1);
+    expect(claudeCli(root, ["unfold", "a.ts"]).status).toBe(1);
+    expect(lineCount(root)).toBe(before);
+
+    const pick = (l: Record<string, any>) => ({
+      channel: l.channel,
+      path: l.path,
+      ...(l.channel === "unfold" ? { symbol: l.symbol } : { from: l.from }),
+      matches: l.matches,
+      capped: l.capped,
+      outcome: l.outcome,
+    });
+    const lines = usageLines(root);
+    expect(lines[0]).toMatchObject({ chars: ok.stdout.length, agent: "claude" });
+    expect(lines.map(pick)).toEqual([
+      { channel: "unfold", path: "a.ts", symbol: "one", matches: 1, capped: false, outcome: "ok" },
+      { channel: "unfold", path: "big.ts", symbol: "big", matches: 1, capped: true, outcome: "ok" },
+      {
+        channel: "unfold",
+        path: "missing.ts",
+        symbol: "x",
+        matches: 0,
+        capped: false,
+        outcome: "not-found",
+      },
+      {
+        channel: "unfold",
+        path: "a.ts",
+        symbol: "nope",
+        matches: 0,
+        capped: false,
+        outcome: "not-found",
+      },
+      {
+        channel: "outline",
+        path: "notes.xyz",
+        from: null,
+        matches: 0,
+        capped: false,
+        outcome: "no-reader",
+      },
+      { channel: "outline", path: null, from: null, matches: 0, capped: false, outcome: "refused" },
+      { channel: "outline", path: null, from: null, matches: 0, capped: false, outcome: "refused" },
+      {
+        channel: "outline",
+        path: "src/x.ts",
+        from: null,
+        matches: 0,
+        capped: false,
+        outcome: "refused",
+      },
+      { channel: "outline", path: "a.ts", from: 2, matches: 2, capped: false, outcome: "ok" },
+    ]);
+
+    const bare = tempDir("crank-usage-bare-");
+    expect(claudeCli(bare, ["outline", "a.ts"]).status).toBe(1);
+    expect(fs.readdirSync(bare)).toEqual([]);
+  }, 60_000);
+
+  test("an outline without the code reader records no-reader", () => {
+    const clone = tempDir("crank-clone-");
+    for (const name of ["src", "bin", "package.json"])
+      fs.cpSync(path.join(REPO_ROOT, name), path.join(clone, name), { recursive: true });
+    fs.mkdirSync(path.join(clone, "node_modules"));
+    const root = makeCrankProject({ "a.ts": THREE });
+    const result = spawnSync(
+      process.execPath,
+      [path.join(clone, "src/cli/main.ts"), "outline", "a.ts"],
+      {
+        cwd: root,
+        encoding: "utf-8",
+        timeout: 30_000,
+        env: { ...process.env, ...CLAUDE_SHELL, CRANK_HOME: makeCrankHome() },
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(usageLines(root).map((l) => [l.path, l.matches, l.outcome])).toEqual([
+      ["a.ts", 0, "no-reader"],
+    ]);
+  }, 30_000);
 });

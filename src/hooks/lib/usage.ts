@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isSensitiveFile } from "./config.ts";
 import { isCodexPayload, type HookPayload } from "./hook-io.ts";
 import { memoryPath } from "./memory.ts";
 
@@ -27,7 +28,7 @@ export type UsageChannel =
   | "outline"
   | "unfold";
 
-type CodeOutcome = "ok" | "refused" | "no-reader" | "not-found";
+export type CodeOutcome = "ok" | "refused" | "no-reader" | "not-found";
 
 export type UsageEvent =
   | {
@@ -103,11 +104,25 @@ function capLists(value: unknown): unknown {
   return value;
 }
 
-/** Append one usage line for `root`'s store, rotating the file first when the line would take it past USAGE_MAX_BYTES. Never throws. */
+/** The event with a top-level `file` or `path` whose basename is sensitive set to null. */
+function dropSensitive(event: UsageEvent): UsageEvent {
+  const fields: Record<string, unknown> = { ...event };
+  for (const key of ["file", "path"]) {
+    const value = fields[key];
+    if (typeof value === "string" && isSensitiveFile(path.basename(value))) fields[key] = null;
+  }
+  return fields as UsageEvent;
+}
+
+/**
+ * Append one usage line for `root`'s store, rotating the file first when the line would take it
+ * past USAGE_MAX_BYTES. A sensitive `file` or `path` is recorded as null. Never throws.
+ */
 export function recordUsage(root: string, actor: UsageActor, event: UsageEvent): void {
   try {
     const file = path.join(path.dirname(memoryPath(root)), USAGE_FILE);
-    const line = JSON.stringify(capLists({ v: 1, ts: Date.now(), ...actor, ...event })) + "\n";
+    const fields = { v: 1, ts: Date.now(), ...actor, ...dropSensitive(event) };
+    const line = JSON.stringify(capLists(fields)) + "\n";
     let size = 0;
     try {
       size = fs.statSync(file).size;
@@ -125,4 +140,11 @@ export function hookActor(payload: HookPayload): UsageActor {
     agent: isCodexPayload(payload) ? "codex" : "claude",
     session: typeof payload.session_id === "string" ? payload.session_id : null,
   };
+}
+
+/** The agent and session of the shell a CLI command runs in (ADR 0012). */
+export function cliActor(): UsageActor {
+  return process.env.CLAUDECODE
+    ? { agent: "claude", session: process.env.CLAUDE_CODE_SESSION_ID || null }
+    : { agent: "manual", session: null };
 }
