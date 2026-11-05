@@ -61,15 +61,14 @@ export async function codeSymbols(text: string, grammar: Grammar): Promise<CodeS
   parser.setLanguage(language);
   const tree = parser.parse(text);
   if (tree === null) throw new Error("tree-sitter returned no tree");
-  const rules = RULES[grammar];
-  return rules ? walk(tree.rootNode.namedChildren, null, rules, text) : [];
+  return walk(tree.rootNode.namedChildren, null, RULES[grammar], text);
 }
 
 /** One family's Symbol table row; the walk, range, head and fold below read only these. */
 interface FamilyRules {
   /** The symbol's kind, or null for a node that is not a symbol; `parent` is the enclosing container's kind. */
   kind(node: Node, parent: SymbolKind | null): SymbolKind | null;
-  container(node: Node, kind: SymbolKind): boolean;
+  container(kind: SymbolKind): boolean;
   /** The children the walk visits in place of a pass-through node, or null for any other node. */
   passThrough(node: Node): Node[] | null;
   /** `start`: the node whose first line is the symbol's first line; `head`: the node the head text starts at. */
@@ -118,7 +117,7 @@ const typescript: FamilyRules = {
     if (isDefaultExport(node)) return node.type === "function_expression" ? "fn" : node.type === "class" ? "class" : null;
     return null;
   },
-  container: (_node, kind) => TS_CONTAINERS.has(kind),
+  container: (kind) => TS_CONTAINERS.has(kind),
   passThrough(node) {
     if (TS_PASS_THROUGH.has(node.type)) return node.namedChildren;
     return node.type === "expression_statement" ? node.namedChildren.filter((child) => child.type === "internal_module") : null;
@@ -180,7 +179,7 @@ const python: FamilyRules = {
     }
     return null;
   },
-  container: (_node, kind) => kind === "class",
+  container: (kind) => kind === "class",
   passThrough(node) {
     const definition = node.type === "decorated_definition" ? node.childForFieldName("definition") : null;
     return definition ? [definition] : null;
@@ -285,7 +284,7 @@ const cpp: FamilyRules = {
     if (!Object.hasOwn(CPP_TYPES, node.type)) return null;
     return node.childForFieldName("name") && node.childForFieldName("body") ? CPP_TYPES[node.type]! : null;
   },
-  container: (_node, kind) => CPP_CONTAINERS.has(kind),
+  container: (kind) => CPP_CONTAINERS.has(kind),
   passThrough: (node) => CPP_PASS_THROUGH.has(node.type) || isAnonymousNamespace(node) ? node.namedChildren : null,
   widen(node) {
     const head = node.parent?.type === "template_declaration" ? node.parent : node;
@@ -335,7 +334,7 @@ const rust: FamilyRules = {
     if (node.type === "mod_item") return node.childForFieldName("body") ? "module" : null;
     return Object.hasOwn(RUST_KINDS, node.type) ? RUST_KINDS[node.type]! : null;
   },
-  container: (_node, kind) => RUST_CONTAINERS.has(kind),
+  container: (kind) => RUST_CONTAINERS.has(kind),
   passThrough: () => null,
   widen(node) {
     let start = node;
@@ -376,7 +375,7 @@ const JAVA_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "interface", 
 
 const java: FamilyRules = {
   kind: (node) => Object.hasOwn(JAVA_KINDS, node.type) ? JAVA_KINDS[node.type]! : null,
-  container: (_node, kind) => JAVA_CONTAINERS.has(kind),
+  container: (kind) => JAVA_CONTAINERS.has(kind),
   passThrough: (node) => node.type === "enum_body_declarations" ? node.namedChildren : null,
   widen: (node) => ({ start: node, head: node }),
   name: (node) => node.childForFieldName("name")?.text ?? "",
@@ -404,7 +403,7 @@ const CSHARP_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["namespace", "class"
 
 const csharp: FamilyRules = {
   kind: (node) => Object.hasOwn(CSHARP_KINDS, node.type) ? CSHARP_KINDS[node.type]! : null,
-  container: (_node, kind) => CSHARP_CONTAINERS.has(kind),
+  container: (kind) => CSHARP_CONTAINERS.has(kind),
   passThrough: (node) => node.type === "declaration_list" ? node.namedChildren : null,
   widen: (node) => ({ start: node, head: node }),
   name(node) {
@@ -442,7 +441,7 @@ const ruby: FamilyRules = {
     }
     return null;
   },
-  container: (_node, kind) => kind === "module" || kind === "class",
+  container: (kind) => kind === "module" || kind === "class",
   passThrough(node) {
     if (node.type === "call") {
       const args = node.childForFieldName("arguments")?.namedChildren ?? [];
@@ -475,7 +474,7 @@ const PHP_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "interface", "
 const php: FamilyRules = {
   ...java,
   kind: (node) => Object.hasOwn(PHP_KINDS, node.type) ? PHP_KINDS[node.type]! : null,
-  container: (_node, kind) => PHP_CONTAINERS.has(kind),
+  container: (kind) => PHP_CONTAINERS.has(kind),
   passThrough: () => null,
   comments: new Set(["comment"]),
 };
@@ -491,7 +490,7 @@ const PS_BRACE_BODIES = new Set(["function_statement", "class_statement", "class
 
 const powershell: FamilyRules = {
   kind: (node) => Object.hasOwn(PS_KINDS, node.type) ? PS_KINDS[node.type]! : null,
-  container: (_node, kind) => kind === "class",
+  container: (kind) => kind === "class",
   passThrough: (node) => node.type === "statement_list" ? node.namedChildren : null,
   widen: (node) => ({ start: node, head: node }),
   name: (node) => (node.children.find((c) => c.type === "function_name") ?? node.children.find((c) => c.type === "simple_name"))?.text ?? "",
@@ -501,7 +500,7 @@ const powershell: FamilyRules = {
   comments: new Set(["comment"]),
 };
 
-const RULES: Partial<Record<Grammar, FamilyRules>> = {
+const RULES: Record<Grammar, FamilyRules> = {
   typescript, tsx: typescript, javascript, python, go, cpp, rust, bash, java, "c-sharp": csharp, ruby, php, powershell,
 };
 
@@ -566,7 +565,7 @@ function walk(nodes: Node[], parent: { kind: SymbolKind; qualifier: string } | n
       indent: /^[ \t]*/.exec(text.slice(lineStart, headNode.startIndex))![0],
       head: headText(text.slice(headNode.startIndex, body ? headEnd(body, rules) : headNode.endIndex)),
       fold: body === null ? "none" : text.startsWith("{", body.startIndex) ? "brace" : "other",
-      children: body && rules.container(node, kind)
+      children: body && rules.container(kind)
         ? walk(rules.members?.(node, body) ?? body.namedChildren, { kind, qualifier }, rules, text)
         : [],
     });
