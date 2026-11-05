@@ -175,6 +175,20 @@ describe("setup", () => {
     expect(dash.stamp()).toBeNull();
   });
 
+  test("a failed stamp write exits 1 with the write error and skips the model", () => {
+    const dash = emptyDashboard();
+    fs.writeFileSync(path.join(dash.dir, "dist"), "not a directory");
+    const bun = fakeTool("bun", 0);
+    const run = runCli(REPO_ROOT, ["setup"], {
+      CRANK_HOME: makeModelHome(),
+      CRANK_DASHBOARD_DIR: dash.dir,
+      PATH: `${bun.dir}:${process.env.PATH}`,
+    });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toStartWith("crank-mem: could not build the dashboard (EEXIST");
+    expect(run.stdout).not.toContain("model");
+  });
+
   test("with neither bun nor npm on PATH, the spawn error is the detail", () => {
     const run = runCli(REPO_ROOT, ["setup"], {
       CRANK_HOME: makeModelHome(),
