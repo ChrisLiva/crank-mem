@@ -11,7 +11,7 @@ import type { CrankConfig } from "./config.ts";
 import type { AnatomyIndex } from "./store.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
-// file map, and the recall pointer when recallApplies) → staleness/drift/
+// file map, the code pointer, and the recall pointer when recallApplies) → staleness/drift/
 // capture notes → the recall sections from memory.db (next steps, only while
 // digests run, then recent memory) → cerebrum excerpt → ADR filenames. No
 // digest state asks the agent to keep memory: the instructions carry no upkeep

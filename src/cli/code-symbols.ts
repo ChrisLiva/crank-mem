@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { oneLine } from "../daemon/digest-prompt.ts";
 
-// The tree-sitter reader behind `crank-mem outline`. web-tree-sitter is reached only by
+// The tree-sitter reader behind `crank-mem outline` and `unfold`. web-tree-sitter is reached only by
 // dynamic import(), so every other command works without the package; its types come
 // through type queries, which have no runtime form.
 
