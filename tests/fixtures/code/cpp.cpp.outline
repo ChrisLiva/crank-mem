@@ -1,0 +1,41 @@
+src/cpp.cpp
+  5-8│int add(int a, int b) { … }
+10-10│int proto(int a);
+16-16│int* make() { … }
+18-18│using Id = int;
+19-19│typedef int Handle;
+20-20│typedef struct { int z; } Z;
+22-22│template <typename T> T maxOf(T a, T b) { … }
+24-28│template <typename T> class Holder {
+27-27│  T get() const { … }
+31-31│int c_fn(void) { … }
+34-64│namespace A {
+35-63│  namespace B {
+36-47│    class Foo {
+38-38│      Foo();
+39-39│      ~Foo();
+40-40│      void inline_def() { … }
+41-41│      void outside();
+42-42│      virtual void g() = 0;
+43-43│      bool operator==(const Foo&) const;
+44-44│      operator bool() const { … }
+45-45│      Foo& get();
+49-49│    void hidden() { … }
+51-54│    struct Point {
+53-53│      int len() const { … }
+56-59│    union Value { … }
+61-61│    enum Color { … }
+62-62│    enum class Mode { … }
+66-66│void A::B::Foo::outside() { … }
+67-67│A::B::Foo::~Foo() { … }
+68-68│A::B::Foo& A::B::Foo::get() { … }
+71-71│int feature() { … }
+73-73│int feature() { … }
+77-77│void when_on() { … }
+81-81│void guarded() { … }
+84-96│namespace GUI {
+85-88│  class HoverLabel {
+86-87│    void SetTitle() { … }
+90-92│  class ExtruderGroup {
+91-91│    void SetTitle();
+94-95│  void ExtruderGroup::SetTitle() { … }

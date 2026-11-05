@@ -140,7 +140,84 @@ const typescript: FamilyRules = {
   comments: new Set(["comment"]),
 };
 
-const RULES: Partial<Record<Grammar, FamilyRules>> = { typescript, tsx: typescript };
+const CPP_TYPES: Record<string, SymbolKind> = {
+  class_specifier: "class",
+  struct_specifier: "struct",
+  union_specifier: "struct",
+  enum_specifier: "enum",
+};
+const CPP_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "struct", "namespace"]);
+const CPP_PASS_THROUGH = new Set([
+  "template_declaration", "linkage_specification", "declaration_list",
+  "preproc_if", "preproc_ifdef", "preproc_elif", "preproc_elifdef", "preproc_else",
+]);
+const CPP_FUNCTION_NAMES = new Set([
+  "identifier", "field_identifier", "qualified_identifier", "destructor_name", "operator_name", "operator_cast",
+]);
+const isAnonymousNamespace = (node: Node) => node.type === "namespace_definition" && node.childForFieldName("name") === null;
+
+/**
+ * The function name of a definition or declaration: its field `declarator`, unwrapped through
+ * pointer and reference declarators, is a `function_declarator` naming it, or (a definition only)
+ * a conversion operator's `operator_cast`. Null when it declares no function.
+ */
+function cppFunctionName(node: Node): string | null {
+  let declarator = node.childForFieldName("declarator");
+  while (declarator?.type === "pointer_declarator" || declarator?.type === "reference_declarator") {
+    declarator = declarator.type === "pointer_declarator" ? declarator.childForFieldName("declarator") : declarator.namedChildren[0] ?? null;
+  }
+  if (declarator?.type === "operator_cast" && node.type === "function_definition") return declarator.text;
+  if (declarator?.type !== "function_declarator") return null;
+  const name = declarator.childForFieldName("declarator");
+  return name && CPP_FUNCTION_NAMES.has(name.type) ? name.text : null;
+}
+
+const cpp: FamilyRules = {
+  kind(node, parent) {
+    const fn = parent === "class" || parent === "struct" ? "method" : "fn";
+    switch (node.type) {
+      case "function_definition":
+        return fn;
+      case "declaration":
+      case "field_declaration":
+        return cppFunctionName(node) === null ? null : fn;
+      case "namespace_definition":
+        return isAnonymousNamespace(node) ? null : "namespace";
+      case "alias_declaration":
+      case "type_definition":
+        return "type";
+    }
+    if (!Object.hasOwn(CPP_TYPES, node.type)) return null;
+    return node.childForFieldName("name") && node.childForFieldName("body") ? CPP_TYPES[node.type]! : null;
+  },
+  container: (_node, kind) => CPP_CONTAINERS.has(kind),
+  passThrough: (node) => CPP_PASS_THROUGH.has(node.type) || isAnonymousNamespace(node) ? node.namedChildren : null,
+  widen(node) {
+    const head = node.parent?.type === "template_declaration" ? node.parent : node;
+    return { start: head, head };
+  },
+  name(node) {
+    if (node.type === "function_definition" || node.type === "declaration" || node.type === "field_declaration") {
+      return cppFunctionName(node) ?? "";
+    }
+    if (node.type === "type_definition") return firstTypeIdentifier(node.childForFieldName("declarator"))?.text ?? "";
+    return node.childForFieldName("name")?.text ?? "";
+  },
+  scope: (node) => cpp.name(node),
+  body: (node) => node.childForFieldName("body"),
+  comments: new Set(["comment"]),
+};
+
+function firstTypeIdentifier(node: Node | null): Node | null {
+  if (node === null || node.type === "type_identifier") return node;
+  for (const child of node.namedChildren) {
+    const found = firstTypeIdentifier(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+const RULES: Partial<Record<Grammar, FamilyRules>> = { typescript, tsx: typescript, cpp };
 
 /** A node's last line, 1-based: a node that ends at column 0 of a later row ends on the row before. */
 function endLine(node: Node): number {

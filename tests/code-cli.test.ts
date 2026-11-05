@@ -79,6 +79,7 @@ describe("unfold", () => {
       "src/d.ts": "// detached\n\n// one\n// two\nfunction d(): void {}\n/** e */\nconst e = () => {};\n",
       "src/k.ts": ["k1", "k1", "k2", "k3", "k4", "k5", "k6"].map((k) => `function ${k}(): void {}\n`).join(""),
       "src/r.ts": "namespace A {\n  export function run(): void {}\n}\nnamespace B {\n  export function run(): void {}\n}\nfunction run(): void {}\n",
+      "src/cpp.cpp": fs.readFileSync(path.join(FIXTURES, "cpp.cpp"), "utf8"),
     });
     const unfold = (file: string, query: string) => runCli(root, ["unfold", file, query]);
 
@@ -107,6 +108,14 @@ describe("unfold", () => {
     for (const n of ["5", "0", "99"]) miss("src/a.ts", n, `crank-mem: no symbol at line ${n} in src/a.ts.\n`);
     miss("src/k.ts", "K", "crank-mem: no symbol K in src/k.ts.\nClose: k1, k2, k3, k4, k5\n");
     expect(unfold("src/d.ts", "e")).toMatchObject({ status: 0, stdout: "src/d.ts:7-7 fn e\n6│/** e */\n7│const e = () => {};\n" });
+    const cppHeaders = (query: string) => {
+      const run = unfold("src/cpp.cpp", query);
+      return [run.status, run.stdout.split("\n").filter((line) => line.startsWith("src/cpp.cpp:"))];
+    };
+    const outOfLine = "src/cpp.cpp:94-95 fn GUI.ExtruderGroup::SetTitle";
+    const declared = "src/cpp.cpp:91-91 method GUI.ExtruderGroup.SetTitle";
+    expect(cppHeaders("SetTitle")).toEqual([0, ["src/cpp.cpp:86-87 method GUI.HoverLabel.SetTitle", declared, outOfLine]]);
+    expect(cppHeaders("ExtruderGroup::SetTitle")).toEqual([0, [declared, outOfLine]]);
   }, 30_000);
 });
 
@@ -202,7 +211,7 @@ describe("without the code reader", () => {
   }, 30_000);
 });
 
-const FAMILIES = ["typescript.ts", "tsx.tsx"];
+const FAMILIES = ["typescript.ts", "tsx.tsx", "cpp.cpp"];
 
 describe("families", () => {
   for (const fixture of FAMILIES) {
@@ -214,7 +223,7 @@ describe("families", () => {
 
       const gutters = outline.split("\n").slice(1, -1).map((line) => line.split("│")[0]!.trim());
       const headers = fs.readFileSync(path.join(FIXTURES, `${fixture}.headers`), "utf8").split("\n").slice(0, -1);
-      const parsed = headers.map((line) => /^src\/\S+:(?<range>\d+-\d+) \S+ (?<qualified>\S+)$/.exec(line)?.groups);
+      const parsed = headers.map((line) => /^src\/\S+:(?<range>\d+-\d+) \S+ (?<qualified>.+)$/.exec(line)?.groups);
       expect(parsed.map((groups) => groups?.range)).toEqual(gutters);
       for (const [i, header] of headers.entries()) {
         const unfold = runCli(root, ["unfold", `src/${fixture}`, parsed[i]!.qualified!]);
