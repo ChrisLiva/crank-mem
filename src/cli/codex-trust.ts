@@ -22,7 +22,9 @@ function canonicalJson(value: unknown): string {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return "{" + entries.map(([k, v]) => JSON.stringify(k) + ":" + canonicalJson(v)).join(",") + "}";
+    return (
+      "{" + entries.map(([k, v]) => JSON.stringify(k) + ":" + canonicalJson(v)).join(",") + "}"
+    );
   }
   return JSON.stringify(value);
 }
@@ -45,7 +47,13 @@ type HookHandler = HookGroup["hooks"][number];
 function eachCrankHandler(
   hooks: HooksMap,
   matches: (command: string | undefined) => boolean,
-  visit: (event: string, group: HookGroup, groupIdx: number, handler: HookHandler, handlerIdx: number) => void,
+  visit: (
+    event: string,
+    group: HookGroup,
+    groupIdx: number,
+    handler: HookHandler,
+    handlerIdx: number,
+  ) => void,
 ): void {
   for (const [event, groups] of Object.entries(hooks)) {
     groups.forEach((group, groupIdx) => {
@@ -195,7 +203,7 @@ function stripTrustEntries(content: string, keys: string[]): string {
     // A block is the header line plus following lines up to the next [ header.
     const re = new RegExp(
       `\\[hooks\\.state\\."${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\]\\n(?:(?!\\[)[^\\n]*\\n?)*`,
-      "g"
+      "g",
     );
     out = out.replace(re, "");
   }
@@ -237,7 +245,11 @@ export interface TrustStatus {
 }
 
 /** Compare the crank handlers in a hooks.json with the trust config.toml holds for them. */
-export function codexTrustStatus(configPath: string, root: string, hooksJsonPath: string): TrustStatus {
+export function codexTrustStatus(
+  configPath: string,
+  root: string,
+  hooksJsonPath: string,
+): TrustStatus {
   let tables = new Map<string, Map<string, string>>();
   try {
     tables = readTomlStrings(fs.readFileSync(configPath, "utf-8"));

@@ -1,0 +1,54 @@
+[USER]
+Add a --dry-run flag to the sync command so it prints the planned changes without writing anything.
+
+[USER]
+Also keep the old output format for scripts.
+
+[USER]
+Here is the screen I get today.
+
+[ASSISTANT]
+I will read the sync command first.
+
+[TOOL_USE Read] {"file_path":"src/sync.ts"}
+
+[TOOL_RESULT Read] export function sync(opts) {
+  return apply(plan(opts));
+}
+
+[TOOL_USE Grep] {"pattern":"dryRun","path":"src"}
+
+[TOOL_RESULT Grep] src/cli.ts:12: dryRun: false,
+src/plan.ts:40: if (dryRun) return changes;
+[image]
+
+[TOOL_USE Bash] {"command":"echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...[119 chars cut]
+
+[TOOL_RESULT Bash] xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...[100 chars cut]
+
+[TOOL_USE Agent] {"description":"Survey the planner","prompt":"Report how plan() builds its change list.","subagent_type":"Explore"}
+
+[TOOL_RESULT Agent] plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and emits one change per file it would touch. plan() reads the config, walks the source tree, and ...[100 chars cut]
+
+[ASSISTANT]
+The planner already returns a change list, so dry-run only needs to skip apply().
+
+[TOOL_USE Read] [sensitive file omitted]
+
+[TOOL_RESULT Read] [sensitive file omitted]
+
+[TOOL_USE Bash] [sensitive file omitted]
+
+[TOOL_RESULT Bash] [sensitive file omitted]
+
+[TOOL_USE Bash] {"command":"ls src","description":"List source files"}
+
+[TOOL_RESULT Bash] cli.ts
+plan.ts
+sync.ts
+
+[USER]
+Caveat: the messages below came from local commands the user ran.
+
+[ASSISTANT]
+Run it with token=[redacted] set, then pass --dry-run.

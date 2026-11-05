@@ -1,0 +1,13 @@
+src/php.php:3-3 namespace App\Models
+src/php.php:5-11 fn helper
+src/php.php:14-27 class User
+src/php.php:20-26 method User.name
+src/php.php:29-32 interface HasName
+src/php.php:31-31 method HasName.name
+src/php.php:34-40 trait Greets
+src/php.php:36-39 method Greets.greet
+src/php.php:42-50 enum Suit
+src/php.php:46-49 method Suit.label
+src/php.php:52-56 namespace Other
+src/php.php:53-55 class Other.Inner
+src/php.php:54-54 method Other.Inner.f

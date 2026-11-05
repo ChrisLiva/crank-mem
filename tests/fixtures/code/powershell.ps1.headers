@@ -1,0 +1,7 @@
+src/powershell.ps1:4-8 fn Get-Thing
+src/powershell.ps1:10-12 fn Only-Even
+src/powershell.ps1:14-16 fn Run-Flow
+src/powershell.ps1:18-28 class Box
+src/powershell.ps1:21-23 method Box.Box
+src/powershell.ps1:25-27 method Box.Area
+src/powershell.ps1:30-33 enum Color

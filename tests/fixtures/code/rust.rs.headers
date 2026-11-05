@@ -1,0 +1,18 @@
+src/rust.rs:4-10 fn add_one
+src/rust.rs:12-14 struct Foo
+src/rust.rs:16-16 struct Pair
+src/rust.rs:18-21 struct Bits
+src/rust.rs:23-26 enum Color
+src/rust.rs:28-33 trait Shape
+src/rust.rs:29-29 method Shape.area
+src/rust.rs:30-32 method Shape.name
+src/rust.rs:35-39 impl Foo
+src/rust.rs:36-38 method Foo.new
+src/rust.rs:41-41 struct Gen
+src/rust.rs:43-47 impl Gen
+src/rust.rs:44-46 method Gen.get
+src/rust.rs:49-53 impl Display for Foo
+src/rust.rs:50-52 method Foo.fmt
+src/rust.rs:55-57 module inner
+src/rust.rs:56-56 fn inner.f
+src/rust.rs:61-61 type Alias

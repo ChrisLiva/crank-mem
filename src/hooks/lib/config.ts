@@ -1,18 +1,27 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isObj } from "./hook-io.ts";
 
 // .crank/config.json load with defaults, plus the always-on sensitive-file
 // filter (not configurable — never index secrets).
 
 export const CRANK_DIR = ".crank";
 export const CONFIG_FILE = "config.json";
+/** Per-checkout settings, kept out of git by .crank/.gitignore's `/*` line. */
+export const LOCAL_CONFIG_FILE = "config.local.json";
 export const MAX_FILE_SIZE_BYTES = 1024 * 1024;
 
 // Hidden paths (.git, .claude, .codex, .crank itself, …) are excluded by the
 // always-on dot rule in isExcluded, so only non-hidden names belong here.
 export const DEFAULT_EXCLUDES = [
-  "node_modules", "dist", "build", "coverage", "__pycache__", "target",
-  "*.min.js", "*.min.css",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  "__pycache__",
+  "target",
+  "*.min.js",
+  "*.min.css",
 ];
 
 export interface CrankConfig {
@@ -41,6 +50,12 @@ export interface CrankConfig {
   codex_trust_written: boolean;
   /** Write a per-run JSONL trace to .crank/debug.log (off by default). */
   debug: boolean;
+  /**
+   * Run background digests of finished sessions through `claude -p` (off by
+   * default). Read only from config.local.json, so a committed config.json
+   * cannot turn digests on for every checkout.
+   */
+  digest: boolean;
 }
 
 export function defaultConfig(): CrankConfig {
@@ -57,6 +72,7 @@ export function defaultConfig(): CrankConfig {
     clone_root: "",
     codex_trust_written: false,
     debug: false,
+    digest: false,
   };
 }
 
@@ -77,6 +93,7 @@ const RUNTIMES: readonly CrankConfig["runtime"][] = ["bun", "node"];
  */
 export function loadConfig(crankDir: string): CrankConfig {
   const config = defaultConfig();
+  config.digest = loadDigest(crankDir);
   let raw: Record<string, unknown>;
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(crankDir, CONFIG_FILE), "utf-8"));
@@ -87,13 +104,15 @@ export function loadConfig(crankDir: string): CrankConfig {
   }
   for (const key of Object.keys(config) as (keyof CrankConfig)[]) {
     const value = raw[key];
-    if (value === undefined) continue;
+    if (value === undefined || key === "digest") continue;
     if (key === "excludes") {
-      if (Array.isArray(value) && value.every((v) => typeof v === "string")) config.excludes = value;
+      if (Array.isArray(value) && value.every((v) => typeof v === "string"))
+        config.excludes = value;
     } else if (key === "git") {
       if (GIT_MODES.includes(value as CrankConfig["git"])) config.git = value as CrankConfig["git"];
     } else if (key === "runtime") {
-      if (RUNTIMES.includes(value as CrankConfig["runtime"])) config.runtime = value as CrankConfig["runtime"];
+      if (RUNTIMES.includes(value as CrankConfig["runtime"]))
+        config.runtime = value as CrankConfig["runtime"];
     } else if (
       typeof value === typeof config[key] &&
       (typeof value !== "number" || (Number.isFinite(value) && value > 0))
@@ -108,16 +127,60 @@ export function loadConfig(crankDir: string): CrankConfig {
   return config;
 }
 
+function loadDigest(crankDir: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(
+      fs.readFileSync(path.join(crankDir, LOCAL_CONFIG_FILE), "utf-8"),
+    );
+    return isObj(parsed) && parsed.digest === true;
+  } catch {
+    return false;
+  }
+}
+
 export function saveConfig(crankDir: string, config: CrankConfig): void {
-  fs.writeFileSync(path.join(crankDir, CONFIG_FILE), JSON.stringify(config, null, 2) + "\n");
+  const { digest, ...shared } = config;
+  fs.writeFileSync(path.join(crankDir, CONFIG_FILE), JSON.stringify(shared, null, 2) + "\n");
+  const local = path.join(crankDir, LOCAL_CONFIG_FILE);
+  if (digest) fs.writeFileSync(local, JSON.stringify({ digest: true }, null, 2) + "\n");
+  else fs.rmSync(local, { force: true });
 }
 
 // ── Sensitive filter (always on, regardless of config) ──────────────────────
 
 const SENSITIVE_EXTENSIONS = new Set([
-  ".pem", ".key", ".p8", ".p12", ".pfx", ".keystore", ".jks", ".ppk", ".kdbx", ".tfstate",
+  ".pem",
+  ".key",
+  ".p8",
+  ".p12",
+  ".pfx",
+  ".keystore",
+  ".jks",
+  ".ppk",
+  ".kdbx",
+  ".tfstate",
 ]);
 const SENSITIVE_BASENAMES = new Set([".npmrc", ".netrc", ".htpasswd", ".pgpass"]);
+
+/**
+ * The filter as permission globs, for the read-only tools a consolidation run gets (ADR 0011).
+ * The probed list matches isSensitiveFile under path.matchesGlob, except that it is case-sensitive.
+ */
+export const SENSITIVE_GLOBS: readonly string[] = [
+  ...[...SENSITIVE_BASENAMES].map((b) => `**/${b}`),
+  ...[...SENSITIVE_EXTENSIONS].map((ext) => `**/*${ext}`),
+  "**/.env",
+  "**/.env.*",
+  "**/id_rsa*",
+  "**/id_dsa*",
+  "**/id_ecdsa*",
+  "**/id_ed25519*",
+  "**/*credential*",
+  "**/secrets.json",
+  "**/secrets.yaml",
+  "**/secrets.yml",
+  "**/secrets.toml",
+];
 
 export function isSensitiveFile(basename: string): boolean {
   const lower = basename.toLowerCase();

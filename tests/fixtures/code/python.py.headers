@@ -1,0 +1,7 @@
+src/python.py:5-9 fn fib
+src/python.py:12-22 class Shape
+src/python.py:17-18 method Shape.area
+src/python.py:20-22 method Shape.name
+src/python.py:25-26 fn fetch
+src/python.py:29-29 fn one
+src/python.py:32-32 type Alias

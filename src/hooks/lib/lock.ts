@@ -70,12 +70,14 @@ function isStale(lockPath: string): boolean {
   }
 }
 
-/** Steal a stale lock. */
-function trySteal(lockPath: string): void {
+/** Steal a stale lock: rename it to a random name and unlink that, so of N stealers one wins. */
+export function trySteal(lockPath: string): void {
   const graveyard = lockPath + "." + crypto.randomBytes(4).toString("hex") + ".stale";
   try {
     fs.renameSync(lockPath, graveyard);
-    try { fs.unlinkSync(graveyard); } catch {}
+    try {
+      fs.unlinkSync(graveyard);
+    } catch {}
   } catch {
     // Someone else won the steal or the owner released — keep waiting.
   }
@@ -114,6 +116,8 @@ export function withLock<T>(crankDir: string, budgetMs: number, fn: () => T): T 
   try {
     return fn();
   } finally {
-    try { fs.unlinkSync(lockPath); } catch {}
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {}
   }
 }

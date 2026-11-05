@@ -1,0 +1,11 @@
+src/go.go:4-6 fn Add
+src/go.go:8-12 fn Map
+src/go.go:14-16 struct Foo
+src/go.go:18-20 method Foo.Len
+src/go.go:22-24 struct G2
+src/go.go:26-27 method G2.M
+src/go.go:29-31 interface Shape
+src/go.go:33-33 type ID
+src/go.go:35-35 type A
+src/go.go:38-38 struct B
+src/go.go:39-39 type C

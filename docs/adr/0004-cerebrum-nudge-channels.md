@@ -1,6 +1,6 @@
 # 0004 — Cerebrum-nudge delivery channels (probe-verified)
 
-Date: 2026-07-17. Status: accepted.
+Date: 2026-07-17. Status: superseded.
 
 ## Context
 
@@ -50,6 +50,21 @@ change since cerebrum's mtime. The count comes from `git status` and `git log`
 filtered by mtime (`lib/changes.ts`), and from the index outside a git root.
 Updating cerebrum resets both signals. The advisory-only invariant is
 preserved — no `decision:"block"` anywhere.
+
+Amended 2026-11-03: while the digest gate's `running` is true, ADR 0010 governs Claude's Stop hook:
+`src/hooks/stop.ts` drops the cerebrum nudge (including its prune and audit lines) and the
+cerebrum overlap note, and emits no `additionalContext` at all; it only writes the session's
+digest spool entry. Codex sessions never get a running gate, so the post-write nudge
+above is unchanged, as is Claude's Stop nudge in a project with digests off or stopped.
+
+Amended 2026-11-04: crank-mem stage 2 removes the nudge in every state, so Claude's Stop
+hook and Codex's post-write hook emit no `additionalContext` at all; Stop still writes the
+session's digest spool entry and post-write still re-indexes. `lib/cerebrum-nudge.ts`
+becomes `lib/cerebrum-files.ts`, which keeps only the memory file names, cerebrum's size
+limits and the backup helpers. No hook writes or reads `.crank/cerebrum-nudge.json` any
+more (`uninstall --delete-crank` still removes it), and `NUDGE_STEP` and `lib/changes.ts`
+are deleted. Consolidation, recorded in ADR 0011, now maintains cerebrum. The channel
+findings above stand.
 
 ## Re-verification 2026-07-19
 

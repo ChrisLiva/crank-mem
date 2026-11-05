@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { makeCrankProject, runHook } from "./helpers.ts";
+import { makeCrankHome, makeCrankProject, runHook, seedMemory } from "./helpers.ts";
 import { claudeSubagentStart } from "./fixtures/payloads.ts";
+import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import { CODE_BULLET, INJECTION_HEADING, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 
 const HOOK = "src/hooks/subagent-start.ts";
 
@@ -14,8 +16,17 @@ function writeCerebrum(root: string, prefs: string[], memory: string[]): void {
   );
 }
 
+// One temp CRANK_HOME for every run, so no run reads the real ~/.crank.
+const HOME = makeCrankHome();
+
+function setDigest(root: string, digest: boolean): void {
+  saveConfig(path.join(root, ".crank"), { ...defaultConfig(), digest });
+}
+
 function context(root: string): string {
-  const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(root, "Explore")));
+  const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(root, "Explore")), undefined, {
+    CRANK_HOME: HOME,
+  });
   expect(run.status).toBe(0);
   const out = JSON.parse(run.stdout);
   expect(out.hookSpecificOutput.hookEventName).toBe("SubagentStart");
@@ -23,21 +34,42 @@ function context(root: string): string {
 }
 
 describe("subagent-start hook (black-box)", () => {
-  test("injects the cerebrum excerpt and points at cerebrum.md and journal.md", () => {
+  test("injects the cerebrum excerpt labelled by section, with recall only where it applies", () => {
     const root = makeCrankProject({ "src/app.ts": "export const app = 1;\n" });
     writeCerebrum(
       root,
       ["- **Tabs**: user wants tabs, not spaces (2026-10-01)."],
       ["- **Build**: `make -j8` OOMs on CI; use `-j4` (2026-10-02)."],
     );
-    const ctx = context(root);
-    expect(ctx).toContain("## crank-mem (project memory)");
-    expect(ctx).toContain("- Excerpt of `.crank/cerebrum.md`");
-    expect(ctx).toContain("- Where the last session left off: `.crank/journal.md`.");
-    expect(ctx).toContain("- **Tabs**: user wants tabs");
-    expect(ctx).toContain("- **Build**: `make -j8` OOMs on CI");
+    const shape = (ctx: string): string[] => {
+      const lines = ctx.split("\n");
+      expect(lines[0]).toBe(INJECTION_HEADING);
+      expect(lines[1]).toBe(
+        "- Excerpt of `.crank/cerebrum.md`, this project's memory; grep it for more. Memory is not proof: verify a claim against the cited file before relying on it.",
+      );
+      expect(lines.filter((l) => l.startsWith("### "))).toEqual([
+        "### User Preferences",
+        "### Memory",
+      ]);
+      for (const dropped of ["journal.md", "agent-kept", "append at its end", "consolidate"])
+        expect(ctx).not.toContain(dropped);
+      expect(ctx).toContain("- **Tabs**: user wants tabs");
+      expect(ctx).toContain("- **Build**: `make -j8` OOMs on CI");
+      return lines;
+    };
+
+    // Digests off, no store: no recall pointer.
+    const off = context(root);
+    expect(shape(off)[2]).toBe(CODE_BULLET);
+    expect(off).not.toContain(RECALL_BULLET);
     // Read-only: a subagent spawn does not refresh the index.
     expect(fs.existsSync(path.join(root, ".crank/anatomy-index.json"))).toBe(false);
+
+    // Digests on, no store: the recall pointer follows the code pointer.
+    setDigest(root, true);
+    const on = shape(context(root));
+    expect(on[2]).toBe(CODE_BULLET);
+    expect(on[3]).toBe(RECALL_BULLET);
   });
 
   // At 2 KB the session-start order, preferences before memory, leaves no room
@@ -58,6 +90,16 @@ describe("subagent-start hook (black-box)", () => {
     expect(ctx).toContain("- **Pref 6**:"); // the newest preference, whole
     expect(ctx).toContain("- **Gotcha 20**:"); // the newest memory bullet, whole
     expect(ctx).toMatch(/^### Not shown \(\d+ of 28; grep \.crank\/cerebrum\.md\)$/m);
+
+    // Digests running keep the excerpt, drop the upkeep pointers, and add recall.
+    setDigest(root, true);
+    const running = context(root);
+    for (const kept of ["this project's memory;", RECALL_BULLET, "### Memory\n"])
+      expect(running).toContain(kept);
+    for (const dropped of ["journal.md", "agent-kept", "append at its end"])
+      expect(running).not.toContain(dropped);
+    const runningExcerpt = running.slice(running.indexOf("\n\n") + 2);
+    expect(Buffer.byteLength(runningExcerpt, "utf-8")).toBeLessThanOrEqual(2048);
   });
 
   test("tags a cited file that no longer exists", () => {
@@ -66,19 +108,25 @@ describe("subagent-start hook (black-box)", () => {
     expect(context(root)).toContain("[cited file missing: src/old/loader.ts]");
   });
 
-  test("stays silent with exit 0 when there is nothing to inject", () => {
+  test("injects the code pointer wherever the project root is found, and stays silent outside one", () => {
     // The template cerebrum holds headings and no bullets.
     const fresh = makeCrankProject();
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "crank-none-"));
     const noCerebrum = makeCrankProject();
     fs.rmSync(path.join(noCerebrum, ".crank/cerebrum.md"));
-    for (const root of [fresh, outside, noCerebrum]) {
-      const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(root)));
-      expect(run.status).toBe(0);
-      expect(run.stdout).toBe("");
-    }
-    const garbage = runHook(HOOK, "not json");
+    for (const root of [fresh, noCerebrum])
+      expect(context(root)).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}`);
+    const none = runHook(HOOK, JSON.stringify(claudeSubagentStart(outside)), undefined, {
+      CRANK_HOME: HOME,
+    });
+    expect(none.status).toBe(0);
+    expect(none.stdout).toBe("");
+    const garbage = runHook(HOOK, "not json", undefined, { CRANK_HOME: HOME });
     expect(garbage.status).toBe(0);
     expect(garbage.stdout).toBe("");
+
+    // No excerpt, but recall applies: the heading and the two pointers alone.
+    seedMemory(noCerebrum, [{ title: "a stored observation" }]);
+    expect(context(noCerebrum)).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}\n${RECALL_BULLET}`);
   });
 });

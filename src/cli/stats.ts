@@ -5,15 +5,19 @@ import { loadIndex, INDEX_FILE, type AnatomyIndex } from "../hooks/lib/store.ts"
 import { walkProject } from "../hooks/lib/scanner.ts";
 import type { CrankConfig } from "../hooks/lib/config.ts";
 import { composeInjection, fileCitations, injectionSources } from "../hooks/lib/injection.ts";
-import { JOURNAL_FILE, NEXT_MARKER } from "../hooks/lib/journal.ts";
-import { parseBullets } from "../hooks/lib/bullets.ts";
-import { LOG_FILE } from "../hooks/lib/debug.ts";
-import {
-  auditSkillInstalled, installedAtMs, lastAuditMs, overlapPairCount, OVERLAP_MIN_SHARED,
-} from "../hooks/lib/cerebrum-nudge.ts";
+import { auditSkillInstalled, installedAtMs, lastAuditMs } from "../hooks/lib/cerebrum-files.ts";
 import { hasCrankHooks } from "./settings.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
-import { codexHome, codexTrustStatus, userCodexConfigPath, CODEX_REVIEW_HINT } from "./codex-trust.ts";
+import {
+  codexHome,
+  codexTrustStatus,
+  userCodexConfigPath,
+  CODEX_REVIEW_HINT,
+} from "./codex-trust.ts";
+import { readStopState } from "../hooks/lib/user-state.ts";
+import { daemonAlive, readParked, readSpool } from "../hooks/lib/spool.ts";
+import { latestSnapshot, memoryPath, openMemory } from "../hooks/lib/memory.ts";
+import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
 
 function age(iso: string | null): string {
   if (!iso) return "never";
@@ -27,25 +31,22 @@ function age(iso: string | null): string {
 const row = (label: string, value: string): string => `  ${(label + ":").padEnd(18)}${value}`;
 const ageOf = (ms: number): string => age(new Date(ms).toISOString());
 
-function readText(file: string): string | null {
-  try {
-    return fs.readFileSync(file, "utf-8");
-  } catch {
-    return null;
-  }
-}
-
 /**
- * How much of the memory reaches a session and how current it is. The excerpt
- * counts come from composing the injection a Claude session start would get,
- * minus the occasional staleness and drift notes, so the budget that cuts
- * bullets is the real one.
+ * How much of cerebrum reaches a session, whether the paths it cites still
+ * exist, and when the audit skill last ran. The excerpt counts come from
+ * composing the injection a Claude session start would get, minus the
+ * occasional staleness and drift notes, so the budget that cuts bullets is the
+ * real one.
  */
-function memoryLines(root: string, crankDir: string, config: CrankConfig, index: AnatomyIndex): string[] {
+function memoryLines(
+  root: string,
+  crankDir: string,
+  config: CrankConfig,
+  index: AnatomyIndex,
+): string[] {
   const lines: string[] = [];
-  const sources = injectionSources(root, crankDir, config, index);
+  const sources = injectionSources(root, crankDir, config, index, false);
   const { cerebrumMd } = sources;
-  const journalMd = readText(path.join(crankDir, JOURNAL_FILE));
 
   if (!cerebrumMd) {
     lines.push(row("cerebrum", cerebrumMd === null ? "missing" : "empty"));
@@ -58,7 +59,12 @@ function memoryLines(root: string, crankDir: string, config: CrankConfig, index:
     // A bullet's date is the latest one it carries: a (supersedes …) date is older.
     // A string Date.parse rejects, such as MySQL's 0000-00-00, is not a date.
     const dates = e.hidden.map(
-      (b) => b.match(/\b\d{4}-\d{2}-\d{2}\b/g)?.filter((d) => !Number.isNaN(Date.parse(d))).sort().at(-1) ?? null,
+      (b) =>
+        b
+          .match(/\b\d{4}-\d{2}-\d{2}\b/g)
+          ?.filter((d) => !Number.isNaN(Date.parse(d)))
+          .sort()
+          .at(-1) ?? null,
     );
     const dated = dates.filter((d): d is string => d !== null).sort();
     const undated = dates.length - dated.length;
@@ -75,57 +81,80 @@ function memoryLines(root: string, crankDir: string, config: CrankConfig, index:
     // Only paths with a directory: a bare basename may live anywhere.
     const cited = [...new Set(fileCitations(cerebrumMd).filter((rel) => rel.includes("/")))];
     const existing = cited.filter((rel) => fs.existsSync(path.join(root, rel))).length;
-    lines.push(row("cited paths", cited.length ? `${existing} of ${cited.length} exist` : "none cited"));
-    lines.push(row("overlaps", `${overlapPairCount(cerebrumMd)} bullet pair(s) share ${OVERLAP_MIN_SHARED}+ identifiers`));
-  }
-
-  if (journalMd === null) {
-    lines.push(row("journal", "missing"));
-  } else {
-    const entries = parseBullets(journalMd.split("\n"));
-    lines.push(row("journal no NEXT", `${entries.filter((b) => !b.includes(NEXT_MARKER)).length} of ${entries.length} entries`));
+    lines.push(
+      row("cited paths", cited.length ? `${existing} of ${cited.length} exist` : "none cited"),
+    );
   }
 
   const audited = lastAuditMs(crankDir);
   const installed = installedAtMs(crankDir);
-  const skill = auditSkillInstalled(root, false) || auditSkillInstalled(root, true) ? "" : "; audit skill not installed";
+  const skill =
+    auditSkillInstalled(root, false) || auditSkillInstalled(root, true)
+      ? ""
+      : "; audit skill not installed";
   lines.push(
     row(
       "last audit",
-      (audited !== null ? ageOf(audited) : installed !== null ? `never (installed ${ageOf(installed)})` : "never") + skill,
+      (audited !== null
+        ? ageOf(audited)
+        : installed !== null
+          ? `never (installed ${ageOf(installed)})`
+          : "never") + skill,
     ),
   );
-  lines.push(row("nudges", nudgeCounts(crankDir)));
   return lines;
 }
 
-/** Nudge parts emitted and overlap flags raised, as recorded in debug.log. */
-function nudgeCounts(crankDir: string): string {
-  const log = readText(path.join(crankDir, LOG_FILE));
-  if (log === null) return "n/a (debug off)";
-  const counts = { record: 0, journal: 0, prune: 0, audit: 0, overlap: 0 };
-  let since: string | null = null;
-  for (const line of log.split("\n")) {
-    let rec: { ts?: unknown; events?: unknown };
+const MEMORY_STATE = {
+  missing: "none yet",
+  older: "older than this version; run crank-mem upgrade",
+  newer: "newer than this version; run crank-mem upgrade",
+  unreadable: "unreadable",
+} as const;
+
+/** To the cent, or to two significant digits under a cent: one Haiku digest costs about $0.002. */
+function dollars(usd: number): string {
+  return usd > 0 && usd < 0.01 ? `$${usd.toPrecision(2)}` : `$${usd.toFixed(2)}`;
+}
+
+/** Whether digests run, what waits for them user-wide, what the store holds, and whether search by meaning works. */
+async function captureLines(root: string, config: CrankConfig): Promise<string[]> {
+  const stop = readStopState();
+  const lines = [
+    row("digest", !config.digest ? "off" : stop ? `stopped (${stop.reason})` : "on"),
+    row("daemon", daemonAlive() ? "alive" : "not running"),
+    row("spool", `${readSpool().length} waiting, ${readParked().length} parked`),
+  ];
+  const store = memoryPath(root);
+  const opened = openMemory(store, "read");
+  if (opened.status === "open") {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    let s;
     try {
-      rec = JSON.parse(line);
-    } catch {
-      continue;
+      s = opened.memory.stats(EMBED_MODEL, monthStart);
+    } finally {
+      opened.memory.close();
     }
-    if (since === null && typeof rec.ts === "string") since = rec.ts.slice(0, 10);
-    for (const e of Array.isArray(rec.events) ? rec.events : []) {
-      if (e?.event === "nudge-emitted") {
-        if (e.recordDue) counts.record++;
-        if (e.journalDue) counts.journal++;
-        if (e.pruneDue) counts.prune++;
-        if (e.auditDue) counts.audit++;
-      } else if (e?.event === "overlap-checked" && e.pairs > 0) {
-        counts.overlap++;
-      }
-    }
+    lines.push(row("observations", String(s.observations)));
+    lines.push(row("unembedded", String(s.unembedded)));
+    lines.push(row("last digest", s.lastDigestMs === null ? "never" : ageOf(s.lastDigestMs)));
+    lines.push(row("month cost", `${dollars(s.costUsdSince)} (list price)`));
+    lines.push(row("proposals", String(s.pendingProposals)));
+    lines.push(row("stale", String(s.staleRows)));
+    const last = s.lastConsolidation;
+    lines.push(
+      row("consolidation", last === null ? "never" : `${ageOf(last.startedMs)} (${last.outcome})`),
+    );
+  } else {
+    lines.push(row("memory", MEMORY_STATE[opened.status]));
   }
-  const parts = Object.entries(counts).map(([k, n]) => `${k} ${n}`).join(", ");
-  return since === null ? parts : `${parts} since ${since}`;
+  const latest = latestSnapshot(store);
+  lines.push(row("last snapshot", latest === null ? "never" : ageOf(latest.atMs)));
+  lines.push(
+    row("embedder", (await embedderReady()) ? "ready" : "not ready (run crank-mem setup)"),
+  );
+  return lines;
 }
 
 export async function run(_args: string[]): Promise<number> {
@@ -144,13 +173,18 @@ export async function run(_args: string[]): Promise<number> {
   } catch {}
 
   console.log(`crank-mem stats`);
-  console.log(`  files indexed:    ${indexed}${index.meta.truncated ? ` (capped at max_files ${config.max_files})` : ""}`);
+  console.log(
+    `  files indexed:    ${indexed}${index.meta.truncated ? ` (capped at max_files ${config.max_files})` : ""}`,
+  );
   console.log(`  indexable files:  ${walked.length} (coverage ${coverage}%)`);
-  console.log(`  last scan:        ${age(index.meta.lastScanned)}${index.meta.partial ? " (partial)" : ""}`);
+  console.log(
+    `  last scan:        ${age(index.meta.lastScanned)}${index.meta.partial ? " (partial)" : ""}`,
+  );
   console.log(`  index size:       ${(indexSize / 1024).toFixed(1)} KB`);
   console.log(`  runtime:          ${config.runtime} (vendored ${config.vendored_version})`);
   console.log(`  injection budget: ${config.injection_budget_bytes} bytes`);
   for (const line of memoryLines(root, crankDir, config, index)) console.log(line);
+  for (const line of await captureLines(root, config)) console.log(line);
 
   const codexHooks = path.join(root, ".codex", "hooks.json");
   if (!hasCrankHooks(codexHooks)) {
@@ -167,17 +201,21 @@ export async function run(_args: string[]): Promise<number> {
   console.log(
     gaps.roots === 0
       ? `  codex sessions:   no root threads${window}`
-      : `  codex sessions:   ${gaps.missed} of ${gaps.roots} root threads${window} got no injection`
+      : `  codex sessions:   ${gaps.missed} of ${gaps.roots} root threads${window} got no injection`,
   );
   console.log(
     `  codex hook trust: ${trust.current} of ${hashes} hashes current` +
-      `${trust.stale ? `, ${trust.stale} stale` : ""}${trust.missing ? `, ${trust.missing} missing` : ""}`
+      `${trust.stale ? `, ${trust.stale} stale` : ""}${trust.missing ? `, ${trust.missing} missing` : ""}`,
   );
   if (trust.projectTrustLevel === null) {
     // Codex may resolve trust from a parent directory; no probe has tested that (ADR 0002).
-    console.log(`  codex project:    no exact-path trust_level in ${userCodexConfigPath()}; a parent directory's entry may apply`);
+    console.log(
+      `  codex project:    no exact-path trust_level in ${userCodexConfigPath()}; a parent directory's entry may apply`,
+    );
   } else if (trust.projectTrustLevel !== "trusted") {
-    console.log(`  codex project:    trust_level = "${trust.projectTrustLevel}", so codex loads no .codex/ hooks here`);
+    console.log(
+      `  codex project:    trust_level = "${trust.projectTrustLevel}", so codex loads no .codex/ hooks here`,
+    );
   }
   if (trust.stale || trust.missing) for (const line of CODEX_REVIEW_HINT) console.log(line);
   return 0;

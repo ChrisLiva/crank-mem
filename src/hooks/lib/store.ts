@@ -54,10 +54,13 @@ export function loadIndex(crankDir: string): AnatomyIndex {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(crankDir, INDEX_FILE), "utf-8"));
     if (
-      typeof raw !== "object" || raw === null ||
+      typeof raw !== "object" ||
+      raw === null ||
       raw.version !== INDEX_VERSION ||
-      typeof raw.files !== "object" || raw.files === null ||
-      typeof raw.meta !== "object" || raw.meta === null
+      typeof raw.files !== "object" ||
+      raw.files === null ||
+      typeof raw.meta !== "object" ||
+      raw.meta === null
     ) {
       return emptyIndex();
     }
@@ -105,7 +108,9 @@ export function renderAnatomyMd(index: AnatomyIndex): string {
   ];
   const fileLine = (rel: string, entry: FileEntry): string =>
     `- \`${rel}\`${entry.description ? ` — ${entry.description}` : ""} (~${entry.tokens} tok)`;
-  const active = activePaths(index).filter((rel) => index.files[rel]).slice(0, MOST_ACTIVE);
+  const active = activePaths(index)
+    .filter((rel) => index.files[rel])
+    .slice(0, MOST_ACTIVE);
   if (active.length > 0) {
     lines.push("## Most active files", "");
     for (const rel of active) lines.push(fileLine(rel, index.files[rel]!));
@@ -134,7 +139,7 @@ function saveAnatomyMd(crankDir: string, index: AnatomyIndex): void {
 export function commitIndex(
   crankDir: string,
   budgetMs: number,
-  build: (current: AnatomyIndex) => AnatomyIndex | null
+  build: (current: AnatomyIndex) => AnatomyIndex | null,
 ): AnatomyIndex | null {
   return withLock(crankDir, budgetMs, () => {
     const next = build(loadIndex(crankDir));

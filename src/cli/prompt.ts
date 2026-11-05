@@ -20,12 +20,18 @@ export function decodeKey(input: string, index: number, count: number): KeyActio
   if (input.includes("\x03")) return { type: "interrupt" }; // ctrl-c
   if (input === "\x1b" || input.includes("\x04")) return { type: "cancel" }; // esc, ctrl-d → default
   if (input.endsWith("\r") || input.endsWith("\n")) return { type: "submit" };
-  if (input.endsWith("\x1b[A") || input === "k") return { type: "move", index: (index + count - 1) % count };
-  if (input.endsWith("\x1b[B") || input === "j") return { type: "move", index: (index + 1) % count };
+  if (input.endsWith("\x1b[A") || input === "k")
+    return { type: "move", index: (index + count - 1) % count };
+  if (input.endsWith("\x1b[B") || input === "j")
+    return { type: "move", index: (index + 1) % count };
   return { type: "none" };
 }
 
-export async function choose<T extends string>(question: string, options: readonly T[], def: T): Promise<T> {
+export async function choose<T extends string>(
+  question: string,
+  options: readonly T[],
+  def: T,
+): Promise<T> {
   if (!process.stdin.isTTY || !process.stderr.isTTY) return def;
   const out = process.stderr;
   let index = Math.max(0, options.indexOf(def));

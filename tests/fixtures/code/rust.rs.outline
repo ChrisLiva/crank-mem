@@ -1,0 +1,19 @@
+src/rust.rs
+ 4-10│pub fn add_one(x: u32) -> u32 { … }
+12-14│pub struct Foo { … }
+16-16│struct Pair …
+18-21│union Bits { … }
+23-26│enum Color { … }
+28-33│pub trait Shape {
+29-29│    fn area(&self) -> f64;
+30-32│    fn name(&self) -> String { … }
+35-39│impl Foo {
+36-38│    pub fn new() -> Self { … }
+41-41│struct Gen<T> …
+43-47│impl<T> Gen<T> {
+44-46│    fn get(&self) -> &T { … }
+49-53│impl Display for Foo {
+50-52│    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { … }
+55-57│mod inner {
+56-56│    fn f() { … }
+61-61│type Alias = u8;

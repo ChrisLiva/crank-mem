@@ -3,18 +3,17 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { makeCrankProject, runHook, enableDebugConfig, readDebugLog } from "./helpers.ts";
-import { claudeSessionStart, claudePostWrite, claudeStop } from "./fixtures/payloads.ts";
+import { claudeSessionStart, claudePostWrite } from "./fixtures/payloads.ts";
 
 const SESSION_START = "src/hooks/session-start.ts";
 const POST_WRITE = "src/hooks/post-write.ts";
-const STOP = "src/hooks/stop.ts";
 const THROWING = "tests/fixtures/throwing-hook.ts";
 
 /** Hold the index lock so the next writer times out (fresh, live-pid body). */
 function holdLock(root: string): void {
   fs.writeFileSync(
     path.join(root, ".crank/anatomy-index.lock"),
-    JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() + 60_000 })
+    JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() + 60_000 }),
   );
 }
 
@@ -72,6 +71,8 @@ describe("debug logging (black-box)", () => {
     expect(injected.fileCount).toBe(2);
     expect(injected.source).toBe("startup");
     expect(injected.injectionTokens).toBeGreaterThan(0);
+    // Session start never reads journal.md, so the event carries no journal counts.
+    expect(Object.keys(injected).filter((k) => k.startsWith("journal"))).toEqual([]);
   });
 
   test("sensitive paths are redacted, never written to the log", () => {
@@ -112,17 +113,6 @@ describe("debug logging (black-box)", () => {
     expect(record.error).toContain("boom from hook body");
     // A stack, not just the message — the reason stderr alone was not enough.
     expect(record.error).toContain("throwing-hook.ts");
-  });
-
-  test("stop records which branch suppressed the nudge, per memory file", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    enableDebugConfig(root);
-    runHook(STOP, JSON.stringify(claudeStop(root)));
-
-    const skipped = readDebugLog(root)[0]!.events.find((e: any) => e.event === "nudge-skipped");
-    // One file changed, no journal seeded: the two parts are suppressed for
-    // different reasons and the log has to say which is which.
-    expect(skipped.reason).toBe("cerebrum:below-threshold journal:absent");
   });
 
   // The one event that catches a matcher or payload mismatch (ADR 0003). It is
@@ -210,7 +200,9 @@ describe("debug logging (black-box)", () => {
 
     const run = runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("`.crank/anatomy.md` indexes 1 file(s)");
+    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain(
+      "`.crank/anatomy.md` indexes 1 file(s)",
+    );
   });
 
   test("an oversized log is restarted rather than grown without bound", () => {

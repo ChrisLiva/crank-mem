@@ -1,20 +1,31 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "./args.ts";
+import { COMMANDS } from "./commands.ts";
 import { choose } from "./prompt.ts";
 import {
-  removeCrankHooksFromFile, removeIgnoreLines, removeCodexFeatures,
-  isLegacyHookCommand, LEGACY_IGNORE_BLOCK,
+  removeCrankHooksFromFile,
+  removeIgnoreLines,
+  removeCodexFeatures,
+  isLegacyHookCommand,
+  LEGACY_IGNORE_BLOCK,
+  removeAllowRule,
 } from "./settings.ts";
-import {
-  crankTrust, removeTrustEntries, userCodexConfigPath,
-} from "./codex-trust.ts";
-import { CRANK_DIR, CONFIG_FILE } from "../hooks/lib/config.ts";
+import { crankTrust, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
+import { CRANK_DIR, CONFIG_FILE, LOCAL_CONFIG_FILE } from "../hooks/lib/config.ts";
 import { INDEX_FILE, ANATOMY_FILE } from "../hooks/lib/store.ts";
 import { LOCK_FILE } from "../hooks/lib/lock.ts";
-import { MARKER_FILE, DEDUP_FILE, CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, isCrankBackup } from "../hooks/lib/cerebrum-nudge.ts";
-import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
+import {
+  MARKER_FILE,
+  DEDUP_FILE,
+  CEREBRUM_FILE,
+  ARCHIVE_FILE,
+  BACKUP_DIR,
+  isCrankBackup,
+  JOURNAL_FILE,
+} from "../hooks/lib/cerebrum-files.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
+import { MEMORY_FILE, SNAPSHOT_DIR } from "../hooks/lib/memory.ts";
 import { openProject } from "./project.ts";
 import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
 
@@ -24,7 +35,7 @@ import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
 // ADR directory.
 
 export async function run(args: string[]): Promise<number> {
-  const { flags } = parseArgs(args, []);
+  const { flags } = parseArgs(args, COMMANDS.uninstall.value);
 
   // A leftover pre-rename install (only crank/, no .crank/) can't be opened as
   // a project — sweep it and stop, so the new CLI can clean up after itself.
@@ -42,7 +53,11 @@ export async function run(args: string[]): Promise<number> {
   const restore =
     flags.restore === true ||
     (!flags.yes &&
-      (await choose("Restore modified files from the init-time backup?", ["restore", "surgical"], "surgical")) === "restore");
+      (await choose(
+        "Restore modified files from the init-time backup?",
+        ["restore", "surgical"],
+        "surgical",
+      )) === "restore");
 
   const codexHooksJson = path.join(root, ".codex", "hooks.json");
 
@@ -70,7 +85,10 @@ export async function run(args: string[]): Promise<number> {
     path.join(root, ".claude", "settings.local.json"),
     codexHooksJson,
   ]) {
-    if (removeCrankHooksFromFile(f)) console.log(`  removed crank hooks from ${path.relative(root, f)}`);
+    if (removeCrankHooksFromFile(f))
+      console.log(`  removed crank hooks from ${path.relative(root, f)}`);
+    if (removeAllowRule(f))
+      console.log(`  removed the crank-mem allow rules from ${path.relative(root, f)}`);
     // Delete a now-empty object only when the manifest proves we created the
     // file — a user's own literal {} must survive.
     if (!absentAtInit(crankDir, f)) continue;
@@ -85,7 +103,8 @@ export async function run(args: string[]): Promise<number> {
   const gitignore = path.join(root, ".gitignore");
   removeIgnoreLines(gitignore);
   try {
-    if (fs.existsSync(gitignore) && fs.readFileSync(gitignore, "utf-8").trim() === "") fs.unlinkSync(gitignore);
+    if (fs.existsSync(gitignore) && fs.readFileSync(gitignore, "utf-8").trim() === "")
+      fs.unlinkSync(gitignore);
   } catch {}
   removeIgnoreLines(path.join(root, ".git", "info", "exclude"));
   removeCodexFeatures(path.join(root, ".codex", "config.toml"));
@@ -98,13 +117,18 @@ export async function run(args: string[]): Promise<number> {
 
   const deleteCrank =
     flags["delete-crank"] === true ||
-    (flags["keep-crank"] !== true && !flags.yes &&
-      (await choose("Delete the .crank/ data directory?", ["delete", "keep"], "keep")) === "delete");
+    (flags["keep-crank"] !== true &&
+      !flags.yes &&
+      (await choose("Delete the .crank/ data directory?", ["delete", "keep"], "keep")) ===
+        "delete");
 
   if (deleteCrank) {
     const left = deleteOwnedFiles(crankDir);
     if (left.length === 0) console.log("  deleted .crank/");
-    else console.log(`  deleted crank-mem's files from .crank/, kept what other tools wrote: ${left.join(", ")}`);
+    else
+      console.log(
+        `  deleted crank-mem's files from .crank/, kept what other tools wrote: ${left.join(", ")}`,
+      );
   } else {
     console.log("  kept .crank/ (delete it manually when ready)");
   }
@@ -164,8 +188,23 @@ function sweepLegacy(root: string): void {
  */
 function deleteOwnedFiles(crankDir: string): string[] {
   const owned = [
-    CONFIG_FILE, INDEX_FILE, ANATOMY_FILE, LOCK_FILE, MARKER_FILE, DEDUP_FILE, JOURNAL_FILE, LOG_FILE,
-    CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, "hooks",
+    CONFIG_FILE,
+    LOCAL_CONFIG_FILE,
+    INDEX_FILE,
+    ANATOMY_FILE,
+    LOCK_FILE,
+    MARKER_FILE,
+    DEDUP_FILE,
+    JOURNAL_FILE,
+    LOG_FILE,
+    CEREBRUM_FILE,
+    ARCHIVE_FILE,
+    BACKUP_DIR,
+    SNAPSHOT_DIR,
+    "hooks",
+    MEMORY_FILE,
+    `${MEMORY_FILE}-wal`,
+    `${MEMORY_FILE}-shm`,
   ];
   for (const name of owned) fs.rmSync(path.join(crankDir, name), { recursive: true, force: true });
   for (const name of readdirOrEmpty(crankDir)) {

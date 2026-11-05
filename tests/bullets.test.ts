@@ -5,12 +5,17 @@ const lines = (text: string): string[] => text.split("\n");
 
 describe("parseBlocks", () => {
   test("a bullet absorbs wrapped prose, sub-bullets and blank separators", () => {
-    const blocks = parseBlocks(lines(
-      "- first bullet that wraps\n  across two physical lines\n  - a sub-bullet\n\n- second bullet"
-    ));
+    const blocks = parseBlocks(
+      lines(
+        "- first bullet that wraps\n  across two physical lines\n  - a sub-bullet\n\n- second bullet",
+      ),
+    );
     expect(blocks.map((b) => b.kind)).toEqual(["bullet", "bullet"]);
     expect(blocks[0]!.lines).toEqual([
-      "- first bullet that wraps", "  across two physical lines", "  - a sub-bullet", "",
+      "- first bullet that wraps",
+      "  across two physical lines",
+      "  - a sub-bullet",
+      "",
     ]);
     expect(blocks[1]!.lines).toEqual(["- second bullet"]);
   });
@@ -33,18 +38,26 @@ describe("parseBlocks", () => {
     expect(parseBlocks([])).toEqual([]);
   });
 
-  // trimJournal writes blocks back to disk, so the grouping must be lossless:
+  // the cerebrum editor writes blocks back to disk, so the grouping must be lossless:
   // every line lands in exactly one block, in order.
   test("blocks round-trip the input verbatim", () => {
     const text =
       "# Cerebrum\n\n## Memory\n\n- 中文 bullet — em dash, \ttab\n  continuation with 🚀\n" +
       "### Misfiled heading\n- trailing bullet with no newline after it";
-    expect(parseBlocks(lines(text)).flatMap((b) => b.lines).join("\n")).toBe(text);
+    expect(
+      parseBlocks(lines(text))
+        .flatMap((b) => b.lines)
+        .join("\n"),
+    ).toBe(text);
   });
 
   test("a trailing newline survives the round-trip", () => {
     const text = "- one\n- two\n";
-    expect(parseBlocks(lines(text)).flatMap((b) => b.lines).join("\n")).toBe(text);
+    expect(
+      parseBlocks(lines(text))
+        .flatMap((b) => b.lines)
+        .join("\n"),
+    ).toBe(text);
   });
 });
 
