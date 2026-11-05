@@ -26,7 +26,7 @@ type Listed = {
   pages: number;
 };
 
-function formatTime(ms: number): string {
+export function formatTime(ms: number): string {
   return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
@@ -278,7 +278,7 @@ function Files({ paths }: { paths: string[] }) {
   );
 }
 
-const LABEL = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
+export const LABEL = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
 
 function ObservationDetail({ o }: { o: Observation }) {
   return (

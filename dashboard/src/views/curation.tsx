@@ -17,12 +17,9 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePoll } from "@/hooks/use-poll";
 import { useListKeys } from "@/hooks/use-list-keys";
+import { formatTime, LABEL } from "./memory";
 
-export function formatTime(ms: number): string {
-  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
-export const LABEL = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
+export { formatTime, LABEL };
 
 /**
  * Keeps `item` on one of `keys`, which are the list's rows in order: the first key when
