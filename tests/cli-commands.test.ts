@@ -732,6 +732,7 @@ describe("flags", () => {
     "restore-memory",
     "setup",
     "stats",
+    "dashboard",
     "upgrade",
     "uninstall",
     "daemon",

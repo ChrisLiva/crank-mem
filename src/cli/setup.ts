@@ -1,12 +1,29 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { embed, EMBED_MODEL, modelPresent, modelsDir } from "../daemon/embedder.ts";
 import { ensureCrankHome } from "../hooks/lib/user-state.ts";
 import { parseArgs, positive } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
-import { REPO_ROOT } from "./version.ts";
+import { cliVersion, REPO_ROOT } from "./version.ts";
 
 // `crank-mem setup`: install the clone's packages and download the local
 // search model into <crank home>/models.
+
+/** The dashboard package, whose build `crank-mem dashboard` serves from `dist/`. */
+export function dashboardDir(): string {
+  return process.env.CRANK_DASHBOARD_DIR || path.join(REPO_ROOT, "dashboard");
+}
+
+/** True when `distDir` holds an `index.html` built for this clone's version. */
+export function dashboardCurrent(distDir: string): boolean {
+  if (!fs.existsSync(path.join(distDir, "index.html"))) return false;
+  try {
+    return fs.readFileSync(path.join(distDir, ".crank-version"), "utf-8").trim() === cliVersion();
+  } catch {
+    return false;
+  }
+}
 
 export type InstallResult = { ok: true; tool: "bun" | "npm" } | { ok: false; detail: string };
 

@@ -27,12 +27,18 @@ let tmpCounter = 0;
  * Write text through a unique temp file and a rename, so a reader never sees a partial file.
  * With `unchangedFrom`, rename only while the file still holds exactly those bytes: a file
  * that changed or vanished since the caller read it is left alone, and the call returns false.
+ * `opts.mode` sets the file mode the temp file, and so the renamed file, is created with.
  */
-export function writeTextAtomic(file: string, text: string, unchangedFrom: string | null): boolean {
+export function writeTextAtomic(
+  file: string,
+  text: string,
+  unchangedFrom: string | null,
+  opts: { mode?: number } = {},
+): boolean {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.${tmpCounter++}.tmp`;
   try {
-    fs.writeFileSync(tmp, text);
+    fs.writeFileSync(tmp, text, { mode: opts.mode ?? 0o666 });
     if (unchangedFrom !== null && !holds(file, unchangedFrom)) {
       fs.rmSync(tmp, { force: true });
       return false;
@@ -54,8 +60,8 @@ function holds(file: string, text: string): boolean {
 }
 
 /** Write JSON through a unique temp file and a rename, so a reader never sees a partial file. */
-export function writeJsonAtomic(file: string, value: unknown): void {
-  writeTextAtomic(file, JSON.stringify(value), null);
+export function writeJsonAtomic(file: string, value: unknown, opts: { mode?: number } = {}): void {
+  writeTextAtomic(file, JSON.stringify(value), null, opts);
 }
 
 /** The recorded reason digests stopped, or null when none is recorded or the file is unreadable. */

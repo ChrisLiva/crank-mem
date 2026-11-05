@@ -43,6 +43,8 @@ async function main(): Promise<number> {
       return (await import("./setup.ts")).run(rest);
     case "stats":
       return (await import("./stats.ts")).run(rest);
+    case "dashboard":
+      return (await import("./dashboard.ts")).run(rest);
     case "upgrade":
       return (await import("./upgrade.ts")).run(rest);
     case "uninstall":

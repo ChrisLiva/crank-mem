@@ -82,6 +82,12 @@ export const COMMANDS = {
     value: [],
     bool: [],
   },
+  dashboard: {
+    summary: "Serve the memory dashboard on localhost",
+    usage: "Usage: crank-mem dashboard [--port <n>] [--no-open]",
+    value: ["port"],
+    bool: ["no-open"],
+  },
   upgrade: {
     summary: "Re-vendor hooks and repair their wiring after a git pull",
     usage: "Usage: crank-mem upgrade",

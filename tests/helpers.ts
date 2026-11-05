@@ -14,6 +14,7 @@ import {
 import { DAEMON_FILE, type DaemonState } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
+import { cliVersion } from "../src/cli/version.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");
@@ -89,7 +90,10 @@ export function makeCrankHome(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "crank-home-"));
 }
 
-/** Run the crank-mem CLI as a child process, with fresh temp CODEX_HOME and CRANK_HOME unless `env` overrides them. */
+/**
+ * Run the crank-mem CLI as a child process, with fresh temp CODEX_HOME and CRANK_HOME and a
+ * current dashboard fixture as CRANK_DASHBOARD_DIR unless `env` overrides them.
+ */
 export function runCli(cwd: string, args: string[], env?: Record<string, string>): CliRun {
   const result = spawnSync(process.execPath, [path.join(REPO_ROOT, "src/cli/main.ts"), ...args], {
     cwd,
@@ -99,6 +103,7 @@ export function runCli(cwd: string, args: string[], env?: Record<string, string>
       ...process.env,
       CODEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "crank-codexhome-")),
       CRANK_HOME: makeCrankHome(),
+      CRANK_DASHBOARD_DIR: dashboardFixture(cliVersion()),
       ...env,
     },
   });
@@ -485,6 +490,100 @@ export async function startModelServer(
     url: `http://127.0.0.1:${port}`,
     requests: () => fs.readFileSync(log, "utf-8").split("\n").filter(Boolean),
     stop,
+  };
+}
+
+/**
+ * A dashboard dir whose `dist/` copies tests/fixtures/dashboard-dist/, with `dist/.crank-version`
+ * holding `stamp` unless `stamp` is null.
+ */
+export function dashboardFixture(stamp: string | null): string {
+  const dir = tempDir("crank-dashdir-");
+  fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/dashboard-dist"), path.join(dir, "dist"), {
+    recursive: true,
+  });
+  if (stamp !== null) fs.writeFileSync(path.join(dir, "dist/.crank-version"), stamp);
+  return dir;
+}
+
+const STARTUP_LINE = /^crank-mem dashboard: (http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]+))\n/;
+
+/**
+ * Start `crank-mem dashboard` as a child on `home` and wait for its startup line. `get` sends a
+ * request with the session cookie and the Host the URL names unless `init` overrides them.
+ */
+export async function startDashboard(
+  home: string,
+  args: string[],
+  opts: { open?: boolean; cwd?: string; env?: Record<string, string>; dashboardDir?: string } = {},
+): Promise<{
+  url: string;
+  token: string;
+  get(path: string, init?: RequestInit): Promise<Response>;
+  stop(signal?: "SIGTERM" | "SIGINT"): Promise<number>;
+  output(): { stdout: string; stderr: string };
+}> {
+  const child = spawn(
+    process.execPath,
+    [
+      path.join(REPO_ROOT, "src/cli/main.ts"),
+      "dashboard",
+      ...(opts.open ? [] : ["--no-open"]),
+      ...args,
+    ],
+    {
+      cwd: opts.cwd ?? tempDir("crank-dash-cwd-"),
+      env: {
+        ...process.env,
+        CRANK_HOME: home,
+        CRANK_DASHBOARD_DIR: opts.dashboardDir ?? dashboardFixture(cliVersion()),
+        ...opts.env,
+      },
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  children.push(child);
+  let stdout = "";
+  let stderr = "";
+  child.stdout!.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+  child.stderr!.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+  const closed = new Promise<number>((resolve) =>
+    child.once("close", (code) => resolve(code ?? -1)),
+  );
+  const [url, port, token] = await new Promise<[string, number, string]>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`dashboard did not print its startup line: ${stderr}`)),
+      10_000,
+    );
+    const check = () => {
+      const m = STARTUP_LINE.exec(stdout);
+      if (!m) return;
+      clearTimeout(timer);
+      resolve([m[1]!, Number(m[2]), m[3]!]);
+    };
+    child.stdout!.on("data", check);
+    void closed.then((code) => {
+      clearTimeout(timer);
+      reject(new Error(`dashboard exited ${code} before its startup line: ${stderr}`));
+    });
+  });
+  return {
+    url,
+    token,
+    get(p, init = {}) {
+      const headers = new Headers({
+        Host: `127.0.0.1:${port}`,
+        Cookie: `crank_dashboard=${token}`,
+      });
+      new Headers(init.headers).forEach((value, name) => headers.set(name, value));
+      return fetch(`http://127.0.0.1:${port}${p}`, { redirect: "manual", ...init, headers });
+    },
+    stop(signal = "SIGTERM") {
+      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+      return closed;
+    },
+    output: () => ({ stdout, stderr }),
   };
 }
 
