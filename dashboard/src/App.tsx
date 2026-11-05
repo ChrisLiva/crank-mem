@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "cn";
 import { fetchProjects, type Dot, type Project } from "./api";
+import { CurationView } from "./views/curation";
+import { HealthView } from "./views/health";
 import { MemoryView } from "./views/memory";
+import { UsageView } from "./views/usage";
 
 const VIEWS = [
   ["memory", "Memory"],
@@ -69,6 +72,11 @@ export function App() {
   }, [project]);
 
   const setItem = useCallback((item: string | null) => setPlace((p) => ({ ...p, item })), []);
+  const setTab = useCallback((tab: string) => setPlace((p) => ({ ...p, tab, item: null })), []);
+  const openObservation = useCallback(
+    (id: number) => setPlace((p) => ({ ...p, view: "memory", tab: null, item: String(id) })),
+    [],
+  );
   const go = (projectId: string, view: View) =>
     setPlace({ project: projectId, view, tab: null, item: null });
   const toggle = (id: string) => {
@@ -147,18 +155,38 @@ export function App() {
             );
           })}
         </nav>
-        {place.project !== null && place.view === "memory" ? (
+        {place.project === null ? null : place.view === "memory" ? (
           <MemoryView
             key={place.project}
             projectId={place.project}
             item={place.item}
             setItem={setItem}
           />
+        ) : place.view === "curation" ? (
+          <CurationView
+            key={place.project}
+            projectId={place.project}
+            tab={place.tab}
+            setTab={setTab}
+            item={place.item}
+            setItem={setItem}
+            openObservation={openObservation}
+          />
+        ) : place.view === "health" ? (
+          <HealthView
+            key={place.project}
+            projectId={place.project}
+            item={place.item}
+            setItem={setItem}
+          />
         ) : (
-          <>
-            <section aria-label="List" className="border-r" />
-            <section aria-label="Detail" />
-          </>
+          <UsageView
+            key={place.project}
+            projectId={place.project}
+            item={place.item}
+            setItem={setItem}
+            openObservation={openObservation}
+          />
         )}
       </main>
     </div>

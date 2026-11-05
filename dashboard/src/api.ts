@@ -58,6 +58,12 @@ export type ObservationFilters = {
   q: string;
 };
 
+/** `route` under the project's API path, with `params` as its query when there are any. */
+function projectPath(projectId: string, route: string, params?: URLSearchParams): string {
+  const query = params === undefined || params.toString() === "" ? "" : `?${params}`;
+  return `/api/projects/${encodeURIComponent(projectId)}${route}${query}`;
+}
+
 export async function fetchProjects(): Promise<Project[]> {
   return (await getJson<{ projects: Project[] }>("/api/projects")).projects;
 }
@@ -74,8 +80,7 @@ export function fetchObservations(
   if (filters.stale) params.set("stale", "1");
   if (filters.q.trim() !== "") params.set("q", filters.q);
   if (before !== null) params.set("before", before);
-  const query = params.toString() === "" ? "" : `?${params}`;
-  return getJson(`/api/projects/${encodeURIComponent(projectId)}/observations${query}`);
+  return getJson(projectPath(projectId, "/observations", params));
 }
 
 /** One whole observation, or null when the server answers 400 or 404 for `oid`. */
@@ -84,11 +89,110 @@ export async function fetchObservation(
   oid: string,
 ): Promise<Observation | Note | null> {
   try {
-    return await getJson(
-      `/api/projects/${encodeURIComponent(projectId)}/observations/${encodeURIComponent(oid)}`,
-    );
+    return await getJson(projectPath(projectId, `/observations/${encodeURIComponent(oid)}`));
   } catch (err) {
     if (err instanceof HttpError && (err.status === 400 || err.status === 404)) return null;
     throw err;
   }
+}
+
+export const PROPOSAL_STATES = ["pending", "accepted", "rejected", "expired"] as const;
+export type ProposalState = (typeof PROPOSAL_STATES)[number];
+export type ProposalRow = {
+  id: number;
+  kind: "preference" | "memory";
+  bullet: string;
+  state: ProposalState;
+  reason: string | null;
+  createdAtMs: number;
+  decidedAtMs: number | null;
+};
+export type StaleRow = {
+  id: number;
+  title: string;
+  staleAtMs: number;
+  reason: string;
+  reviewed: boolean;
+};
+export type ConsolidationRow = {
+  id: number;
+  startedAtMs: number;
+  finishedAtMs: number;
+  outcome: "ok" | "conflict" | "rejected" | "retry" | "stopped";
+  model: string | null;
+  costUsd: number;
+};
+/** One page of a curation list; `next` is the `before` that asks for the page after it. */
+export type RowPage<T> = { rows: T[]; next: string | null } | Note;
+
+function beforeParams(before: string | null): URLSearchParams {
+  const params = new URLSearchParams();
+  if (before !== null) params.set("before", before);
+  return params;
+}
+
+export function fetchProposals(
+  projectId: string,
+  state: ProposalState | null,
+  before: string | null,
+): Promise<RowPage<ProposalRow>> {
+  const params = beforeParams(before);
+  if (state !== null) params.set("state", state);
+  return getJson(projectPath(projectId, "/proposals", params));
+}
+
+export function fetchStale(projectId: string, before: string | null): Promise<RowPage<StaleRow>> {
+  return getJson(projectPath(projectId, "/stale", beforeParams(before)));
+}
+
+export function fetchConsolidations(
+  projectId: string,
+  before: string | null,
+): Promise<RowPage<ConsolidationRow>> {
+  return getJson(projectPath(projectId, "/consolidations", beforeParams(before)));
+}
+
+/** The capture rows `crank-mem stats` prints, as label and value pairs. */
+export async function fetchHealth(projectId: string): Promise<[label: string, value: string][]> {
+  return (await getJson<{ rows: [string, string][] }>(projectPath(projectId, "/health"))).rows;
+}
+
+export const USAGE_CHANNELS = [
+  "session-start",
+  "subagent-start",
+  "file-history",
+  "search",
+  "timeline",
+  "get",
+  "outline",
+  "unfold",
+] as const;
+export type UsageChannel = (typeof USAGE_CHANNELS)[number];
+export const USAGE_DAYS = [7, 30, 90] as const;
+export type UsageDays = (typeof USAGE_DAYS)[number];
+
+/** The fields of the server's `UsageMetrics` (`src/cli/usage-metrics.ts`) the Usage view reads. */
+export type UsageMetrics = {
+  perDay: { date: string; counts: Record<UsageChannel, number> }[];
+  searches: number;
+  zeroResultShare: number | null;
+  keywordShare: number | null;
+  followThrough: number | null;
+  neverSurfacedShare: number | null;
+  topQueries: {
+    query: string;
+    count: number;
+    lastMs: number;
+    meanResults: number;
+    runs: { ts: number; ids: number[] }[];
+  }[];
+};
+
+export function fetchUsage(
+  projectId: string,
+  days: UsageDays,
+  manual: boolean,
+): Promise<UsageMetrics> {
+  const params = new URLSearchParams({ days: String(days), manual: manual ? "1" : "0" });
+  return getJson(projectPath(projectId, "/usage", params));
 }
