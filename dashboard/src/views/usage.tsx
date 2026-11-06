@@ -3,7 +3,7 @@ import { cn } from "cn";
 import { fetchUsage, USAGE_CHANNELS, USAGE_DAYS, type UsageDays, type UsageMetrics } from "@/api";
 import { Button } from "@/components/ui/button";
 import { usePoll } from "@/hooks/use-poll";
-import { formatTime, LABEL, ObservationLink, Row, useSelection } from "./curation";
+import { formatTime, LABEL, ListFoot, ObservationLink, Row, useSelection } from "./shared";
 
 /** A share as a whole percent, or `—` when there was nothing to divide. */
 function percent(share: number | null): string {
@@ -173,12 +173,7 @@ export function UsageView({
             </>
           )}
         </div>
-        <div className="flex items-center justify-between gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
-          <span>{metrics !== null && `${metrics.searches} searches`}</span>
-          <span>
-            <kbd className="font-mono">j</kbd> <kbd className="font-mono">k</kbd>
-          </span>
-        </div>
+        <ListFoot start={metrics !== null && `${metrics.searches} searches`} />
       </section>
       <section aria-label="Detail" className="min-h-0 overflow-auto">
         {chosen !== undefined && (

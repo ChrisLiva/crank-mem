@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { fetchHealth } from "@/api";
 import { usePoll } from "@/hooks/use-poll";
-import { Pairs, Row, useSelection } from "./curation";
+import { ListFoot, Pairs, Row, useSelection } from "./shared";
 
 /** Columns 2 and 3 for a project's health: the `crank-mem stats` capture rows, keyed by label. */
 export function HealthView({
@@ -45,11 +45,7 @@ export function HealthView({
             ))
           )}
         </div>
-        <div className="flex justify-end border-t px-3 py-2 text-xs text-muted-foreground">
-          <span>
-            <kbd className="font-mono">j</kbd> <kbd className="font-mono">k</kbd>
-          </span>
-        </div>
+        <ListFoot />
       </section>
       <section aria-label="Detail" className="min-h-0 overflow-auto">
         {rows !== null && (

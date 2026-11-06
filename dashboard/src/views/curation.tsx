@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { cn } from "cn";
 import {
   fetchConsolidations,
@@ -6,89 +6,23 @@ import {
   fetchStale,
   PROPOSAL_STATES,
   type ConsolidationRow,
-  type Note,
   type ProposalRow,
   type ProposalState,
   type RowPage,
   type StaleRow,
 } from "@/api";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { usePoll } from "@/hooks/use-poll";
-import { useListKeys } from "@/hooks/use-list-keys";
-import { formatTime, LABEL } from "./memory";
-
-export { formatTime, LABEL };
-
-/**
- * Keeps `item` on one of `keys`, which are the list's rows in order: the first key when
- * `item` is missing or gone, null when the list is empty. j/k move it. While `keys` is
- * null (the list is still loading), `item` stays as it is.
- */
-export function useSelection(
-  keys: string[] | null,
-  item: string | null,
-  setItem: (item: string | null) => void,
-): void {
-  const selected = keys === null || item === null ? -1 : keys.indexOf(item);
-  const first = keys?.[0] ?? null;
-  useEffect(() => {
-    if (keys !== null && selected < 0 && first !== item) setItem(first);
-  }, [keys, selected, first, item, setItem]);
-  const select = useCallback(
-    (i: number) => {
-      const key = keys?.[i];
-      if (key !== undefined) setItem(key);
-    },
-    [keys, setItem],
-  );
-  useListKeys(keys?.length ?? 0, selected, select);
-}
-
-/** A list row button: the left bar and background mark the selected row. */
-export function Row({
-  selected,
-  onClick,
-  children,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  const ref = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (selected) ref.current?.scrollIntoView({ block: "nearest" });
-  }, [selected]);
-  return (
-    <button
-      ref={ref}
-      type="button"
-      data-row
-      aria-current={selected || undefined}
-      onClick={onClick}
-      className={cn(
-        "grid w-full gap-0.5 border-b border-l-2 border-l-transparent px-3 py-2 text-left hover:bg-accent/60",
-        selected && "border-l-primary bg-accent",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-/** A link to observation `id` in the Memory view. */
-export function ObservationLink({ id, open }: { id: number; open: (id: number) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => open(id)}
-      className="font-mono underline-offset-2 hover:underline"
-    >
-      #{id}
-    </button>
-  );
-}
+import {
+  formatTime,
+  LABEL,
+  ListFoot,
+  ObservationLink,
+  Pairs,
+  Row,
+  usePaged,
+  useSelection,
+} from "./shared";
 
 const CURATION_TABS = [
   ["proposals", "Proposals"],
@@ -96,57 +30,6 @@ const CURATION_TABS = [
   ["consolidations", "Consolidations"],
 ] as const;
 type CurationTab = (typeof CURATION_TABS)[number][0];
-
-type Listed<T> = { key: string; rows: T[]; next: string | null; pages: number };
-
-/** A fresh first page, with the older pages already loaded kept beneath it. */
-function withOlderPages<T extends { id: number }>(prev: Listed<T> | null, first: Listed<T>) {
-  if (prev === null || prev.pages < 2 || first.next === null) return first;
-  const last = first.rows[first.rows.length - 1];
-  const at = last === undefined ? -1 : prev.rows.findIndex((r) => r.id === last.id);
-  if (at < 0) return first;
-  return {
-    ...first,
-    rows: [...first.rows, ...prev.rows.slice(at + 1)],
-    next: prev.next,
-    pages: prev.pages,
-  };
-}
-
-/** Page 1 of `fetchPage` on each `key` and each poll, and `older` to append the page after the last. */
-function usePaged<T extends { id: number }>(
-  key: string,
-  fetchPage: (before: string | null) => Promise<RowPage<T>>,
-) {
-  const keyRef = useRef(key);
-  keyRef.current = key;
-  const [listed, setListed] = useState<Listed<T> | Note | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = async (before: string | null) => {
-    const asked = key;
-    try {
-      const page = await fetchPage(before);
-      if (keyRef.current !== asked) return;
-      setError(null);
-      if ("note" in page) return setListed(page);
-      const got: Listed<T> = { key: asked, rows: page.rows, next: page.next, pages: 1 };
-      setListed((prev) => {
-        const same = prev !== null && !("note" in prev) && prev.key === asked ? prev : null;
-        if (before === null) return withOlderPages(same, got);
-        if (same === null) return prev;
-        return { ...got, rows: [...same.rows, ...got.rows], pages: same.pages + 1 };
-      });
-    } catch (err) {
-      if (keyRef.current === asked) setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-  usePoll(() => load(null), [key]);
-
-  const current = listed !== null && !("note" in listed) && listed.key === key ? listed : null;
-  const note = listed !== null && "note" in listed ? listed.note : null;
-  return { current, note, error, older: () => current?.next != null && load(current.next) };
-}
 
 type ListSpec<T> = {
   key: string;
@@ -195,19 +78,7 @@ function PagedList<T extends { id: number }>({
             ))
           )}
         </div>
-        <div className="flex items-center justify-between gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
-          <span>{current !== null && `${current.rows.length} shown`}</span>
-          <span className="flex items-center gap-2">
-            <span>
-              <kbd className="font-mono">j</kbd> <kbd className="font-mono">k</kbd>
-            </span>
-            {current !== null && current.next !== null && (
-              <Button variant="outline" size="xs" onClick={older}>
-                Older
-              </Button>
-            )}
-          </span>
-        </div>
+        <ListFoot start={current !== null && `${current.rows.length} shown`} older={older} />
       </section>
       <section aria-label="Detail" className="min-h-0 overflow-auto">
         {note !== null ? (
@@ -224,33 +95,6 @@ function Meta({ children }: { children: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-xs text-muted-foreground">
       {children}
-    </div>
-  );
-}
-
-/** Label and value pairs in a bordered two-column card; the `highlight` label's pair stands out. */
-export function Pairs({
-  pairs,
-  highlight,
-}: {
-  pairs: [label: string, value: ReactNode][];
-  highlight?: string;
-}) {
-  return (
-    <div className="grid grid-cols-[160px_1fr] rounded-lg border bg-card text-card-foreground">
-      {pairs.map(([label, value], i) => {
-        const cell = cn(
-          "px-3.5 py-2",
-          i < pairs.length - 1 && "border-b",
-          label === highlight && "bg-accent font-semibold",
-        );
-        return (
-          <div key={label} data-pair className="contents">
-            <div className={cn(cell, "text-xs text-muted-foreground")}>{label}</div>
-            <div className={cell}>{value}</div>
-          </div>
-        );
-      })}
     </div>
   );
 }
