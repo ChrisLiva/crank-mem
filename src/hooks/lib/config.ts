@@ -1,9 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isObj } from "./hook-io.ts";
 
 // .crank/config.json load with defaults, plus the always-on sensitive-file
 // filter (not configurable — never index secrets).
+
+export type Obj = Record<string, unknown>;
+
+export const isObj = (v: unknown): v is Obj =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
 
 export const CRANK_DIR = ".crank";
 export const CONFIG_FILE = "config.json";
