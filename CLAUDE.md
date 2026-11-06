@@ -55,4 +55,6 @@ At load average about 1.5 the hold test still failed every solo run made at `ea1
 
 The same file's `a failing stem waits --retry-ms, doubling each failure up to --retry-cap-ms` asserts a first gap under 700 ms and is load-sensitive in the same way: it failed at `cd03457` at load average about 5.5, and a full-suite run during the stage-5 final gate measured 778 ms. Neither daemon timing test is a regression signal unless `src/daemon/` changed.
 
+Other `tests/snapshots.test.ts` tests still run on bun's 5,000 ms default, and the `maintenance` and `restore-memory` ones take about 4.75 s solo. At load average about 7, one or two of them reported `Received: -1` even when the file ran alone, at `f1a6e00` and at `50527b9` alike (2 of 15 failed, with the failing test changing from run to run), while `bun test tests/snapshots.test.ts --timeout 20000` passed 15 of 15 at `f1a6e00`. Rerun that file with `--timeout 20000` before reading such a failure as a regression.
+
 To probe an fs failure path (such as `src/hooks/lib/spool.ts` → `settleEntry`'s non-`EEXIST` link fallback), run the probe under node: assigning `fs.linkSync` on the default `node:fs` import and calling `syncBuiltinESMExports()` reaches a module's `import * as fs` namespace under node 26 (the call threw the mock's `EPERM`) but not under bun 1.4 (it threw the real `ENOENT`).
