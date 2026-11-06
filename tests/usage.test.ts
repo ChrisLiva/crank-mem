@@ -20,6 +20,7 @@ import {
   tempDir,
   ZONES,
 } from "./helpers.ts";
+import { NO_MEMORY_NOTE, STATE_NOTES } from "../src/cli/recall.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import {
   claudePostBash,
@@ -1021,8 +1022,15 @@ describe("usage window: the usage endpoint aggregates the log", () => {
       neverSurfacedShare: null,
       surfaced: good.surfaced.map((s: object) => ({ ...s, title: "(deleted)" })),
     };
-    expect(await usageOf(dash, newer, "days=90&manual=0")).toEqual(expected);
-    expect(await usageOf(dash, missing, "days=90&manual=0")).toEqual(expected);
+    expect(await usageOf(dash, newer, "days=90&manual=0")).toEqual({
+      ...expected,
+      note: STATE_NOTES.newer,
+    });
+    expect(await usageOf(dash, missing, "days=90&manual=0")).toEqual({
+      ...expected,
+      note: NO_MEMORY_NOTE,
+    });
+    expect(good).not.toHaveProperty("note");
   }, 20_000);
 
   test("the rotated file is read too, and a changed file is read again", async () => {

@@ -188,6 +188,8 @@ export type UsageMetrics = {
   }[];
   surfaced: { id: number; count: number; title: string }[];
   filesWithoutMemory: { path: string; count: number }[];
+  /** The store's note when memory.db did not open, so `surfaced` has no titles. */
+  note?: string;
 };
 
 export function fetchUsage(

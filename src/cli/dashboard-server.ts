@@ -257,7 +257,7 @@ async function health(root: string): Promise<Answer> {
   return { status: 200, body: { rows } };
 }
 
-/** `GET …/usage`: the Usage view's metrics over the log; a store that does not open gives no titles. */
+/** `GET …/usage`: the Usage view's metrics over the log; a store that does not open gives no titles, and its note. */
 async function usage(root: string, params: URLSearchParams): Promise<Answer> {
   const days = ([7, 30, 90] as const).find((d) => String(d) === params.get("days"));
   const manual = params.get("manual") ?? "0";
@@ -274,7 +274,10 @@ async function usage(root: string, params: URLSearchParams): Promise<Answer> {
   if (!("note" in body)) return { status: 200, body };
   return {
     status: 200,
-    body: usageMetrics(events, { ...opts, titles: () => new Map(), observationCount: 0 }),
+    body: {
+      ...usageMetrics(events, { ...opts, titles: () => new Map(), observationCount: 0 }),
+      note: body.note,
+    },
   };
 }
 

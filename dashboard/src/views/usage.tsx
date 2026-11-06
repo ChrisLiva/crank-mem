@@ -77,14 +77,21 @@ const RANKED = 10;
 /** A labeled list of counted rows, most counted first, that j/k do not move through. */
 function Ranked({
   label,
+  note,
   rows,
 }: {
   label: string;
+  note?: string;
   rows: { key: string; count: number; body: ReactNode }[];
 }) {
   return (
     <div data-ranked={label}>
       <div className={cn(LABEL, "px-3 pt-4 pb-1")}>{label}</div>
+      {note !== undefined && (
+        <p data-note className="px-3 py-1.5 text-xs text-muted-foreground">
+          {note}
+        </p>
+      )}
       {rows.length === 0 ? (
         <p className="px-3 py-1.5 text-xs text-muted-foreground">None yet.</p>
       ) : (
@@ -204,13 +211,16 @@ export function UsageView({
                 ))}
                 <Ranked
                   label="Most surfaced"
+                  note={metrics.note}
                   rows={metrics.surfaced.map((s) => ({
                     key: String(s.id),
                     count: s.count,
                     body: (
                       <>
                         <ObservationLink id={s.id} open={openObservation} />
-                        <span className="min-w-0 truncate">{s.title}</span>
+                        {metrics.note === undefined && (
+                          <span className="min-w-0 truncate">{s.title}</span>
+                        )}
                       </>
                     ),
                   }))}
