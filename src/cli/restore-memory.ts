@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { latestSnapshot, memoryPath, restoreMemory, SNAPSHOT_DIR } from "../hooks/lib/memory.ts";
+import { latestSnapshot, memoryPath, restoreMemory, snapshotDir } from "../hooks/lib/memory.ts";
 import { openNearestProject } from "./project.ts";
 import { migrateStore } from "./upgrade.ts";
 
@@ -13,7 +13,7 @@ export async function run(args: string[]): Promise<number> {
   const source =
     args[0] !== undefined ? path.resolve(process.cwd(), args[0]) : latestSnapshot(store)?.file;
   if (source === undefined) {
-    console.error(`crank-mem: no snapshot in ${path.join(path.dirname(store), SNAPSHOT_DIR)}.`);
+    console.error(`crank-mem: no snapshot in ${snapshotDir(store)}.`);
     return 1;
   }
   let result: Awaited<ReturnType<typeof restoreMemory>>;

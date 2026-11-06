@@ -36,6 +36,14 @@ export const DEDUP_FILE = "cerebrum-dedup.json";
 const AUDIT_SKILL = "crank-mem-audit";
 
 /**
+ * The one file-name stamp: an ISO time with `:` and `.` made filename-safe.
+ * `installedAtMs` and memory's `DAILY_SNAPSHOT` parse this format back.
+ */
+export function fileStamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+/**
  * Copy cerebrum.md, given as text or raw bytes, to
  * backups/cerebrum/<timestamp>.md unless the newest copy already matches,
  * keeping the last BACKUP_KEEP. Returns the project-relative
@@ -52,7 +60,7 @@ export function backupCerebrum(crankDir: string, text: string | Buffer): string 
       .sort();
     let name = copies[copies.length - 1];
     if (!name || !fs.readFileSync(path.join(dir, name)).equals(Buffer.from(text))) {
-      name = new Date().toISOString().replace(/[:.]/g, "-") + ".md";
+      name = fileStamp() + ".md";
       fs.writeFileSync(path.join(dir, name), text);
       copies.push(name);
     }

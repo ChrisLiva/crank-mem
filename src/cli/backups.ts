@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { manifestDirs } from "../hooks/lib/cerebrum-files.ts";
+import { fileStamp, manifestDirs } from "../hooks/lib/cerebrum-files.ts";
 
 // Backups of every file init/upgrade is about to modify, with a manifest
 // mapping backup names to original absolute paths so uninstall can restore
@@ -18,7 +18,7 @@ interface Manifest {
 }
 
 export function newBackupDir(crankDir: string): string {
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const stamp = fileStamp();
   const dir = path.join(crankDir, "backups", stamp);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(

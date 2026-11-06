@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { ISO_DATE } from "./bullets.ts";
+import { fileStamp } from "./cerebrum-files.ts";
 import { CRANK_DIR } from "./config.ts";
 import { runGit } from "./scanner.ts";
 
@@ -308,11 +309,7 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
       } else {
         // VACUUM INTO cannot run inside migrate's transaction, so the snapshot comes first.
         try {
-          writeSnapshot(
-            db,
-            path.join(path.dirname(file), SNAPSHOT_DIR),
-            `${snapshotStamp()}-v${v}.db`,
-          );
+          writeSnapshot(db, snapshotDir(file), `${fileStamp()}-v${v}.db`);
         } catch (err) {
           db.close();
           return { status: "unmigrated", detail: errorMessage(err) };
@@ -373,14 +370,14 @@ let snapshotCount = 0;
 const DAILY_SNAPSHOT = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
 const DAILY_KEEP = 7;
 
-/** The one snapshot-name stamp: an ISO time with `:` and `.` made filename-safe. */
-function snapshotStamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-");
+/** The folder that holds the snapshots of `storeFile`. */
+export function snapshotDir(storeFile: string): string {
+  return path.join(path.dirname(storeFile), SNAPSHOT_DIR);
 }
 
 /** The snapshot of `storeFile` whose `.db` name sorts last, with its mtime; null when the folder is missing, unreadable or empty. */
 export function latestSnapshot(storeFile: string): { file: string; atMs: number } | null {
-  const dir = path.join(path.dirname(storeFile), SNAPSHOT_DIR);
+  const dir = snapshotDir(storeFile);
   try {
     const name = fs
       .readdirSync(dir)
@@ -457,8 +454,8 @@ export async function restoreMemory(
     if (problem !== null) return { status: "invalid", detail: problem };
     let savedAs: string | null = null;
     if (fs.existsSync(storeFile)) {
-      const dir = path.join(path.dirname(storeFile), SNAPSHOT_DIR);
-      const stamp = snapshotStamp();
+      const dir = snapshotDir(storeFile);
+      const stamp = fileStamp();
       // Read-write: under bun a read-only open of a closed WAL store with no -shm fails.
       const current = new mod.DatabaseSync(storeFile);
       let damaged = false;
@@ -1055,8 +1052,8 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     maintain({ everyMs, staleKeepMs }) {
       const latest = latestSnapshot(file);
       if (latest !== null && Date.now() - latest.atMs <= everyMs) return null;
-      const dir = path.join(path.dirname(file), SNAPSHOT_DIR);
-      const snapshot = writeSnapshot(db, dir, `${snapshotStamp()}.db`);
+      const dir = snapshotDir(file);
+      const snapshot = writeSnapshot(db, dir, `${fileStamp()}.db`);
       const deleted = transaction(db, () => {
         const cutoff = Date.now() - staleKeepMs;
         const expired = "SELECT id FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?";
