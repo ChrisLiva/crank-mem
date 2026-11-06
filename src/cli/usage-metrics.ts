@@ -1,19 +1,9 @@
 import { localDate } from "../hooks/lib/memory.ts";
-import type { UsageChannel, UsageLine } from "../hooks/lib/usage.ts";
+import { USAGE_CHANNELS, type UsageChannel, type UsageLine } from "../hooks/lib/usage.ts";
 
 // The Usage view's numbers, computed from a store's usage lines over a window
 // of whole local days that ends today.
 
-const CHANNELS: UsageChannel[] = [
-  "session-start",
-  "subagent-start",
-  "file-history",
-  "search",
-  "timeline",
-  "get",
-  "outline",
-  "unfold",
-];
 /** The longest list the metrics answer. */
 const TOP = 50;
 /** The runs each `topQueries` entry keeps. */
@@ -48,7 +38,7 @@ function share(part: number, whole: number): number | null {
 }
 
 function zeroCounts(): Record<UsageChannel, number> {
-  return Object.fromEntries(CHANNELS.map((c) => [c, 0])) as Record<UsageChannel, number>;
+  return Object.fromEntries(USAGE_CHANNELS.map((c) => [c, 0])) as Record<UsageChannel, number>;
 }
 
 /** The `TOP` most counted keys, by count and then path, both as `{ path, count }`. */
@@ -123,7 +113,7 @@ export function usageMetrics(
   }
   for (const line of lines) {
     const counts = byDate.get(localDate(line.ts));
-    if (counts && line.channel in counts) counts[line.channel]++;
+    if (counts) counts[line.channel]++;
   }
 
   const searches = of("search");
