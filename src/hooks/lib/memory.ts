@@ -20,6 +20,7 @@ export const MEMORY_OLDER_NOTE =
 export const MEMORY_NEWER_NOTE =
   "crank-mem: memory.db is newer than this version; run `crank-mem upgrade`.";
 export const MEMORY_UNREADABLE_NOTE = "crank-mem: .crank/memory.db is not a readable database.";
+export const NO_MEMORY_NOTE = "crank-mem: no memory exists yet.";
 export type MemoryReader = Omit<
   Memory,
   "appendDigest" | "recordRejection" | "putVectors" | "recordConsolidation" | "maintain"
@@ -332,6 +333,27 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
       /* already closed or never opened */
     }
     return { status: "unreadable" };
+  }
+}
+
+const READ_NOTES: Record<Exclude<MemoryRead["status"], "open">, string> = {
+  missing: NO_MEMORY_NOTE,
+  older: MEMORY_OLDER_NOTE,
+  newer: MEMORY_NEWER_NOTE,
+  unreadable: MEMORY_UNREADABLE_NOTE,
+};
+
+/** `fn`'s answer over the store, opened read-only and closed after; a store that does not open answers its note. */
+export async function withReader<T>(
+  file: string,
+  fn: (memory: MemoryReader) => T | Promise<T>,
+): Promise<T | { note: string }> {
+  const opened = openMemory(file, "read");
+  if (opened.status !== "open") return { note: READ_NOTES[opened.status] };
+  try {
+    return await fn(opened.memory);
+  } finally {
+    opened.memory.close();
   }
 }
 

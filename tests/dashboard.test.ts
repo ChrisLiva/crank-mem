@@ -3,13 +3,13 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
-import { NO_MEMORY_NOTE } from "../src/cli/recall.ts";
 import { cliVersion } from "../src/cli/version.ts";
 import { loadConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import {
   MEMORY_NEWER_NOTE,
   MEMORY_UNREADABLE_NOTE,
   memoryPath,
+  NO_MEMORY_NOTE,
   openMemory,
   type Memory,
 } from "../src/hooks/lib/memory.ts";

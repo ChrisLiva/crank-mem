@@ -4,8 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { memoryPaths } from "../src/hooks/lib/hook-io.ts";
 import { git, gitCommit, plantMemory, runCli, seedMemory, tempDir, ZONES } from "./helpers.ts";
-import { MEMORY_NEWER_NOTE, MEMORY_UNREADABLE_NOTE } from "../src/hooks/lib/memory.ts";
-import { NO_MEMORY_NOTE } from "../src/cli/recall.ts";
+import {
+  MEMORY_NEWER_NOTE,
+  MEMORY_UNREADABLE_NOTE,
+  NO_MEMORY_NOTE,
+} from "../src/hooks/lib/memory.ts";
 import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
 
 describe("memoryPaths", () => {

@@ -9,10 +9,9 @@ import {
   memoryStatus,
   isObservationType,
   isProposalState,
-  openMemory,
+  withReader,
   type ConsolidationRow,
   type MemoryRead,
-  type MemoryReader,
   type ObservationLine,
   type ProposalRow,
   type StaleRow,
@@ -20,7 +19,7 @@ import {
 import { readUsage } from "../hooks/lib/usage.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
 import { EMBED_MODEL } from "../daemon/embedder.ts";
-import { NO_MEMORY_NOTE, queryVector, STATE_NOTES } from "./recall.ts";
+import { queryVector } from "./recall.ts";
 import { registeredRoots } from "./registry.ts";
 import { captureRows } from "./stats.ts";
 import { usageMetrics } from "./usage-metrics.ts";
@@ -124,21 +123,6 @@ function projectsBody(): string {
   return JSON.stringify({ projects });
 }
 
-/** `fn`'s answer over the project's store, opened read-only and closed after; a store that does not open answers its note. */
-async function withStore<T>(
-  root: string,
-  fn: (memory: MemoryReader) => T | Promise<T>,
-): Promise<T | { note: string }> {
-  const opened = openMemory(memoryPath(root), "read");
-  if (opened.status === "missing") return { note: NO_MEMORY_NOTE };
-  if (opened.status !== "open") return { note: STATE_NOTES[opened.status] };
-  try {
-    return await fn(opened.memory);
-  } finally {
-    opened.memory.close();
-  }
-}
-
 /** A `<ms>:<id>` paging cursor, or null for anything else. */
 function parseCursor(s: string): { ms: number; id: number } | null {
   const m = /^(\d+):(\d+)$/.exec(s);
@@ -177,7 +161,7 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
     file: params.get("file"),
     stale: params.get("stale") === "1",
   };
-  const body = await withStore(root, async (memory) => {
+  const body = await withReader(memoryPath(root), async (memory) => {
     if (q !== null) {
       const vector = await queryVector(memory, q);
       const lines = memory.search({ ...filters, text: q, vector, sinceMs: null, limit: PAGE });
@@ -201,7 +185,7 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
 async function observation(root: string, oid: string): Promise<Answer> {
   const id = parseId(oid);
   if (id === null) return { status: 400 };
-  const body = await withStore(root, (memory) => memory.get([id])[0] ?? null);
+  const body = await withReader(memoryPath(root), (memory) => memory.get([id])[0] ?? null);
   return body === null ? { status: 404 } : { status: 200, body };
 }
 
@@ -212,7 +196,7 @@ async function proposals(root: string, params: URLSearchParams): Promise<Answer>
   const state = params.get("state");
   if (beforeParam !== null && beforeId === null) return { status: 400 };
   if (state !== null && !isProposalState(state)) return { status: 400 };
-  const body = await withStore(root, (memory) =>
+  const body = await withReader(memoryPath(root), (memory) =>
     pageOf(memory.proposalRows({ state, beforeId, limit: PAGE + 1 }), PAGE, (row: ProposalRow) =>
       String(row.id),
     ),
@@ -225,7 +209,7 @@ async function stale(root: string, params: URLSearchParams): Promise<Answer> {
   const beforeParam = params.get("before");
   const before = beforeParam === null ? null : parseCursor(beforeParam);
   if (beforeParam !== null && before === null) return { status: 400 };
-  const body = await withStore(root, (memory) =>
+  const body = await withReader(memoryPath(root), (memory) =>
     pageOf(
       memory.staleRows({
         before: before && { staleAtMs: before.ms, id: before.id },
@@ -243,7 +227,7 @@ async function consolidations(root: string, params: URLSearchParams): Promise<An
   const beforeParam = params.get("before");
   const beforeId = beforeParam === null ? null : parseId(beforeParam);
   if (beforeParam !== null && beforeId === null) return { status: 400 };
-  const body = await withStore(root, (memory) =>
+  const body = await withReader(memoryPath(root), (memory) =>
     pageOf(memory.consolidationRows({ beforeId, limit: PAGE + 1 }), PAGE, (row: ConsolidationRow) =>
       String(row.id),
     ),
@@ -264,7 +248,7 @@ async function usage(root: string, params: URLSearchParams): Promise<Answer> {
   if (days === undefined || (manual !== "0" && manual !== "1")) return { status: 400 };
   const events = readUsage(path.dirname(memoryPath(root)));
   const opts = { nowMs: Date.now(), days, manual: manual === "1" };
-  const body = await withStore(root, (memory) =>
+  const body = await withReader(memoryPath(root), (memory) =>
     usageMetrics(events, {
       ...opts,
       titles: (ids) => new Map(memory.get(ids).map((o) => [o.id, o.title])),

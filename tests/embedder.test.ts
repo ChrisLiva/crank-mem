@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { NO_MEMORY_NOTE } from "../src/cli/recall.ts";
+import { NO_MEMORY_NOTE } from "../src/hooks/lib/memory.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
 import {
   makeCrankHome,

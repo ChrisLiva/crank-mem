@@ -6,10 +6,8 @@ import {
   isObservationType,
   localDate,
   memoryPath,
-  openMemory,
-  MEMORY_NEWER_NOTE,
-  MEMORY_OLDER_NOTE,
-  MEMORY_UNREADABLE_NOTE,
+  NO_MEMORY_NOTE,
+  withReader,
   type MemoryReader,
   type Observation,
   type SearchQuery,
@@ -19,15 +17,8 @@ import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";
 
-export const NO_MEMORY_NOTE = "crank-mem: no memory exists yet.";
 const KEYWORD_ONLY_NOTE =
   "crank-mem: keyword search only; run `crank-mem setup` for search by meaning.";
-
-export const STATE_NOTES = {
-  older: MEMORY_OLDER_NOTE,
-  newer: MEMORY_NEWER_NOTE,
-  unreadable: MEMORY_UNREADABLE_NOTE,
-} as const;
 
 /** A missing store is an empty result for search (stdout, exit 0) and an error for the rest. */
 async function withMemory(
@@ -35,24 +26,14 @@ async function withMemory(
   missingIsEmpty: boolean,
   fn: (memory: MemoryReader) => number | Promise<number>,
 ): Promise<number> {
-  const opened = openMemory(memoryPath(root), "read");
-  if (opened.status === "missing") {
-    if (missingIsEmpty) {
-      console.log(NO_MEMORY_NOTE);
-      return 0;
-    }
-    console.error(NO_MEMORY_NOTE);
-    return 1;
+  const r = await withReader(memoryPath(root), fn);
+  if (typeof r === "number") return r;
+  if (missingIsEmpty && r.note === NO_MEMORY_NOTE) {
+    console.log(r.note);
+    return 0;
   }
-  if (opened.status !== "open") {
-    console.error(STATE_NOTES[opened.status]);
-    return 1;
-  }
-  try {
-    return await fn(opened.memory);
-  } finally {
-    opened.memory.close();
-  }
+  console.error(r.note);
+  return 1;
 }
 
 const DEFAULT_LIMIT = 10;

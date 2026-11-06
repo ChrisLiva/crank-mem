@@ -20,7 +20,7 @@ import {
   tempDir,
   ZONES,
 } from "./helpers.ts";
-import { NO_MEMORY_NOTE, STATE_NOTES } from "../src/cli/recall.ts";
+import { MEMORY_NEWER_NOTE, NO_MEMORY_NOTE } from "../src/hooks/lib/memory.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import {
   claudePostBash,
@@ -1009,7 +1009,7 @@ describe("usage window: the usage endpoint aggregates the log", () => {
     };
     expect(await usageOf(dash, newer, "days=90&manual=0")).toEqual({
       ...expected,
-      note: STATE_NOTES.newer,
+      note: MEMORY_NEWER_NOTE,
     });
     expect(await usageOf(dash, missing, "days=90&manual=0")).toEqual({
       ...expected,
