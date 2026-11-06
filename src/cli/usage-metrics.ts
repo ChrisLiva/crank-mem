@@ -23,8 +23,6 @@ const FOLLOW_MS = 30 * 60 * 1000;
 const DELETED_TITLE = "(deleted)";
 
 export type UsageMetrics = {
-  days: number;
-  manual: boolean;
   perDay: { date: string; counts: Record<UsageChannel, number> }[];
   searches: number;
   zeroResultShare: number | null;
@@ -39,14 +37,7 @@ export type UsageMetrics = {
   }[];
   surfaced: { id: number; count: number; title: string }[];
   neverSurfacedShare: number | null;
-  observationCount: number;
-  topFiles: { path: string; count: number }[];
   filesWithoutMemory: { path: string; count: number }[];
-  sessionStarts: number;
-  subagentStarts: number;
-  outlines: number;
-  unfolds: number;
-  cappedShare: number | null;
 };
 
 type Line<C extends UsageChannel> = Extract<UsageLine, { channel: C }>;
@@ -175,19 +166,12 @@ export function usageMetrics(
     .slice(0, TOP)
     .map(([id, count]) => ({ id, count, title: titles.get(id) ?? DELETED_TITLE }));
 
-  const shownFiles = new Map<string, number>();
   const emptyFiles = new Map<string, number>();
   for (const line of of("file-history")) {
-    for (const s of line.shown) shownFiles.set(s.path, (shownFiles.get(s.path) ?? 0) + 1);
     for (const p of line.empty) emptyFiles.set(p, (emptyFiles.get(p) ?? 0) + 1);
   }
 
-  const outlines = of("outline");
-  const unfolds = of("unfold");
-  const code = [...outlines, ...unfolds];
   return {
-    days: opts.days,
-    manual: opts.manual,
     perDay,
     searches: searches.length,
     zeroResultShare: share(searches.filter((s) => s.ids.length === 0).length, searches.length),
@@ -196,13 +180,6 @@ export function usageMetrics(
     topQueries,
     surfaced,
     neverSurfacedShare: share(opts.observationCount - titles.size, opts.observationCount),
-    observationCount: opts.observationCount,
-    topFiles: topPaths(shownFiles),
     filesWithoutMemory: topPaths(emptyFiles),
-    sessionStarts: of("session-start").length,
-    subagentStarts: of("subagent-start").length,
-    outlines: outlines.length,
-    unfolds: unfolds.length,
-    cappedShare: share(code.filter((c) => c.capped).length, code.length),
   };
 }

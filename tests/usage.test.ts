@@ -850,7 +850,6 @@ describe("usage window: the usage endpoint aggregates the log", () => {
       expect(on(L2.ts).counts.get).toBe(1);
       expect(totals(week)).toEqual(channelCounts({ search: 1, get: 1 }));
       expect(week).toMatchObject({
-        days: 7,
         searches: 1,
         zeroResultShare: 0,
         keywordShare: 0,
@@ -865,8 +864,6 @@ describe("usage window: the usage endpoint aggregates the log", () => {
           },
         ],
         neverSurfacedShare: 0.5,
-        observationCount: 4,
-        sessionStarts: 0,
       });
       expect(week.surfaced).toEqual([
         { id: B, count: 2, title: title(B) },
@@ -897,7 +894,6 @@ describe("usage window: the usage endpoint aggregates the log", () => {
         zeroResultShare: 0.5,
         keywordShare: 0.5,
         followThrough: 1,
-        sessionStarts: 1,
         neverSurfacedShare: 0.25,
       });
       expect(month.topQueries).toEqual([
@@ -938,7 +934,6 @@ describe("usage window: the usage endpoint aggregates the log", () => {
         [X, 1],
       ]);
       expect(quarter.neverSurfacedShare).toBe(0.25);
-      expect(quarter.topFiles).toEqual([{ path: "a.ts", count: 1 }]);
       expect(quarter.filesWithoutMemory).toEqual([{ path: "b.ts", count: 1 }]);
       expect(totals(quarter)).toEqual(
         channelCounts({ search: 3, get: 1, "session-start": 1, "file-history": 1 }),
@@ -981,8 +976,6 @@ describe("usage window: the usage endpoint aggregates the log", () => {
     expect(body.perDay).toHaveLength(7);
     for (const day of body.perDay) expect(day.counts).toEqual(channelCounts({}));
     expect(body).toEqual({
-      days: 7,
-      manual: false,
       perDay: body.perDay,
       searches: 0,
       zeroResultShare: null,
@@ -991,14 +984,7 @@ describe("usage window: the usage endpoint aggregates the log", () => {
       topQueries: [],
       surfaced: [],
       neverSurfacedShare: 1,
-      observationCount: 4,
-      topFiles: [],
       filesWithoutMemory: [],
-      sessionStarts: 0,
-      subagentStarts: 0,
-      outlines: 0,
-      unfolds: 0,
-      cappedShare: null,
     });
   }, 20_000);
 
@@ -1018,7 +1004,6 @@ describe("usage window: the usage endpoint aggregates the log", () => {
     const good = await usageOf(dash, root, "days=90&manual=0");
     const expected = {
       ...good,
-      observationCount: 0,
       neverSurfacedShare: null,
       surfaced: good.surfaced.map((s: object) => ({ ...s, title: "(deleted)" })),
     };
@@ -1144,13 +1129,6 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
         unfold: 1,
       }),
     );
-    expect(all).toMatchObject({
-      sessionStarts: 1,
-      subagentStarts: 1,
-      outlines: 1,
-      unfolds: 1,
-      cappedShare: 0,
-    });
     expect(all.zeroResultShare).toBeCloseTo(1 / 3);
     const lists = (l: Record<string, any>): number[][] =>
       [l.ids, l.found, ...(l.shown ?? []).map((s: { ids: number[] }) => s.ids)].filter(
