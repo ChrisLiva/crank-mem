@@ -208,23 +208,13 @@ const typescript: FamilyRules = {
       : node.childForFieldName("body"),
 };
 
-const JS_KINDS: Record<string, SymbolKind> = {
-  function_declaration: "fn",
-  generator_function_declaration: "fn",
-  class_declaration: "class",
-};
-
 const javascript: FamilyRules = {
   ...typescript,
-  kind(node) {
-    if (Object.hasOwn(JS_KINDS, node.type)) return JS_KINDS[node.type]!;
+  kind(node, parent) {
     if (node.type === "method_definition")
       return node.parent?.type === "class_body" ? "method" : null;
-    if (node.type === "variable_declarator" && hasFunctionValue(node)) return "fn";
     if (node.type === "field_definition" && hasFunctionValue(node)) return "method";
-    if (isDefaultExport(node))
-      return node.type === "function_expression" ? "fn" : node.type === "class" ? "class" : null;
-    return null;
+    return typescript.kind(node, parent);
   },
   passThrough: (node) =>
     TS_DECLARATIONS.has(node.type) || node.type === "export_statement" ? node.namedChildren : null,
