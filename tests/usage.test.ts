@@ -1099,6 +1099,21 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
     expect(printedIds(manual.stdout)).toEqual([hit]);
 
     const lines = usageLines(root);
+    const actor = { v: 1, ts: Date.now(), agent: "claude", session: "s1" };
+    const malformed = [
+      { channel: "session-start" },
+      { channel: "search", query: "q" },
+      { channel: "search", query: 7, ids: [] },
+      { channel: "timeline", anchor: hit, ids: "1" },
+      { channel: "get", requested: [hit], found: null },
+      { channel: "file-history", empty: [] },
+      { channel: "file-history", shown: [null], empty: [] },
+      { channel: "bogus", ids: [hit] },
+    ];
+    fs.appendFileSync(
+      path.join(root, ".crank", "usage.jsonl"),
+      malformed.map((m) => JSON.stringify({ ...actor, ...m }) + "\n").join(""),
+    );
     const dash = await startDashboard(home, ["--port", "0"]);
     const all = await usageOf(dash, root, "days=7&manual=1");
     expect(totals(all)).toEqual(

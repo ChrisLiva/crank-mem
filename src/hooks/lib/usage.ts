@@ -149,9 +149,38 @@ export function cliActor(): UsageActor {
     : { agent: "manual", session: null };
 }
 
+/** Whether a parsed line is a `v: 1` line whose channel is known and whose read fields hold their types. */
+function isUsageLine(value: unknown): value is UsageLine {
+  if (typeof value !== "object" || value === null) return false;
+  const line = value as Record<string, unknown>;
+  if (line.v !== 1 || typeof line.ts !== "number") return false;
+  switch (line.channel) {
+    case "session-start":
+      return Array.isArray(line.ids);
+    case "search":
+      return Array.isArray(line.ids) && typeof line.query === "string";
+    case "timeline":
+      return line.ids === null || Array.isArray(line.ids);
+    case "get":
+      return Array.isArray(line.requested) && Array.isArray(line.found);
+    case "file-history":
+      return (
+        Array.isArray(line.empty) &&
+        Array.isArray(line.shown) &&
+        line.shown.every((s) => typeof s === "object" && s !== null && Array.isArray(s.ids))
+      );
+    case "subagent-start":
+    case "outline":
+    case "unfold":
+      return true;
+    default:
+      return false;
+  }
+}
+
 const parsed = new Map<string, { size: number; mtimeMs: number; lines: UsageLine[] }>();
 
-/** The `v: 1` lines of one usage file, parsed again only when its size or mtime changed. */
+/** The well-formed `v: 1` lines of one usage file, parsed again only when its size or mtime changed. */
 function readUsageFile(file: string): UsageLine[] {
   let stat: fs.Stats;
   try {
@@ -167,8 +196,8 @@ function readUsageFile(file: string): UsageLine[] {
     for (const text of fs.readFileSync(file, "utf-8").split("\n")) {
       if (!text) continue;
       try {
-        const line = JSON.parse(text) as UsageLine | null;
-        if (line?.v === 1) lines.push(line);
+        const line: unknown = JSON.parse(text);
+        if (isUsageLine(line)) lines.push(line);
       } catch {}
     }
   } catch {
