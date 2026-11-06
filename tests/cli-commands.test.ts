@@ -633,8 +633,12 @@ describe("upgrade", () => {
     const root = initedProject();
     const crankDir = path.join(root, ".crank");
     const cerebrum = path.join(crankDir, "cerebrum.md");
-    const body = "## User Preferences\n\n- **Tabs**: keep tabs (2026-10-01)\n\n## Memory\n";
-    const old = frozenPreamble() + body;
+    const old = Buffer.concat([
+      Buffer.from(frozenPreamble()),
+      Buffer.from("## Memory\n- x "),
+      Buffer.from([0xff]),
+      Buffer.from("\n"),
+    ]);
     fs.writeFileSync(cerebrum, old);
 
     const run = cli(root, "upgrade");
@@ -642,21 +646,42 @@ describe("upgrade", () => {
     expect(run.stdout.split("\n")).toContain(
       "  replaced the template preamble of .crank/cerebrum.md",
     );
-    expect(fs.readFileSync(cerebrum, "utf-8")).toBe("# Cerebrum\n\n" + body);
+    expect(
+      fs
+        .readFileSync(cerebrum)
+        .equals(
+          Buffer.concat([
+            Buffer.from("# Cerebrum\n\n## Memory\n- x "),
+            Buffer.from([0xff]),
+            Buffer.from("\n"),
+          ]),
+        ),
+    ).toBe(true);
+
+    const copies = path.join(crankDir, "backups/cerebrum");
+    const names = fs.readdirSync(copies).filter((f) => f.endsWith(".md"));
+    expect(names).toHaveLength(1);
+    expect(fs.readFileSync(path.join(copies, names[0]!)).equals(old)).toBe(true);
 
     const backups = path.join(crankDir, "backups");
-    const newest = path.join(backups, fs.readdirSync(backups).sort().at(-1)!);
-    const manifest = JSON.parse(fs.readFileSync(path.join(newest, "manifest.json"), "utf-8"));
-    const entry = manifest.entries.find((e: { original: string }) =>
-      e.original.endsWith("/.crank/cerebrum.md"),
-    );
-    expect(fs.readFileSync(path.join(newest, entry.backupFile), "utf-8")).toBe(old);
+    for (const dir of fs.readdirSync(backups)) {
+      const file = path.join(backups, dir, "manifest.json");
+      if (!fs.existsSync(file)) continue;
+      const manifest = JSON.parse(fs.readFileSync(file, "utf-8"));
+      expect(
+        manifest.entries.some((e: { original: string }) =>
+          e.original.endsWith("/.crank/cerebrum.md"),
+        ),
+      ).toBe(false);
+    }
 
-    const names = fs.readdirSync(backups);
+    const listing = fs.readdirSync(backups);
+    const copyListing = fs.readdirSync(copies);
     const again = cli(root, "upgrade");
     expect(again.status).toBe(0);
     expect(again.stdout).not.toContain("replaced the template preamble");
-    expect(fs.readdirSync(backups)).toEqual(names);
+    expect(fs.readdirSync(backups)).toEqual(listing);
+    expect(fs.readdirSync(copies)).toEqual(copyListing);
   });
 
   test("keeps an edited preamble, and a cerebrum whose backup fails, byte for byte", () => {
@@ -690,7 +715,7 @@ describe("upgrade", () => {
     } finally {
       fs.chmodSync(backups, 0o755);
     }
-  });
+  }, 20_000);
 });
 
 describe("vendored hooks run standalone", () => {

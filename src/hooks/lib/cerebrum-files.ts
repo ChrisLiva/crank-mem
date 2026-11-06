@@ -36,11 +36,12 @@ export const DEDUP_FILE = "cerebrum-dedup.json";
 const AUDIT_SKILL = "crank-mem-audit";
 
 /**
- * Copy cerebrum.md to backups/cerebrum/<timestamp>.md unless the newest copy
- * already matches, keeping the last BACKUP_KEEP. Returns the project-relative
+ * Copy cerebrum.md, given as text or raw bytes, to
+ * backups/cerebrum/<timestamp>.md unless the newest copy already matches,
+ * keeping the last BACKUP_KEEP. Returns the project-relative
  * path of the copy that matches the file now, or null when the copy failed.
  */
-export function backupCerebrum(crankDir: string, text: string): string | null {
+export function backupCerebrum(crankDir: string, text: string | Buffer): string | null {
   try {
     const dir = path.join(crankDir, BACKUP_DIR);
     fs.mkdirSync(dir, { recursive: true });
@@ -50,7 +51,7 @@ export function backupCerebrum(crankDir: string, text: string): string | null {
       .filter((f) => f.endsWith(".md"))
       .sort();
     let name = copies[copies.length - 1];
-    if (!name || fs.readFileSync(path.join(dir, name), "utf-8") !== text) {
+    if (!name || !fs.readFileSync(path.join(dir, name)).equals(Buffer.from(text))) {
       name = new Date().toISOString().replace(/[:.]/g, "-") + ".md";
       fs.writeFileSync(path.join(dir, name), text);
       copies.push(name);

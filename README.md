@@ -78,7 +78,7 @@ with `@vscode/tree-sitter-wasm` for `outline` and `unfold`.
 consolidation removed or replaced, each with its reason; never injected),
 `memory.db` (digested memory, kept out of git), `config.json`, `config.local.json` (the per-checkout digest switch, kept out of git), `hooks/` (vendored), `backups/` (init/upgrade snapshots,
 plus `backups/cerebrum/`: the last 5 copies of cerebrum.md, taken before each
-consolidation edit, and `backups/memory/`: the daily snapshots of
+consolidation edit and before an upgrade replaces the 0.8.1 template preamble, and `backups/memory/`: the daily snapshots of
 `memory.db`), `usage.jsonl` (the always-on usage log, kept out of git: one line
 per session start, subagent start and file read the hooks handle, and per
 `search`, `timeline`, `get`, `outline` and `unfold` run; at 4 MiB it rotates

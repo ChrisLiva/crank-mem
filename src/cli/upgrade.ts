@@ -26,7 +26,7 @@ import {
   addAllowRule,
 } from "./settings.ts";
 import { saveConfig } from "../hooks/lib/config.ts";
-import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
+import { backupCerebrum, CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
 import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
 
 // Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
@@ -121,7 +121,8 @@ export async function run(_args: string[]): Promise<number> {
         const fresh = splitPreamble(
           fs.readFileSync(templatePath(CEREBRUM_FILE), "latin1"),
         ).preamble;
-        backup(cerebrumPath);
+        if (backupCerebrum(crankDir, fs.readFileSync(cerebrumPath)) === null)
+          throw new Error("could not back up the cerebrum");
         fs.writeFileSync(cerebrumPath, fresh + (body ?? ""), "latin1");
         console.log(`  replaced the template preamble of .crank/${CEREBRUM_FILE}`);
       }

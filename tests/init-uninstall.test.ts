@@ -276,6 +276,23 @@ describe("init → uninstall round-trip", () => {
     expect(fs.readFileSync(crankGitignore, "utf-8")).toBe(denylist);
   });
 
+  test("restore keeps a cerebrum edited after upgrade replaced its template preamble", () => {
+    const { root, codexHome } = makeProject();
+    cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
+    const cerebrum = path.join(root, ".crank/cerebrum.md");
+    const preamble = fs.readFileSync(
+      path.join(import.meta.dir, "../src/templates/cerebrum-preamble-0.8.1.md"),
+    );
+    fs.writeFileSync(cerebrum, Buffer.concat([preamble, Buffer.from("## Memory\n")]));
+    const up = cli(root, codexHome, "upgrade");
+    expect(up.status).toBe(0);
+    expect(up.stdout).toContain("replaced the template preamble of .crank/cerebrum.md");
+    fs.appendFileSync(cerebrum, "- **Kept**: added after upgrade (2026-11-05)\n");
+    const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--keep-crank");
+    expect(un.status).toBe(0);
+    expect(fs.readFileSync(cerebrum, "utf-8")).toContain("**Kept**: added after upgrade");
+  });
+
   test("restore keeps the allowlist init wrote where no .crank/.gitignore was", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
