@@ -44,8 +44,8 @@ export function unregisterProject(root: string): void {
     const kept = entries.filter((e) => e.root !== root);
     if (kept.length !== entries.length) writeEntries(kept);
   } catch {
-    // A failed write leaves the root listed until `uninstall --delete-crank`
-    // removes its .crank/config.json or a later registry write succeeds.
+    // A failed write leaves the root listed until its .crank/config.json is gone
+    // or a later uninstall of it writes the registry.
   }
 }
 
