@@ -2,3 +2,4 @@ node_modules/
 .crank/
 .DS_Store
 dashboard/dist/
+.playwright-mcp/
