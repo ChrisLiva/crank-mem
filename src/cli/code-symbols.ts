@@ -37,7 +37,6 @@ export type SymbolKind =
   | "impl"
   | "type";
 export interface CodeSymbol {
-  name: string;
   qualified: string;
   kind: SymbolKind;
   start: number;
@@ -114,17 +113,20 @@ interface FamilyRules {
   container(kind: SymbolKind): boolean;
   /** The children the walk visits in place of a pass-through node, or null for any other node. */
   passThrough(node: Node): Node[] | null;
-  /** `start`: the node whose first line is the symbol's first line; `head`: the node the head text starts at. */
-  widen(node: Node): { start: Node; head: Node };
+  /** `start`: the node whose first line is the symbol's first line; `head`: the node the head text starts at; both default to the node. */
+  widen?(node: Node): { start: Node; head: Node };
   name(node: Node): string;
-  /** The segment members qualify under. */
-  scope(node: Node): string;
-  /** The node whose start ends the head, or null when bodiless. */
-  body(node: Node): Node | null;
+  /** The segment members qualify under; defaults to `name`. */
+  scope?(node: Node): string;
+  /** The node whose start ends the head, or null when bodiless; defaults to the field `body`. */
+  body?(node: Node): Node | null;
   /** A container's members, when they are not `body`'s named children. */
   members?(node: Node, body: Node): Node[];
-  comments: ReadonlySet<string>;
+  /** Comment node types; defaults to `comment`. */
+  comments?: ReadonlySet<string>;
 }
+
+const DEFAULT_COMMENTS: ReadonlySet<string> = new Set(["comment"]);
 
 const TS_KINDS: Record<string, SymbolKind> = {
   function_declaration: "fn",
@@ -200,12 +202,10 @@ const typescript: FamilyRules = {
       return name.namedChildren.find((c) => c.type === "string_fragment")?.text ?? "";
     return name?.text ?? "";
   },
-  scope: (node) => typescript.name(node),
   body: (node) =>
     VALUE_BODIES.has(node.type)
       ? (node.childForFieldName("value")?.childForFieldName("body") ?? null)
       : node.childForFieldName("body"),
-  comments: new Set(["comment"]),
 };
 
 const JS_KINDS: Record<string, SymbolKind> = {
@@ -234,7 +234,6 @@ const javascript: FamilyRules = {
       node.childForFieldName(node.type === "field_definition" ? "property" : "name")?.text ?? ""
     );
   },
-  scope: (node) => javascript.name(node),
 };
 
 const python: FamilyRules = {
@@ -261,9 +260,6 @@ const python: FamilyRules = {
   }),
   name: (node) =>
     node.childForFieldName(node.type === "type_alias_statement" ? "left" : "name")?.text ?? "",
-  scope: (node) => python.name(node),
-  body: (node) => node.childForFieldName("body"),
-  comments: new Set(["comment"]),
 };
 
 const GO_SPEC_KINDS: Record<string, SymbolKind> = {
@@ -304,7 +300,6 @@ const go: FamilyRules = {
     const type = receiver?.childForFieldName("type")?.text ?? "";
     return `${type.replace(/^\*\s*/, "").replace(/\[[\s\S]*$/, "")}.${name}`;
   },
-  scope: (node) => go.name(node),
   body(node) {
     if (node.type !== "type_spec") return node.childForFieldName("body");
     const type = node.childForFieldName("type");
@@ -313,7 +308,6 @@ const go: FamilyRules = {
     if (type?.type === "interface_type") return type.children.find((c) => c.type === "{") ?? null;
     return null;
   },
-  comments: new Set(["comment"]),
 };
 
 const CPP_TYPES: Record<string, SymbolKind> = {
@@ -403,9 +397,6 @@ const cpp: FamilyRules = {
       return firstTypeIdentifier(node.childForFieldName("declarator"))?.text ?? "";
     return node.childForFieldName("name")?.text ?? "";
   },
-  scope: (node) => cpp.name(node),
-  body: (node) => node.childForFieldName("body"),
-  comments: new Set(["comment"]),
 };
 
 function firstTypeIdentifier(node: Node | null): Node | null {
@@ -453,7 +444,6 @@ const rust: FamilyRules = {
     return trait ? `${trait.text} for ${rustImplType(node)}` : rustImplType(node);
   },
   scope: (node) => (node.type === "impl_item" ? rustImplType(node) : rust.name(node)),
-  body: (node) => node.childForFieldName("body"),
   comments: new Set(["line_comment", "block_comment"]),
 };
 
@@ -461,11 +451,7 @@ const bash: FamilyRules = {
   kind: (node) => (node.type === "function_definition" ? "fn" : null),
   container: () => false,
   passThrough: () => null,
-  widen: (node) => ({ start: node, head: node }),
   name: (node) => node.childForFieldName("name")?.text ?? "",
-  scope: (node) => bash.name(node),
-  body: (node) => node.childForFieldName("body"),
-  comments: new Set(["comment"]),
 };
 
 const JAVA_KINDS: Record<string, SymbolKind> = {
@@ -483,10 +469,7 @@ const java: FamilyRules = {
   kind: (node) => (Object.hasOwn(JAVA_KINDS, node.type) ? JAVA_KINDS[node.type]! : null),
   container: (kind) => JAVA_CONTAINERS.has(kind),
   passThrough: (node) => (node.type === "enum_body_declarations" ? node.namedChildren : null),
-  widen: (node) => ({ start: node, head: node }),
   name: (node) => node.childForFieldName("name")?.text ?? "",
-  scope: (node) => java.name(node),
-  body: (node) => node.childForFieldName("body"),
   comments: new Set(["line_comment", "block_comment"]),
 };
 
@@ -516,7 +499,6 @@ const csharp: FamilyRules = {
   kind: (node) => (Object.hasOwn(CSHARP_KINDS, node.type) ? CSHARP_KINDS[node.type]! : null),
   container: (kind) => CSHARP_CONTAINERS.has(kind),
   passThrough: (node) => (node.type === "declaration_list" ? node.namedChildren : null),
-  widen: (node) => ({ start: node, head: node }),
   name(node) {
     switch (node.type) {
       case "destructor_declaration":
@@ -528,9 +510,6 @@ const csharp: FamilyRules = {
     }
     return node.childForFieldName("name")?.text ?? "";
   },
-  scope: (node) => csharp.name(node),
-  body: (node) => node.childForFieldName("body"),
-  comments: new Set(["comment"]),
 };
 
 /** A method in `class << self`: its parent is the singleton class's body. */
@@ -572,9 +551,6 @@ const ruby: FamilyRules = {
       return `${node.childForFieldName("object")?.text ?? ""}.${name}`;
     return node.type === "method" && inRubySingletonClass(node) ? `self.${name}` : name;
   },
-  scope: (node) => ruby.name(node),
-  body: (node) => node.childForFieldName("body"),
-  comments: new Set(["comment"]),
 };
 
 const PHP_KINDS: Record<string, SymbolKind> = {
@@ -619,17 +595,14 @@ const powershell: FamilyRules = {
   kind: (node) => (Object.hasOwn(PS_KINDS, node.type) ? PS_KINDS[node.type]! : null),
   container: (kind) => kind === "class",
   passThrough: (node) => (node.type === "statement_list" ? node.namedChildren : null),
-  widen: (node) => ({ start: node, head: node }),
   name: (node) =>
     (
       node.children.find((c) => c.type === "function_name") ??
       node.children.find((c) => c.type === "simple_name")
     )?.text ?? "",
-  scope: (node) => powershell.name(node),
   body: (node) =>
     PS_BRACE_BODIES.has(node.type) ? (node.children.find((c) => c.type === "{") ?? null) : null,
   members: (node, body) => node.namedChildren.filter((child) => child.startIndex >= body.endIndex),
-  comments: new Set(["comment"]),
 };
 
 const RULES: Record<Grammar, FamilyRules> = {
@@ -673,7 +646,7 @@ function docStart(node: Node, start: Node, head: Node, rules: FamilyRules): numb
     sib = from.parent.previousSibling;
   for (
     ;
-    sib && rules.comments.has(sib.type) && endLine(sib) === first - 1;
+    sib && (rules.comments ?? DEFAULT_COMMENTS).has(sib.type) && endLine(sib) === first - 1;
     sib = sib.previousSibling
   ) {
     first = sib.startPosition.row + 1;
@@ -684,7 +657,7 @@ function docStart(node: Node, start: Node, head: Node, rules: FamilyRules): numb
 /** Where a head before `body` ends: after the last non-comment node before it, so a comment between head and body stays out. */
 function headEnd(body: Node, rules: FamilyRules): number {
   let sib = body.previousSibling;
-  while (sib && rules.comments.has(sib.type)) sib = sib.previousSibling;
+  while (sib && (rules.comments ?? DEFAULT_COMMENTS).has(sib.type)) sib = sib.previousSibling;
   return sib ? sib.endIndex : body.startIndex;
 }
 
@@ -711,14 +684,14 @@ function walk(
       if (inner) symbols.push(...walk(inner, parent, rules, text));
       continue;
     }
-    const { start, head: headNode } = rules.widen(node);
-    const body = rules.body(node);
+    const { start, head: headNode } = rules.widen?.(node) ?? { start: node, head: node };
+    const body = rules.body ? rules.body(node) : node.childForFieldName("body");
     const name = rules.name(node);
-    const qualifier = parent ? `${parent.qualifier}.${rules.scope(node)}` : rules.scope(node);
+    const scope = rules.scope?.(node) ?? name;
+    const qualifier = parent ? `${parent.qualifier}.${scope}` : scope;
     const lineStart = text.lastIndexOf("\n", headNode.startIndex - 1) + 1;
     const startLine = start.startPosition.row + 1;
     symbols.push({
-      name,
       qualified: parent ? `${parent.qualifier}.${name}` : name,
       kind,
       start: startLine,
