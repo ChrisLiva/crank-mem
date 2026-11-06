@@ -37,6 +37,10 @@ Keep the file within 150 lines and 3,000 tokens, about 12,000 characters. When i
 Each bullet is one telegram-style line of about 200 characters at most, starts with a short bold subject, and cites code by backticked repo path and symbol. Preferences go under the user preferences heading.
 Return a verdict for every proposal and flag, and only the edits you are sure of.`;
 
+const EDIT_OPS = ["add", "replace", "remove"] as const;
+const PROPOSAL_VERDICTS = ["accepted", "rejected"] as const;
+const STALE_VERDICTS = ["confirmed", "cleared"] as const;
+
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -49,7 +53,7 @@ const SCHEMA = {
         additionalProperties: false,
         required: ["op"],
         properties: {
-          op: { type: "string", enum: ["add", "replace", "remove"] },
+          op: { type: "string", enum: EDIT_OPS },
           heading: { type: "string" },
           bullet_id: { type: "integer" },
           bullet: { type: "string" },
@@ -66,7 +70,7 @@ const SCHEMA = {
         required: ["id", "verdict", "reason"],
         properties: {
           id: { type: "integer" },
-          verdict: { type: "string", enum: ["accepted", "rejected"] },
+          verdict: { type: "string", enum: PROPOSAL_VERDICTS },
           reason: { type: "string" },
         },
       },
@@ -79,7 +83,7 @@ const SCHEMA = {
         required: ["id", "verdict"],
         properties: {
           id: { type: "integer" },
-          verdict: { type: "string", enum: ["confirmed", "cleared"] },
+          verdict: { type: "string", enum: STALE_VERDICTS },
         },
       },
     },
@@ -87,7 +91,7 @@ const SCHEMA = {
 };
 
 type OutputEdit = {
-  op: "add" | "replace" | "remove";
+  op: (typeof EDIT_OPS)[number];
   heading?: string;
   bullet_id?: number;
   bullet?: string;
@@ -96,8 +100,8 @@ type OutputEdit = {
 };
 export type Consolidation = {
   edits: OutputEdit[];
-  proposals: { id: number; verdict: "accepted" | "rejected"; reason: string }[];
-  stale: { id: number; verdict: "confirmed" | "cleared" }[];
+  proposals: { id: number; verdict: (typeof PROPOSAL_VERDICTS)[number]; reason: string }[];
+  stale: { id: number; verdict: (typeof STALE_VERDICTS)[number] }[];
 };
 
 const optional = (v: Record<string, unknown>, key: string, ok: (x: unknown) => boolean) =>
@@ -106,7 +110,7 @@ const isString = (x: unknown) => typeof x === "string";
 
 const isEdit = (v: unknown): boolean =>
   isObj(v) &&
-  ["add", "replace", "remove"].includes(v.op as string) &&
+  EDIT_OPS.includes(v.op as OutputEdit["op"]) &&
   optional(v, "heading", isString) &&
   optional(v, "bullet_id", Number.isInteger) &&
   optional(v, "bullet", isString) &&
@@ -115,10 +119,12 @@ const isEdit = (v: unknown): boolean =>
 const isVerdict = (v: unknown): boolean =>
   isObj(v) &&
   Number.isInteger(v.id) &&
-  ["accepted", "rejected"].includes(v.verdict as string) &&
+  PROPOSAL_VERDICTS.includes(v.verdict as Consolidation["proposals"][number]["verdict"]) &&
   typeof v.reason === "string";
 const isStaleVerdict = (v: unknown): boolean =>
-  isObj(v) && Number.isInteger(v.id) && ["confirmed", "cleared"].includes(v.verdict as string);
+  isObj(v) &&
+  Number.isInteger(v.id) &&
+  STALE_VERDICTS.includes(v.verdict as Consolidation["stale"][number]["verdict"]);
 
 /** The flat shape only: what the edits mean is checked against the sent work after the run. */
 function validate(value: unknown): value is Consolidation {
