@@ -15,13 +15,19 @@ hook asks the agent to keep memory. Advisory-only — hooks always exit 0.
 ```sh
 git clone <this repo> ~/GitHub/crank-mem
 ln -s ~/GitHub/crank-mem/bin/crank-mem ~/.local/bin/crank-mem
-crank-mem setup          # once per machine: packages and the local search model
+crank-mem setup          # once per machine: packages, the dashboard build and the local search model
 cd <your project> && crank-mem init
 ```
 
+`setup` installs the clone's packages, then the `dashboard/` packages, builds
+the dashboard into `dashboard/dist/` and stamps the build with the clone's
+version, then downloads the search model.
+
 Upgrade = `git pull` in the clone, then `crank-mem upgrade` in each project.
 It re-vendors the hooks copied into `.crank/hooks/`, installs the clone's
-packages, adds the `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`,
+packages, rebuilds the dashboard when its build stamp is not the clone's
+version (a failed build prints a warning and the upgrade goes on), adds the
+`Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`,
 `Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the wired Claude settings file, adds hook wiring the install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
 wrote to the current form, and removes crank hooks from the Claude settings
 file the git mode does not use, since wiring in both runs every hook twice.
@@ -42,7 +48,8 @@ Codex ask once for a hooks review: open codex in the project and accept it.
 An install made with `--codex-trust write` skips that, because upgrade
 recomputes the trusted hashes.
 
-Requires bun, or node >= 23.6 (runs TypeScript directly; no build step). Hooks
+Requires bun, or node >= 23.6 (runs TypeScript directly). The dashboard is the
+one built part, and `crank-mem setup` builds it. Hooks
 import only `node:` modules. Three packages each load only when a command needs
 them: `@huggingface/transformers` for search by meaning, and `web-tree-sitter`
 with `@vscode/tree-sitter-wasm` for `outline` and `unfold`.
@@ -58,9 +65,10 @@ with `@vscode/tree-sitter-wasm` for `outline` and `unfold`.
 - `crank-mem outline <file>` — print a source file's symbols as folded source with start-end line ranges, members under their class; a long outline ends with a `--from <line>` command for the next page
 - `crank-mem unfold <file> <symbol|line>` — print one symbol in full with line numbers and its doc comment, by bare or qualified name or by any line inside it; every match prints
 - `crank-mem restore-memory [<file>]` — put a `memory.db` snapshot back: the named file, or the newest one in `.crank/backups/memory/`. It checks the snapshot's integrity and schema version, saves the current store as a snapshot first so the restore can be undone, then migrates the restored store to this version
-- `crank-mem setup` — install the clone's packages and download the local search model into `~/.crank/models`
+- `crank-mem setup` — install the clone's packages, build the dashboard into `dashboard/dist/`, and download the local search model into `~/.crank/models`
 - `crank-mem stats` — index report; memory health (cerebrum bullets injected against total, preferences left out, the oldest bullet left out, cited paths that still exist, days since the last audit); capture health (digest on, off or stopped, daemon, spool waiting and parked, store counts, last digest, the month's cost at list price, pending `proposals`, `stale` rows, the last `consolidation` and its outcome, `last snapshot`, embedder); whether Codex threads got the injection and whether its hook trust is current
-- `crank-mem upgrade` — re-vendor hooks and repair their wiring after a `git pull`
+- `crank-mem dashboard` — serve a read-only memory dashboard on `127.0.0.1` until Ctrl-C: each registered project's Memory, Curation, Health and Usage views. It prints `crank-mem dashboard: http://127.0.0.1:<port>/?token=<token>` and opens that URL in the browser; the token, kept in `~/.crank/dashboard.json`, trades for a session cookie. `--port <n>` picks the port (default `38700` plus your uid mod 100), and `--no-open` skips the browser. It refuses until `setup` has built the dashboard
+- `crank-mem upgrade` — re-vendor hooks and repair their wiring after a `git pull`, rebuild the dashboard when its build is for another version, and add the project to `~/.crank/projects.json`, the list the dashboard shows
 - `crank-mem uninstall` — remove all wiring, offer backup restore; `--delete-crank` deletes only the files crank-mem writes in `.crank/`, `memory.db` and its `-wal` and `-shm` files included, and removes the directory only when nothing else is left in it
 
 ## Layout under `.crank/`
@@ -71,8 +79,11 @@ consolidation removed or replaced, each with its reason; never injected),
 `memory.db` (digested memory, kept out of git), `config.json`, `config.local.json` (the per-checkout digest switch, kept out of git), `hooks/` (vendored), `backups/` (init/upgrade snapshots,
 plus `backups/cerebrum/`: the last 5 copies of cerebrum.md, taken before each
 consolidation edit, and `backups/memory/`: the daily snapshots of
-`memory.db`). A `journal.md` from an earlier release stays on disk, but
-nothing reads or writes it.
+`memory.db`), `usage.jsonl` (the always-on usage log, kept out of git: one line
+per session start, subagent start and file read the hooks handle, and per
+`search`, `timeline`, `get`, `outline` and `unfold` run; at 4 MiB it rotates
+to `usage.1.jsonl`, replacing the older one). A `journal.md` from an earlier
+release stays on disk, but nothing reads or writes it.
 
 `.crank/.gitignore` is an allowlist: it ignores everything in `.crank/` except
 `config.json`, `cerebrum.md`, `cerebrum-archive.md`, `journal.md`,

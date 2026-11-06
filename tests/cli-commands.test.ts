@@ -414,7 +414,7 @@ describe("upgrade", () => {
     // Simulate an old vendored version + user data.
     const configPath = path.join(crankDir, "config.json");
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    config.vendored_version = "0.0.1";
+    config.vendored_version = "0.10.0";
     config.injection_budget_bytes = 1234; // user-tuned value must survive
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
     fs.appendFileSync(path.join(crankDir, "cerebrum.md"), "- custom memory\n");
@@ -424,11 +424,11 @@ describe("upgrade", () => {
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("upgraded vendored hooks 0.0.1");
+    expect(run.stdout).toContain("upgraded vendored hooks 0.10.0 → 0.11.0");
 
     const after = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     expect(after.injection_budget_bytes).toBe(1234);
-    expect(after.vendored_version).not.toBe("0.0.1");
+    expect(after.vendored_version).not.toBe("0.10.0");
     expect(fs.readFileSync(path.join(crankDir, "hooks/session-start.ts"), "utf-8")).not.toContain(
       "stale vendored copy",
     );
@@ -575,7 +575,7 @@ describe("upgrade", () => {
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("upgraded vendored hooks 0.7.0 → 0.10.0");
+    expect(run.stdout).toContain("upgraded vendored hooks 0.7.0 → 0.11.0");
     const after = JSON.parse(fs.readFileSync(local, "utf-8")).hooks;
     const wired = crankHooks("bun", "claude");
     expect(after.SessionEnd).toHaveLength(1);
