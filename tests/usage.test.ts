@@ -1108,6 +1108,11 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
       { channel: "get", requested: [hit], found: null },
       { channel: "file-history", empty: [] },
       { channel: "file-history", shown: [null], empty: [] },
+      { channel: "session-start", ids: [true] },
+      { channel: "search", query: "q", ids: [[1]] },
+      { channel: "timeline", anchor: hit, ids: ["1"] },
+      { channel: "get", requested: [hit], found: [{}] },
+      { channel: "file-history", shown: [{ ids: [null] }], empty: [] },
       { channel: "bogus", ids: [hit] },
     ];
     fs.appendFileSync(

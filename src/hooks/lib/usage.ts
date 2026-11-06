@@ -149,6 +149,9 @@ export function cliActor(): UsageActor {
     : { agent: "manual", session: null };
 }
 
+const isIds = (value: unknown): value is number[] =>
+  Array.isArray(value) && value.every((id) => typeof id === "number");
+
 /** Whether a parsed line is a `v: 1` line whose channel is known and whose read fields hold their types. */
 function isUsageLine(value: unknown): value is UsageLine {
   if (typeof value !== "object" || value === null) return false;
@@ -156,18 +159,18 @@ function isUsageLine(value: unknown): value is UsageLine {
   if (line.v !== 1 || typeof line.ts !== "number") return false;
   switch (line.channel) {
     case "session-start":
-      return Array.isArray(line.ids);
+      return isIds(line.ids);
     case "search":
-      return Array.isArray(line.ids) && typeof line.query === "string";
+      return isIds(line.ids) && typeof line.query === "string";
     case "timeline":
-      return line.ids === null || Array.isArray(line.ids);
+      return line.ids === null || isIds(line.ids);
     case "get":
-      return Array.isArray(line.requested) && Array.isArray(line.found);
+      return isIds(line.requested) && isIds(line.found);
     case "file-history":
       return (
         Array.isArray(line.empty) &&
         Array.isArray(line.shown) &&
-        line.shown.every((s) => typeof s === "object" && s !== null && Array.isArray(s.ids))
+        line.shown.every((s) => typeof s === "object" && s !== null && isIds(s.ids))
       );
     case "subagent-start":
     case "outline":
