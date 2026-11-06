@@ -554,10 +554,10 @@ describe("memory view", () => {
     );
     const dash = await startDashboard(home, ["--port", "0"]);
     const page1 = await memoryJson(dash, root, "observations");
-    const created = page1.lines[0].createdAtMs;
+    const created = page1.rows[0].createdAtMs;
     expect(typeof created).toBe("number");
     expect(page1).toEqual({
-      lines: ids
+      rows: ids
         .slice(10)
         .reverse()
         .map((id) => ({
@@ -571,7 +571,7 @@ describe("memory view", () => {
     });
     const page2 = await memoryJson(dash, root, `observations?before=${page1.next}`);
     expect(page2).toEqual({
-      lines: ids
+      rows: ids
         .slice(0, 10)
         .reverse()
         .map((id) => ({
@@ -596,7 +596,7 @@ describe("memory view", () => {
     seedMemory(root, [], { stale: [{ id: flagged!, reason: "c changed" }] });
     const dash = await startDashboard(home, ["--port", "0"]);
     const ids = async (query: string) =>
-      ((await memoryJson(dash, root, `observations${query}`)).lines as Line[]).map((l) => [
+      ((await memoryJson(dash, root, `observations${query}`)).rows as Line[]).map((l) => [
         l.id,
         l.stale,
       ]);
@@ -627,13 +627,13 @@ describe("memory view", () => {
     plantVector(hybrid, planted!);
     const dash = await startDashboard(home, ["--port", "0"]);
     const found = await memoryJson(dash, keyword, "observations?q=walrus&type=bugfix&before=1:1");
-    expect([found.lines.map((l: Line) => l.id), found.next, found.mode]).toEqual([
+    expect([found.rows.map((l: Line) => l.id), found.next, found.mode]).toEqual([
       [walrus],
       null,
       "keyword",
     ]);
     const byMeaning = await memoryJson(dash, hybrid, "observations?q=walrus");
-    expect([byMeaning.lines.map((l: Line) => l.id), byMeaning.next, byMeaning.mode]).toEqual([
+    expect([byMeaning.rows.map((l: Line) => l.id), byMeaning.next, byMeaning.mode]).toEqual([
       [planted],
       null,
       "hybrid",
@@ -712,7 +712,7 @@ describe("memory view", () => {
         expect(await memoryJson(dash, root, route)).toEqual({ note });
       }
     }
-    const lines = (await memoryJson(dash, seeded, "observations")).lines as Line[];
+    const lines = (await memoryJson(dash, seeded, "observations")).rows as Line[];
     expect(lines.map((l) => [l.id, l.title])).toEqual([[id!, "Still here"]]);
   }, 20_000);
 

@@ -48,9 +48,8 @@ export type Observation = ObservationLine & {
   filesModified: string[];
   staleFlag: { atMs: number; reason: string } | null;
 };
-export type ObservationPage =
-  | { lines: ObservationLine[]; next: string | null; mode?: "keyword" | "hybrid" }
-  | Note;
+/** One page of a list; `next` is the `before` that asks for the page after it. */
+export type Page<T> = { rows: T[]; next: string | null; mode?: "keyword" | "hybrid" } | Note;
 export type ObservationFilters = {
   type: ObservationType | null;
   file: string;
@@ -73,7 +72,7 @@ export function fetchObservations(
   projectId: string,
   filters: ObservationFilters,
   before: string | null,
-): Promise<ObservationPage> {
+): Promise<Page<ObservationLine>> {
   const params = new URLSearchParams();
   if (filters.type !== null) params.set("type", filters.type);
   if (filters.file !== "") params.set("file", filters.file);
@@ -122,8 +121,6 @@ export type ConsolidationRow = {
   model: string | null;
   costUsd: number;
 };
-/** One page of a curation list; `next` is the `before` that asks for the page after it. */
-export type RowPage<T> = { rows: T[]; next: string | null } | Note;
 
 function beforeParams(before: string | null): URLSearchParams {
   const params = new URLSearchParams();
@@ -135,20 +132,20 @@ export function fetchProposals(
   projectId: string,
   state: ProposalState | null,
   before: string | null,
-): Promise<RowPage<ProposalRow>> {
+): Promise<Page<ProposalRow>> {
   const params = beforeParams(before);
   if (state !== null) params.set("state", state);
   return getJson(projectPath(projectId, "/proposals", params));
 }
 
-export function fetchStale(projectId: string, before: string | null): Promise<RowPage<StaleRow>> {
+export function fetchStale(projectId: string, before: string | null): Promise<Page<StaleRow>> {
   return getJson(projectPath(projectId, "/stale", beforeParams(before)));
 }
 
 export function fetchConsolidations(
   projectId: string,
   before: string | null,
-): Promise<RowPage<ConsolidationRow>> {
+): Promise<Page<ConsolidationRow>> {
   return getJson(projectPath(projectId, "/consolidations", beforeParams(before)));
 }
 

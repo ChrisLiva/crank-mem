@@ -181,7 +181,7 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
     if (q !== null) {
       const vector = await queryVector(memory, q);
       const lines = memory.search({ ...filters, text: q, vector, sinceMs: null, limit: PAGE });
-      return { lines, next: null, mode: vector !== null ? "hybrid" : "keyword" };
+      return { rows: lines, next: null, mode: vector !== null ? "hybrid" : "keyword" };
     }
     const page = pageOf(
       memory.list({
@@ -192,7 +192,7 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
       PAGE,
       (line: ObservationLine) => `${line.createdAtMs}:${line.id}`,
     );
-    return { lines: page.rows, next: page.next };
+    return page;
   });
   return { status: 200, body };
 }

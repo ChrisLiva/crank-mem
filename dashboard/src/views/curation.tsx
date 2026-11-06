@@ -8,7 +8,7 @@ import {
   type ConsolidationRow,
   type ProposalRow,
   type ProposalState,
-  type RowPage,
+  type Page,
   type StaleRow,
 } from "@/api";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +33,7 @@ type CurationTab = (typeof CURATION_TABS)[number][0];
 
 type ListSpec<T> = {
   key: string;
-  fetchPage: (before: string | null) => Promise<RowPage<T>>;
+  fetchPage: (before: string | null) => Promise<Page<T>>;
   row: (row: T) => ReactNode;
   detail: (row: T) => ReactNode;
 };

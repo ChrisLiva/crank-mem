@@ -1143,8 +1143,8 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
     const before = lineCount(root);
     const res = await dash.get(`/api/projects/${projectId(root)}/observations?q=epsilon`);
     expect(res.status).toBe(200);
-    const found = (await res.json()) as { lines: { id: number }[] };
-    expect(found.lines.map((l) => l.id)).toEqual([hit]);
+    const found = (await res.json()) as { rows: { id: number }[] };
+    expect(found.rows.map((l) => l.id)).toEqual([hit]);
     expect(lineCount(root)).toBe(before);
   }, 60_000);
 });

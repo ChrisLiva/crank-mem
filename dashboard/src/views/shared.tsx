@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
-import type { Note } from "@/api";
+import type { Note, Page } from "@/api";
 import { Button } from "@/components/ui/button";
 import { usePoll } from "@/hooks/use-poll";
 import { useListKeys } from "@/hooks/use-list-keys";
@@ -125,9 +125,6 @@ export function ListFoot({ start, older }: { start?: ReactNode; older?: (() => v
     </div>
   );
 }
-
-/** One page of a list; `next` is the `before` that asks for the page after it. */
-export type Page<T> = { rows: T[]; next: string | null; mode?: string } | Note;
 
 type Listed<T> = {
   key: string;

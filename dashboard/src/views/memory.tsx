@@ -46,9 +46,7 @@ export function MemoryView({
   const filters: ObservationFilters = { type, file, stale, q };
   const key = JSON.stringify([projectId, filters]);
   const { current, note, error, older } = usePaged<ObservationLine>(key, (before) =>
-    fetchObservations(projectId, filters, before).then((page) =>
-      "note" in page ? page : { rows: page.lines, next: page.next, mode: page.mode },
-    ),
+    fetchObservations(projectId, filters, before),
   );
 
   const lines = current?.rows ?? [];
