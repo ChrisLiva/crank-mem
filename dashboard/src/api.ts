@@ -186,6 +186,8 @@ export type UsageMetrics = {
     meanResults: number;
     runs: { ts: number; ids: number[] }[];
   }[];
+  surfaced: { id: number; count: number; title: string }[];
+  filesWithoutMemory: { path: string; count: number }[];
 };
 
 export function fetchUsage(

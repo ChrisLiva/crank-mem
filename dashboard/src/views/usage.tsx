@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { fetchUsage, USAGE_CHANNELS, USAGE_DAYS, type UsageDays, type UsageMetrics } from "@/api";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,36 @@ function Shares({ metrics }: { metrics: UsageMetrics }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** The rows each ranked list shows, of the up to 50 the metrics answer. */
+const RANKED = 10;
+
+/** A labeled list of counted rows, most counted first, that j/k do not move through. */
+function Ranked({
+  label,
+  rows,
+}: {
+  label: string;
+  rows: { key: string; count: number; body: ReactNode }[];
+}) {
+  return (
+    <div data-ranked={label}>
+      <div className={cn(LABEL, "px-3 pt-4 pb-1")}>{label}</div>
+      {rows.length === 0 ? (
+        <p className="px-3 py-1.5 text-xs text-muted-foreground">None yet.</p>
+      ) : (
+        rows.slice(0, RANKED).map((row) => (
+          <div key={row.key} className="flex items-center gap-2 border-b px-3 py-1.5 text-xs">
+            <span className="flex min-w-0 flex-1 items-center gap-2">{row.body}</span>
+            <span data-count className="tabular-nums">
+              {row.count}
+            </span>
+          </div>
+        ))
+      )}
     </div>
   );
 }
@@ -151,26 +181,50 @@ export function UsageView({
             <p className="px-4 py-8 text-center text-destructive">{error}</p>
           ) : empty ? (
             <p className="px-4 py-8 text-center text-muted-foreground">No usage recorded yet.</p>
-          ) : queries !== null && queries.length === 0 ? (
-            <p className="px-4 py-8 text-center text-muted-foreground">No searches yet.</p>
           ) : (
-            <>
-              {queries !== null && <div className={cn(LABEL, "px-3 pt-2.5 pb-1")}>Top queries</div>}
-              {queries?.map((q) => (
-                <Row key={q.query} selected={q.query === item} onClick={() => setItem(q.query)}>
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs">{q.query}</span>
-                    <span data-count className="tabular-nums">
-                      {q.count}
+            metrics !== null && (
+              <>
+                <div className={cn(LABEL, "px-3 pt-2.5 pb-1")}>Top queries</div>
+                {metrics.topQueries.length === 0 && (
+                  <p className="px-3 py-1.5 text-xs text-muted-foreground">No searches yet.</p>
+                )}
+                {metrics.topQueries.map((q) => (
+                  <Row key={q.query} selected={q.query === item} onClick={() => setItem(q.query)}>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs">{q.query}</span>
+                      <span data-count className="tabular-nums">
+                        {q.count}
+                      </span>
                     </span>
-                  </span>
-                  <span className="flex gap-2 text-xs text-muted-foreground">
-                    <span>{q.meanResults.toFixed(1)} results on average</span>
-                    <span className="tabular-nums">{formatTime(q.lastMs)}</span>
-                  </span>
-                </Row>
-              ))}
-            </>
+                    <span className="flex gap-2 text-xs text-muted-foreground">
+                      <span>{q.meanResults.toFixed(1)} results on average</span>
+                      <span className="tabular-nums">{formatTime(q.lastMs)}</span>
+                    </span>
+                  </Row>
+                ))}
+                <Ranked
+                  label="Most surfaced"
+                  rows={metrics.surfaced.map((s) => ({
+                    key: String(s.id),
+                    count: s.count,
+                    body: (
+                      <>
+                        <ObservationLink id={s.id} open={openObservation} />
+                        <span className="min-w-0 truncate">{s.title}</span>
+                      </>
+                    ),
+                  }))}
+                />
+                <Ranked
+                  label="Files without memory"
+                  rows={metrics.filesWithoutMemory.map((f) => ({
+                    key: f.path,
+                    count: f.count,
+                    body: <span className="min-w-0 truncate font-mono">{f.path}</span>,
+                  }))}
+                />
+              </>
+            )
           )}
         </div>
         <ListFoot start={metrics !== null && `${metrics.searches} searches`} />
