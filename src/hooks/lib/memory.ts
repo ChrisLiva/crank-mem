@@ -509,17 +509,21 @@ export async function restoreMemory(
  * "newer" when another process moved it past this version.
  */
 function migrate(db: sqlite.DatabaseSync): number | null | "newer" {
-  db.exec("BEGIN IMMEDIATE");
-  try {
+  return transaction(db, () => {
     const v = userVersion(db);
-    if (v >= SCHEMA_VERSION) {
-      db.exec("ROLLBACK");
-      return v > SCHEMA_VERSION ? "newer" : null;
-    }
+    if (v >= SCHEMA_VERSION) return v > SCHEMA_VERSION ? "newer" : null;
     for (let step = v; step < SCHEMA_VERSION; step++) db.exec(STEPS[step]!);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-    db.exec("COMMIT");
     return v;
+  });
+}
+
+function transaction<T>(db: sqlite.DatabaseSync, fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    db.exec("COMMIT");
+    return result;
   } catch (err) {
     try {
       db.exec("ROLLBACK");
@@ -633,20 +637,18 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
   const all = (sql: string, ...params: sqlite.SQLInputValue[]) =>
     db.prepare(sql).all(...params) as Row[];
 
-  function transaction<T>(fn: () => T): T {
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      const result = fn();
-      db.exec("COMMIT");
-      return result;
-    } catch (err) {
-      try {
-        db.exec("ROLLBACK");
-      } catch {
-        /* no open transaction */
-      }
-      throw err;
+  function list(q: Parameters<Memory["list"]>[0]): ObservationLine[] {
+    const { filters, params } = lineFilters({ ...q, sinceMs: null });
+    if (q.before !== null) {
+      filters.push("(o.created_at, o.id) < (?, ?)");
+      params.push(q.before.createdAtMs, q.before.id);
     }
+    const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+    return all(
+      `SELECT ${LINE_COLUMNS} FROM observations o ${where} ${NEWEST_FIRST} LIMIT ?`,
+      ...params,
+      q.limit,
+    ).map(toLine);
   }
 
   function position(sessionId: string): Position | null {
@@ -681,7 +683,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     appendDigest(input) {
       const { session, next, summary } = input;
       const stale = Symbol();
-      const result = transaction(() => {
+      const result = transaction(db, () => {
         if (!samePosition(position(session.id), input.expected)) return stale;
         db.prepare(
           `INSERT INTO sessions (id, agent, transcript_path, position_uuid, position_ts, rejections)
@@ -769,7 +771,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     },
 
     putVectors(model, rows) {
-      transaction(() => {
+      transaction(db, () => {
         const put = db.prepare(
           "INSERT OR REPLACE INTO observation_vectors (observation_id, model, vector) VALUES (?, ?, ?)",
         );
@@ -831,19 +833,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
         .map((entry) => entry.line);
     },
 
-    list(q) {
-      const { filters, params } = lineFilters({ ...q, sinceMs: null });
-      if (q.before !== null) {
-        filters.push("(o.created_at, o.id) < (?, ?)");
-        params.push(q.before.createdAtMs, q.before.id);
-      }
-      const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
-      return all(
-        `SELECT ${LINE_COLUMNS} FROM observations o ${where} ${NEWEST_FIRST} LIMIT ?`,
-        ...params,
-        q.limit,
-      ).map(toLine);
-    },
+    list,
 
     timeline(id, depth) {
       const anchor = one(`SELECT ${LINE_COLUMNS} FROM observations o WHERE o.id = ?`, id);
@@ -895,10 +885,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     },
 
     recent(limit) {
-      return all(
-        `SELECT ${LINE_COLUMNS} FROM observations o WHERE o.stale_at IS NULL ${NEWEST_FIRST} LIMIT ?`,
-        limit,
-      ).map(toLine);
+      return list({ limit, type: null, file: null, stale: false, before: null });
     },
 
     latestNextSteps() {
@@ -909,13 +896,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     },
 
     fileHistory(relPath, limit) {
-      return all(
-        `SELECT ${LINE_COLUMNS} FROM observations o
-         WHERE o.stale_at IS NULL AND o.id IN (SELECT observation_id FROM observation_files WHERE path = ?)
-         ${NEWEST_FIRST} LIMIT ?`,
-        relPath,
-        limit,
-      ).map(toLine);
+      return list({ limit, type: null, file: relPath, stale: false, before: null });
     },
 
     stats(model, sinceMs) {
@@ -1041,7 +1022,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     },
 
     recordConsolidation(run) {
-      transaction(() => {
+      transaction(db, () => {
         const now = Date.now();
         db.prepare(
           "INSERT INTO consolidations (started_at, finished_at, outcome, model, cost_usd) VALUES (?, ?, ?, ?, ?)",
@@ -1076,7 +1057,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       if (latest !== null && Date.now() - latest.atMs <= everyMs) return null;
       const dir = path.join(path.dirname(file), SNAPSHOT_DIR);
       const snapshot = writeSnapshot(db, dir, `${snapshotStamp()}.db`);
-      const deleted = transaction(() => {
+      const deleted = transaction(db, () => {
         const cutoff = Date.now() - staleKeepMs;
         const expired = "SELECT id FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?";
         db.prepare(`DELETE FROM observation_files WHERE observation_id IN (${expired})`).run(
