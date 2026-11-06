@@ -151,12 +151,15 @@ export function cliActor(): UsageActor {
 
 const isIds = (value: unknown): value is number[] =>
   Array.isArray(value) && value.every((id) => typeof id === "number");
+const isPaths = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((p) => typeof p === "string");
 
 /** Whether a parsed line is a `v: 1` line whose channel is known and whose read fields hold their types. */
 function isUsageLine(value: unknown): value is UsageLine {
   if (typeof value !== "object" || value === null) return false;
   const line = value as Record<string, unknown>;
   if (line.v !== 1 || typeof line.ts !== "number") return false;
+  if (line.session !== null && typeof line.session !== "string") return false;
   switch (line.channel) {
     case "session-start":
       return isIds(line.ids);
@@ -168,9 +171,11 @@ function isUsageLine(value: unknown): value is UsageLine {
       return isIds(line.requested) && isIds(line.found);
     case "file-history":
       return (
-        Array.isArray(line.empty) &&
+        isPaths(line.empty) &&
         Array.isArray(line.shown) &&
-        line.shown.every((s) => typeof s === "object" && s !== null && isIds(s.ids))
+        line.shown.every(
+          (s) => typeof s === "object" && s !== null && typeof s.path === "string" && isIds(s.ids),
+        )
       );
     case "subagent-start":
     case "outline":
