@@ -3,16 +3,15 @@ import { redact } from "../daemon/redact.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 import {
   formatLine,
+  isObservationType,
   localDate,
   memoryPath,
   openMemory,
   MEMORY_NEWER_NOTE,
   MEMORY_OLDER_NOTE,
   MEMORY_UNREADABLE_NOTE,
-  OBSERVATION_TYPES,
   type MemoryReader,
   type Observation,
-  type ObservationType,
   type SearchQuery,
 } from "../hooks/lib/memory.ts";
 import { cliActor, recordUsage } from "../hooks/lib/usage.ts";
@@ -68,9 +67,6 @@ function localMidnight(value: string): number | null {
   if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null;
   return date.getTime();
 }
-
-const isObservationType = (value: string): value is ObservationType =>
-  OBSERVATION_TYPES.some((t) => t === value);
 
 /** The longest query text a search usage line records. */
 const QUERY_CHARS = 500;

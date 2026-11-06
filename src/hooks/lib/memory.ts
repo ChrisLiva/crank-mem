@@ -43,6 +43,8 @@ export const OBSERVATION_TYPES = [
   "decision",
 ] as const;
 export type ObservationType = (typeof OBSERVATION_TYPES)[number];
+export const isObservationType = (value: string): value is ObservationType =>
+  OBSERVATION_TYPES.some((t) => t === value);
 export type Position = { uuid: string; timestamp: string };
 export type SessionKey = { id: string; agent: "claude"; transcriptPath: string };
 export type DigestSummary = {
@@ -63,6 +65,8 @@ export type NewObservation = {
 export type ProposalKind = "preference" | "memory";
 export const PROPOSAL_STATES = ["pending", "accepted", "rejected", "expired"] as const;
 export type ProposalState = (typeof PROPOSAL_STATES)[number];
+export const isProposalState = (value: string): value is ProposalState =>
+  PROPOSAL_STATES.some((s) => s === value);
 export type ProposalRow = {
   id: number;
   kind: ProposalKind;

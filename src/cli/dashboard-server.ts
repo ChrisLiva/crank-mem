@@ -7,16 +7,14 @@ import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import {
   memoryPath,
   memoryStatus,
-  OBSERVATION_TYPES,
+  isObservationType,
+  isProposalState,
   openMemory,
-  PROPOSAL_STATES,
   type ConsolidationRow,
   type MemoryRead,
   type MemoryReader,
   type ObservationLine,
-  type ObservationType,
   type ProposalRow,
-  type ProposalState,
   type StaleRow,
 } from "../hooks/lib/memory.ts";
 import { readUsage } from "../hooks/lib/usage.ts";
@@ -172,10 +170,10 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
   const type = params.get("type");
   const q = params.get("q");
   if (beforeParam !== null && before === null) return { status: 400 };
-  if (type !== null && !OBSERVATION_TYPES.some((t) => t === type)) return { status: 400 };
+  if (type !== null && !isObservationType(type)) return { status: 400 };
   if (q !== null && q.trim() === "") return { status: 400 };
   const filters = {
-    type: type as ObservationType | null,
+    type,
     file: params.get("file"),
     stale: params.get("stale") === "1",
   };
@@ -213,12 +211,10 @@ async function proposals(root: string, params: URLSearchParams): Promise<Answer>
   const beforeId = beforeParam === null ? null : parseId(beforeParam);
   const state = params.get("state");
   if (beforeParam !== null && beforeId === null) return { status: 400 };
-  if (state !== null && !PROPOSAL_STATES.some((s) => s === state)) return { status: 400 };
+  if (state !== null && !isProposalState(state)) return { status: 400 };
   const body = await withStore(root, (memory) =>
-    pageOf(
-      memory.proposalRows({ state: state as ProposalState | null, beforeId, limit: PAGE + 1 }),
-      PAGE,
-      (row: ProposalRow) => String(row.id),
+    pageOf(memory.proposalRows({ state, beforeId, limit: PAGE + 1 }), PAGE, (row: ProposalRow) =>
+      String(row.id),
     ),
   );
   return { status: 200, body };
