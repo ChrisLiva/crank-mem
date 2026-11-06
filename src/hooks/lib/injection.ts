@@ -141,8 +141,8 @@ export interface InjectionSources {
   codex?: boolean;
   /** Project root; when set, the excerpt tags cited files that vanished or changed. */
   projectRoot?: string;
-  /** Digests run for this session: next steps show and recall applies with no store yet. Absent: digests off. */
-  running?: boolean;
+  /** The session's digest gate: `gate.running` means digests run for this session, so recall applies with no store yet. Absent: digests off. */
+  gate?: DigestGate;
   /** What the memory store offers this session. Absent: no recall section or pointer. */
   recall?: Recall;
   /** Capture-health notes, shown italic after the drift note. */
@@ -433,7 +433,7 @@ export function composeInjection(
   sources: InjectionSources,
   budgetBytes: number,
 ): { text: string; excerpt: Excerpt | null; shown: Shown } {
-  const running = sources.running ?? false;
+  const running = sources.gate?.running ?? false;
   const recall = sources.recall;
   const recallPointer = recall ? recallApplies(running, recall.status) : false;
   const parts: string[] = [instructions(sources.index, sources.codex ?? false, recallPointer)];
@@ -460,7 +460,7 @@ export function composeInjection(
 
   if (recall?.status === "open") {
     const { nextSteps, recent } = recall;
-    if (running && nextSteps !== null && bytes(nextSteps) <= NEXT_STEPS_MAX_BYTES) {
+    if (nextSteps !== null && bytes(nextSteps) <= NEXT_STEPS_MAX_BYTES) {
       shown.nextSteps = fit(`## Next steps (last digested session)\n${nextSteps}`);
     }
     // Newest first, so the cap drops the oldest whole lines.
@@ -523,14 +523,13 @@ export function injectionSources(
   config: CrankConfig,
   index: AnatomyIndex,
   codex: boolean,
-): InjectionSources & { codex: boolean; running: boolean; recall: Recall; gate: DigestGate } {
+): InjectionSources & { codex: boolean; recall: Recall; gate: DigestGate } {
   let cerebrumMd: string | null = null;
   try {
     cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
   } catch {}
 
   const gate = digestGate(config, codex, root);
-  const running = gate.running;
   const recall = readRecall(root, gate);
 
   return {
@@ -540,7 +539,6 @@ export function injectionSources(
     adrPath: config.adr_path,
     projectRoot: root,
     codex,
-    running,
     recall,
     gate,
   };
