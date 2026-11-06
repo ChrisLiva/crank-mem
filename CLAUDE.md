@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `bun test tests/scanner.test.ts` — run one test file
 - `bun test -t "pattern"` — run tests matching a name
 - `bun run typecheck` — `tsc --noEmit`, then `tsc --noEmit -p dashboard`
-- `cd dashboard && bun run build` — rebuild the dashboard page; vite empties `dashboard/dist/` first and drops its `.crank-version` stamp, so `crank-mem dashboard` refuses as not built until `crank-mem setup` (or an `upgrade` that changes the version) restamps it
+- `cd dashboard && bun run build` — rebuild the dashboard page; vite empties `dashboard/dist/` first and drops its `.crank-version` stamp, so `crank-mem dashboard` refuses as not built until `crank-mem setup` (or any `crank-mem upgrade`) restamps it
 - `bun run format` / `bun run format:check` — oxfmt (pinned exact in `package.json`). `.oxfmtrc.json` leaves out `tests/fixtures/`, whose bytes the `.outline`/`.headers` goldens record, and all markdown, whose ADRs quote probe output verbatim and whose README shows JSONL one record per line
 
 `bun test` needs `crank-mem setup` (or `bun src/cli/main.ts setup`) run once on the machine: `tests/digest-job.test.ts`, `tests/embedder.test.ts`, `tests/setup.test.ts` and `tests/cli-commands.test.ts` read the real model it downloads into `~/.crank/models`.
@@ -45,7 +45,7 @@ The shared core is `src/hooks/lib/`: `scanner.ts` (index refresh with time budge
 
 Tests are black-box: hooks and CLI commands are executed as real child processes with agent-like stdin payloads via `runHook` and `runCli` in `tests/helpers.ts`, with `fakeClaude` standing in for the `claude` binary and `startDaemon` running the real daemon under a temp `CRANK_HOME` (no test runs the real `claude`), against temp projects built by `makeCrankProject`. Agent payload fixtures live in `tests/fixtures/payloads.ts`. Prefer this style over importing hook internals — assertions should hold against exit status, stdout JSON, and on-disk `.crank/` state.
 
-`bun test` runs the test process in UTC with `TZ` unset, while `runCli` and `runHook` children run in the system zone, so an in-process local-date assertion passes against UTC getters too. Pin local dates through a CLI child with `TZ` in its env, in zones on both sides of UTC (`tests/recall-cli.test.ts` → `ZONES`).
+`bun test` runs the test process in UTC with `TZ` unset, while `runCli` and `runHook` children run in the system zone, so an in-process local-date assertion passes against UTC getters too. Pin local dates through a CLI child with `TZ` in its env, in zones on both sides of UTC (`tests/helpers.ts` → `ZONES`).
 
 The `spawnSync` timeout in `tests/helpers.ts` → `runCli` kills only the CLI child; a grandchild that hangs, such as `fakeClaude` with `auth: "hang"`, keeps running at ppid 1. After a RED run that hit the timeout, find leftover fake `claude` processes with `ps` and kill them.
 

@@ -171,8 +171,8 @@ export async function run(_args: string[]): Promise<number> {
   // costs search by meaning, not the upgrade.
   const installed = installPackages(REPO_ROOT);
   if (!installed.ok) console.error(`crank-mem: could not install packages (${installed.detail})`);
-  // A pull can also change the dashboard's sources; a failed build costs the
-  // dashboard, not the upgrade.
+  // A build for another clone version, or none, is rebuilt; a failed build
+  // costs the dashboard, not the upgrade.
   if (!dashboardCurrent(path.join(dashboardDir(), "dist"))) {
     const dashInstalled = installPackages(dashboardDir());
     if (!dashInstalled.ok) {

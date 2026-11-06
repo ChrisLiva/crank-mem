@@ -44,7 +44,8 @@ export function unregisterProject(root: string): void {
     const kept = entries.filter((e) => e.root !== root);
     if (kept.length !== entries.length) writeEntries(kept);
   } catch {
-    // The dashboard drops a root whose .crank/config.json is gone.
+    // A failed write leaves the root listed until `uninstall --delete-crank`
+    // removes its .crank/config.json or a later registry write succeeds.
   }
 }
 
