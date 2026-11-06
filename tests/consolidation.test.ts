@@ -390,16 +390,23 @@ describe("bullets whose cited files changed", () => {
     const scenarios = [
       { lines: okStreamOf(digestOf([])) },
       { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) },
+      { lines: okStreamOf(digestOf([])) },
     ];
-    const { fake, job } = journey(root, scenarios, { transcript });
-    expect(job.status).toBe(0);
-    const calls = fake.calls();
+    const j = journey(root, scenarios, { transcript });
+    expect(j.job.status).toBe(0);
+    const calls = j.fake.calls();
     expect(calls.length).toBe(2);
     expect(calls[1]!.stdin).toBe(
       "[CEREBRUM]\n## User Preferences\n## Memory\n" +
         "[B1] RECHECK **A**: `src/a.ts` → `a` holds one (2026-01-01)\n" +
         "[B2] RECHECK **Gone**: `src/gone.ts` → `g` was removed (2026-11-04)\n",
     );
+
+    // After an ok run kept the bullet citing a missing file, that bullet alone no longer triggers a run.
+    appendRecords(j.transcript, laterRecords("s2").records);
+    stop(j);
+    expect(rerun(j, 10_000, {}, ["--consolidate-every-ms", "1"]).status).toBe(0);
+    expect(j.fake.calls().length).toBe(3);
   }, 30_000);
 });
 

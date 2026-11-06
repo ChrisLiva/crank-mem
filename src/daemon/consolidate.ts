@@ -192,7 +192,10 @@ function narrow(e: OutputEdit, sent: Set<number>): CerebrumEdit | null {
     : null;
 }
 
-/** The ids of the bullets citing a file that is missing or modified since the last ok run (or the bullet's date, before one). */
+/**
+ * The ids of the bullets citing a file modified since the last ok run (or the bullet's date, before
+ * one), or, before the first ok run, a missing file.
+ */
 function dueBullets(
   root: string,
   crankDir: string,
@@ -204,7 +207,7 @@ function dueBullets(
   const due = new Set<number>();
   for (const { id, text } of numberBullets(md).bullets) {
     const { missing, modified } = citationStatus(text, { index, root }, byName, sinceMs);
-    if (missing.length > 0 || modified.length > 0) due.add(id);
+    if (modified.length > 0 || (missing.length > 0 && sinceMs === null)) due.add(id);
   }
   return due;
 }
