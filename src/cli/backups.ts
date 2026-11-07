@@ -1,11 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileStamp, manifestDirs } from "../hooks/lib/cerebrum-files.ts";
+import { CEREBRUM_FILE, fileStamp, manifestDirs } from "../hooks/lib/cerebrum-files.ts";
+import { repoRelative } from "../hooks/lib/hook-io.ts";
 
 // Backups of every file init/upgrade is about to modify, with a manifest
-// mapping backup names to original absolute paths so uninstall can restore
-// byte-identically. Files that did not exist are recorded as "absent" and
-// deleted on restore.
+// mapping copy names to original absolute paths. Files that did not exist are
+// recorded as absent. Read together, oldest dir first, the manifests form the
+// install record: the first entry per path is that file as it was before
+// crank-mem first changed it. Restore replays that entry for paths inside the
+// project, leaves every other path as is, and never replays .crank/cerebrum.md.
 
 interface ManifestEntry {
   original: string;
@@ -49,12 +52,6 @@ export function backupFile(backupDir: string, originalPath: string): void {
   saveManifest(backupDir, m);
 }
 
-/** Latest backup dir under .crank/backups, or null. */
-export function latestBackupDir(crankDir: string): string | null {
-  const last = manifestDirs(crankDir).at(-1);
-  return last ? path.join(crankDir, "backups", last) : null;
-}
-
 /**
  * True iff a manifest proves `originalPath` did not exist before init. The
  * oldest manifest mentioning the path wins — that's the init-time record;
@@ -74,19 +71,45 @@ export function absentAtInit(crankDir: string, originalPath: string): boolean {
   return false;
 }
 
-/** Restore every manifest entry: copy back, or delete files that were absent. */
-export function restoreBackup(backupDir: string): string[] {
-  const m = loadManifest(backupDir);
-  const restored: string[] = [];
-  for (const e of m.entries) {
-    if (e.backupFile) {
-      fs.mkdirSync(path.dirname(e.original), { recursive: true });
-      fs.copyFileSync(path.join(backupDir, e.backupFile), e.original);
-      restored.push(e.original);
-    } else if (fs.existsSync(e.original)) {
-      fs.unlinkSync(e.original);
-      restored.push(e.original + " (removed — did not exist before init)");
+export type RestoredPath =
+  | { path: string; outcome: "copied" }
+  | { path: string; outcome: "removed" } // earliest record says absent, and the file existed
+  | { path: string; outcome: "outside" }; // outside the project root, left as is
+
+export type RestoreResult =
+  | { status: "no-backups" }
+  | { status: "replayed"; paths: RestoredPath[] };
+
+/** The first entry per `original`, oldest manifest dir first, with the dir that holds its copy. */
+function installRecord(crankDir: string): Map<string, { dir: string; backupFile: string | null }> {
+  const record = new Map<string, { dir: string; backupFile: string | null }>();
+  for (const d of manifestDirs(crankDir)) {
+    const dir = path.join(crankDir, "backups", d);
+    for (const e of loadManifest(dir).entries) {
+      if (!record.has(e.original)) record.set(e.original, { dir, backupFile: e.backupFile });
     }
   }
-  return restored;
+  return record;
+}
+
+/** Replays the earliest copy of each recorded path inside the project. */
+export function restoreInstall(crankDir: string): RestoreResult {
+  if (manifestDirs(crankDir).length === 0) return { status: "no-backups" };
+  const root = path.dirname(crankDir);
+  const cerebrum = path.join(crankDir, CEREBRUM_FILE);
+  const paths: RestoredPath[] = [];
+  for (const [original, { dir, backupFile }] of installRecord(crankDir)) {
+    if (original === cerebrum) continue;
+    if (!path.isAbsolute(original) || repoRelative(root, root, original) === null) {
+      paths.push({ path: original, outcome: "outside" });
+    } else if (backupFile !== null) {
+      fs.mkdirSync(path.dirname(original), { recursive: true });
+      fs.copyFileSync(path.join(dir, backupFile), original);
+      paths.push({ path: original, outcome: "copied" });
+    } else if (fs.existsSync(original)) {
+      fs.unlinkSync(original);
+      paths.push({ path: original, outcome: "removed" });
+    }
+  }
+  return { status: "replayed", paths };
 }

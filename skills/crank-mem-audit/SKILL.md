@@ -67,9 +67,9 @@ Contradicted or unverifiable → prune. Only verified claims enter the rewrite.
 ## 5. Back up
 
 Copy the current `cerebrum.md` to `.crank/backups/<timestamp>/` — a plain
-copy only, no `manifest.json` (`uninstall --restore` restores from the newest
-backup dir that has a manifest; writing one would make it restore from the
-audit's backup instead of init's). Do this before writing anything.
+copy only, no `manifest.json` (a manifest would make `uninstall --restore`
+read the dir as an install record and stop `crank-mem stats` dating the audit
+by it). Do this before writing anything.
 
 ## 6. Rewrite
 

@@ -61,13 +61,25 @@ function snapshot(root: string): Record<string, string> {
   return out;
 }
 
+/** The real path of the one dir under `<root>/.crank/backups/`; expects exactly one. */
+function onlyBackupDir(root: string): string {
+  const dirs = fs.readdirSync(path.join(root, ".crank", "backups"));
+  expect(dirs).toHaveLength(1);
+  return path.join(fs.realpathSync(root), ".crank", "backups", dirs[0]!);
+}
+
+/** Writes `text` as `<root>/.crank/backups/2999-01-01T00-00-00-000Z/manifest.json`, creating the dir, and returns the dir's real path. */
+function plantLaterManifest(root: string, text: string): string {
+  const dir = path.join(fs.realpathSync(root), ".crank", "backups", "2999-01-01T00-00-00-000Z");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "manifest.json"), text);
+  return dir;
+}
+
 /** The original paths the manifest in the one backup dir under `<root>/.crank/backups/` lists. */
 function manifestOriginals(root: string): string[] {
-  const backups = path.join(root, ".crank", "backups");
-  const dirs = fs.readdirSync(backups);
-  expect(dirs).toHaveLength(1);
   const manifest = JSON.parse(
-    fs.readFileSync(path.join(backups, dirs[0]!, "manifest.json"), "utf-8"),
+    fs.readFileSync(path.join(onlyBackupDir(root), "manifest.json"), "utf-8"),
   );
   return manifest.entries.map((e: { original: string }) => e.original);
 }
@@ -553,6 +565,99 @@ describe("init → uninstall round-trip", () => {
     expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
   });
 
+  for (const shape of ["plain upgrade", "upgrade with a repair copy"]) {
+    test(`restore after a version-changing upgrade returns the project byte-identical (${shape})`, () => {
+      const { root, codexHome } = makeProject({
+        ".claude/settings.local.json": '{"permissions":{"allow":["Bash(ls:*)"]}}\n',
+      });
+      const before = snapshot(root);
+      expect(cli(root, codexHome, "init", "--yes", "--codex", "merge").status).toBe(0);
+
+      const settings = path.join(root, ".claude/settings.local.json");
+      if (shape === "upgrade with a repair copy") {
+        const obj = JSON.parse(fs.readFileSync(settings, "utf-8"));
+        delete obj.hooks.SessionEnd;
+        fs.writeFileSync(settings, JSON.stringify(obj, null, 2) + "\n");
+      }
+      const cfgPath = path.join(root, ".crank/config.json");
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+      cfg.vendored_version = "0.0.1";
+      fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+      const upgrade = cli(root, codexHome, "upgrade");
+      expect(upgrade.status).toBe(0);
+
+      const r = fs.realpathSync(root);
+      const backups = path.join(root, ".crank", "backups");
+      const manifestDirs = fs
+        .readdirSync(backups)
+        .filter((d) => fs.existsSync(path.join(backups, d, "manifest.json")))
+        .sort();
+      expect(manifestDirs).toHaveLength(2);
+      if (shape === "upgrade with a repair copy") {
+        expect(upgrade.stdout).toContain(
+          "re-wired Claude Code hooks in .claude/settings.local.json",
+        );
+        const later = JSON.parse(
+          fs.readFileSync(path.join(backups, manifestDirs[1]!, "manifest.json"), "utf-8"),
+        );
+        expect(later.entries.map((e: { original: string }) => e.original)).toContain(
+          path.join(r, ".claude/settings.local.json"),
+        );
+      }
+
+      const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
+      expect(un.status).toBe(0);
+      expect(snapshot(root)).toEqual(before);
+      expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
+      expect(fs.existsSync(path.join(root, ".codex"))).toBe(false);
+      expect(un.stdout).toContain(`  restored ${r}/.claude/settings.local.json\n`);
+      expect(un.stdout).toContain(`  removed ${r}/.codex/hooks.json (crank-mem created it)\n`);
+    }, 20_000);
+  }
+
+  test("restore replays a planted later record: inside copies only, never cerebrum or outside paths", () => {
+    const { root, codexHome } = makeProject();
+    expect(cli(root, codexHome, "init", "--yes", "--codex", "skip").status).toBe(0);
+    const r = fs.realpathSync(root);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "crank-outside-"));
+    fs.writeFileSync(path.join(outside, "z"), "keep\n");
+    const entries = [
+      { original: path.join(r, ".crank/cerebrum.md"), backupFile: "0-cerebrum.md" },
+      { original: "rel/x", backupFile: "1-x" },
+      { original: path.join(r, "sub/dir/y.txt"), backupFile: "2-y.txt" },
+      { original: path.join(r, "gone.txt"), backupFile: null },
+      { original: path.join(r, "made.txt"), backupFile: null },
+      { original: path.join(outside, "z"), backupFile: null },
+      { original: path.join(outside, "never"), backupFile: null },
+    ];
+    const dir = plantLaterManifest(
+      root,
+      JSON.stringify({ createdAt: "2999-01-01T00-00-00-000Z", entries }),
+    );
+    fs.writeFileSync(path.join(dir, "0-cerebrum.md"), "# Old cerebrum\n");
+    fs.writeFileSync(path.join(dir, "1-x"), "old x\n");
+    fs.writeFileSync(path.join(dir, "2-y.txt"), "y\n");
+    fs.writeFileSync(path.join(root, "made.txt"), "made\n");
+    const cerebrumBefore = fs.readFileSync(path.join(root, ".crank/cerebrum.md"), "utf-8");
+
+    const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--keep-crank");
+    expect(un.status).toBe(0);
+    expect(fs.readFileSync(path.join(root, ".crank/cerebrum.md"), "utf-8")).toBe(cerebrumBefore);
+    expect(un.stdout).not.toContain("cerebrum.md");
+    expect(un.stdout).toContain("  left rel/x as is (outside this project)\n");
+    expect(fs.existsSync(path.join(root, "rel/x"))).toBe(false);
+    expect(fs.readFileSync(path.join(root, "sub/dir/y.txt"), "utf-8")).toBe("y\n");
+    expect(un.stdout).toContain(`  restored ${r}/sub/dir/y.txt\n`);
+    expect(un.stdout).not.toContain("gone.txt");
+    expect(fs.existsSync(path.join(root, "made.txt"))).toBe(false);
+    expect(un.stdout).toContain(`  removed ${r}/made.txt (crank-mem created it)\n`);
+    expect(un.stdout).toContain(`  left ${path.join(outside, "z")} as is (outside this project)\n`);
+    expect(fs.readFileSync(path.join(outside, "z"), "utf-8")).toBe("keep\n");
+    expect(un.stdout).toContain(
+      `  left ${path.join(outside, "never")} as is (outside this project)\n`,
+    );
+  });
+
   test("invalid --codex value exits 1 and leaves the project untouched", () => {
     const { root, codexHome } = makeProject();
     const before = snapshot(root);
@@ -571,31 +676,39 @@ describe("init → uninstall round-trip", () => {
     expect(second.stderr).toContain("already initialized");
   });
 
-  test("codex-trust init then --restore returns the project and CODEX_HOME config byte-identical", () => {
-    const { root, codexHome } = makeProject();
-    const codexConfig = path.join(codexHome, "config.toml");
-    const before = snapshot(root);
-    const beforeCodexConfig = fs.readFileSync(codexConfig);
+  test("two projects share one CODEX_HOME: --restore in one leaves the other's trust entries", () => {
+    const A = makeProject();
+    const B = makeProject();
+    const codexConfig = path.join(A.codexHome, "config.toml");
+    const seed = 'model = "gpt-5.6"\n';
+    expect(fs.readFileSync(codexConfig, "utf-8")).toBe(seed);
+    const beforeA = snapshot(A.root);
+    const trustInit = ["init", "--yes", "--codex", "merge", "--codex-trust", "write"];
 
-    const init = cli(
-      root,
-      codexHome,
-      "init",
-      "--yes",
-      "--codex",
-      "merge",
-      "--codex-trust",
-      "write",
-    );
-    expect(init.status).toBe(0);
-    expect(manifestOriginals(root)).toContain(codexConfig);
-    const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
-    expect(un.status).toBe(0);
+    expect(cli(A.root, A.codexHome, ...trustInit).status).toBe(0);
+    const dir = onlyBackupDir(A.root);
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf-8"));
+    const entry = manifest.entries.find((e: { original: string }) => e.original === codexConfig);
+    expect(entry).toBeDefined();
+    expect(fs.readFileSync(path.join(dir, entry.backupFile), "utf-8")).toBe(seed);
+    const afterA = fs.readFileSync(codexConfig, "utf-8");
 
-    expect(snapshot(root)).toEqual(before);
-    expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
-    expect(fs.readFileSync(codexConfig)).toEqual(beforeCodexConfig);
-  });
+    expect(cli(B.root, A.codexHome, ...trustInit).status).toBe(0);
+    const full = fs.readFileSync(codexConfig, "utf-8");
+    expect(full.startsWith(afterA)).toBe(true);
+    const bBlocks = full.slice(afterA.length);
+    expect(bBlocks).toContain(`[hooks.state."${fs.realpathSync(B.root)}/.codex/hooks.json:`);
+
+    const unA = cli(A.root, A.codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
+    expect(unA.status).toBe(0);
+    expect(fs.readFileSync(codexConfig, "utf-8")).toBe(seed + bBlocks);
+    expect(snapshot(A.root)).toEqual(beforeA);
+    expect(unA.stdout).toContain(`  left ${codexConfig} as is (outside this project)\n`);
+
+    const unB = cli(B.root, A.codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
+    expect(unB.status).toBe(0);
+    expect(fs.readFileSync(codexConfig, "utf-8")).toBe(seed);
+  }, 20_000);
 
   test("a backup manifest lists only the files init wrote", () => {
     const { root, codexHome } = makeProject({ ".gitignore": ".crank/\n" });
@@ -618,6 +731,9 @@ describe("init → uninstall round-trip", () => {
     expect(originals).toContain(path.join(realRoot, ".claude/settings.local.json"));
     expect(originals).not.toContain(path.join(realRoot, ".gitignore"));
     expect(originals).not.toContain(path.join(codexHome, "config.toml"));
+    expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).toBe(
+      'model = "gpt-5.6"\n',
+    );
   });
 });
 

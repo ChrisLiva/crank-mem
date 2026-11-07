@@ -29,12 +29,13 @@ import { MEMORY_FILE, SNAPSHOT_DIR } from "../hooks/lib/memory.ts";
 import { USAGE_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
 import { openProject } from "./project.ts";
 import { unregisterProject } from "./registry.ts";
-import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
+import { restoreInstall, absentAtInit } from "./backups.ts";
 
 // Remove all crank-mem wiring. Default is surgical: strip exactly the
 // entries/lines we added (safe alongside post-init user edits). --restore
-// instead restores the init-time backups byte-identically. Never touches the
-// ADR directory.
+// first puts back each project file as it was before crank-mem first changed
+// it and leaves files outside the project, such as ~/.codex/config.toml, as is.
+// Never touches the ADR directory.
 
 export async function run(args: string[]): Promise<number> {
   const { flags } = parseArgs(args, COMMANDS.uninstall.value);
@@ -56,7 +57,7 @@ export async function run(args: string[]): Promise<number> {
     flags.restore === true ||
     (!flags.yes &&
       (await choose(
-        "Restore modified files from the init-time backup?",
+        "Restore the files crank-mem changed, as they were before it first changed them?",
         ["restore", "surgical"],
         "surgical",
       )) === "restore");
@@ -72,11 +73,15 @@ export async function run(args: string[]): Promise<number> {
   }
 
   if (restore) {
-    const backupDir = latestBackupDir(crankDir);
-    if (!backupDir) {
+    const result = restoreInstall(crankDir);
+    if (result.status === "no-backups") {
       console.error("crank-mem: no backups found — falling back to surgical removal.");
     } else {
-      for (const restored of restoreBackup(backupDir)) console.log(`  restored ${restored}`);
+      for (const p of result.paths) {
+        if (p.outcome === "copied") console.log(`  restored ${p.path}`);
+        else if (p.outcome === "removed") console.log(`  removed ${p.path} (crank-mem created it)`);
+        else console.log(`  left ${p.path} as is (outside this project)`);
+      }
     }
   }
 
