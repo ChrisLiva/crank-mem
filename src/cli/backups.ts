@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CEREBRUM_FILE, fileStamp, manifestDirs } from "../hooks/lib/cerebrum-files.ts";
+import { isObj } from "../hooks/lib/config.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 
 // Backups of every file init/upgrade is about to modify, with a manifest
@@ -52,63 +53,114 @@ export function backupFile(backupDir: string, originalPath: string): void {
   saveManifest(backupDir, m);
 }
 
-/**
- * True iff a manifest proves `originalPath` did not exist before init. The
- * oldest manifest mentioning the path wins — that's the init-time record;
- * later (upgrade) backups don't cover it. No mention anywhere ⇒ false (when
- * in doubt, keep the file).
- */
-export function absentAtInit(crankDir: string, originalPath: string): boolean {
-  const base = path.join(crankDir, "backups");
-  for (const d of manifestDirs(crankDir)) {
-    try {
-      const entry = loadManifest(path.join(base, d)).entries.find(
-        (e) => e.original === originalPath,
-      );
-      if (entry) return entry.backupFile === null;
-    } catch {}
-  }
-  return false;
-}
-
 export type RestoredPath =
   | { path: string; outcome: "copied" }
   | { path: string; outcome: "removed" } // earliest record says absent, and the file existed
-  | { path: string; outcome: "outside" }; // outside the project root, left as is
+  | { path: string; outcome: "outside" } // outside the project root, left as is
+  | { path: string; outcome: "failed"; code: string };
 
 export type RestoreResult =
   | { status: "no-backups" }
+  | { status: "unreadable"; manifest: string; detail: string }
   | { status: "replayed"; paths: RestoredPath[] };
 
-/** The first entry per `original`, oldest manifest dir first, with the dir that holds its copy. */
-function installRecord(crankDir: string): Map<string, { dir: string; backupFile: string | null }> {
-  const record = new Map<string, { dir: string; backupFile: string | null }>();
+type InstallRecord = Map<string, { dir: string; backupFile: string | null }>;
+
+/** A copy name `backupFile` writes: one path segment, never `.` or `..`. */
+function isBareName(v: unknown): boolean {
+  return (
+    typeof v === "string" &&
+    v !== "" &&
+    v !== "." &&
+    v !== ".." &&
+    !v.includes("/") &&
+    !v.includes("\\")
+  );
+}
+
+function isEntry(e: unknown): e is ManifestEntry {
+  return (
+    isObj(e) &&
+    typeof e.original === "string" &&
+    (e.backupFile === null || isBareName(e.backupFile))
+  );
+}
+
+/** The manifest's entries, or why it cannot be read as a crank-mem manifest. */
+function readEntries(manifest: string): ManifestEntry[] | { detail: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(manifest, "utf-8"));
+  } catch (err) {
+    return { detail: err instanceof Error ? err.message : String(err) };
+  }
+  const entries = isObj(parsed) ? parsed.entries : undefined;
+  if (!Array.isArray(entries) || !entries.every(isEntry)) {
+    return { detail: "not a crank-mem manifest" };
+  }
+  return entries;
+}
+
+/**
+ * The first entry per `original`, oldest manifest dir first, with the dir that
+ * holds its copy, or the first manifest that cannot be read.
+ */
+function readInstallRecord(
+  crankDir: string,
+): { record: InstallRecord } | { manifest: string; detail: string } {
+  const record: InstallRecord = new Map();
   for (const d of manifestDirs(crankDir)) {
     const dir = path.join(crankDir, "backups", d);
-    for (const e of loadManifest(dir).entries) {
+    const manifest = path.join(dir, "manifest.json");
+    const entries = readEntries(manifest);
+    if (!Array.isArray(entries)) return { manifest, detail: entries.detail };
+    for (const e of entries) {
       if (!record.has(e.original)) record.set(e.original, { dir, backupFile: e.backupFile });
     }
   }
-  return record;
+  return { record };
 }
 
-/** Replays the earliest copy of each recorded path inside the project. */
+/**
+ * True iff every manifest reads and the earliest entry whose `original` ===
+ * `file` (an absolute path, compared as a string) says it was absent. Any doubt
+ * keeps the file. Never throws.
+ */
+export function createdByCrank(crankDir: string, file: string): boolean {
+  const read = readInstallRecord(crankDir);
+  return "record" in read && read.record.get(file)?.backupFile === null;
+}
+
+/** Replays the earliest copy of each recorded path inside the project. Never throws. */
 export function restoreInstall(crankDir: string): RestoreResult {
   if (manifestDirs(crankDir).length === 0) return { status: "no-backups" };
+  const read = readInstallRecord(crankDir);
+  if (!("record" in read)) return { status: "unreadable", ...read };
   const root = path.dirname(crankDir);
   const cerebrum = path.join(crankDir, CEREBRUM_FILE);
   const paths: RestoredPath[] = [];
-  for (const [original, { dir, backupFile }] of installRecord(crankDir)) {
+  for (const [original, { dir, backupFile }] of read.record) {
     if (original === cerebrum) continue;
     if (!path.isAbsolute(original) || repoRelative(root, root, original) === null) {
       paths.push({ path: original, outcome: "outside" });
-    } else if (backupFile !== null) {
-      fs.mkdirSync(path.dirname(original), { recursive: true });
-      fs.copyFileSync(path.join(dir, backupFile), original);
-      paths.push({ path: original, outcome: "copied" });
-    } else if (fs.existsSync(original)) {
-      fs.unlinkSync(original);
-      paths.push({ path: original, outcome: "removed" });
+      continue;
+    }
+    try {
+      if (backupFile !== null) {
+        fs.mkdirSync(path.dirname(original), { recursive: true });
+        fs.copyFileSync(path.join(dir, backupFile), original);
+        paths.push({ path: original, outcome: "copied" });
+      } else if (fs.existsSync(original)) {
+        fs.unlinkSync(original);
+        paths.push({ path: original, outcome: "removed" });
+      }
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      paths.push({
+        path: original,
+        outcome: "failed",
+        code: typeof code === "string" ? code : "error",
+      });
     }
   }
   return { status: "replayed", paths };

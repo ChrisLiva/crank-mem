@@ -676,6 +676,151 @@ describe("init → uninstall round-trip", () => {
     expect(second.stderr).toContain("already initialized");
   });
 
+  const notAManifest = (manifest: string): string =>
+    `crank-mem: could not read ${manifest} (not a crank-mem manifest) — falling back to surgical removal.`;
+  const rewriteInitManifest = (initManifest: string, edit: (m: any) => void): void => {
+    const m = JSON.parse(fs.readFileSync(initManifest, "utf-8"));
+    edit(m);
+    fs.writeFileSync(initManifest, JSON.stringify(m, null, 2));
+  };
+  const expectEmptySettingsKept = (root: string): void => {
+    const settings = path.join(root, ".claude/settings.local.json");
+    expect(fs.existsSync(settings)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(settings, "utf-8"))).toEqual({});
+  };
+  const unreadableCases: {
+    name: string;
+    plant: (root: string, initManifest: string) => void;
+    check: (un: CliRun, root: string, r: string, initManifest: string) => void;
+  }[] = [
+    {
+      name: "init's manifest is invalid JSON",
+      plant: (_root, initManifest) => fs.writeFileSync(initManifest, "{not json"),
+      check: (un, root, _r, initManifest) => {
+        expect(un.stderr).toContain(`crank-mem: could not read ${initManifest} (`);
+        expect(un.stderr).toContain(" — falling back to surgical removal.");
+        expectEmptySettingsKept(root);
+      },
+    },
+    {
+      name: "a later manifest is invalid JSON",
+      plant: (root) => plantLaterManifest(root, "{not json"),
+      check: (un, root, r) => {
+        expect(un.stderr).toContain(
+          `crank-mem: could not read ${r}/.crank/backups/2999-01-01T00-00-00-000Z/manifest.json (`,
+        );
+        expectEmptySettingsKept(root);
+      },
+    },
+    {
+      name: "init's manifest cannot be read",
+      plant: (_root, initManifest) => {
+        fs.rmSync(initManifest);
+        fs.mkdirSync(initManifest);
+      },
+      check: (un, _root, _r, initManifest) => {
+        expect(un.stderr).toContain(
+          `crank-mem: could not read ${initManifest} (EISDIR: illegal operation on a directory, read) — falling back to surgical removal.`,
+        );
+      },
+    },
+    ...["../x", "", "a\\b", ".", ".."].map((v) => ({
+      name: `backupFile is ${JSON.stringify(v)}`,
+      plant: (_root: string, initManifest: string) =>
+        rewriteInitManifest(initManifest, (m) => {
+          m.entries[0].backupFile = v;
+        }),
+      check: (un: CliRun, _root: string, _r: string, initManifest: string) => {
+        expect(un.stderr).toContain(notAManifest(initManifest));
+      },
+    })),
+    {
+      name: "an entry's original is not a string",
+      plant: (_root, initManifest) =>
+        rewriteInitManifest(initManifest, (m) => {
+          m.entries[0].original = 5;
+        }),
+      check: (un, _root, _r, initManifest) => {
+        expect(un.stderr).toContain(notAManifest(initManifest));
+      },
+    },
+    {
+      name: "the manifest has no entries",
+      plant: (root, initManifest) => {
+        fs.writeFileSync(initManifest, '{"createdAt":"x"}');
+        plantLaterManifest(root, "{not json");
+      },
+      check: (un, _root, _r, initManifest) => {
+        expect(un.stderr).toContain(notAManifest(initManifest));
+        expect(un.stderr).not.toContain("2999-01-01");
+      },
+    },
+    {
+      name: "no backups",
+      plant: (root) =>
+        fs.rmSync(path.join(root, ".crank/backups"), { recursive: true, force: true }),
+      check: (un) => {
+        expect(un.status).toBe(0);
+        expect(un.stderr).toContain(
+          "crank-mem: no backups found — falling back to surgical removal.",
+        );
+      },
+    },
+  ];
+  for (const c of unreadableCases) {
+    test(`restore refuses an unreadable record: ${c.name}`, () => {
+      const { root, codexHome } = makeProject();
+      expect(cli(root, codexHome, "init", "--yes", "--codex", "skip").status).toBe(0);
+      const r = fs.realpathSync(root);
+      const initManifest = path.join(onlyBackupDir(root), "manifest.json");
+      c.plant(root, initManifest);
+      const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--keep-crank");
+      c.check(un, root, r, initManifest);
+      expect(un.stdout).toContain("  removed crank hooks from .claude/settings.local.json\n");
+      if (c.name !== "no backups") {
+        expect(un.status).toBe(1);
+        expect(un.stdout).toContain("crank-mem: uninstalled.");
+        expect(un.stdout).not.toMatch(/^  restored /m);
+        expect(un.stdout).not.toMatch(/^  removed .* \(crank-mem created it\)$/m);
+      }
+    });
+  }
+
+  test("restore reports each path it cannot restore and restores the rest", () => {
+    const { root, codexHome } = makeProject({
+      ".claude/settings.local.json": '{"permissions":{"allow":["Bash(ls:*)"]}}\n',
+    });
+    const excludeBefore = fs.readFileSync(path.join(root, ".git/info/exclude"));
+    expect(cli(root, codexHome, "init", "--yes", "--codex", "skip").status).toBe(0);
+    const r = fs.realpathSync(root);
+    const dir = onlyBackupDir(root);
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf-8"));
+    const entry = manifest.entries.find(
+      (e: { original: string }) => e.original === `${r}/.claude/settings.local.json`,
+    );
+    fs.rmSync(path.join(dir, entry.backupFile));
+    plantLaterManifest(
+      root,
+      JSON.stringify({
+        createdAt: "x",
+        entries: [{ original: path.join(r, "plain-dir"), backupFile: null }],
+      }),
+    );
+    fs.mkdirSync(path.join(root, "plain-dir"));
+
+    const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--keep-crank");
+    expect(un.status).toBe(1);
+    expect(un.stderr).toContain(
+      `crank-mem: could not restore ${r}/.claude/settings.local.json (ENOENT)`,
+    );
+    expect(un.stderr).toContain(`crank-mem: could not restore ${r}/plain-dir (`);
+    expect(un.stderr).toMatch(/\/plain-dir \((EPERM|EISDIR)\)$/m);
+    expect(un.stdout).toContain(`  restored ${r}/.git/info/exclude\n`);
+    expect(fs.readFileSync(path.join(root, ".git/info/exclude"))).toEqual(excludeBefore);
+    expect(fs.existsSync(path.join(root, "plain-dir"))).toBe(true);
+    expect(un.stdout).toContain("crank-mem: uninstalled.");
+  });
+
   test("two projects share one CODEX_HOME: --restore in one leaves the other's trust entries", () => {
     const A = makeProject();
     const B = makeProject();

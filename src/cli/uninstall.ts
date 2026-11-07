@@ -29,7 +29,7 @@ import { MEMORY_FILE, SNAPSHOT_DIR } from "../hooks/lib/memory.ts";
 import { USAGE_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
 import { openProject } from "./project.ts";
 import { unregisterProject } from "./registry.ts";
-import { restoreInstall, absentAtInit } from "./backups.ts";
+import { restoreInstall, createdByCrank } from "./backups.ts";
 
 // Remove all crank-mem wiring. Default is surgical: strip exactly the
 // entries/lines we added (safe alongside post-init user edits). --restore
@@ -72,15 +72,26 @@ export async function run(args: string[]): Promise<number> {
     console.log(`  removed trusted_hash entries from ${userCodexConfigPath()}`);
   }
 
+  let status = 0;
   if (restore) {
     const result = restoreInstall(crankDir);
     if (result.status === "no-backups") {
       console.error("crank-mem: no backups found — falling back to surgical removal.");
+    } else if (result.status === "unreadable") {
+      console.error(
+        `crank-mem: could not read ${result.manifest} (${result.detail}) — falling back to surgical removal.`,
+      );
+      status = 1;
     } else {
       for (const p of result.paths) {
         if (p.outcome === "copied") console.log(`  restored ${p.path}`);
         else if (p.outcome === "removed") console.log(`  removed ${p.path} (crank-mem created it)`);
-        else console.log(`  left ${p.path} as is (outside this project)`);
+        else if (p.outcome === "outside")
+          console.log(`  left ${p.path} as is (outside this project)`);
+        else {
+          console.error(`crank-mem: could not restore ${p.path} (${p.code})`);
+          status = 1;
+        }
       }
     }
   }
@@ -98,7 +109,7 @@ export async function run(args: string[]): Promise<number> {
       console.log(`  removed the crank-mem allow rules from ${path.relative(root, f)}`);
     // Delete a now-empty object only when the manifest proves we created the
     // file — a user's own literal {} must survive.
-    if (!absentAtInit(crankDir, f)) continue;
+    if (!createdByCrank(crankDir, f)) continue;
     try {
       if (fs.existsSync(f) && JSON.stringify(JSON.parse(fs.readFileSync(f, "utf-8"))) === "{}") {
         fs.unlinkSync(f);
@@ -142,7 +153,7 @@ export async function run(args: string[]): Promise<number> {
 
   unregisterProject(root);
   console.log("crank-mem: uninstalled.");
-  return 0;
+  return status;
 }
 
 /**
