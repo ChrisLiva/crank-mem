@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { REPO_ROOT, makeCrankHome, makeProject, runCli, type CliRun } from "./helpers.ts";
+import { REPO_ROOT, makeCrankHome, makeProject, runCli, snapshot, type CliRun } from "./helpers.ts";
 import { cliVersion } from "../src/cli/version.ts";
+import { CRANK_ALLOW_RULES, crankHooks } from "../src/cli/settings.ts";
 
 function cli(cwd: string, codexHome: string, crankHome: string, ...args: string[]): CliRun {
   return runCli(cwd, args, { CODEX_HOME: codexHome, CRANK_HOME: crankHome });
@@ -164,3 +165,83 @@ for (const choice of ["trust", "review"] as const) {
     }
   }, 20_000);
 }
+
+function registeredRoots(home: string): string[] {
+  return JSON.parse(fs.readFileSync(path.join(home, "projects.json"), "utf-8")).projects.map(
+    (p: { root: string }) => p.root,
+  );
+}
+
+for (const git of ["commit", "ignore", "exclude"] as const) {
+  test(`round trip returns the project to its pre-init state: ${git}`, () => {
+    const { root, codexHome } = makeProject();
+    const home = makeCrankHome();
+    const exclude = path.join(root, ".git/info/exclude");
+    const backups = path.join(root, ".crank/backups");
+    const before = snapshot(root);
+    const excludeBefore = fs.readFileSync(exclude);
+    const init = cli(root, codexHome, home, "init", "--yes", "--git", git, ...CODEX_FLAGS.review);
+    expect(init.status).toBe(0);
+    const real = fs.realpathSync(root);
+    expect(registeredRoots(home)).toContain(real);
+    const backupsBefore = fs.readdirSync(backups);
+    const up = cli(root, codexHome, home, "upgrade");
+    expect(up.status).toBe(0);
+    expect(up.stdout.split("\n").filter((l) => l.startsWith("  "))).toEqual([]);
+    expect(fs.readdirSync(backups)).toEqual(backupsBefore);
+    const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
+    expect(un.status).toBe(0);
+    expect(snapshot(root)).toEqual(before);
+    expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
+    expect(fs.readFileSync(exclude).equals(excludeBefore)).toBe(true);
+    expect(registeredRoots(home)).not.toContain(real);
+  }, 20_000);
+}
+
+for (const c of ["skip", "missing key"] as const) {
+  test(`uninstall strips crank entries whatever codex records: ${c}`, () => {
+    const { root, codexHome } = makeProject();
+    const home = makeCrankHome();
+    expect(
+      cli(root, codexHome, home, "init", "--yes", "--git", "exclude", "--codex", "skip").status,
+    ).toBe(0);
+    const plant = (rel: string, text: string): void => {
+      fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      fs.writeFileSync(path.join(root, rel), text);
+    };
+    plant(".codex/hooks.json", JSON.stringify({ hooks: crankHooks("bun", "codex") }));
+    plant(".codex/config.toml", "\n# crank-mem\n[features]\nhooks = true\n");
+    plant(
+      ".claude/settings.json",
+      JSON.stringify({
+        hooks: crankHooks("bun", "claude"),
+        permissions: { allow: [...CRANK_ALLOW_RULES] },
+      }),
+    );
+    plant(".gitignore", "# crank-mem\n.crank/\n");
+    if (c === "missing key") {
+      const { codex: _codex, ...rest } = readConfig(root);
+      writeConfig(root, rest);
+    }
+    const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
+    expect(un.status).toBe(0);
+    const read = (rel: string): string => fs.readFileSync(path.join(root, rel), "utf-8");
+    expect(JSON.parse(read(".codex/hooks.json"))).toEqual({});
+    expect(read(".codex/config.toml")).toBe("");
+    expect(JSON.parse(read(".claude/settings.json"))).toEqual({});
+    expect(read(".gitignore")).toBe("");
+    expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
+    expect(read(".git/info/exclude")).not.toContain("# crank-mem");
+  }, 20_000);
+}
+
+test("a restore uninstall prints the trust line once", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  expect(cli(root, codexHome, home, "init", "--yes", ...CODEX_FLAGS.trust).status).toBe(0);
+  const un = cli(root, codexHome, home, "uninstall", "--yes", "--restore", "--delete-crank");
+  expect(un.status).toBe(0);
+  const line = `  removed trusted_hash entries from ${codexHome}/config.toml`;
+  expect(un.stdout.split("\n").filter((l) => l === line).length).toBe(1);
+  expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).toBe('model = "gpt-5.6"\n');
+}, 20_000);

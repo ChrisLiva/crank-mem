@@ -6,10 +6,8 @@ import { choose } from "./prompt.ts";
 import {
   removeCrankHooksFromFile,
   removeIgnoreLines,
-  removeCodexFeatures,
   isLegacyHookCommand,
   LEGACY_IGNORE_BLOCK,
-  removeAllowRule,
 } from "./settings.ts";
 import { crankTrust, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
 import { CRANK_DIR, CONFIG_FILE, LOCAL_CONFIG_FILE } from "../hooks/lib/config.ts";
@@ -28,8 +26,8 @@ import { LOG_FILE } from "../hooks/lib/debug.ts";
 import { MEMORY_FILE, SNAPSHOT_DIR } from "../hooks/lib/memory.ts";
 import { USAGE_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
 import { openProject } from "./project.ts";
-import { unregisterProject } from "./registry.ts";
-import { restoreInstall, createdByCrank } from "./backups.ts";
+import { restoreInstall } from "./backups.ts";
+import { installPaths, removeInstall, type Report } from "./install.ts";
 
 // Remove all crank-mem wiring. Default is surgical: strip exactly the
 // entries/lines we added (safe alongside post-init user edits). --restore
@@ -51,7 +49,7 @@ export async function run(args: string[]): Promise<number> {
 
   const project = openProject();
   if (!project) return 1;
-  const { root, crankDir, config } = project;
+  const { root, crankDir } = project;
 
   const restore =
     flags.restore === true ||
@@ -62,15 +60,7 @@ export async function run(args: string[]): Promise<number> {
         "surgical",
       )) === "restore");
 
-  const codexHooksJson = path.join(root, ".codex", "hooks.json");
-
-  // Trust entries first: keys come from hooks.json as it stands, before we
-  // strip our groups out of it. Both spellings go — older releases keyed on
-  // the raw PascalCase event and left those entries orphaned.
-  if (config.codex === "trust") {
-    removeTrustEntries(userCodexConfigPath(), crankTrust(codexHooksJson).keys);
-    console.log(`  removed trusted_hash entries from ${userCodexConfigPath()}`);
-  }
+  printReport(removeInstall(project));
 
   let status = 0;
   if (restore) {
@@ -94,29 +84,10 @@ export async function run(args: string[]): Promise<number> {
         }
       }
     }
+    // A second pass strips whatever the restored copies still carry, in
+    // case a backup predates some wiring. It only strips crank-mem's entries.
+    printReport(removeInstall(project));
   }
-
-  // Surgical removal is idempotent — run it even after a restore, in case the
-  // backup predates some wiring. It only ever strips crank-mem's own entries.
-  for (const f of [
-    path.join(root, ".claude", "settings.json"),
-    path.join(root, ".claude", "settings.local.json"),
-    codexHooksJson,
-  ]) {
-    if (removeCrankHooksFromFile(f))
-      console.log(`  removed crank hooks from ${path.relative(root, f)}`);
-    if (removeAllowRule(f))
-      console.log(`  removed the crank-mem allow rules from ${path.relative(root, f)}`);
-    deleteNowEmpty(root, crankDir, f, (text) => JSON.stringify(JSON.parse(text)) === "{}");
-  }
-
-  const gitignore = path.join(root, ".gitignore");
-  removeIgnoreLines(gitignore);
-  deleteNowEmpty(root, crankDir, gitignore, (text) => text.trim() === "");
-  removeIgnoreLines(path.join(root, ".git", "info", "exclude"));
-  const codexConfigToml = path.join(root, ".codex", "config.toml");
-  removeCodexFeatures(codexConfigToml);
-  deleteNowEmpty(root, crankDir, codexConfigToml, (text) => text.trim() === "");
 
   // A migrated project that was re-init'd on top of an old checkout still
   // carries the pre-rename crank/ dir and its duplicate hook wiring — sweep it.
@@ -142,29 +113,13 @@ export async function run(args: string[]): Promise<number> {
     console.log("  kept .crank/ (delete it manually when ready)");
   }
 
-  unregisterProject(root);
   console.log("crank-mem: uninstalled.");
   return status;
 }
 
-/**
- * Delete `file` and print `  deleted now-empty <rel>` when it exists, crank-mem
- * created it, and `isEmpty` holds for its text. A user's own blank or `{}` file
- * survives. Never throws.
- */
-function deleteNowEmpty(
-  root: string,
-  crankDir: string,
-  file: string,
-  isEmpty: (text: string) => boolean,
-): void {
-  try {
-    if (!fs.existsSync(file) || !createdByCrank(crankDir, file)) return;
-    if (isEmpty(fs.readFileSync(file, "utf-8"))) {
-      fs.unlinkSync(file);
-      console.log(`  deleted now-empty ${path.relative(root, file)}`);
-    }
-  } catch {}
+function printReport({ lines, warnings }: Report): void {
+  for (const line of lines) console.log(line);
+  for (const warning of warnings) console.error(warning);
 }
 
 /**
@@ -182,27 +137,23 @@ function legacyPresent(root: string): boolean {
  * the directory itself. Idempotent — a no-op when there is nothing legacy.
  */
 function sweepLegacy(root: string): void {
-  const codexHooksJson = path.join(root, ".codex", "hooks.json");
+  const { claudeShared, claudeLocal, codexHooks, gitignore, gitExclude } = installPaths(root);
 
   // Trust keys come from the legacy entries' positions in hooks.json, read
   // before we strip them. Removal is a safe no-op if trust was never written.
-  const legacyKeys = crankTrust(codexHooksJson, isLegacyHookCommand).keys;
+  const legacyKeys = crankTrust(codexHooks, isLegacyHookCommand).keys;
   if (legacyKeys.length) {
     removeTrustEntries(userCodexConfigPath(), legacyKeys);
     console.log(`  removed legacy trusted_hash entries from ${userCodexConfigPath()}`);
   }
 
-  for (const f of [
-    path.join(root, ".claude", "settings.json"),
-    path.join(root, ".claude", "settings.local.json"),
-    codexHooksJson,
-  ]) {
+  for (const f of [claudeShared, claudeLocal, codexHooks]) {
     if (removeCrankHooksFromFile(f, isLegacyHookCommand))
       console.log(`  removed legacy crank hooks from ${path.relative(root, f)}`);
   }
 
-  removeIgnoreLines(path.join(root, ".gitignore"), LEGACY_IGNORE_BLOCK);
-  removeIgnoreLines(path.join(root, ".git", "info", "exclude"), LEGACY_IGNORE_BLOCK);
+  removeIgnoreLines(gitignore, LEGACY_IGNORE_BLOCK);
+  removeIgnoreLines(gitExclude, LEGACY_IGNORE_BLOCK);
 
   // Delete the directory only when it's provably ours (see legacyPresent).
   if (legacyPresent(root)) {

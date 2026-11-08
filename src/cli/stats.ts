@@ -7,6 +7,7 @@ import type { CrankConfig } from "../hooks/lib/config.ts";
 import { composeInjection, fileCitations, injectionSources } from "../hooks/lib/injection.ts";
 import { auditSkillInstalled, installedAtMs, lastAuditMs } from "../hooks/lib/cerebrum-files.ts";
 import { hasCrankHooks } from "./settings.ts";
+import { installPaths } from "./install.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
 import {
   codexHome,
@@ -192,7 +193,7 @@ export async function run(_args: string[]): Promise<number> {
   for (const line of memoryLines(root, crankDir, config, index)) console.log(line);
   for (const [label, value] of await captureRows(root, config)) console.log(row(label, value));
 
-  const codexHooks = path.join(root, ".codex", "hooks.json");
+  const { codexHooks } = installPaths(root);
   if (!hasCrankHooks(codexHooks)) {
     console.log(`  codex:            not wired`);
     return 0;

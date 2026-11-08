@@ -588,7 +588,7 @@ describe("init → uninstall round-trip", () => {
       expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
       expect(fs.existsSync(path.join(root, ".codex"))).toBe(false);
       expect(un.stdout).toContain(`  restored ${r}/.claude/settings.local.json\n`);
-      expect(un.stdout).toContain(`  removed ${r}/.codex/hooks.json (crank-mem created it)\n`);
+      expect(un.stdout).toContain(`  deleted now-empty .codex/hooks.json\n`);
     }, 20_000);
   }
 
