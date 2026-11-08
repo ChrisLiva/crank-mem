@@ -245,3 +245,123 @@ test("a restore uninstall prints the trust line once", () => {
   expect(un.stdout.split("\n").filter((l) => l === line).length).toBe(1);
   expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).toBe('model = "gpt-5.6"\n');
 }, 20_000);
+
+const unparseableCases: { file: string; text: string; gone: string }[] = [
+  {
+    file: ".claude/settings.local.json",
+    text: '{ "hooks": ".crank/hooks/ broken',
+    gone: ".codex/hooks.json",
+  },
+  {
+    file: ".claude/settings.json",
+    text: '{"permissions": "Bash(crank-mem search *)"',
+    gone: ".codex/hooks.json",
+  },
+  {
+    file: ".codex/hooks.json",
+    text: '{ ".crank/hooks/session-start.ts"',
+    gone: ".claude/settings.local.json",
+  },
+];
+
+function initExclude(root: string, codexHome: string, home: string): void {
+  const init = cli(
+    root,
+    codexHome,
+    home,
+    "init",
+    "--yes",
+    "--git",
+    "exclude",
+    ...CODEX_FLAGS.review,
+  );
+  expect(init.status).toBe(0);
+}
+
+for (const c of unparseableCases) {
+  test(`uninstall reports an unparseable file that holds crank entries: ${c.file}`, () => {
+    const { root, codexHome } = makeProject();
+    const home = makeCrankHome();
+    initExclude(root, codexHome, home);
+    fs.mkdirSync(path.dirname(path.join(root, c.file)), { recursive: true });
+    fs.writeFileSync(path.join(root, c.file), c.text);
+    const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
+    expect(un.status).toBe(1);
+    expect(un.stderr).toBe(
+      `crank-mem: could not remove crank-mem's entries from ${c.file} (not valid JSON)\n`,
+    );
+    expect(fs.readFileSync(path.join(root, c.file), "utf-8")).toBe(c.text);
+    expect(un.stdout.endsWith("crank-mem: uninstalled.\n")).toBe(true);
+    expect(fs.readFileSync(path.join(root, ".git/info/exclude"), "utf-8")).not.toContain(
+      "# crank-mem",
+    );
+    expect(fs.existsSync(path.join(root, c.gone))).toBe(false);
+  }, 20_000);
+}
+
+test("uninstall leaves an unparseable file without crank strings alone", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  initExclude(root, codexHome, home);
+  const file = path.join(root, ".claude/settings.json");
+  fs.writeFileSync(file, "{ broken");
+  const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
+  expect(un.status).toBe(0);
+  expect(un.stderr).toBe("");
+  expect(fs.readFileSync(file, "utf-8")).toBe("{ broken");
+}, 20_000);
+
+const GITIGNORE_EACCES = "crank-mem: could not remove crank-mem's entries from .gitignore (EACCES";
+
+test("uninstall reports an unwritable .gitignore once and carries on", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  const init = cli(
+    root,
+    codexHome,
+    home,
+    "init",
+    "--yes",
+    "--git",
+    "ignore",
+    ...CODEX_FLAGS.review,
+  );
+  expect(init.status).toBe(0);
+  const gitignore = path.join(root, ".gitignore");
+  let un: CliRun;
+  try {
+    fs.chmodSync(gitignore, 0o000);
+    un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
+  } finally {
+    fs.chmodSync(gitignore, 0o644);
+  }
+  expect(un.status).toBe(1);
+  const lines = un.stderr.split("\n").filter((l) => l !== "");
+  expect(lines.length).toBe(1);
+  expect(lines[0]!.startsWith(GITIGNORE_EACCES)).toBe(true);
+  expect(un.stdout.endsWith("crank-mem: uninstalled.\n")).toBe(true);
+  expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
+  expect(fs.existsSync(path.join(root, ".codex/hooks.json"))).toBe(false);
+}, 20_000);
+
+test("a legacy-only uninstall reports an unreadable .gitignore and still sweeps crank/", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  fs.mkdirSync(path.join(root, "crank"));
+  fs.writeFileSync(path.join(root, "crank/config.json"), "{}\n");
+  const gitignore = path.join(root, ".gitignore");
+  fs.writeFileSync(gitignore, "node_modules\n# crank-mem\ncrank/\n");
+  let un: CliRun;
+  try {
+    fs.chmodSync(gitignore, 0o000);
+    un = cli(root, codexHome, home, "uninstall", "--yes");
+  } finally {
+    fs.chmodSync(gitignore, 0o644);
+  }
+  expect(un.status).toBe(1);
+  const lines = un.stderr.split("\n").filter((l) => l !== "");
+  expect(lines.length).toBe(1);
+  expect(lines[0]!.startsWith(GITIGNORE_EACCES)).toBe(true);
+  expect(un.stdout.endsWith("crank-mem: removed legacy crank/ install.\n")).toBe(true);
+  expect(fs.existsSync(path.join(root, "crank"))).toBe(false);
+});
