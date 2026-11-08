@@ -3,7 +3,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { makeCrankHome, runCli, runHook, setMtime, type CliRun } from "./helpers.ts";
+import {
+  makeCrankHome,
+  makeProject,
+  runCli,
+  runHook,
+  setMtime,
+  snapshot,
+  type CliRun,
+} from "./helpers.ts";
 import { claudeSessionStart, claudeStop, codexApplyPatch } from "./fixtures/payloads.ts";
 
 // Smoke: init into a temp project, check the wiring, uninstall, then expect a
@@ -23,42 +31,11 @@ function plantSnapshot(root: string): string {
   return file;
 }
 
-function makeProject(extra: Record<string, string> = {}): { root: string; codexHome: string } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-init-"));
-  const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "crank-codexhome-"));
-  fs.writeFileSync(path.join(codexHome, "config.toml"), 'model = "gpt-5.6"\n');
-  fs.writeFileSync(path.join(root, "app.ts"), "/** The app. */\nexport const app = 1;\n");
-  fs.writeFileSync(path.join(root, "README.md"), "# Test project\n");
-  for (const [rel, content] of Object.entries(extra)) {
-    const abs = path.join(root, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content);
-  }
-  spawnSync("git", ["init", "-q"], { cwd: root });
-  return { root, codexHome };
-}
-
 const STORE_FILES = ["memory.db", "memory.db-wal", "memory.db-shm"];
 
 /** True when git ignores `rel` in `root`. */
 function ignored(root: string, rel: string): boolean {
   return spawnSync("git", ["check-ignore", "-q", "--", rel], { cwd: root }).status === 0;
-}
-
-/** Recursive listing and contents of everything except .git and .crank. */
-function snapshot(root: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  const walk = (dir: string): void => {
-    for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, item.name);
-      const rel = path.relative(root, full);
-      if (rel === ".git" || rel === ".crank") continue;
-      if (item.isDirectory()) walk(full);
-      else out[rel] = fs.readFileSync(full, "utf-8");
-    }
-  };
-  walk(root);
-  return out;
 }
 
 /** The real path of the one dir under `<root>/.crank/backups/`; expects exactly one. */

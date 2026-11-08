@@ -133,14 +133,14 @@ export async function run(args: string[]): Promise<number> {
   try {
     // ── Vendor hooks + write config ────────────────────────────────────────
     vendorHooks(crankDir);
-    const config = {
+    const config: CrankConfig = {
       ...defaultConfig(),
       adr_path: adrPath,
       git: gitMode,
       runtime,
       vendored_version: cliVersion(),
       clone_root: REPO_ROOT,
-      codex_trust_written: codexTrust === "write" && codexMode === "merge",
+      codex: codexMode !== "merge" ? "skip" : codexTrust === "write" ? "trust" : "review",
     };
     saveConfig(crankDir, config);
 

@@ -67,7 +67,7 @@ export async function run(args: string[]): Promise<number> {
   // Trust entries first: keys come from hooks.json as it stands, before we
   // strip our groups out of it. Both spellings go — older releases keyed on
   // the raw PascalCase event and left those entries orphaned.
-  if (config.codex_trust_written) {
+  if (config.codex === "trust") {
     removeTrustEntries(userCodexConfigPath(), crankTrust(codexHooksJson).keys);
     console.log(`  removed trusted_hash entries from ${userCodexConfigPath()}`);
   }

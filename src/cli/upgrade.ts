@@ -87,7 +87,7 @@ export async function run(_args: string[]): Promise<number> {
       );
       if (codexRewired) {
         console.log(`  re-wired Codex hooks in .codex/hooks.json`);
-        if (!config.codex_trust_written) for (const line of CODEX_REVIEW_HINT) console.log(line);
+        if (config.codex !== "trust") for (const line of CODEX_REVIEW_HINT) console.log(line);
       }
     }
   } catch (err) {
@@ -188,7 +188,7 @@ export async function run(_args: string[]): Promise<number> {
   migrateStore(memoryPath(root));
 
   const versionChanged = config.vendored_version !== current;
-  if (config.codex_trust_written && (versionChanged || codexRewired)) {
+  if (config.codex === "trust" && (versionChanged || codexRewired)) {
     const t = crankTrust(codexHooksJson);
     writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys, backup);
     console.log(`  recomputed Codex trusted_hash entries`);

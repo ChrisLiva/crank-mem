@@ -28,6 +28,9 @@ export const DEFAULT_EXCLUDES = [
   "*.min.css",
 ];
 
+/** What init did with Codex: left it alone, wired hooks for the user to review, or also wrote trust entries. */
+export type CodexChoice = "skip" | "review" | "trust";
+
 export interface CrankConfig {
   version: number;
   excludes: string[];
@@ -51,7 +54,8 @@ export interface CrankConfig {
    * on installs predating the field; `upgrade` stamps it.
    */
   clone_root: string;
-  codex_trust_written: boolean;
+  /** The Codex choice init recorded; null on an install that recorded none. */
+  codex: CodexChoice | null;
   /** Write a per-run JSONL trace to .crank/debug.log (off by default). */
   debug: boolean;
   /**
@@ -74,7 +78,7 @@ export function defaultConfig(): CrankConfig {
     runtime: "bun",
     vendored_version: "0.0.0",
     clone_root: "",
-    codex_trust_written: false,
+    codex: null,
     debug: false,
     digest: false,
   };
@@ -85,10 +89,11 @@ export function defaultConfig(): CrankConfig {
  * additions survive a round-trip; these are dropped instead, so a stale knob
  * that no longer governs anything doesn't linger in every installed config.
  */
-const LEGACY_KEYS = new Set(["injection_budget_tokens"]);
+const LEGACY_KEYS = new Set(["injection_budget_tokens", "codex_trust_written"]);
 
 const GIT_MODES: readonly CrankConfig["git"][] = ["commit", "ignore", "exclude"];
 const RUNTIMES: readonly CrankConfig["runtime"][] = ["bun", "node"];
+const CODEX_CHOICES: readonly CodexChoice[] = ["skip", "review", "trust"];
 
 /**
  * Load config, accepting each known field only when it matches the expected
@@ -108,7 +113,7 @@ export function loadConfig(crankDir: string): CrankConfig {
   }
   for (const key of Object.keys(config) as (keyof CrankConfig)[]) {
     const value = raw[key];
-    if (value === undefined || key === "digest") continue;
+    if (value === undefined || key === "digest" || key === "codex") continue;
     if (key === "excludes") {
       if (Array.isArray(value) && value.every((v) => typeof v === "string"))
         config.excludes = value;
@@ -124,6 +129,12 @@ export function loadConfig(crankDir: string): CrankConfig {
       (config as unknown as Record<string, unknown>)[key] = value;
     }
   }
+  // Installs before `codex` recorded only whether init wrote trust entries.
+  config.codex = CODEX_CHOICES.includes(raw.codex as CodexChoice)
+    ? (raw.codex as CodexChoice)
+    : raw.codex_trust_written === true
+      ? "trust"
+      : null;
   for (const key of Object.keys(raw)) {
     if (key in config || LEGACY_KEYS.has(key)) continue;
     (config as unknown as Record<string, unknown>)[key] = raw[key];
@@ -143,7 +154,9 @@ function loadDigest(crankDir: string): boolean {
 }
 
 export function saveConfig(crankDir: string, config: CrankConfig): void {
-  const { digest, ...shared } = config;
+  const { digest, ...rest } = config;
+  const shared: Record<string, unknown> = { ...rest };
+  if (shared.codex === null) delete shared.codex;
   fs.writeFileSync(path.join(crankDir, CONFIG_FILE), JSON.stringify(shared, null, 2) + "\n");
   const local = path.join(crankDir, LOCAL_CONFIG_FILE);
   if (digest) fs.writeFileSync(local, JSON.stringify({ digest: true }, null, 2) + "\n");
