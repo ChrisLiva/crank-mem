@@ -107,25 +107,16 @@ export async function run(args: string[]): Promise<number> {
       console.log(`  removed crank hooks from ${path.relative(root, f)}`);
     if (removeAllowRule(f))
       console.log(`  removed the crank-mem allow rules from ${path.relative(root, f)}`);
-    // Delete a now-empty object only when the manifest proves we created the
-    // file — a user's own literal {} must survive.
-    if (!createdByCrank(crankDir, f)) continue;
-    try {
-      if (fs.existsSync(f) && JSON.stringify(JSON.parse(fs.readFileSync(f, "utf-8"))) === "{}") {
-        fs.unlinkSync(f);
-        console.log(`  deleted now-empty ${path.relative(root, f)}`);
-      }
-    } catch {}
+    deleteNowEmpty(root, crankDir, f, (text) => JSON.stringify(JSON.parse(text)) === "{}");
   }
 
   const gitignore = path.join(root, ".gitignore");
   removeIgnoreLines(gitignore);
-  try {
-    if (fs.existsSync(gitignore) && fs.readFileSync(gitignore, "utf-8").trim() === "")
-      fs.unlinkSync(gitignore);
-  } catch {}
+  deleteNowEmpty(root, crankDir, gitignore, (text) => text.trim() === "");
   removeIgnoreLines(path.join(root, ".git", "info", "exclude"));
-  removeCodexFeatures(path.join(root, ".codex", "config.toml"));
+  const codexConfigToml = path.join(root, ".codex", "config.toml");
+  removeCodexFeatures(codexConfigToml);
+  deleteNowEmpty(root, crankDir, codexConfigToml, (text) => text.trim() === "");
 
   // A migrated project that was re-init'd on top of an old checkout still
   // carries the pre-rename crank/ dir and its duplicate hook wiring — sweep it.
@@ -154,6 +145,26 @@ export async function run(args: string[]): Promise<number> {
   unregisterProject(root);
   console.log("crank-mem: uninstalled.");
   return status;
+}
+
+/**
+ * Delete `file` and print `  deleted now-empty <rel>` when it exists, crank-mem
+ * created it, and `isEmpty` holds for its text. A user's own blank or `{}` file
+ * survives. Never throws.
+ */
+function deleteNowEmpty(
+  root: string,
+  crankDir: string,
+  file: string,
+  isEmpty: (text: string) => boolean,
+): void {
+  try {
+    if (!fs.existsSync(file) || !createdByCrank(crankDir, file)) return;
+    if (isEmpty(fs.readFileSync(file, "utf-8"))) {
+      fs.unlinkSync(file);
+      console.log(`  deleted now-empty ${path.relative(root, file)}`);
+    }
+  } catch {}
 }
 
 /**
