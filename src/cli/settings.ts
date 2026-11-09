@@ -416,12 +416,13 @@ export function unignoreCerebrum(root: string, beforeStrip: (file: string) => vo
 export const CODEX_FEATURES_SNIPPET = "\n# crank-mem\n[features]\nhooks = true\n";
 
 /** Ensure [features] hooks = true in a codex config.toml, non-destructively, calling `beforeWrite` before it writes. */
-export function ensureCodexFeatures(file: string, beforeWrite?: (file: string) => void): void {
+export function ensureCodexFeatures(file: string, beforeWrite?: (file: string) => void): boolean {
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
-  if (/^\s*hooks\s*=\s*true\s*$/m.test(existing)) return;
+  if (/^\s*hooks\s*=\s*true\s*$/m.test(existing)) return false;
   beforeWrite?.(file);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, existing + CODEX_FEATURES_SNIPPET);
+  return true;
 }
 
 /** Remove exactly the snippet ensureCodexFeatures appended (if present). */

@@ -423,6 +423,27 @@ const repairCases: {
       expect(run.stdout.split("\n").filter((l) => l.startsWith("  "))).toEqual([]);
     },
   },
+  {
+    name: "Codex hooks",
+    damage: (root) => fs.rmSync(path.join(root, ".codex/hooks.json")),
+    files: (root) => [path.join(root, ".codex/hooks.json")],
+    line: "  re-wired Codex hooks in .codex/hooks.json",
+    extra: (_root, _codexHome, _home, run) =>
+      expect(run.stdout).not.toContain("Codex trust: open codex once"),
+  },
+  {
+    name: "Codex [features]",
+    damage: (root) => fs.rmSync(path.join(root, ".codex/config.toml")),
+    files: (root) => [path.join(root, ".codex/config.toml")],
+    line: "  added the crank-mem [features] snippet to .codex/config.toml",
+  },
+  {
+    name: "Codex trust",
+    damage: (_root, codexHome) =>
+      fs.writeFileSync(path.join(codexHome, "config.toml"), 'model = "gpt-5.6"\n'),
+    files: (_root, codexHome) => [path.join(codexHome, "config.toml")],
+    line: "  recomputed Codex trusted_hash entries",
+  },
 ];
 
 for (const c of repairCases) {
@@ -465,10 +486,14 @@ for (const { choice, set } of legacyStampCases) {
     expect(cli(root, codexHome, home, "init", "--yes", ...CODEX_FLAGS[choice]).status).toBe(0);
     const { codex: _codex, ...rest } = readConfig(root);
     writeConfig(root, { ...rest, ...set });
-    expect(cli(root, codexHome, home, "upgrade").status).toBe(0);
+    if (choice === "trust")
+      fs.writeFileSync(path.join(codexHome, "config.toml"), 'model = "gpt-5.6"\n');
+    const up = cli(root, codexHome, home, "upgrade");
+    expect(up.status).toBe(0);
     const parsed = readConfig(root);
     expect(parsed.codex).toBe(choice);
     expect("codex_trust_written" in parsed).toBe(false);
+    if (choice === "trust") expect(up.stdout).toContain("  recomputed Codex trusted_hash entries");
   }, 20_000);
 }
 
@@ -493,6 +518,9 @@ test("a corrupt Claude settings file costs only the Claude item", () => {
   const settings = path.join(root, ".claude/settings.local.json");
   fs.writeFileSync(settings, "{ broken");
   fs.rmSync(path.join(root, ".crank/.gitignore"));
+  const codexHooks = path.join(root, ".codex/hooks.json");
+  const codexHooksBefore = fs.readFileSync(codexHooks);
+  fs.rmSync(codexHooks);
   const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
   const db = new DatabaseSync(path.join(root, ".crank/memory.db"));
   db.exec("PRAGMA journal_mode=WAL");
@@ -505,6 +533,84 @@ test("a corrupt Claude settings file costs only the Claude item", () => {
   expect(fs.readFileSync(settings, "utf-8")).toBe("{ broken");
   expect(up.stdout).toContain("  wrote the allowlist .crank/.gitignore\n");
   expect(up.stdout).toContain("  migrated memory.db v1 → v2\n");
+  expect(fs.readFileSync(codexHooks).equals(codexHooksBefore)).toBe(true);
+  expect(up.stdout).toContain(
+    "  Codex trust: open codex once in this project and accept the hooks review\n  (or headless: codex --dangerously-bypass-hook-trust)\n",
+  );
+}, 20_000);
+
+test("a corrupt hooks.json costs only the Codex item", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  initExcludeNoTrust(root, codexHome, home);
+  const codexHooks = path.join(root, ".codex/hooks.json");
+  fs.writeFileSync(codexHooks, "{ broken");
+  fs.rmSync(path.join(root, ".crank/.gitignore"));
+  const up = cli(root, codexHome, home, "upgrade");
+  expect(up.status).toBe(1);
+  expect(up.stderr).toContain("crank-mem: could not re-wire Codex hooks (");
+  expect(fs.readFileSync(codexHooks, "utf-8")).toBe("{ broken");
+  expect(up.stdout).toContain("  wrote the allowlist .crank/.gitignore\n");
+}, 20_000);
+
+test("upgrade on a skip install creates nothing under .codex/", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  const init = cli(root, codexHome, home, "init", "--yes", "--git", "exclude", ...CODEX_FLAGS.skip);
+  expect(init.status).toBe(0);
+  const up = cli(root, codexHome, home, "upgrade");
+  expect(up.status).toBe(0);
+  expect(fs.existsSync(path.join(root, ".codex"))).toBe(false);
+}, 20_000);
+
+test("upgrade leaves current trust entries alone and sweeps an orphan", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  const init = cli(
+    root,
+    codexHome,
+    home,
+    "init",
+    "--yes",
+    "--git",
+    "exclude",
+    ...CODEX_FLAGS.trust,
+  );
+  expect(init.status).toBe(0);
+  const toml = path.join(codexHome, "config.toml");
+  const bytes = fs.readFileSync(toml);
+  const mtimeMs = fs.statSync(toml).mtimeMs;
+  const up = cli(root, codexHome, home, "upgrade");
+  expect(up.status).toBe(0);
+  expect(fs.readFileSync(toml).equals(bytes)).toBe(true);
+  expect(fs.statSync(toml).mtimeMs).toBe(mtimeMs);
+  expect(up.stdout).not.toContain("recomputed");
+  fs.appendFileSync(
+    toml,
+    `[hooks.state."${fs.realpathSync(root)}/.codex/hooks.json:SessionStart:0:0"]\ntrusted_hash = "sha256:00"\n`,
+  );
+  const again = cli(root, codexHome, home, "upgrade");
+  expect(again.status).toBe(0);
+  expect(again.stdout).toContain("  recomputed Codex trusted_hash entries");
+  expect(fs.readFileSync(toml, "utf-8")).not.toContain(':SessionStart:0:0"]');
+}, 20_000);
+
+test("upgrade after uninstall --keep-crank reinstalls every item", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  initExcludeNoTrust(root, codexHome, home);
+  const files = [
+    ".claude/settings.local.json",
+    ".codex/hooks.json",
+    ".codex/config.toml",
+    ".git/info/exclude",
+  ].map((rel) => path.join(root, rel));
+  const recorded = files.map((f) => fs.readFileSync(f));
+  expect(cli(root, codexHome, home, "uninstall", "--yes", "--keep-crank").status).toBe(0);
+  const up = cli(root, codexHome, home, "upgrade");
+  expect(up.status).toBe(0);
+  files.forEach((f, i) => expect(fs.readFileSync(f).equals(recorded[i]!)).toBe(true));
+  expect(registeredRoots(home)).toContain(fs.realpathSync(root));
 }, 20_000);
 
 test("a failed cerebrum seed fails the upgrade after every step", () => {

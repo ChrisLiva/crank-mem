@@ -6,6 +6,7 @@ import {
   addIgnoreLines,
   claudeSettingsFiles,
   crankHooks,
+  ensureCodexFeatures,
   ensureCrankGitignore,
   hasCrankHooks,
   isCrankHookCommand,
@@ -17,7 +18,14 @@ import {
   removeIgnoreLines,
   unignoreCerebrum,
 } from "./settings.ts";
-import { crankTrust, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
+import {
+  CODEX_REVIEW_HINT,
+  codexTrustStatus,
+  crankTrust,
+  removeTrustEntries,
+  userCodexConfigPath,
+  writeTrustEntries,
+} from "./codex-trust.ts";
 import { registerProject, unregisterProject } from "./registry.ts";
 import { backupFile, createdByCrank } from "./backups.ts";
 import { templatePath } from "./vendor.ts";
@@ -143,7 +151,35 @@ const claudeWiring: InstallItem = {
 };
 
 const codexWiring: InstallItem = {
-  repair: () => report(),
+  // A skip install leaves .codex/ alone. Trust is rewritten only when an entry
+  // is missing or stale or an older release's PascalCase orphan is present, so
+  // an install already trusted keeps its config.toml untouched.
+  repair(ctx) {
+    const { root, config } = ctx;
+    const r = report();
+    if (config.codex === "skip") return r;
+    const backup = backupWith(ctx);
+    const { codexHooks, codexConfig } = installPaths(root);
+    attemptRepair(r, "re-wire Codex hooks", () => {
+      if (mergeHooksIntoFile(codexHooks, crankHooks(config.runtime, "codex"), backup)) {
+        r.lines.push(`  re-wired Codex hooks in ${path.relative(root, codexHooks)}`);
+        if (config.codex === "review") r.lines.push(...CODEX_REVIEW_HINT);
+      }
+      if (ensureCodexFeatures(codexConfig, backup))
+        r.lines.push(
+          `  added the crank-mem [features] snippet to ${path.relative(root, codexConfig)}`,
+        );
+      if (config.codex === "trust") {
+        const s = codexTrustStatus(userCodexConfigPath(), root, codexHooks);
+        if (s.missing + s.stale + s.orphans > 0) {
+          const t = crankTrust(codexHooks);
+          writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys, backup);
+          r.lines.push("  recomputed Codex trusted_hash entries");
+        }
+      }
+    });
+    return r;
+  },
   remove({ root, crankDir, config }) {
     const { codexHooks, codexConfig } = installPaths(root);
     const r = report();

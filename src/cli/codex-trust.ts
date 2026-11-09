@@ -242,6 +242,8 @@ export interface TrustStatus {
   /** trusted_hash present but different: codex re-asks for review and skips the hook until then. */
   stale: number;
   missing: number;
+  /** Stale PascalCase keys from older releases that still have a table in config.toml. */
+  orphans: number;
 }
 
 /** Compare the crank handlers in a hooks.json with the trust config.toml holds for them. */
@@ -259,12 +261,16 @@ export function codexTrustStatus(
     current: 0,
     stale: 0,
     missing: 0,
+    orphans: 0,
   };
-  for (const e of crankTrust(hooksJsonPath).entries) {
+  const trust = crankTrust(hooksJsonPath);
+  for (const e of trust.entries) {
     const hash = tables.get(`hooks.state.${JSON.stringify(e.key)}`)?.get("trusted_hash");
     if (hash === undefined) status.missing++;
     else if (hash === e.hash) status.current++;
     else status.stale++;
   }
+  for (const key of trust.staleKeys)
+    if (tables.has(`hooks.state.${JSON.stringify(key)}`)) status.orphans++;
   return status;
 }

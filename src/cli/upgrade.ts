@@ -4,15 +4,8 @@ import { cliVersion, REPO_ROOT } from "./version.ts";
 import { buildDashboard, dashboardCurrent, dashboardDir, installPackages } from "./setup.ts";
 import { vendorHooks } from "./vendor.ts";
 import { openProject } from "./project.ts";
-import { newBackupDir, backupFile } from "./backups.ts";
-import {
-  crankTrust,
-  writeTrustEntries,
-  userCodexConfigPath,
-  CODEX_REVIEW_HINT,
-} from "./codex-trust.ts";
-import { crankHooks, mergeHooksIntoFile, hasCrankHooks } from "./settings.ts";
-import { installPaths, printReport, repairInstall, resolveCodex } from "./install.ts";
+import { newBackupDir } from "./backups.ts";
+import { printReport, repairInstall, resolveCodex } from "./install.ts";
 import { CONFIG_FILE, saveConfig } from "../hooks/lib/config.ts";
 import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
 
@@ -24,7 +17,8 @@ import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
 // Of config.json it updates only vendored_version, clone_root and a missing codex.
 // Of cerebrum it seeds a missing one from the template and replaces only an
 // unedited 0.8.1 template preamble, after backing the file up; it never touches
-// the index. Recomputes Codex trusted hashes iff the config records trust.
+// the index. Recomputes Codex trusted hashes only when the config records trust
+// and an entry is missing, stale or a PascalCase orphan.
 // Exits 1 when any repair failed, after every step has run.
 
 export async function run(_args: string[]): Promise<number> {
@@ -53,33 +47,9 @@ export async function run(_args: string[]): Promise<number> {
   // Created on first use, so an upgrade that changes nothing leaves no backup.
   let backupDir: string | null = null;
   const ensureBackupDir = () => (backupDir ??= newBackupDir(crankDir));
-  const backup = (file: string) => backupFile(ensureBackupDir(), file);
 
   const repaired = repairInstall({ root, crankDir, config: stamped, backupDir: ensureBackupDir });
   printReport(repaired);
-  let failed = repaired.failed;
-
-  // Codex wiring was opt-in at init: leave a hooks.json without crank entries alone.
-  const codexHooksJson = installPaths(root).codexHooks;
-  let codexRewired = false;
-  try {
-    if (hasCrankHooks(codexHooksJson)) {
-      codexRewired = mergeHooksIntoFile(
-        codexHooksJson,
-        crankHooks(stamped.runtime, "codex"),
-        backup,
-      );
-      if (codexRewired) {
-        console.log(`  re-wired Codex hooks in .codex/hooks.json`);
-        if (stamped.codex !== "trust") for (const line of CODEX_REVIEW_HINT) console.log(line);
-      }
-    }
-  } catch (err) {
-    console.error(
-      `crank-mem: could not re-wire Codex hooks (${err instanceof Error ? err.message : String(err)})`,
-    );
-    failed = true;
-  }
 
   // A pull can change package.json at the same version; an install failure
   // costs search by meaning, not the upgrade.
@@ -99,13 +69,8 @@ export async function run(_args: string[]): Promise<number> {
 
   migrateStore(memoryPath(root));
 
-  const status = failed ? 1 : 0;
+  const status = repaired.failed ? 1 : 0;
   const versionChanged = stamped.vendored_version !== current;
-  if (stamped.codex === "trust" && (versionChanged || codexRewired)) {
-    const t = crankTrust(codexHooksJson);
-    writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys, backup);
-    console.log(`  recomputed Codex trusted_hash entries`);
-  }
 
   if (!versionChanged) {
     console.log(`crank-mem: already at ${current} — nothing else to do.`);

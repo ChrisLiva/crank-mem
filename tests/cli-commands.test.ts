@@ -448,7 +448,10 @@ describe("upgrade", () => {
   // Crank commands in the settings file the git mode does not use, plus wiring
   // in the one it does use, run every hook twice.
   test("re-wires an install at the current version and drops duplicate wiring", () => {
-    const root = initedProject(); // exclude mode: wired into settings.local.json
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-cli-"));
+    fs.writeFileSync(path.join(root, "a.ts"), "/** Alpha. */\nexport const a = 1;\n");
+    // exclude mode: wired into settings.local.json
+    expect(cli(root, "init", "--yes", "--codex", "merge", "--codex-trust", "skip").status).toBe(0);
     const local = path.join(root, ".claude/settings.local.json");
     const shared = path.join(root, ".claude/settings.json");
     const bare = (agent: "claude" | "codex") => {
@@ -459,7 +462,7 @@ describe("upgrade", () => {
     };
     fs.writeFileSync(local, JSON.stringify(bare("claude")));
     fs.writeFileSync(shared, JSON.stringify(bare("claude")));
-    fs.mkdirSync(path.join(root, ".codex"));
+    fs.mkdirSync(path.join(root, ".codex"), { recursive: true });
     fs.writeFileSync(path.join(root, ".codex/hooks.json"), JSON.stringify(bare("codex")));
 
     const run = cli(root, "upgrade");
