@@ -171,7 +171,9 @@ describe("setup", () => {
     });
     expect(run.status).toBe(1);
     expect(run.stderr).toBe("crank-mem: could not build the dashboard (bun failed on purpose)\n");
-    expect(run.stdout).not.toContain("model");
+    expect(run.stdout).toBe(
+      "crank-mem: installed packages with bun\ncrank-mem: installed dashboard packages with bun\n",
+    );
     expect(dash.stamp()).toBeNull();
   });
 
@@ -275,6 +277,27 @@ describe("upgrade installs packages", () => {
     });
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("crank-mem: could not build the dashboard (bun failed on purpose)\n");
+    expect(fs.existsSync(path.join(dash, "dist/.crank-version"))).toBe(false);
+    expect(run.stdout).toContain("already at");
+  });
+
+  test("a dashboard install failure warns, skips the build, writes no stamp and still exits 0", () => {
+    const root = initedProject();
+    const dash = dashboardFixture(null);
+    const dashReal = fs.realpathSync(dash);
+    const bun = fakeTool("bun", 0, { argv: "install --frozen-lockfile", cwd: dashReal });
+    const run = runCli(root, ["upgrade"], {
+      CRANK_DASHBOARD_DIR: dash,
+      PATH: `${bun.dir}:${process.env.PATH}`,
+    });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe(
+      "crank-mem: could not install dashboard packages (bun failed on purpose)\n",
+    );
+    expect(bun.calls()).toEqual([
+      { argv: "install --frozen-lockfile", cwd: ROOT_REAL },
+      { argv: "install --frozen-lockfile", cwd: dashReal },
+    ]);
     expect(fs.existsSync(path.join(dash, "dist/.crank-version"))).toBe(false);
     expect(run.stdout).toContain("already at");
   });

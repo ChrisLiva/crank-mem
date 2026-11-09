@@ -61,7 +61,7 @@ export function installPackages(dir: string): InstallResult {
 }
 
 /** Builds the dashboard into `dist/` and stamps it with this clone's version. */
-export function buildDashboard(): InstallResult {
+function buildDashboard(): InstallResult {
   const built = runTool(dashboardDir(), ["run", "build"], ["run", "build"]);
   if (!built.ok) return built;
   try {
@@ -72,6 +72,25 @@ export function buildDashboard(): InstallResult {
     return { ok: false, detail: err instanceof Error ? err.message : String(err) };
   }
   return built;
+}
+
+/**
+ * Installs the dashboard's packages, then builds and stamps it. `error` is the
+ * stderr line for the first failing step; the caller prints every line.
+ */
+export function setUpDashboard(): { installedWith: "bun" | "npm" | null; error: string | null } {
+  const installed = installPackages(dashboardDir());
+  if (!installed.ok) {
+    return {
+      installedWith: null,
+      error: `crank-mem: could not install dashboard packages (${installed.detail})`,
+    };
+  }
+  const built = buildDashboard();
+  return {
+    installedWith: installed.tool,
+    error: built.ok ? null : `crank-mem: could not build the dashboard (${built.detail})`,
+  };
 }
 
 export async function run(args: string[]): Promise<number> {
@@ -86,16 +105,12 @@ export async function run(args: string[]): Promise<number> {
   }
   console.log(`crank-mem: installed packages with ${installed.tool}`);
 
-  const dashInstalled = installPackages(dashboardDir());
-  if (!dashInstalled.ok) {
-    console.error(`crank-mem: could not install dashboard packages (${dashInstalled.detail})`);
-    return 1;
+  const dashboard = setUpDashboard();
+  if (dashboard.installedWith) {
+    console.log(`crank-mem: installed dashboard packages with ${dashboard.installedWith}`);
   }
-  console.log(`crank-mem: installed dashboard packages with ${dashInstalled.tool}`);
-
-  const built = buildDashboard();
-  if (!built.ok) {
-    console.error(`crank-mem: could not build the dashboard (${built.detail})`);
+  if (dashboard.error) {
+    console.error(dashboard.error);
     return 1;
   }
   console.log("crank-mem: built the dashboard");
