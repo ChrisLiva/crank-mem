@@ -7,6 +7,7 @@ import {
   type ProposalKind,
 } from "../hooks/lib/memory.ts";
 import { isObj } from "../hooks/lib/config.ts";
+import type { ModelRequest } from "./gateway.ts";
 
 export type Digest = {
   observations: {
@@ -160,12 +161,7 @@ export function digestRequest(
   delta: string,
   previous: DigestSummary | null,
   context: DigestContext,
-): {
-  system: string;
-  input: string;
-  schema: object;
-  validate: (value: unknown) => value is Digest;
-} {
+): ModelRequest<Digest> {
   const prior =
     previous === null
       ? ""

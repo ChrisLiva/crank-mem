@@ -13,7 +13,7 @@ import { loadIndex } from "../hooks/lib/store.ts";
 import { writeStopState, writeTextAtomic } from "../hooks/lib/user-state.ts";
 import { applyEdits, numberBullets, type CerebrumEdit } from "./cerebrum-edit.ts";
 import { oneLine } from "./digest-prompt.ts";
-import { askClaude } from "./gateway.ts";
+import { askClaude, type ModelRequest } from "./gateway.ts";
 import { redact } from "./redact.ts";
 
 // After a digest: a model with read-only tools over the project checks the
@@ -146,12 +146,7 @@ export function consolidationRequest(
   md: string,
   work: Pick<PendingWork, "proposals" | "stale">,
   due = new Set<number>(),
-): {
-  system: string;
-  input: string;
-  schema: object;
-  validate: (value: unknown) => value is Consolidation;
-} {
+): ModelRequest<Consolidation> {
   const { headings, bullets } = numberBullets(md);
   const cerebrum: string[] = [];
   let next = 0;

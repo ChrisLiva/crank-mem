@@ -7,6 +7,13 @@ import { crankHome } from "../hooks/lib/user-state.ts";
 // The one door to the model: `claude -p` on the user's own Claude login,
 // with a fixed call shape and an allowlisted environment (ADR 0008).
 
+export type ModelRequest<T> = {
+  system: string;
+  input: string;
+  schema: object;
+  validate: (value: unknown) => value is T;
+};
+
 export type ModelResult<T> =
   | { kind: "ok"; output: T; model: string; costUsd: number }
   | { kind: "stopped"; reason: "credential" | "login"; detail: string }
@@ -149,7 +156,7 @@ function callArgs(system: string, schema: object, project: string | null): strin
  * does not reach a directory passed by `--add-dir` (ADR 0011).
  */
 export async function askClaude<T>(
-  req: { system: string; input: string; schema: object; validate: (value: unknown) => value is T },
+  req: ModelRequest<T>,
   opts: { timeoutMs?: number; project?: string } = {},
 ): Promise<ModelResult<T>> {
   const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_MS;
