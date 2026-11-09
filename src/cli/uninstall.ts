@@ -23,7 +23,8 @@ import {
   JOURNAL_FILE,
 } from "../hooks/lib/cerebrum-files.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
-import { MEMORY_FILE, SNAPSHOT_DIR } from "../hooks/lib/memory.ts";
+import { MEMORY_FILE } from "../hooks/lib/memory.ts";
+import { SNAPSHOT_DIR } from "../hooks/lib/store-upkeep.ts";
 import { USAGE_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
 import { openProject } from "./project.ts";
 import { restoreInstall } from "./backups.ts";

@@ -22,7 +22,8 @@ import {
 } from "./codex-trust.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
 import { daemonAlive, readParked, readSpool } from "../hooks/lib/spool.ts";
-import { latestSnapshot, memoryPath, openMemory } from "../hooks/lib/memory.ts";
+import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
+import { latestSnapshot } from "../hooks/lib/store-upkeep.ts";
 import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
 
 function age(iso: string | null): string {

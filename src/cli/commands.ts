@@ -107,7 +107,7 @@ export const COMMANDS = {
   },
   job: {
     usage: "Usage: crank-mem job <stem> (internal: the daemon runs it)",
-    value: ["run-timeout-ms", "consolidate-every-ms", "maintain-every-ms", "stale-keep-ms"],
+    value: ["run-timeout-ms", "consolidate-every-ms"],
     bool: [],
   },
 } satisfies Record<string, CommandSpec>;

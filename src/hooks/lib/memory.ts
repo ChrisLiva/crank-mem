@@ -3,9 +3,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { ISO_DATE } from "./bullets.ts";
-import { fileStamp } from "./cerebrum-files.ts";
 import { CRANK_DIR } from "./config.ts";
 import { runGit } from "./scanner.ts";
+import { dailyUpkeep, saveCurrentStore, snapshotBeforeMigration } from "./store-upkeep.ts";
 
 // The memory store: <project>/.crank/memory.db, one SQLite file per project
 // holding digests and their observations. node:sqlite loads through
@@ -14,8 +14,6 @@ import { runGit } from "./scanner.ts";
 
 const SCHEMA_VERSION = 2;
 export const MEMORY_FILE = "memory.db";
-/** Snapshots of the store, relative to the folder that holds it. */
-export const SNAPSHOT_DIR = path.join("backups", "memory");
 export const MEMORY_OLDER_NOTE =
   "crank-mem: memory.db predates this version; run `crank-mem upgrade`.";
 export const MEMORY_NEWER_NOTE =
@@ -193,14 +191,10 @@ export interface Memory {
   consolidationRows(q: { beforeId: number | null; limit: number }): ConsolidationRow[];
   recordConsolidation(run: ConsolidationRecord): void;
   /**
-   * When the newest snapshot is older than `everyMs` (or there is none): snapshots the store, deletes rows
-   * flagged stale more than `staleKeepMs` ago, and trims the snapshot folder. Null when not due; throws,
-   * before any delete, when the snapshot fails.
+   * The daily pass (store-upkeep's `dailyUpkeep`) at `nowMs`, default `Date.now()`. Null when not due;
+   * throws, before any delete, when the snapshot fails.
    */
-  maintain(opts: {
-    everyMs: number;
-    staleKeepMs: number;
-  }): { snapshot: string; deleted: number } | null;
+  maintain(nowMs?: number): { snapshot: string; deleted: number } | null;
   close(): void;
 }
 
@@ -309,7 +303,7 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
       } else {
         // VACUUM INTO cannot run inside migrate's transaction, so the snapshot comes first.
         try {
-          writeSnapshot(db, snapshotDir(file), `${fileStamp()}-v${v}.db`);
+          snapshotBeforeMigration(db, file, v);
         } catch (err) {
           db.close();
           return { status: "unmigrated", detail: errorMessage(err) };
@@ -364,58 +358,9 @@ function userVersion(db: sqlite.DatabaseSync): number {
   return Number((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);
 }
 
-let snapshotCount = 0;
-
-/** Daily snapshots the maintenance pass writes and trims; the pre-migration `-v<n>.db` copies never match. */
-const DAILY_SNAPSHOT = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
-const DAILY_KEEP = 7;
-
-/** The folder that holds the snapshots of `storeFile`. */
-export function snapshotDir(storeFile: string): string {
-  return path.join(path.dirname(storeFile), SNAPSHOT_DIR);
-}
-
-/** The snapshot of `storeFile` whose `.db` name sorts last, with its mtime; null when the folder is missing, unreadable or empty. */
-export function latestSnapshot(storeFile: string): { file: string; atMs: number } | null {
-  const dir = snapshotDir(storeFile);
-  try {
-    const name = fs
-      .readdirSync(dir)
-      .filter((n) => n.endsWith(".db"))
-      .sort()
-      .at(-1);
-    if (name === undefined) return null;
-    const file = path.join(dir, name);
-    return { file, atMs: fs.statSync(file).mtimeMs };
-  } catch {
-    return null;
-  }
-}
-
-/** Writes a copy of the store to `<dir>/<name>` through a unique .tmp file; throws on failure, leaving no .tmp behind. */
-function writeSnapshot(db: sqlite.DatabaseSync, dir: string, name: string): string {
-  fs.mkdirSync(dir, { recursive: true });
-  const final = path.join(dir, name);
-  const tmp = `${final}.${process.pid}.${snapshotCount++}.tmp`;
-  try {
-    db.prepare("VACUUM INTO ?").run(tmp);
-    fs.renameSync(tmp, final);
-    return final;
-  } catch (err) {
-    fs.rmSync(tmp, { force: true });
-    throw err;
-  }
-}
-
 /** A restore retries a locked store every RESTORE_RETRY_MS for RESTORE_WAIT_MS. */
 const RESTORE_WAIT_MS = 10_000;
 const RESTORE_RETRY_MS = 100;
-
-/** SQLITE_NOTADB (26) or SQLITE_CORRUPT (11), extended codes included: the store is damaged, not busy or unwritable. */
-function isDamaged(err: unknown): boolean {
-  const code = (err as { errcode?: unknown } | null)?.errcode;
-  return typeof code === "number" && [26, 11].includes(code & 0xff);
-}
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -452,31 +397,7 @@ export async function restoreMemory(
   try {
     const problem = snapshotProblem(src);
     if (problem !== null) return { status: "invalid", detail: problem };
-    let savedAs: string | null = null;
-    if (fs.existsSync(storeFile)) {
-      const dir = snapshotDir(storeFile);
-      const stamp = fileStamp();
-      // Read-write: under bun a read-only open of a closed WAL store with no -shm fails.
-      const current = new mod.DatabaseSync(storeFile);
-      let damaged = false;
-      try {
-        savedAs = writeSnapshot(current, dir, `${stamp}.db`);
-      } catch (err) {
-        if (!isDamaged(err)) throw err;
-        damaged = true;
-      } finally {
-        current.close();
-      }
-      if (damaged) {
-        savedAs = path.join(dir, `${stamp}.damaged`);
-        fs.mkdirSync(dir, { recursive: true });
-        fs.renameSync(storeFile, savedAs);
-        for (const suffix of ["-wal", "-shm"]) {
-          if (fs.existsSync(storeFile + suffix))
-            fs.renameSync(storeFile + suffix, savedAs + suffix);
-        }
-      }
-    }
+    const savedAs = saveCurrentStore(mod, storeFile);
     const firstMs = Date.now();
     for (;;) {
       try {
@@ -1049,35 +970,23 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
       });
     },
 
-    maintain({ everyMs, staleKeepMs }) {
-      const latest = latestSnapshot(file);
-      if (latest !== null && Date.now() - latest.atMs <= everyMs) return null;
-      const dir = snapshotDir(file);
-      const snapshot = writeSnapshot(db, dir, `${fileStamp()}.db`);
-      const deleted = transaction(db, () => {
-        const cutoff = Date.now() - staleKeepMs;
-        const expired = "SELECT id FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?";
-        db.prepare(`DELETE FROM observation_files WHERE observation_id IN (${expired})`).run(
-          cutoff,
-        );
-        db.prepare(`DELETE FROM observation_vectors WHERE observation_id IN (${expired})`).run(
-          cutoff,
-        );
-        return Number(
-          db
-            .prepare("DELETE FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?")
-            .run(cutoff).changes,
-        );
-      });
-      const names = fs.readdirSync(dir);
-      const daily = names.filter((n) => DAILY_SNAPSHOT.test(n)).sort();
-      for (const n of [
-        ...daily.slice(0, -DAILY_KEEP),
-        ...names.filter((n) => n.endsWith(".tmp")),
-      ]) {
-        fs.rmSync(path.join(dir, n), { force: true });
-      }
-      return { snapshot, deleted };
+    maintain(nowMs = Date.now()) {
+      return dailyUpkeep(db, file, nowMs, (cutoff) =>
+        transaction(db, () => {
+          const expired = "SELECT id FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?";
+          db.prepare(`DELETE FROM observation_files WHERE observation_id IN (${expired})`).run(
+            cutoff,
+          );
+          db.prepare(`DELETE FROM observation_vectors WHERE observation_id IN (${expired})`).run(
+            cutoff,
+          );
+          return Number(
+            db
+              .prepare("DELETE FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?")
+              .run(cutoff).changes,
+          );
+        }),
+      );
     },
 
     close: () => db.close(),

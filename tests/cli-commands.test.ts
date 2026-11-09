@@ -883,6 +883,8 @@ describe("flags", () => {
       ["scan", "--full"],
       ["init", "--git=commit"],
       ["job", "s1", "--bogus"],
+      ["job", "s1", "--maintain-every-ms"],
+      ["job", "s1", "--stale-keep-ms"],
     ]) {
       const run = cli(root, ...args);
       expect([args, run.status]).toEqual([args, 1]);

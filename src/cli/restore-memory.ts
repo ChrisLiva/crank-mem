@@ -1,5 +1,6 @@
 import * as path from "node:path";
-import { latestSnapshot, memoryPath, restoreMemory, snapshotDir } from "../hooks/lib/memory.ts";
+import { memoryPath, restoreMemory } from "../hooks/lib/memory.ts";
+import { latestSnapshot, snapshotDir } from "../hooks/lib/store-upkeep.ts";
 import { openNearestProject } from "./project.ts";
 import { migrateStore } from "./upgrade.ts";
 

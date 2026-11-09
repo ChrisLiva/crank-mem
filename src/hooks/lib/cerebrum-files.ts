@@ -37,7 +37,7 @@ const AUDIT_SKILL = "crank-mem-audit";
 
 /**
  * The one file-name stamp: an ISO time with `:` and `.` made filename-safe.
- * `installedAtMs` and memory's `DAILY_SNAPSHOT` parse this format back.
+ * `installedAtMs` and store-upkeep's `DAILY_SNAPSHOT` parse this format back.
  */
 export function fileStamp(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");

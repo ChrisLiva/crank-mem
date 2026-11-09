@@ -119,6 +119,7 @@ describe("openMemory", () => {
     const file = v1File();
     expect(openMemory(file, "read").status).toBe("older");
     expect(memoryStatus(file)).toBe("older");
+    expect(fs.existsSync(path.join(path.dirname(file), "backups"))).toBe(false);
   });
 
   test("a writer reports the version it migrated from, and snapshots only a version-1 store", () => {

@@ -36,10 +36,6 @@ const HISTORY_TOTAL = 30;
 /** Rejections before an entry parks: a session the model will not digest must not cost a run every hour. */
 const REJECTION_LIMIT = 3;
 
-/** How often the maintenance pass snapshots the store, and how long a stale-flagged row survives it. */
-const MAINTAIN_EVERY_MS = 24 * 3_600_000;
-const STALE_KEEP_MS = 90 * 24 * 3_600_000;
-
 export async function run(args: string[]): Promise<number> {
   const stem = args[0];
   const item = readSpool().find((i) => i.stem === stem);
@@ -53,14 +49,12 @@ export async function run(args: string[]): Promise<number> {
   const { flags } = parseArgs(args.slice(1), COMMANDS.job.value);
   const timeoutMs = positive(flags["run-timeout-ms"], RUN_TIMEOUT_MS);
   const everyMs = positive(flags["consolidate-every-ms"], CONSOLIDATE_EVERY_MS);
-  const maintainEveryMs = positive(flags["maintain-every-ms"], MAINTAIN_EVERY_MS);
-  const staleKeepMs = positive(flags["stale-keep-ms"], STALE_KEEP_MS);
 
   const opened = openMemory(memoryPath(entry.projectRoot), "write");
   if (opened.status !== "open") return 1;
   const memory = opened.memory;
   try {
-    return await digest(memory, stem, entry, { timeoutMs, everyMs, maintainEveryMs, staleKeepMs });
+    return await digest(memory, stem, entry, { timeoutMs, everyMs });
   } finally {
     memory.close();
   }
@@ -70,9 +64,9 @@ async function digest(
   memory: Memory,
   stem: string,
   entry: SpoolEntry,
-  opts: { timeoutMs: number; everyMs: number; maintainEveryMs: number; staleKeepMs: number },
+  opts: { timeoutMs: number; everyMs: number },
 ): Promise<number> {
-  const { timeoutMs, maintainEveryMs, staleKeepMs } = opts;
+  const { timeoutMs } = opts;
   const pos = memory.position(stem);
   const d = distill(entry.transcriptPath, pos, MAX_DELTA_CHARS);
   if (pos === null && fs.statSync(entry.transcriptPath).size > PARK_SIZE && d.records === 0) {
@@ -117,7 +111,7 @@ async function digest(
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
     await embedPending(memory);
     try {
-      memory.maintain({ everyMs: maintainEveryMs, staleKeepMs });
+      memory.maintain();
     } catch (err) {
       console.error(
         `crank-mem: maintenance skipped (${err instanceof Error ? err.message : String(err)})`,
