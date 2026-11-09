@@ -5,6 +5,8 @@ import { ISO_DATE, parseBullets } from "./bullets.ts";
 import { SOURCE_EXTENSIONS } from "./scanner.ts";
 import { symbolsSupported } from "./symbols.ts";
 import { CEREBRUM_FILE } from "./cerebrum-files.ts";
+import { debugEvent } from "./debug.ts";
+import { driftNote } from "./drift.ts";
 import {
   MEMORY_NEWER_NOTE,
   MEMORY_OLDER_NOTE,
@@ -161,7 +163,7 @@ function recallApplies(running: boolean, status: Recall["status"]): boolean {
 }
 
 /** Notes on the health of memory capture for this project, most urgent first. Never throws. */
-export function captureNotes(gate: DigestGate, status: Recall["status"]): string[] {
+function captureNotes(gate: DigestGate, status: Recall["status"]): string[] {
   const notes: string[] = [];
   if (gate.stop)
     notes.push(
@@ -595,6 +597,64 @@ function readCerebrum(crankDir: string): string | null {
   } catch {
     return null;
   }
+}
+
+type SessionStartUsage = Extract<UsageEvent, { channel: "session-start" }>;
+
+/**
+ * The SessionStart injection, for a Codex session when `opts.codex` is set.
+ * Gathers every source and adds the drift and capture notes; the caller
+ * passes the staleness note. Returns the text, the excerpt `crank-mem stats`
+ * reports and the usage event; the caller records the event.
+ */
+export function sessionStartInjection(
+  root: string,
+  crankDir: string,
+  config: CrankConfig,
+  index: AnatomyIndex,
+  opts: { codex: boolean; source: string | null; stalenessNote: string | null },
+): { text: string; excerpt: Excerpt | null; usage: SessionStartUsage } {
+  const sources = injectionSources(root, crankDir, config, index, opts.codex);
+  const drift = driftNote(config);
+  const notes = captureNotes(sources.gate, sources.recall.status);
+  const { text, excerpt, shown } = composeInjection(
+    {
+      ...sources,
+      stalenessNote: opts.stalenessNote ?? undefined,
+      driftNote: drift ?? undefined,
+      captureNotes: notes,
+    },
+    config.injection_budget_bytes,
+  );
+  debugEvent("injected", {
+    source: opts.source,
+    fileCount: index.meta.fileCount,
+    injectionTokens: estimateProseTokens(text),
+    // Bytes bind, not tokens: see injection_budget_bytes in config.ts.
+    injectionBytes: bytes(text),
+    budgetBytes: config.injection_budget_bytes,
+    hasCerebrum: sources.cerebrumMd !== null,
+    drift: drift !== null,
+    adrCount: sources.adrFilenames.length,
+    stale: opts.stalenessNote !== null,
+  });
+  return {
+    text,
+    excerpt,
+    usage: {
+      channel: "session-start",
+      source: opts.source,
+      ids: shown.recentIds,
+      nextSteps: shown.nextSteps,
+      cerebrum: shown.cerebrum,
+      adrs: shown.adrs,
+      cerebrumBullets: excerpt ? { shown: excerpt.shown, total: excerpt.total } : null,
+      bytes: bytes(text),
+      budget: config.injection_budget_bytes,
+      notes: shown.notes,
+      recallPointer: shown.recallPointer,
+    },
+  };
 }
 
 function readRecall(root: string, gate: DigestGate): Recall {

@@ -11,15 +11,13 @@ import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex, commitIndex } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
-import { captureNotes, composeInjection, injectionSources } from "./lib/injection.ts";
-import { driftNote } from "./lib/drift.ts";
-import { estimateProseTokens } from "./lib/tokens.ts";
+import { sessionStartInjection } from "./lib/injection.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
 
 // SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
 // included. Refreshes the index under lock, then emits the injection via
-// hookSpecificOutput.additionalContext. injectionSources applies the digest
+// hookSpecificOutput.additionalContext. sessionStartInjection applies the digest
 // gate (ADR 0010); no state carries an upkeep prompt, and journal.md is never read.
 // Advisory-only: every path exits 0.
 
@@ -36,7 +34,7 @@ async function main(): Promise<void> {
   const config = loadConfig(crankDir);
   enableDebug(crankDir, config.debug);
 
-  let stalenessNote: string | undefined;
+  let stalenessNote: string | null = null;
   let index = commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (current) => {
     const startedRefresh = Date.now();
     const result = refreshIndex(root, config, current, REFRESH_BUDGET_MS);
@@ -60,49 +58,13 @@ async function main(): Promise<void> {
       "index refresh ran out of time before covering every file — the file map may be slightly stale";
   }
 
-  const source = typeof payload.source === "string" ? payload.source : null;
-  const sources = injectionSources(root, crankDir, config, index, isCodexPayload(payload));
-  const drift = driftNote(config);
-  const {
-    text: context,
-    excerpt,
-    shown,
-  } = composeInjection(
-    {
-      ...sources,
-      stalenessNote,
-      driftNote: drift ?? undefined,
-      captureNotes: captureNotes(sources.gate, sources.recall.status),
-    },
-    config.injection_budget_bytes,
-  );
-
-  emitAdditionalContext("SessionStart", context);
-  recordUsage(root, hookActor(payload), {
-    channel: "session-start",
-    source,
-    ids: shown.recentIds,
-    nextSteps: shown.nextSteps,
-    cerebrum: shown.cerebrum,
-    adrs: shown.adrs,
-    cerebrumBullets: excerpt ? { shown: excerpt.shown, total: excerpt.total } : null,
-    bytes: Buffer.byteLength(context, "utf-8"),
-    budget: config.injection_budget_bytes,
-    notes: shown.notes,
-    recallPointer: shown.recallPointer,
+  const result = sessionStartInjection(root, crankDir, config, index, {
+    codex: isCodexPayload(payload),
+    source: typeof payload.source === "string" ? payload.source : null,
+    stalenessNote,
   });
-  debugEvent("injected", {
-    source,
-    fileCount: index.meta.fileCount,
-    injectionTokens: estimateProseTokens(context),
-    // Bytes bind, not tokens: see injection_budget_bytes in config.ts.
-    injectionBytes: Buffer.byteLength(context, "utf-8"),
-    budgetBytes: config.injection_budget_bytes,
-    hasCerebrum: sources.cerebrumMd !== null,
-    drift: drift !== null,
-    adrCount: sources.adrFilenames.length,
-    stale: stalenessNote !== undefined,
-  });
+  emitAdditionalContext("SessionStart", result.text);
+  recordUsage(root, hookActor(payload), result.usage);
   console.error(`crank-mem: injected project memory (${index.meta.fileCount} files indexed)`);
 }
 

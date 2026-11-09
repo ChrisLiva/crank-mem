@@ -12,10 +12,11 @@ import {
   MEMORY_RECENT_COUNT,
   PREFS_TOKEN_CAP,
   RECALL_BULLET,
+  sessionStartInjection,
 } from "../src/hooks/lib/injection.ts";
 import { loadConfig } from "../src/hooks/lib/config.ts";
 import { makeCrankProject, seedMemory } from "./helpers.ts";
-import { emptyIndex, type AnatomyIndex } from "../src/hooks/lib/store.ts";
+import { emptyIndex, loadIndex, type AnatomyIndex } from "../src/hooks/lib/store.ts";
 import { estimateProseTokens } from "../src/hooks/lib/tokens.ts";
 
 function fixtureIndex(fileCount: number): AnatomyIndex {
@@ -462,5 +463,37 @@ describe("subagentInjection", () => {
     const recalled = run();
     expect(recalled.text).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}\n${RECALL_BULLET}`);
     expect(recalled.usage.recallPointer).toBe(true);
+  });
+});
+
+describe("sessionStartInjection", () => {
+  test("the excerpt and its bullet counts are null exactly when cerebrum.md is absent or empty", () => {
+    const root = makeCrankProject();
+    const crankDir = path.join(root, ".crank");
+    const cerebrum = path.join(crankDir, "cerebrum.md");
+    const run = () =>
+      sessionStartInjection(root, crankDir, loadConfig(crankDir), loadIndex(crankDir), {
+        codex: false,
+        source: null,
+        stalenessNote: null,
+      });
+
+    // The template holds both headings and no bullet.
+    const template = run();
+    expect(template.excerpt).not.toBeNull();
+    expect(template.usage.cerebrumBullets).toEqual({ shown: 0, total: 0 });
+    expect(template.usage.channel).toBe("session-start");
+    expect(template.usage.source).toBeNull();
+    expect(template.usage.budget).toBe(8192);
+
+    fs.writeFileSync(cerebrum, "");
+    const empty = run();
+    expect(empty.excerpt).toBeNull();
+    expect(empty.usage.cerebrumBullets).toBeNull();
+
+    fs.rmSync(cerebrum);
+    const absent = run();
+    expect(absent.excerpt).toBeNull();
+    expect(absent.usage.cerebrumBullets).toBeNull();
   });
 });
