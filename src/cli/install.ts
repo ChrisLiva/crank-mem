@@ -4,14 +4,12 @@ import {
   CRANK_HOOK_MARKER,
   addAllowRule,
   addIgnoreLines,
-  claudeSettingsFiles,
   crankHooks,
   ensureCodexFeatures,
   ensureCrankGitignore,
   hasCrankHooks,
   isCrankHookCommand,
   mergeHooksIntoFile,
-  modeIgnoreFile,
   removeAllowRule,
   removeCodexFeatures,
   removeCrankHooksFromFile,
@@ -63,6 +61,25 @@ export function installPaths(root: string): {
   };
 }
 
+/** The Claude settings file a git mode wires, and the other one, which must hold no crank hooks. */
+function claudeSettingsFiles(
+  root: string,
+  git: CrankConfig["git"],
+): { wired: string; other: string } {
+  const { claudeShared, claudeLocal } = installPaths(root);
+  return git === "commit"
+    ? { wired: claudeShared, other: claudeLocal }
+    : { wired: claudeLocal, other: claudeShared };
+}
+
+/** The file that holds a git mode's ignore block, or null: commit mode has none, and exclude mode needs a .git directory. */
+function modeIgnoreFile(root: string, git: CrankConfig["git"]): string | null {
+  const { gitignore, gitExclude } = installPaths(root);
+  if (git === "ignore") return gitignore;
+  if (git === "exclude" && fs.existsSync(path.join(root, ".git"))) return gitExclude;
+  return null;
+}
+
 export interface InstallContext {
   root: string;
   crankDir: string;
@@ -72,6 +89,8 @@ export interface InstallContext {
 }
 
 interface InstallItem {
+  /** Install the item for a fresh init; throws on failure. */
+  apply(ctx: InstallContext): Report;
   repair(ctx: InstallContext): Report;
   remove(project: OpenedProject): Report;
 }
@@ -104,6 +123,10 @@ const isEmptyJson = (text: string): boolean => JSON.stringify(JSON.parse(text)) 
 const isBlank = (text: string): boolean => text.trim() === "";
 
 const vendoredHooks: InstallItem = {
+  apply({ crankDir }) {
+    vendorHooks(crankDir);
+    return report();
+  },
   // A version change re-vendors whether or not the trees differ; at the same
   // version, a pull or a hand edit that leaves .crank/hooks/ unlike the clone
   // re-vendors too. The stamp moves only once the copy is in place.
@@ -127,19 +150,38 @@ const vendoredHooks: InstallItem = {
   remove: () => report(),
 };
 
+// Crank hooks left in the Claude settings file the git mode does not use run
+// every event twice.
+function removeDuplicateClaudeHooks(
+  r: Report,
+  root: string,
+  other: string,
+  backup: (file: string) => void,
+): void {
+  if (!hasCrankHooks(other)) return;
+  removeCrankHooksFromFile(other, isCrankHookCommand, backup);
+  r.lines.push(`  removed duplicate crank hooks from ${path.relative(root, other)}`);
+}
+
 const claudeWiring: InstallItem = {
-  // Crank hooks left in the Claude settings file the git mode does not use run
-  // every event twice.
+  apply(ctx) {
+    const { root, config } = ctx;
+    const backup = backupWith(ctx);
+    const r = report();
+    const { wired, other } = claudeSettingsFiles(root, config.git);
+    mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), backup);
+    addAllowRule(wired, backup);
+    r.lines.push(`  Claude Code: hooks wired into ${path.relative(root, wired)}`);
+    removeDuplicateClaudeHooks(r, root, other, backup);
+    return r;
+  },
   repair(ctx) {
     const { root, config } = ctx;
     const backup = backupWith(ctx);
     const r = report();
     attemptRepair(r, "re-wire Claude Code hooks", () => {
       const { wired, other } = claudeSettingsFiles(root, config.git);
-      if (hasCrankHooks(other)) {
-        removeCrankHooksFromFile(other, isCrankHookCommand, backup);
-        r.lines.push(`  removed duplicate crank hooks from ${path.relative(root, other)}`);
-      }
+      removeDuplicateClaudeHooks(r, root, other, backup);
       if (mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), backup))
         r.lines.push(`  re-wired Claude Code hooks in ${path.relative(root, wired)}`);
       if (addAllowRule(wired, backup))
@@ -170,7 +212,28 @@ const claudeWiring: InstallItem = {
   },
 };
 
+function writeCrankTrust(codexHooks: string, backup: (file: string) => void): void {
+  const t = crankTrust(codexHooks);
+  writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys, backup);
+}
+
 const codexWiring: InstallItem = {
+  apply(ctx) {
+    const { root, config } = ctx;
+    if (config.codex === "skip") return report(["  Codex: skipped"]);
+    const backup = backupWith(ctx);
+    const { codexHooks, codexConfig } = installPaths(root);
+    mergeHooksIntoFile(codexHooks, crankHooks(config.runtime, "codex"), backup);
+    ensureCodexFeatures(codexConfig, backup);
+    const r = report(["  Codex: hooks wired into .codex/hooks.json"]);
+    if (config.codex === "trust") {
+      writeCrankTrust(codexHooks, backup);
+      r.lines.push(`  Codex trust: trusted_hash entries written to ${userCodexConfigPath()}`);
+    } else {
+      r.lines.push(...CODEX_REVIEW_HINT);
+    }
+    return r;
+  },
   // A skip install leaves .codex/ alone. Trust is rewritten only when an entry
   // is missing or stale or an older release's PascalCase orphan is present, so
   // an install already trusted keeps its config.toml untouched.
@@ -192,8 +255,7 @@ const codexWiring: InstallItem = {
       if (config.codex === "trust") {
         const s = codexTrustStatus(userCodexConfigPath(), root, codexHooks);
         if (s.missing + s.stale + s.orphans > 0) {
-          const t = crankTrust(codexHooks);
-          writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys, backup);
+          writeCrankTrust(codexHooks, backup);
           r.lines.push("  recomputed Codex trusted_hash entries");
         }
       }
@@ -229,6 +291,10 @@ const codexWiring: InstallItem = {
 };
 
 const crankGitignore: InstallItem = {
+  apply(ctx) {
+    ensureCrankGitignore(ctx.crankDir, backupWith(ctx));
+    return report();
+  },
   // An install from before the allowlist keeps a denylist that misses state
   // files added since, and every file another tool sharing .crank/ writes.
   repair(ctx) {
@@ -242,27 +308,42 @@ const crankGitignore: InstallItem = {
   remove: () => report(),
 };
 
+// Commit mode loses a stale crank-mem ignore block, which keeps cerebrum out of
+// git, and warns when another ignore rule still hides it.
+function unignoreForCommit(r: Report, root: string, backup: (file: string) => void): void {
+  const ignoredBy = unignoreCerebrum(root, (f) => {
+    backup(f);
+    r.lines.push(`  removed the crank-mem .crank/ ignore block from ${path.relative(root, f)}`);
+  });
+  if (ignoredBy)
+    r.warnings.push(
+      `crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`,
+    );
+}
+
 const gitIgnoreState: InstallItem = {
-  // Commit mode loses a stale crank-mem ignore block, which keeps cerebrum out
-  // of git; ignore and exclude mode regain a missing one, whose absence exposes
-  // .crank/ to git.
+  apply(ctx) {
+    const { root, config } = ctx;
+    const backup = backupWith(ctx);
+    const r = report();
+    if (config.git === "commit") {
+      unignoreForCommit(r, root, backup);
+      return r;
+    }
+    const ignoreFile = modeIgnoreFile(root, config.git);
+    if (ignoreFile) addIgnoreLines(ignoreFile, backup);
+    return r;
+  },
+  // Ignore and exclude mode regain a missing ignore block, whose absence
+  // exposes .crank/ to git.
   repair(ctx) {
     const { root, config } = ctx;
     const backup = backupWith(ctx);
     const r = report();
     if (config.git === "commit") {
-      attemptRepair(r, "check .crank/cerebrum.md against git ignores", () => {
-        const ignoredBy = unignoreCerebrum(root, (f) => {
-          backup(f);
-          r.lines.push(
-            `  removed the crank-mem .crank/ ignore block from ${path.relative(root, f)}`,
-          );
-        });
-        if (ignoredBy)
-          r.warnings.push(
-            `crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`,
-          );
-      });
+      attemptRepair(r, "check .crank/cerebrum.md against git ignores", () =>
+        unignoreForCommit(r, root, backup),
+      );
       return r;
     }
     const ignoreFile = modeIgnoreFile(root, config.git);
@@ -288,17 +369,28 @@ const gitIgnoreState: InstallItem = {
   },
 };
 
+/** Copy the template to .crank/cerebrum.md when none exists; true exactly when it copied. */
+function seedCerebrum(crankDir: string): boolean {
+  const cerebrumPath = path.join(crankDir, CEREBRUM_FILE);
+  if (fs.existsSync(cerebrumPath)) return false;
+  fs.copyFileSync(templatePath(CEREBRUM_FILE), cerebrumPath);
+  return true;
+}
+
 const cerebrum: InstallItem = {
+  apply({ crankDir }) {
+    seedCerebrum(crankDir);
+    return report();
+  },
   repair({ crankDir }) {
     const r = report();
     const cerebrumPath = path.join(crankDir, CEREBRUM_FILE);
-    if (!fs.existsSync(cerebrumPath)) {
-      attemptRepair(r, `seed .crank/${CEREBRUM_FILE} from the template`, () => {
-        fs.copyFileSync(templatePath(CEREBRUM_FILE), cerebrumPath);
-        r.lines.push(`  seeded .crank/${CEREBRUM_FILE} from the template`);
-      });
-      return r;
-    }
+    let seeded = false;
+    attemptRepair(r, `seed .crank/${CEREBRUM_FILE} from the template`, () => {
+      seeded = seedCerebrum(crankDir);
+      if (seeded) r.lines.push(`  seeded .crank/${CEREBRUM_FILE} from the template`);
+    });
+    if (seeded || r.failed) return r;
     // 0.8.1 and earlier seeded the cerebrum with a protocol preamble telling
     // agents how to keep it; consolidation keeps it now, so an unedited copy of
     // that preamble gives way to the current template's. An edited one is the
@@ -322,6 +414,10 @@ const cerebrum: InstallItem = {
 };
 
 const registry: InstallItem = {
+  apply({ root }) {
+    registerProject(root);
+    return report();
+  },
   repair({ root }) {
     registerProject(root);
     return report();
@@ -341,6 +437,16 @@ const ITEMS: InstallItem[] = [
   cerebrum,
   registry,
 ];
+
+/**
+ * Install every item for a fresh init, in list order. The first item that
+ * throws stops the walk: no later item is applied and the error propagates.
+ */
+export function applyInstall(ctx: InstallContext): Report {
+  const reports: Report[] = [];
+  for (const item of ITEMS) reports.push(item.apply(ctx));
+  return mergeReports(reports);
+}
 
 /**
  * Bring every item back to the recorded install, in list order. Never throws:

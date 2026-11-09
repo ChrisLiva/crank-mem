@@ -803,3 +803,65 @@ test("a failed re-vendor prints no summary line and exits 1", () => {
   expect(up.stdout).not.toContain("already at");
   expect(readConfig(root).vendored_version).toBe("0.0.1");
 }, 20_000);
+
+test("init leaves an existing cerebrum alone", () => {
+  const { root, codexHome } = makeProject();
+  const cerebrumPath = path.join(root, ".crank/cerebrum.md");
+  fs.mkdirSync(path.dirname(cerebrumPath), { recursive: true });
+  fs.writeFileSync(cerebrumPath, "# Mine\n");
+  const run = cli(root, codexHome, makeCrankHome(), "init", "--yes", ...CODEX_FLAGS.review);
+  expect(run.status).toBe(0);
+  expect(fs.readFileSync(cerebrumPath, "utf-8")).toBe("# Mine\n");
+});
+
+test("a failing first scan stops init before wiring anything", () => {
+  const { root, codexHome } = makeProject();
+  const exclude = path.join(root, ".git/info/exclude");
+  const before = snapshot(root);
+  const excludeBefore = fs.readFileSync(exclude);
+  fs.mkdirSync(path.join(root, ".crank/anatomy-index.json"), { recursive: true });
+  const run = cli(
+    root,
+    codexHome,
+    makeCrankHome(),
+    "init",
+    "--yes",
+    "--git",
+    "exclude",
+    ...CODEX_FLAGS.review,
+  );
+  expect(run.status).toBe(1);
+  expect(run.stderr).toContain("crank-mem: EISDIR");
+  expect(run.stderr).toContain("init failed before wiring anything — delete .crank/ and retry.\n");
+  expect(fs.existsSync(configPath(root))).toBe(false);
+  expect(snapshot(root)).toEqual(before);
+  expect(fs.readFileSync(exclude).equals(excludeBefore)).toBe(true);
+});
+
+test("a failing item stops init partway", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  const exclude = path.join(root, ".git/info/exclude");
+  const excludeBefore = fs.readFileSync(exclude);
+  fs.mkdirSync(path.join(root, ".claude/settings.local.json"), { recursive: true });
+  const run = cli(
+    root,
+    codexHome,
+    home,
+    "init",
+    "--yes",
+    "--git",
+    "exclude",
+    ...CODEX_FLAGS.review,
+  );
+  expect(run.status).toBe(1);
+  expect(run.stdout).toBe("");
+  expect(run.stderr).toContain("crank-mem: EISDIR");
+  expect(run.stderr).toContain(
+    "init failed partway — run `crank-mem uninstall --restore` to roll back.",
+  );
+  expect(fs.existsSync(path.join(root, ".codex/hooks.json"))).toBe(false);
+  expect(fs.readFileSync(exclude).equals(excludeBefore)).toBe(true);
+  const registry = path.join(home, "projects.json");
+  if (fs.existsSync(registry)) expect(fs.readFileSync(registry, "utf-8")).not.toContain(root);
+});

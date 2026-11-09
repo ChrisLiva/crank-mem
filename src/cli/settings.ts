@@ -210,16 +210,6 @@ export function hasCrankHooks(file: string): boolean {
   }
 }
 
-/** The Claude settings file a git mode wires, and the other one, which must hold no crank hooks. */
-export function claudeSettingsFiles(
-  root: string,
-  git: CrankConfig["git"],
-): { wired: string; other: string } {
-  const shared = path.join(root, ".claude", "settings.json");
-  const local = path.join(root, ".claude", "settings.local.json");
-  return git === "commit" ? { wired: shared, other: local } : { wired: local, other: shared };
-}
-
 /**
  * Remove every hook group whose command references .crank/hooks/. Drops empty
  * event arrays and an empty hooks object, calling `beforeWrite` before it
@@ -341,14 +331,6 @@ export function addIgnoreLines(file: string, beforeWrite?: (file: string) => voi
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, existing + sep + IGNORE_BLOCK);
   return true;
-}
-
-/** The file that holds a git mode's ignore block, or null: commit mode has none, and exclude mode needs a .git directory. */
-export function modeIgnoreFile(root: string, git: "commit" | "ignore" | "exclude"): string | null {
-  if (git === "ignore") return path.join(root, ".gitignore");
-  if (git === "exclude" && fs.existsSync(path.join(root, ".git")))
-    return path.join(root, ".git", "info", "exclude");
-  return null;
 }
 
 /**
