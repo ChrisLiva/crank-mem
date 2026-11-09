@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isSensitiveFile } from "../hooks/lib/config.ts";
-import { isObj } from "../hooks/lib/hook-io.ts";
+import { isObj, isSensitiveFile } from "../hooks/lib/config.ts";
 import type { Position } from "../hooks/lib/memory.ts";
 import { shellReadPaths } from "../hooks/lib/shell-reads.ts";
 import { redact, stripBlocks } from "./redact.ts";

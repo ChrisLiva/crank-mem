@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { SENSITIVE_GLOBS } from "../hooks/lib/config.ts";
-import { isObj, type Obj } from "../hooks/lib/hook-io.ts";
+import { isObj, SENSITIVE_GLOBS, type Obj } from "../hooks/lib/config.ts";
 import { crankHome } from "../hooks/lib/user-state.ts";
 
 // The one door to the model: `claude -p` on the user's own Claude login,

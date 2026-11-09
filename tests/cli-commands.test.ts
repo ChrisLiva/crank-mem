@@ -235,6 +235,9 @@ describe("stats: capture health", () => {
     stopDigests(home);
     spoolEntry(home, "waiting", "/elsewhere", Date.now());
     spoolEntry(home, "stuck", root, Date.now(), true);
+    fs.writeFileSync(path.join(home, "spool", "null.json"), "null");
+    fs.writeFileSync(path.join(home, "spool", "array.json"), "[]");
+    fs.writeFileSync(path.join(home, "spool", "number.json"), "42");
 
     const run = runCli(root, ["stats"], { CRANK_HOME: home });
     expect(run.status).toBe(0);

@@ -5,7 +5,7 @@ import {
   type ObservationType,
   type ProposalKind,
 } from "../hooks/lib/memory.ts";
-import { isObj } from "../hooks/lib/hook-io.ts";
+import { isObj } from "../hooks/lib/config.ts";
 
 export type Digest = {
   observations: {

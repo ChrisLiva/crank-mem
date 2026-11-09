@@ -1115,6 +1115,7 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
       path.join(root, ".crank", "usage.jsonl"),
       malformed.map((m) => JSON.stringify({ ...actor, ...m }) + "\n").join(""),
     );
+    fs.appendFileSync(path.join(root, ".crank", "usage.jsonl"), "null\n[]\n42\n");
     const dash = await startDashboard(home, ["--port", "0"]);
     const all = await usageOf(dash, root, "days=7&manual=1");
     expect(totals(all)).toEqual(

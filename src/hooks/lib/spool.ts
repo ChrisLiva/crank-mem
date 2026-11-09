@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { errorMessage, type CrankConfig } from "./config.ts";
+import { errorMessage, isObj, type CrankConfig } from "./config.ts";
 import { debugEvent } from "./debug.ts";
 import type { HookPayload } from "./hook-io.ts";
 import {
@@ -157,8 +157,8 @@ function readEntries(dir: string): SpoolItem[] {
   for (const name of names) {
     if (!name.endsWith(EXT)) continue;
     try {
-      const entry = JSON.parse(fs.readFileSync(path.join(dir, name), "utf-8"));
-      if (typeof entry === "object" && entry !== null) {
+      const entry: SpoolEntry = JSON.parse(fs.readFileSync(path.join(dir, name), "utf-8"));
+      if (isObj(entry)) {
         // An entry written before entries carried cwd takes its project root.
         if (typeof entry.cwd !== "string") entry.cwd = entry.projectRoot;
         items.push({ stem: name.slice(0, -EXT.length), entry });

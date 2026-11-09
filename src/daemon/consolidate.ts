@@ -1,8 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ARCHIVE_FILE, CEREBRUM_FILE, backupCerebrum } from "../hooks/lib/cerebrum-files.ts";
-import { CRANK_DIR } from "../hooks/lib/config.ts";
-import { isObj } from "../hooks/lib/hook-io.ts";
+import { CRANK_DIR, isObj } from "../hooks/lib/config.ts";
 import { basenameIndex, citationStatus } from "../hooks/lib/injection.ts";
 import {
   localDate,

@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isSensitiveFile } from "./config.ts";
+import { isObj, isSensitiveFile } from "./config.ts";
 import { isCodexPayload, type HookPayload } from "./hook-io.ts";
 import { memoryPath } from "./memory.ts";
 
@@ -157,9 +157,8 @@ const isPaths = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((p) => typeof p === "string");
 
 /** Whether a parsed line is a `v: 1` line whose channel is known and whose read fields hold their types. */
-function isUsageLine(value: unknown): value is UsageLine {
-  if (typeof value !== "object" || value === null) return false;
-  const line = value as Record<string, unknown>;
+function isUsageLine(line: unknown): line is UsageLine {
+  if (!isObj(line)) return false;
   if (line.v !== 1 || typeof line.ts !== "number") return false;
   if (line.session !== null && typeof line.session !== "string") return false;
   switch (line.channel) {
@@ -175,9 +174,7 @@ function isUsageLine(value: unknown): value is UsageLine {
       return (
         isPaths(line.empty) &&
         Array.isArray(line.shown) &&
-        line.shown.every(
-          (s) => typeof s === "object" && s !== null && typeof s.path === "string" && isIds(s.ids),
-        )
+        line.shown.every((s) => isObj(s) && typeof s.path === "string" && isIds(s.ids))
       );
     case "subagent-start":
     case "outline":

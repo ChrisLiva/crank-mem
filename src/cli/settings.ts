@@ -1,8 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import type { CrankConfig } from "../hooks/lib/config.ts";
-import { isObj } from "../hooks/lib/hook-io.ts";
+import { isObj, type CrankConfig } from "../hooks/lib/config.ts";
 
 // Additive wiring of hook entries into agent settings files, and its exact
 // inverse. Merge adds missing entries and refreshes only command forms
