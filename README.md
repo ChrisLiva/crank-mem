@@ -31,6 +31,12 @@ version (a failed build prints a warning and the upgrade goes on), adds the
 `Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the wired Claude settings file, adds hook wiring the install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
 wrote to the current form, and removes crank hooks from the Claude settings
 file the git mode does not use, since wiring in both runs every hook twice.
+It brings every item back to the choices init recorded in `.crank/config.json`:
+when init wired Codex it re-wires `.codex/hooks.json` and the `[features]`
+snippet in `.codex/config.toml`, it re-vendors `.crank/hooks/` whenever it differs from the clone,
+and it re-seeds a missing `cerebrum.md`. With `--codex-trust write` it
+recomputes the trusted hashes only when one is missing or stale. A failed
+repair prints a warning, every other repair still runs, and the upgrade exits 1.
 A hook command you edited stays as written. It replaces a `.crank/.gitignore`
 that is not the current allowlist, which admits only crank-mem's tracked files
 to git. In commit mode it also removes

@@ -424,6 +424,12 @@ const repairCases: {
     },
   },
   {
+    name: "vendored hooks",
+    damage: (root) => fs.rmSync(path.join(root, ".crank/hooks/post-read.ts")),
+    files: (root) => [path.join(root, ".crank/hooks/post-read.ts")],
+    line: "  re-vendored .crank/hooks/, which differed from the clone",
+  },
+  {
     name: "Codex hooks",
     damage: (root) => fs.rmSync(path.join(root, ".codex/hooks.json")),
     files: (root) => [path.join(root, ".codex/hooks.json")],
@@ -672,3 +678,128 @@ for (const c of failedWriteCases) {
     expect(lastLine(up.stdout)).toBe(ALREADY_AT);
   }, 20_000);
 }
+
+const REVENDORED = "  re-vendored .crank/hooks/, which differed from the clone";
+const OLD_MTIME = new Date("2001-01-01");
+
+/** The one entry of `.crank/backups` that `before` lacks. */
+function newBackup(root: string, before: string[]): string {
+  const added = fs
+    .readdirSync(path.join(root, ".crank/backups"))
+    .filter((e) => !before.includes(e));
+  expect(added.length).toBe(1);
+  return path.join(root, ".crank/backups", added[0]!);
+}
+
+function backupsListing(root: string): string[] {
+  const dir = path.join(root, ".crank/backups");
+  return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+}
+
+const sameBytes = (a: string, b: string): boolean => fs.readFileSync(a).equals(fs.readFileSync(b));
+
+const treeCases: {
+  name: string;
+  damage(hooks: string): void;
+  check(root: string, hooks: string, before: string[], run: CliRun): void;
+}[] = [
+  {
+    name: "extra file",
+    damage: (hooks) => fs.writeFileSync(path.join(hooks, "extra.ts"), "// extra\n"),
+    check: (root, hooks, before, run) => {
+      expect(run.stdout).toContain(REVENDORED + "\n");
+      expect(fs.existsSync(path.join(hooks, "extra.ts"))).toBe(false);
+      const backup = newBackup(root, before);
+      expect(fs.readFileSync(path.join(backup, "hooks/extra.ts"), "utf-8")).toBe("// extra\n");
+    },
+  },
+  {
+    name: "changed bytes",
+    damage: (hooks) => fs.writeFileSync(path.join(hooks, "stop.ts"), "// edited\n"),
+    check: (root, hooks, before, run) => {
+      expect(run.stdout).toContain(REVENDORED + "\n");
+      expect(
+        sameBytes(path.join(hooks, "stop.ts"), path.join(REPO_ROOT, "src/hooks/stop.ts")),
+      ).toBe(true);
+      const backup = newBackup(root, before);
+      expect(fs.readFileSync(path.join(backup, "hooks/stop.ts"), "utf-8")).toBe("// edited\n");
+    },
+  },
+  {
+    name: "dot-file only",
+    damage: (hooks) => fs.writeFileSync(path.join(hooks, ".DS_Store"), "x"),
+    check: (_root, hooks, _before, run) => {
+      expect(run.stdout).not.toContain("re-vendored");
+      expect(fs.existsSync(path.join(hooks, ".DS_Store"))).toBe(true);
+    },
+  },
+  {
+    name: "match",
+    damage: (hooks) => fs.utimesSync(path.join(hooks, "stop.ts"), OLD_MTIME, OLD_MTIME),
+    check: (_root, hooks, _before, run) => {
+      expect(run.stdout).not.toContain("re-vendored");
+      expect(fs.statSync(path.join(hooks, "stop.ts")).mtimeMs).toBe(OLD_MTIME.getTime());
+    },
+  },
+  {
+    name: "missing dir",
+    damage: (hooks) => fs.rmSync(hooks, { recursive: true }),
+    check: (_root, hooks, _before, run) => {
+      expect(run.stdout).toContain(REVENDORED + "\n");
+      expect(
+        sameBytes(path.join(hooks, "post-read.ts"), path.join(REPO_ROOT, "src/hooks/post-read.ts")),
+      ).toBe(true);
+    },
+  },
+];
+
+for (const c of treeCases) {
+  test(`same-version upgrade re-vendors exactly when the tree differs: ${c.name}`, () => {
+    const { root, codexHome } = makeProject();
+    const home = makeCrankHome();
+    initExcludeNoTrust(root, codexHome, home);
+    const hooks = path.join(root, ".crank/hooks");
+    c.damage(hooks);
+    const before = backupsListing(root);
+    const up = cli(root, codexHome, home, "upgrade");
+    expect(up.status).toBe(0);
+    c.check(root, hooks, before, up);
+  }, 20_000);
+}
+
+test("a version-changing upgrade re-vendors and ends on the upgraded line", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  initExcludeNoTrust(root, codexHome, home);
+  writeConfig(root, { ...readConfig(root), vendored_version: "0.0.1" });
+  const stop = path.join(root, ".crank/hooks/stop.ts");
+  fs.utimesSync(stop, OLD_MTIME, OLD_MTIME);
+  const before = backupsListing(root);
+  const up = cli(root, codexHome, home, "upgrade");
+  expect(up.status).toBe(0);
+  expect(lastLine(up.stdout)).toBe(`crank-mem: upgraded vendored hooks 0.0.1 → ${cliVersion()}`);
+  expect(up.stdout).not.toContain("re-vendored");
+  expect(readConfig(root).vendored_version).toBe(cliVersion());
+  expect(fs.statSync(stop).mtimeMs).not.toBe(OLD_MTIME.getTime());
+  expect(fs.existsSync(path.join(newBackup(root, before), "hooks/stop.ts"))).toBe(true);
+}, 20_000);
+
+test("a failed re-vendor prints no summary line and exits 1", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  initExcludeNoTrust(root, codexHome, home);
+  writeConfig(root, { ...readConfig(root), vendored_version: "0.0.1" });
+  const backups = path.join(root, ".crank/backups");
+  let up: CliRun;
+  try {
+    fs.chmodSync(backups, 0o555);
+    up = cli(root, codexHome, home, "upgrade");
+  } finally {
+    fs.chmodSync(backups, 0o755);
+  }
+  expect(up.status).toBe(1);
+  expect(up.stderr).toContain("crank-mem: could not re-vendor .crank/hooks/ (");
+  expect(up.stdout).not.toContain("upgraded vendored hooks");
+  expect(up.stdout).not.toContain("already at");
+  expect(readConfig(root).vendored_version).toBe("0.0.1");
+}, 20_000);

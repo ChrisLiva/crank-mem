@@ -28,9 +28,10 @@ import {
 } from "./codex-trust.ts";
 import { registerProject, unregisterProject } from "./registry.ts";
 import { backupFile, createdByCrank } from "./backups.ts";
-import { templatePath } from "./vendor.ts";
+import { templatePath, vendorHooks, vendoredHooksCurrent } from "./vendor.ts";
+import { cliVersion } from "./version.ts";
 import type { OpenedProject } from "./project.ts";
-import type { CodexChoice, CrankConfig } from "../hooks/lib/config.ts";
+import { saveConfig, type CodexChoice, type CrankConfig } from "../hooks/lib/config.ts";
 import { backupCerebrum, CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 
@@ -103,7 +104,26 @@ const isEmptyJson = (text: string): boolean => JSON.stringify(JSON.parse(text)) 
 const isBlank = (text: string): boolean => text.trim() === "";
 
 const vendoredHooks: InstallItem = {
-  repair: () => report(),
+  // A version change re-vendors whether or not the trees differ; at the same
+  // version, a pull or a hand edit that leaves .crank/hooks/ unlike the clone
+  // re-vendors too. The stamp moves only once the copy is in place.
+  repair(ctx) {
+    const { crankDir, config } = ctx;
+    const r = report();
+    attemptRepair(r, "re-vendor .crank/hooks/", () => {
+      const versionCurrent = config.vendored_version === cliVersion();
+      if (versionCurrent && vendoredHooksCurrent(crankDir)) return;
+      const hooksDir = path.join(crankDir, "hooks");
+      if (fs.existsSync(hooksDir))
+        fs.cpSync(hooksDir, path.join(ctx.backupDir(), "hooks"), { recursive: true });
+      vendorHooks(crankDir);
+      config.vendored_version = cliVersion();
+      saveConfig(crankDir, config);
+      if (versionCurrent)
+        r.lines.push("  re-vendored .crank/hooks/, which differed from the clone");
+    });
+    return r;
+  },
   remove: () => report(),
 };
 

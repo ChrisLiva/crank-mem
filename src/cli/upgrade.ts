@@ -2,17 +2,17 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { cliVersion, REPO_ROOT } from "./version.ts";
 import { buildDashboard, dashboardCurrent, dashboardDir, installPackages } from "./setup.ts";
-import { vendorHooks } from "./vendor.ts";
 import { openProject } from "./project.ts";
 import { newBackupDir } from "./backups.ts";
 import { printReport, repairInstall, resolveCodex } from "./install.ts";
 import { CONFIG_FILE, saveConfig } from "../hooks/lib/config.ts";
 import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
 
-// Non-interactive: re-vendor hooks after a `git pull` in the clone and repair
-// every install item (src/cli/install.ts) to the recorded install: the hook
-// wiring, the .crank/.gitignore allowlist, the git mode's ignore state, a
-// missing cerebrum and the project registry. It installs the clone's packages,
+// Non-interactive: after a `git pull` in the clone, repair every install item
+// (src/cli/install.ts) to the recorded install: the vendored hooks (on a
+// version change, or whenever they differ from the clone), the hook wiring, the
+// .crank/.gitignore allowlist, the git mode's ignore state, a missing cerebrum
+// and the project registry. It installs the clone's packages,
 // rebuilding the dashboard when its build is not for this version.
 // Of config.json it updates only vendored_version, clone_root and a missing codex.
 // Of cerebrum it seeds a missing one from the template and replaces only an
@@ -27,8 +27,8 @@ export async function run(_args: string[]): Promise<number> {
   const { root, crankDir, config } = project;
   const current = cliVersion();
 
-  // Every repair from here to the version check runs at any version, so an
-  // install already at the current version still converges.
+  // Every repair runs at any version, so an install already at the current
+  // version still converges.
 
   const hadCodexKey = rawHasCodexKey(path.join(crankDir, CONFIG_FILE));
 
@@ -48,6 +48,7 @@ export async function run(_args: string[]): Promise<number> {
   let backupDir: string | null = null;
   const ensureBackupDir = () => (backupDir ??= newBackupDir(crankDir));
 
+  const prev = stamped.vendored_version;
   const repaired = repairInstall({ root, crankDir, config: stamped, backupDir: ensureBackupDir });
   printReport(repaired);
 
@@ -69,28 +70,10 @@ export async function run(_args: string[]): Promise<number> {
 
   migrateStore(memoryPath(root));
 
-  const status = repaired.failed ? 1 : 0;
-  const versionChanged = stamped.vendored_version !== current;
-
-  if (!versionChanged) {
-    console.log(`crank-mem: already at ${current} — nothing else to do.`);
-    return status;
-  }
-
-  const hooksDir = path.join(crankDir, "hooks");
-  if (fs.existsSync(hooksDir)) {
-    fs.cpSync(hooksDir, path.join(ensureBackupDir(), "hooks"), {
-      recursive: true,
-    });
-  }
-
-  vendorHooks(crankDir);
-  const prev = stamped.vendored_version;
-  stamped.vendored_version = current;
-  saveConfig(crankDir, stamped);
-
-  console.log(`crank-mem: upgraded vendored hooks ${prev} → ${current}`);
-  return status;
+  if (prev === current) console.log(`crank-mem: already at ${current} — nothing else to do.`);
+  else if (stamped.vendored_version === current)
+    console.log(`crank-mem: upgraded vendored hooks ${prev} → ${current}`);
+  return repaired.failed ? 1 : 0;
 }
 
 /** Whether config.json as written holds a `codex` key; a read or parse failure counts as none. */
