@@ -83,6 +83,10 @@ function modeIgnoreFile(root: string, git: CrankConfig["git"]): string | null {
 export interface InstallContext {
   root: string;
   crankDir: string;
+  /**
+   * The vendored-hooks item's repair sets `vendored_version` here in place once
+   * the new copy is in place; upgrade reads it back to pick its summary line.
+   */
   config: CrankConfig & { codex: CodexChoice };
   /** The run's backup dir, created on first call. */
   backupDir: () => string;
