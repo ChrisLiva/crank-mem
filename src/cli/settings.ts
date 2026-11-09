@@ -77,60 +77,22 @@ export const SUBAGENT_MATCHER = "^(general-purpose|Explore|Plan|workflow-subagen
 /** The hook entries crank-mem wires, per agent. */
 export function crankHooks(runtime: CrankConfig["runtime"], agent: Agent): HooksMap {
   const matcher = agent === "claude" ? "Write|Edit|MultiEdit" : "apply_patch";
+  const entry = (script: string): HookHandler => ({
+    type: "command",
+    command: hookCommand(runtime, script, agent),
+    timeout: 10,
+  });
   const map: HooksMap = {
-    SessionStart: [
-      {
-        hooks: [
-          {
-            type: "command",
-            command: hookCommand(runtime, "session-start.ts", agent),
-            timeout: 10,
-          },
-        ],
-      },
-    ],
-    PostToolUse: [
-      {
-        matcher,
-        hooks: [
-          { type: "command", command: hookCommand(runtime, "post-write.ts", agent), timeout: 10 },
-        ],
-      },
-    ],
+    SessionStart: [{ hooks: [entry("session-start.ts")] }],
+    PostToolUse: [{ matcher, hooks: [entry("post-write.ts")] }],
   };
   // File history, Stop, SessionEnd and SubagentStart are Claude-only; Codex has no digests.
   if (agent === "claude") {
     // After the write group, so PostToolUse[0] stays the write matcher.
-    map.PostToolUse!.push({
-      matcher: "Read|Bash",
-      hooks: [
-        { type: "command", command: hookCommand(runtime, "post-read.ts", agent), timeout: 10 },
-      ],
-    });
-    map.Stop = [
-      {
-        hooks: [{ type: "command", command: hookCommand(runtime, "stop.ts", agent), timeout: 10 }],
-      },
-    ];
-    map.SessionEnd = [
-      {
-        hooks: [
-          { type: "command", command: hookCommand(runtime, "session-end.ts", agent), timeout: 10 },
-        ],
-      },
-    ];
-    map.SubagentStart = [
-      {
-        matcher: SUBAGENT_MATCHER,
-        hooks: [
-          {
-            type: "command",
-            command: hookCommand(runtime, "subagent-start.ts", agent),
-            timeout: 10,
-          },
-        ],
-      },
-    ];
+    map.PostToolUse!.push({ matcher: "Read|Bash", hooks: [entry("post-read.ts")] });
+    map.Stop = [{ hooks: [entry("stop.ts")] }];
+    map.SessionEnd = [{ hooks: [entry("session-end.ts")] }];
+    map.SubagentStart = [{ matcher: SUBAGENT_MATCHER, hooks: [entry("subagent-start.ts")] }];
   }
   return map;
 }
