@@ -32,6 +32,10 @@ export type MemoryWrite =
   | { status: "open"; memory: Memory; migratedFrom: number | null }
   | { status: "newer" | "unreadable" }
   | { status: "unmigrated"; detail: string };
+export type StoreMigration =
+  | { status: "absent" | "current" | "newer" }
+  | { status: "migrated"; from: number; to: number }
+  | { status: "failed"; detail: string };
 
 /** SCHEMA_V1's observations.type CHECK repeats this list as a literal; schema v1 freezes it. */
 export const OBSERVATION_TYPES = [
@@ -345,6 +349,27 @@ export async function withReader<T>(
     return await fn(opened.memory);
   } finally {
     opened.memory.close();
+  }
+}
+
+/** Brings an existing store to the current schema (snapshotting a version-n store first); never creates a store. */
+export function migrateStore(storeFile: string): StoreMigration {
+  if (!fs.existsSync(storeFile)) return { status: "absent" };
+  const opened = openMemory(storeFile, "write");
+  switch (opened.status) {
+    case "open": {
+      opened.memory.close();
+      const from = opened.migratedFrom;
+      return from === null
+        ? { status: "current" }
+        : { status: "migrated", from, to: SCHEMA_VERSION };
+    }
+    case "newer":
+      return { status: "newer" };
+    case "unmigrated":
+      return { status: "failed", detail: opened.detail };
+    case "unreadable":
+      return { status: "failed", detail: "unreadable" };
   }
 }
 

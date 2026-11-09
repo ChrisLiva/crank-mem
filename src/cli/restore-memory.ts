@@ -1,8 +1,7 @@
 import * as path from "node:path";
-import { memoryPath, restoreMemory } from "../hooks/lib/memory.ts";
+import { memoryPath, migrateStore, restoreMemory } from "../hooks/lib/memory.ts";
 import { latestSnapshot, snapshotDir } from "../hooks/lib/store-upkeep.ts";
-import { openNearestProject } from "./project.ts";
-import { migrateStore } from "./upgrade.ts";
+import { openNearestProject, reportMigration } from "./project.ts";
 
 // Puts a memory.db snapshot back: the named file, or the newest snapshot.
 // The current store is saved as a snapshot first, so a restore can be undone.
@@ -36,6 +35,6 @@ export async function run(args: string[]): Promise<number> {
   }
   console.log(`restored memory.db from ${source}`);
   if (result.savedAs !== null) console.log(`  the previous store is at ${result.savedAs}`);
-  migrateStore(store);
+  reportMigration(migrateStore(store));
   return 0;
 }

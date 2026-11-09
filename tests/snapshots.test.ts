@@ -184,6 +184,15 @@ describe("migration", () => {
     expect(up.status).toBe(0);
     expect(up.stderr).toContain("crank-mem: could not migrate memory.db (unreadable)");
   });
+
+  test("upgrade prints no migrate line for a store from a later version", () => {
+    const root = project();
+    plantMemory(root, "newer");
+    const up = runCli(root, ["upgrade"]);
+    expect(up.status).toBe(0);
+    expect(up.stdout).not.toContain("migrate");
+    expect(up.stderr).not.toContain("migrate");
+  });
 });
 
 describe("older stores", () => {

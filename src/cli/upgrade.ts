@@ -2,11 +2,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { cliVersion, REPO_ROOT } from "./version.ts";
 import { buildDashboard, dashboardCurrent, dashboardDir, installPackages } from "./setup.ts";
-import { openProject } from "./project.ts";
+import { openProject, reportMigration } from "./project.ts";
 import { newBackupDir } from "./backups.ts";
 import { printReport, repairInstall, resolveCodex } from "./install.ts";
 import { CONFIG_FILE, saveConfig } from "../hooks/lib/config.ts";
-import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
+import { memoryPath, migrateStore } from "../hooks/lib/memory.ts";
 
 // Non-interactive: after a `git pull` in the clone, repair every install item
 // (src/cli/install.ts) to the recorded install: the vendored hooks (on a
@@ -68,7 +68,7 @@ export async function run(_args: string[]): Promise<number> {
     }
   }
 
-  migrateStore(memoryPath(root));
+  reportMigration(migrateStore(memoryPath(root)));
 
   if (prev === current) console.log(`crank-mem: already at ${current} — nothing else to do.`);
   else if (stamped.vendored_version === current)
@@ -83,22 +83,5 @@ function rawHasCodexKey(file: string): boolean {
     return typeof parsed === "object" && parsed !== null && "codex" in parsed;
   } catch {
     return false;
-  }
-}
-
-/**
- * Brings an existing store to the current schema, snapshotting a version-1 store
- * first. It never creates a store, and a store it cannot migrate stays as it was.
- */
-export function migrateStore(storeFile: string): void {
-  if (!fs.existsSync(storeFile)) return;
-  const opened = openMemory(storeFile, "write");
-  if (opened.status === "open") {
-    if (opened.migratedFrom === 1) console.log("  migrated memory.db v1 → v2");
-    opened.memory.close();
-  } else if (opened.status === "unmigrated") {
-    console.error(`crank-mem: could not migrate memory.db (${opened.detail})`);
-  } else if (opened.status === "unreadable") {
-    console.error("crank-mem: could not migrate memory.db (unreadable)");
   }
 }
