@@ -150,7 +150,7 @@ describe("migration", () => {
     fs.chmodSync(backups, 0o555);
     try {
       const up = runCli(root, ["upgrade"]);
-      expect(up.status).toBe(0);
+      expect(up.status).toBe(1);
       expect(up.stderr).toContain("crank-mem: could not migrate memory.db (");
 
       const search = runCli(root, ["search", "lock"]);

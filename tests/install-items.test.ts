@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { REPO_ROOT, makeCrankHome, makeProject, runCli, snapshot, type CliRun } from "./helpers.ts";
 import { cliVersion } from "../src/cli/version.ts";
 import { CRANK_ALLOW_RULES, crankHooks } from "../src/cli/settings.ts";
+import { V1_DDL } from "./fixtures/schema-v1.ts";
 
 function cli(cwd: string, codexHome: string, crankHome: string, ...args: string[]): CliRun {
   return runCli(cwd, args, { CODEX_HOME: codexHome, CRANK_HOME: crankHome });
@@ -365,3 +366,203 @@ test("a legacy-only uninstall reports an unreadable .gitignore and still sweeps 
   expect(un.stdout.endsWith("crank-mem: removed legacy crank/ install.\n")).toBe(true);
   expect(fs.existsSync(path.join(root, "crank"))).toBe(false);
 });
+
+const ALREADY_AT = `crank-mem: already at ${cliVersion()} — nothing else to do.`;
+
+function lastLine(text: string): string | undefined {
+  return text
+    .split("\n")
+    .filter((l) => l !== "")
+    .at(-1);
+}
+
+function stripIgnoreBlock(file: string): void {
+  fs.writeFileSync(file, fs.readFileSync(file, "utf-8").replace("# crank-mem\n.crank/\n", ""));
+}
+
+const repairCases: {
+  name: string;
+  damage(root: string, codexHome: string, home: string): void;
+  files(root: string, codexHome: string, home: string): string[];
+  line: string | null;
+  extra?(root: string, codexHome: string, home: string, run: CliRun): void;
+}[] = [
+  {
+    name: "Claude wiring",
+    damage: (root) => fs.rmSync(path.join(root, ".claude/settings.local.json")),
+    files: (root) => [path.join(root, ".claude/settings.local.json")],
+    line: "  re-wired Claude Code hooks in .claude/settings.local.json",
+  },
+  {
+    name: ".crank/.gitignore",
+    damage: (root) => fs.rmSync(path.join(root, ".crank/.gitignore")),
+    files: (root) => [path.join(root, ".crank/.gitignore")],
+    line: "  wrote the allowlist .crank/.gitignore",
+  },
+  {
+    name: "git ignore block",
+    damage: (root) => stripIgnoreBlock(path.join(root, ".git/info/exclude")),
+    files: (root) => [path.join(root, ".git/info/exclude")],
+    line: "  added the crank-mem .crank/ ignore block to .git/info/exclude",
+  },
+  {
+    name: "cerebrum",
+    damage: (root) => fs.rmSync(path.join(root, ".crank/cerebrum.md")),
+    files: (root) => [path.join(root, ".crank/cerebrum.md")],
+    line: "  seeded .crank/cerebrum.md from the template",
+  },
+  {
+    name: "registry",
+    damage: (_root, _codexHome, home) =>
+      fs.writeFileSync(path.join(home, "projects.json"), '{"version":1,"projects":[]}'),
+    files: () => [],
+    line: null,
+    extra: (root, _codexHome, home, run) => {
+      const real = fs.realpathSync(root);
+      expect(registeredRoots(home).filter((r) => r === real).length).toBe(1);
+      expect(run.stdout.split("\n").filter((l) => l.startsWith("  "))).toEqual([]);
+    },
+  },
+];
+
+for (const c of repairCases) {
+  test(`upgrade repairs ${c.name}`, () => {
+    const { root, codexHome } = makeProject();
+    const home = makeCrankHome();
+    const init = cli(
+      root,
+      codexHome,
+      home,
+      "init",
+      "--yes",
+      "--git",
+      "exclude",
+      ...CODEX_FLAGS.trust,
+    );
+    expect(init.status).toBe(0);
+    const files = c.files(root, codexHome, home);
+    const recorded = files.map((f) => fs.readFileSync(f));
+    c.damage(root, codexHome, home);
+    const up = cli(root, codexHome, home, "upgrade");
+    expect(up.status).toBe(0);
+    if (c.line !== null) expect(up.stdout).toContain(c.line + "\n");
+    files.forEach((f, i) => expect(fs.readFileSync(f).equals(recorded[i]!)).toBe(true));
+    expect(lastLine(up.stdout)).toBe(ALREADY_AT);
+    c.extra?.(root, codexHome, home, up);
+  }, 20_000);
+}
+
+const legacyStampCases: { choice: Choice; set: Record<string, unknown> }[] = [
+  { choice: "trust", set: { codex_trust_written: true } },
+  { choice: "review", set: {} },
+  { choice: "skip", set: {} },
+];
+
+for (const { choice, set } of legacyStampCases) {
+  test(`upgrade stamps a legacy config's Codex choice: ${choice}`, () => {
+    const { root, codexHome } = makeProject();
+    const home = makeCrankHome();
+    expect(cli(root, codexHome, home, "init", "--yes", ...CODEX_FLAGS[choice]).status).toBe(0);
+    const { codex: _codex, ...rest } = readConfig(root);
+    writeConfig(root, { ...rest, ...set });
+    expect(cli(root, codexHome, home, "upgrade").status).toBe(0);
+    const parsed = readConfig(root);
+    expect(parsed.codex).toBe(choice);
+    expect("codex_trust_written" in parsed).toBe(false);
+  }, 20_000);
+}
+
+function initExcludeNoTrust(root: string, codexHome: string, home: string): void {
+  const init = cli(
+    root,
+    codexHome,
+    home,
+    "init",
+    "--yes",
+    "--git",
+    "exclude",
+    ...CODEX_FLAGS.review,
+  );
+  expect(init.status).toBe(0);
+}
+
+test("a corrupt Claude settings file costs only the Claude item", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  initExcludeNoTrust(root, codexHome, home);
+  const settings = path.join(root, ".claude/settings.local.json");
+  fs.writeFileSync(settings, "{ broken");
+  fs.rmSync(path.join(root, ".crank/.gitignore"));
+  const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
+  const db = new DatabaseSync(path.join(root, ".crank/memory.db"));
+  db.exec("PRAGMA journal_mode=WAL");
+  db.exec(V1_DDL);
+  db.exec("PRAGMA user_version = 1");
+  db.close();
+  const up = cli(root, codexHome, home, "upgrade");
+  expect(up.status).toBe(1);
+  expect(up.stderr).toContain("crank-mem: could not re-wire Claude Code hooks (");
+  expect(fs.readFileSync(settings, "utf-8")).toBe("{ broken");
+  expect(up.stdout).toContain("  wrote the allowlist .crank/.gitignore\n");
+  expect(up.stdout).toContain("  migrated memory.db v1 → v2\n");
+}, 20_000);
+
+test("a failed cerebrum seed fails the upgrade after every step", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  initExcludeNoTrust(root, codexHome, home);
+  const crankDir = path.join(root, ".crank");
+  fs.rmSync(path.join(crankDir, "cerebrum.md"));
+  let up: CliRun;
+  try {
+    fs.chmodSync(crankDir, 0o555);
+    up = cli(root, codexHome, home, "upgrade");
+  } finally {
+    fs.chmodSync(crankDir, 0o755);
+  }
+  expect(up.status).toBe(1);
+  expect(up.stderr).toContain("crank-mem: could not seed .crank/cerebrum.md from the template (");
+  expect(lastLine(up.stdout)).toBe(ALREADY_AT);
+}, 20_000);
+
+const failedWriteCases: { name: string; damage(root: string): () => void; line: string }[] = [
+  {
+    name: ".crank/.gitignore",
+    damage: (root) => {
+      const file = path.join(root, ".crank/.gitignore");
+      fs.rmSync(file);
+      fs.mkdirSync(file);
+      return () => {};
+    },
+    line: "crank-mem: could not write .crank/.gitignore (",
+  },
+  {
+    name: "ignore file",
+    damage: (root) => {
+      const file = path.join(root, ".git/info/exclude");
+      stripIgnoreBlock(file);
+      fs.chmodSync(file, 0o444);
+      return () => fs.chmodSync(file, 0o644);
+    },
+    line: "crank-mem: could not write .git/info/exclude (",
+  },
+];
+
+for (const c of failedWriteCases) {
+  test(`a failed item write fails the upgrade: ${c.name}`, () => {
+    const { root, codexHome } = makeProject();
+    const home = makeCrankHome();
+    initExcludeNoTrust(root, codexHome, home);
+    let up: CliRun;
+    let restore = () => {};
+    try {
+      restore = c.damage(root);
+      up = cli(root, codexHome, home, "upgrade");
+    } finally {
+      restore();
+    }
+    expect(up.status).toBe(1);
+    expect(up.stderr).toContain(c.line);
+    expect(lastLine(up.stdout)).toBe(ALREADY_AT);
+  }, 20_000);
+}

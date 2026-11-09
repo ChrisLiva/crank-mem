@@ -2,15 +2,28 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   CRANK_HOOK_MARKER,
+  addAllowRule,
+  addIgnoreLines,
+  claudeSettingsFiles,
+  crankHooks,
+  ensureCrankGitignore,
+  hasCrankHooks,
+  isCrankHookCommand,
+  mergeHooksIntoFile,
+  modeIgnoreFile,
   removeAllowRule,
   removeCodexFeatures,
   removeCrankHooksFromFile,
   removeIgnoreLines,
+  unignoreCerebrum,
 } from "./settings.ts";
 import { crankTrust, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
-import { unregisterProject } from "./registry.ts";
-import { createdByCrank } from "./backups.ts";
+import { registerProject, unregisterProject } from "./registry.ts";
+import { backupFile, createdByCrank } from "./backups.ts";
+import { templatePath } from "./vendor.ts";
 import type { OpenedProject } from "./project.ts";
+import type { CodexChoice, CrankConfig } from "../hooks/lib/config.ts";
+import { backupCerebrum, CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 
 // The ordered list of everything crank-mem installs into a project. Each
@@ -41,8 +54,29 @@ export function installPaths(root: string): {
   };
 }
 
+export interface InstallContext {
+  root: string;
+  crankDir: string;
+  config: CrankConfig & { codex: CodexChoice };
+  /** The run's backup dir, created on first call. */
+  backupDir: () => string;
+}
+
 interface InstallItem {
+  repair(ctx: InstallContext): Report;
   remove(project: OpenedProject): Report;
+}
+
+/** The recorded Codex choice, or for a legacy config the one its wiring implies. */
+export function resolveCodex(root: string, config: CrankConfig): CodexChoice {
+  if (config.codex !== null) return config.codex;
+  return hasCrankHooks(installPaths(root).codexHooks) ? "review" : "skip";
+}
+
+/** Each of `r.lines` to stdout, then each of `r.warnings` to stderr. */
+export function printReport(r: Report): void {
+  for (const line of r.lines) console.log(line);
+  for (const warning of r.warnings) console.error(warning);
 }
 
 function report(lines: string[] = []): Report {
@@ -61,10 +95,30 @@ const isEmptyJson = (text: string): boolean => JSON.stringify(JSON.parse(text)) 
 const isBlank = (text: string): boolean => text.trim() === "";
 
 const vendoredHooks: InstallItem = {
+  repair: () => report(),
   remove: () => report(),
 };
 
 const claudeWiring: InstallItem = {
+  // Crank hooks left in the Claude settings file the git mode does not use run
+  // every event twice.
+  repair(ctx) {
+    const { root, config } = ctx;
+    const backup = backupWith(ctx);
+    const r = report();
+    attemptRepair(r, "re-wire Claude Code hooks", () => {
+      const { wired, other } = claudeSettingsFiles(root, config.git);
+      if (hasCrankHooks(other)) {
+        removeCrankHooksFromFile(other, isCrankHookCommand, backup);
+        r.lines.push(`  removed duplicate crank hooks from ${path.relative(root, other)}`);
+      }
+      if (mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), backup))
+        r.lines.push(`  re-wired Claude Code hooks in ${path.relative(root, wired)}`);
+      if (addAllowRule(wired, backup))
+        r.lines.push("  added the crank-mem rules to permissions.allow");
+    });
+    return r;
+  },
   remove({ root, crankDir }) {
     const { claudeShared, claudeLocal } = installPaths(root);
     const r = report();
@@ -89,6 +143,7 @@ const claudeWiring: InstallItem = {
 };
 
 const codexWiring: InstallItem = {
+  repair: () => report(),
   remove({ root, crankDir, config }) {
     const { codexHooks, codexConfig } = installPaths(root);
     const r = report();
@@ -118,10 +173,53 @@ const codexWiring: InstallItem = {
 };
 
 const crankGitignore: InstallItem = {
+  // An install from before the allowlist keeps a denylist that misses state
+  // files added since, and every file another tool sharing .crank/ writes.
+  repair(ctx) {
+    const r = report();
+    attemptRepair(r, "write .crank/.gitignore", () => {
+      if (ensureCrankGitignore(ctx.crankDir, backupWith(ctx)))
+        r.lines.push(`  wrote the allowlist .crank/.gitignore`);
+    });
+    return r;
+  },
   remove: () => report(),
 };
 
 const gitIgnoreState: InstallItem = {
+  // Commit mode loses a stale crank-mem ignore block, which keeps cerebrum out
+  // of git; ignore and exclude mode regain a missing one, whose absence exposes
+  // .crank/ to git.
+  repair(ctx) {
+    const { root, config } = ctx;
+    const backup = backupWith(ctx);
+    const r = report();
+    if (config.git === "commit") {
+      attemptRepair(r, "check .crank/cerebrum.md against git ignores", () => {
+        const ignoredBy = unignoreCerebrum(root, (f) => {
+          backup(f);
+          r.lines.push(
+            `  removed the crank-mem .crank/ ignore block from ${path.relative(root, f)}`,
+          );
+        });
+        if (ignoredBy)
+          r.warnings.push(
+            `crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`,
+          );
+      });
+      return r;
+    }
+    const ignoreFile = modeIgnoreFile(root, config.git);
+    if (ignoreFile) {
+      attemptRepair(r, `write ${path.relative(root, ignoreFile)}`, () => {
+        if (addIgnoreLines(ignoreFile, backup))
+          r.lines.push(
+            `  added the crank-mem .crank/ ignore block to ${path.relative(root, ignoreFile)}`,
+          );
+      });
+    }
+    return r;
+  },
   remove({ root, crankDir }) {
     const { gitignore, gitExclude } = installPaths(root);
     const r = report();
@@ -135,10 +233,43 @@ const gitIgnoreState: InstallItem = {
 };
 
 const cerebrum: InstallItem = {
+  repair({ crankDir }) {
+    const r = report();
+    const cerebrumPath = path.join(crankDir, CEREBRUM_FILE);
+    if (!fs.existsSync(cerebrumPath)) {
+      attemptRepair(r, `seed .crank/${CEREBRUM_FILE} from the template`, () => {
+        fs.copyFileSync(templatePath(CEREBRUM_FILE), cerebrumPath);
+        r.lines.push(`  seeded .crank/${CEREBRUM_FILE} from the template`);
+      });
+      return r;
+    }
+    // 0.8.1 and earlier seeded the cerebrum with a protocol preamble telling
+    // agents how to keep it; consolidation keeps it now, so an unedited copy of
+    // that preamble gives way to the current template's. An edited one is the
+    // user's and stays. latin1 maps each byte to one char, so the body's bytes
+    // survive the rewrite even when they are not valid UTF-8.
+    attemptRepair(r, `replace the template preamble of .crank/${CEREBRUM_FILE}`, () => {
+      const { preamble, body } = splitPreamble(fs.readFileSync(cerebrumPath, "latin1"));
+      if (preamble === fs.readFileSync(templatePath("cerebrum-preamble-0.8.1.md"), "latin1")) {
+        const fresh = splitPreamble(
+          fs.readFileSync(templatePath(CEREBRUM_FILE), "latin1"),
+        ).preamble;
+        if (backupCerebrum(crankDir, fs.readFileSync(cerebrumPath)) === null)
+          throw new Error("could not back up the cerebrum");
+        fs.writeFileSync(cerebrumPath, fresh + (body ?? ""), "latin1");
+        r.lines.push(`  replaced the template preamble of .crank/${CEREBRUM_FILE}`);
+      }
+    });
+    return r;
+  },
   remove: () => report(),
 };
 
 const registry: InstallItem = {
+  repair({ root }) {
+    registerProject(root);
+    return report();
+  },
   remove({ root }) {
     unregisterProject(root);
     return report();
@@ -156,12 +287,37 @@ const ITEMS: InstallItem[] = [
 ];
 
 /**
+ * Bring every item back to the recorded install, in list order. Never throws:
+ * an item that fails becomes a warning and sets `failed`, and the walk carries
+ * on with the next item.
+ */
+export function repairInstall(ctx: InstallContext): Report {
+  return mergeReports(ITEMS.map((item) => item.repair(ctx)));
+}
+
+/**
  * Strip crank-mem's own entries from every item, last installed first.
  * Idempotent. Never throws: a file it cannot clean becomes a warning and sets
  * `failed`, and the walk carries on with the next file.
  */
 export function removeInstall(project: OpenedProject): Report {
   return mergeReports([...ITEMS].reverse().map((item) => item.remove(project)));
+}
+
+function backupWith(ctx: InstallContext): (file: string) => void {
+  return (file) => backupFile(ctx.backupDir(), file);
+}
+
+/** Run one item's repair, turning a throw into `crank-mem: could not <action> (…)` on `r`. */
+function attemptRepair(r: Report, action: string, steps: () => void): void {
+  try {
+    steps();
+  } catch (err) {
+    r.warnings.push(
+      `crank-mem: could not ${action} (${err instanceof Error ? err.message : String(err)})`,
+    );
+    r.failed = true;
+  }
 }
 
 function pushLine(lines: string[], line: string | null): void {

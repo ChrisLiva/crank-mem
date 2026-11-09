@@ -707,7 +707,7 @@ describe("upgrade", () => {
     fs.chmodSync(backups, 0o555);
     try {
       const run = cli(root, "upgrade");
-      expect(run.status).toBe(0);
+      expect(run.status).toBe(1);
       expect(run.stderr).toContain(
         "crank-mem: could not replace the template preamble of .crank/cerebrum.md (",
       );
