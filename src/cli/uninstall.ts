@@ -31,8 +31,9 @@ import { attemptRemoval, installPaths, removeInstall, type Report } from "./inst
 
 // Remove all crank-mem wiring. Default is surgical: strip exactly the
 // entries/lines we added (safe alongside post-init user edits). --restore
-// first puts back each project file as it was before crank-mem first changed
-// it and leaves files outside the project, such as ~/.codex/config.toml, as is.
+// runs between two surgical passes: it puts back each project file as it was
+// before crank-mem first changed it and leaves files outside the project, such
+// as ~/.codex/config.toml, as is.
 // Never touches the ADR directory.
 
 export async function run(args: string[]): Promise<number> {
