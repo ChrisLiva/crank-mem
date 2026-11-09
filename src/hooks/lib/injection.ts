@@ -516,35 +516,6 @@ export function listAdrFilenames(projectRoot: string, adrPath: string): string[]
   }
 }
 
-/**
- * The on-disk sources of a session-start injection, shared by the hook and
- * `crank-mem stats`, for a Codex session when `codex` is set. The caller adds
- * the staleness, drift and capture notes. Never throws.
- */
-export function injectionSources(
-  root: string,
-  crankDir: string,
-  config: CrankConfig,
-  index: AnatomyIndex,
-  codex: boolean,
-): InjectionSources & { codex: boolean; recall: Recall; gate: DigestGate } {
-  const cerebrumMd = readCerebrum(crankDir);
-
-  const gate = digestGate(config, codex, root);
-  const recall = readRecall(root, gate);
-
-  return {
-    cerebrumMd,
-    adrFilenames: listAdrFilenames(root, config.adr_path),
-    index,
-    adrPath: config.adr_path,
-    projectRoot: root,
-    codex,
-    recall,
-    gate,
-  };
-}
-
 /** Excerpt budget per spawn: a quarter of the session injection, paid per subagent. */
 const SUBAGENT_EXCERPT_BYTES = 2048;
 const SUBAGENT_EXCERPT_LABEL =
@@ -614,9 +585,20 @@ export function sessionStartInjection(
   index: AnatomyIndex,
   opts: { codex: boolean; source: string | null; stalenessNote: string | null },
 ): { text: string; excerpt: Excerpt | null; usage: SessionStartUsage } {
-  const sources = injectionSources(root, crankDir, config, index, opts.codex);
+  const gate = digestGate(config, opts.codex, root);
+  const recall = readRecall(root, gate);
+  const sources = {
+    cerebrumMd: readCerebrum(crankDir),
+    adrFilenames: listAdrFilenames(root, config.adr_path),
+    index,
+    adrPath: config.adr_path,
+    projectRoot: root,
+    codex: opts.codex,
+    recall,
+    gate,
+  } satisfies InjectionSources;
   const drift = driftNote(config);
-  const notes = captureNotes(sources.gate, sources.recall.status);
+  const notes = captureNotes(gate, recall.status);
   const { text, excerpt, shown } = composeInjection(
     {
       ...sources,

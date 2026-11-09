@@ -4,8 +4,13 @@ import { openProject } from "./project.ts";
 import { loadIndex, INDEX_FILE, type AnatomyIndex } from "../hooks/lib/store.ts";
 import { walkProject } from "../hooks/lib/scanner.ts";
 import type { CrankConfig } from "../hooks/lib/config.ts";
-import { composeInjection, fileCitations, injectionSources } from "../hooks/lib/injection.ts";
-import { auditSkillInstalled, installedAtMs, lastAuditMs } from "../hooks/lib/cerebrum-files.ts";
+import { fileCitations, sessionStartInjection } from "../hooks/lib/injection.ts";
+import {
+  auditSkillInstalled,
+  CEREBRUM_FILE,
+  installedAtMs,
+  lastAuditMs,
+} from "../hooks/lib/cerebrum-files.ts";
 import { hasCrankHooks } from "./settings.ts";
 import { installPaths } from "./install.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
@@ -36,8 +41,7 @@ const ageOf = (ms: number): string => age(new Date(ms).toISOString());
  * How much of cerebrum reaches a session, whether the paths it cites still
  * exist, and when the audit skill last ran. The excerpt counts come from
  * composing the injection a Claude session start would get, minus the
- * occasional staleness and drift notes, so the budget that cuts bullets is the
- * real one.
+ * staleness note, so the budget that cuts bullets is the real one.
  */
 function memoryLines(
   root: string,
@@ -46,14 +50,19 @@ function memoryLines(
   index: AnatomyIndex,
 ): string[] {
   const lines: string[] = [];
-  const sources = injectionSources(root, crankDir, config, index, false);
-  const { cerebrumMd } = sources;
+  let cerebrumMd: string | null = null;
+  try {
+    cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
+  } catch {}
+  const { excerpt: e } = sessionStartInjection(root, crankDir, config, index, {
+    codex: false,
+    source: null,
+    stalenessNote: null,
+  });
 
-  if (!cerebrumMd) {
+  if (!e) {
     lines.push(row("cerebrum", cerebrumMd === null ? "missing" : "empty"));
   } else {
-    const { excerpt } = composeInjection(sources, config.injection_budget_bytes);
-    const e = excerpt!;
     lines.push(row("cerebrum bullets", `${e.shown} of ${e.total} injected`));
     lines.push(row("prefs dropped", `${e.prefsTotal - e.prefsShown} of ${e.prefsTotal}`));
 
@@ -80,7 +89,7 @@ function memoryLines(
     );
 
     // Only paths with a directory: a bare basename may live anywhere.
-    const cited = [...new Set(fileCitations(cerebrumMd).filter((rel) => rel.includes("/")))];
+    const cited = [...new Set(fileCitations(cerebrumMd ?? "").filter((rel) => rel.includes("/")))];
     const existing = cited.filter((rel) => fs.existsSync(path.join(root, rel))).length;
     lines.push(
       row("cited paths", cited.length ? `${existing} of ${cited.length} exist` : "none cited"),

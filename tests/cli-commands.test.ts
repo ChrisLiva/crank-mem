@@ -7,14 +7,17 @@ import { spawnSync } from "node:child_process";
 import {
   digestProject,
   makeCrankHome,
+  makeCrankProject,
   makeModelHome,
   plantMemory,
   runCli,
+  runHook,
   seedMemory,
   spoolEntry,
   stopDigests,
   type CliRun,
 } from "./helpers.ts";
+import { claudeSessionStart } from "./fixtures/payloads.ts";
 import { crankHooks } from "../src/cli/settings.ts";
 import { crankTrust } from "../src/cli/codex-trust.ts";
 import { memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
@@ -133,6 +136,67 @@ describe("stats: memory health", () => {
     expect(run.status).toBe(0);
     expect(run.stdout).toMatch(/oldest hidden: {4}2026-09-10 \(\d+d ago\), 1 undated\n/);
   });
+
+  test("counts the excerpt the session's usage line records when a drift note costs it a bullet, and writes no debug line", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;\n" });
+    const crankDir = path.join(root, ".crank");
+    const clone = fs.mkdtempSync(path.join(os.tmpdir(), "crank-clone-"));
+    fs.writeFileSync(
+      path.join(clone, "package.json"),
+      JSON.stringify({ name: "crank-mem", version: "0.5.0" }),
+    );
+    const configFile = path.join(crankDir, "config.json");
+    fs.writeFileSync(
+      configFile,
+      JSON.stringify({
+        ...JSON.parse(fs.readFileSync(configFile, "utf-8")),
+        vendored_version: "0.3.2",
+        clone_root: clone,
+        injection_budget_bytes: 1340,
+        debug: true,
+      }),
+    );
+    const mem = Array.from(
+      { length: 6 },
+      (_, i) => `- **m${i}**: a memory note about thing ${i} (2026-09-1${i})`,
+    );
+    const cerebrum = path.join(crankDir, "cerebrum.md");
+    fs.writeFileSync(
+      cerebrum,
+      `# Cerebrum\n\n## User Preferences\n- prefers tabs\n\n## Memory\n${mem.join("\n")}\n`,
+    );
+
+    const hook = runHook(
+      "src/hooks/session-start.ts",
+      JSON.stringify(claudeSessionStart(root)),
+      root,
+      {
+        CRANK_HOME: makeCrankHome(),
+      },
+    );
+    expect(hook.status).toBe(0);
+    const line = JSON.parse(
+      fs.readFileSync(path.join(crankDir, "usage.jsonl"), "utf-8").split("\n")[0]!,
+    );
+    const { shown, total } = line.cerebrumBullets;
+    expect(shown).toBeLessThan(total); // the drift note costs the excerpt a bullet
+
+    const logFile = path.join(crankDir, "debug.log");
+    const log = fs.readFileSync(logFile, "utf-8");
+    const stats = cli(root, "stats");
+    expect(stats.status).toBe(0);
+    expect(stats.stdout).toContain(`cerebrum bullets: ${shown} of ${total} injected\n`);
+    expect(fs.readFileSync(logFile, "utf-8")).toBe(log);
+
+    fs.rmSync(cerebrum);
+    const missing = cli(root, "stats").stdout;
+    expect(missing).toContain("  cerebrum:         missing\n");
+    expect(missing).not.toContain("cerebrum bullets:");
+    fs.writeFileSync(cerebrum, "");
+    const empty = cli(root, "stats").stdout;
+    expect(empty).toContain("  cerebrum:         empty\n");
+    expect(empty).not.toContain("cerebrum bullets:");
+  }, 20_000);
 
   test("dates the last audit by its manifest-less backup dir and says when the skill is missing", () => {
     const root = memoryProject();
