@@ -486,7 +486,7 @@ function pushLine(lines: string[], line: string | null): void {
   if (line !== null) lines.push(line);
 }
 
-export function removalWarning(root: string, file: string, err: unknown): string {
+function removalWarning(root: string, file: string, err: unknown): string {
   const detail = err instanceof Error ? err.message : String(err);
   return `crank-mem: could not remove crank-mem's entries from ${repoRelative(root, root, file) ?? file} (${detail})`;
 }
