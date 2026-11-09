@@ -66,7 +66,8 @@ export type NewObservation = {
   filesRead: string[];
   filesModified: string[];
 };
-export type ProposalKind = "preference" | "memory";
+export const PROPOSAL_KINDS = ["preference", "memory"] as const;
+export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 export const PROPOSAL_STATES = ["pending", "accepted", "rejected", "expired"] as const;
 export type ProposalState = (typeof PROPOSAL_STATES)[number];
 export const isProposalState = (value: string): value is ProposalState =>

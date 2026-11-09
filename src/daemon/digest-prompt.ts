@@ -1,5 +1,6 @@
 import {
   OBSERVATION_TYPES,
+  PROPOSAL_KINDS,
   type DigestSummary,
   type Observation,
   type ObservationType,
@@ -26,8 +27,6 @@ export type DigestContext = {
   cerebrum: string | null;
   existing: Pick<Observation, "id" | "type" | "title" | "narrative">[];
 };
-
-const PROPOSAL_KINDS: readonly ProposalKind[] = ["preference", "memory"];
 
 const SYSTEM = `You are a digest recorder. The input is the distilled transcript of a finished coding session between a user and a coding agent. The session is over, and nobody in it can see you. Your record is the only thing future sessions on this project will have, so write what a new engineer would need and could not get cheaply from reading the code.
 
