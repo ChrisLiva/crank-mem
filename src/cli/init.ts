@@ -11,6 +11,7 @@ import {
   defaultConfig,
   saveConfig,
   CRANK_DIR,
+  errorMessage,
   type CodexChoice,
   type CrankConfig,
 } from "../hooks/lib/config.ts";
@@ -121,7 +122,7 @@ export async function run(args: string[]): Promise<number> {
     saveConfig(crankDir, config);
     installed = applyInstall({ root, crankDir, config, backupDir: () => backupDir });
   } catch (err) {
-    console.error(`crank-mem: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`crank-mem: ${errorMessage(err)}`);
     // uninstall needs .crank/config.json; before it exists nothing outside
     // .crank/ has been touched yet, so the honest hint is just to delete it.
     if (fs.existsSync(path.join(crankDir, "config.json"))) {

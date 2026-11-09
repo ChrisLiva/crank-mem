@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { ISO_DATE } from "./bullets.ts";
-import { CRANK_DIR } from "./config.ts";
+import { CRANK_DIR, errorMessage } from "./config.ts";
 import { runGit } from "./scanner.ts";
 import { dailyUpkeep, saveCurrentStore, snapshotBeforeMigration } from "./store-upkeep.ts";
 
@@ -386,8 +386,6 @@ function userVersion(db: sqlite.DatabaseSync): number {
 /** A restore retries a locked store every RESTORE_RETRY_MS for RESTORE_WAIT_MS. */
 const RESTORE_WAIT_MS = 10_000;
 const RESTORE_RETRY_MS = 100;
-
-const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /** Why a snapshot cannot be restored, or null when it passes the integrity check at a version this code reads or migrates. */
 function snapshotProblem(src: sqlite.DatabaseSync): string | null {

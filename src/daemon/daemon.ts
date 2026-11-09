@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { parseArgs, positive } from "../cli/args.ts";
 import { COMMANDS } from "../cli/commands.ts";
 import { REPO_ROOT, cliVersion } from "../cli/version.ts";
-import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
+import { CONFIG_FILE, CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
 import { trySteal } from "../hooks/lib/lock.ts";
 import {
   DAEMON_FILE,
@@ -161,9 +161,7 @@ class Daemon {
     try {
       writeJsonAtomic(this.file, state(this.startVersion));
     } catch (err) {
-      console.error(
-        `crank-mem daemon: heartbeat failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      console.error(`crank-mem daemon: heartbeat failed: ${errorMessage(err)}`);
     }
     try {
       // The clone was upgraded under us: finish the current job, then let the next start load the new code.
@@ -192,9 +190,7 @@ class Daemon {
         if (next) this.startJob(next.stem);
       }
     } catch (err) {
-      console.error(
-        `crank-mem daemon: sweep failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      console.error(`crank-mem daemon: sweep failed: ${errorMessage(err)}`);
     }
     if (this.job !== null) {
       this.busySince = Date.now();

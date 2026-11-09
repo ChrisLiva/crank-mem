@@ -29,7 +29,12 @@ import { backupFile, createdByCrank } from "./backups.ts";
 import { templatePath, vendorHooks, vendoredHooksCurrent } from "./vendor.ts";
 import { cliVersion } from "./version.ts";
 import type { OpenedProject } from "./project.ts";
-import { saveConfig, type CodexChoice, type CrankConfig } from "../hooks/lib/config.ts";
+import {
+  errorMessage,
+  saveConfig,
+  type CodexChoice,
+  type CrankConfig,
+} from "../hooks/lib/config.ts";
 import { backupCerebrum, CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 
@@ -479,9 +484,7 @@ function attemptRepair(r: Report, action: string, steps: () => void): void {
   try {
     steps();
   } catch (err) {
-    r.warnings.push(
-      `crank-mem: could not ${action} (${err instanceof Error ? err.message : String(err)})`,
-    );
+    r.warnings.push(`crank-mem: could not ${action} (${errorMessage(err)})`);
     r.failed = true;
   }
 }
@@ -491,7 +494,7 @@ function pushLine(lines: string[], line: string | null): void {
 }
 
 function removalWarning(root: string, file: string, err: unknown): string {
-  const detail = err instanceof Error ? err.message : String(err);
+  const detail = errorMessage(err);
   return `crank-mem: could not remove crank-mem's entries from ${repoRelative(root, root, file) ?? file} (${detail})`;
 }
 

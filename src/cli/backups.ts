@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CEREBRUM_FILE, fileStamp, manifestDirs } from "../hooks/lib/cerebrum-files.ts";
-import { isObj } from "../hooks/lib/config.ts";
+import { errorMessage, isObj } from "../hooks/lib/config.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 
 // Backups of every file init/upgrade is about to modify, with a manifest
@@ -92,7 +92,7 @@ function readEntries(manifest: string): ManifestEntry[] | { detail: string } {
   try {
     parsed = JSON.parse(fs.readFileSync(manifest, "utf-8"));
   } catch (err) {
-    return { detail: err instanceof Error ? err.message : String(err) };
+    return { detail: errorMessage(err) };
   }
   const entries = isObj(parsed) ? parsed.entries : undefined;
   if (!Array.isArray(entries) || !entries.every(isEntry)) {

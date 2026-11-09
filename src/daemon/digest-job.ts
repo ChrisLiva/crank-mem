@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { parseArgs, positive } from "../cli/args.ts";
 import { COMMANDS } from "../cli/commands.ts";
 import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
-import { CRANK_DIR } from "../hooks/lib/config.ts";
+import { CRANK_DIR, errorMessage } from "../hooks/lib/config.ts";
 import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
 import { deleteEntry, readSpool, settleEntry, type SpoolEntry } from "../hooks/lib/spool.ts";
@@ -113,16 +113,12 @@ async function digest(
     try {
       memory.maintain();
     } catch (err) {
-      console.error(
-        `crank-mem: maintenance skipped (${err instanceof Error ? err.message : String(err)})`,
-      );
+      console.error(`crank-mem: maintenance skipped (${errorMessage(err)})`);
     }
     try {
       await consolidate(entry.projectRoot, memory, opts);
     } catch (err) {
-      process.stderr.write(
-        `crank-mem: consolidation skipped (${err instanceof Error ? err.message : String(err)})\n`,
-      );
+      process.stderr.write(`crank-mem: consolidation skipped (${errorMessage(err)})\n`);
     }
   }
   return 0;
@@ -170,9 +166,7 @@ async function embedPending(memory: Memory): Promise<void> {
       rows.map((r, i) => ({ id: r.id, vector: vectors[i]! })),
     );
   } catch (err) {
-    console.error(
-      `crank-mem: embedding skipped (${err instanceof Error ? err.message : String(err)})`,
-    );
+    console.error(`crank-mem: embedding skipped (${errorMessage(err)})`);
   }
 }
 

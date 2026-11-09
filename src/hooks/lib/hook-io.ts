@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CRANK_DIR, isSensitiveFile } from "./config.ts";
+import { CRANK_DIR, errorMessage, isSensitiveFile } from "./config.ts";
 import { flushDebug } from "./debug.ts";
 
 // Hook I/O helpers. Hooks are advisory-only: they must never fail the tool
@@ -99,7 +99,7 @@ export async function runAdvisoryHook(name: string, main: () => Promise<void>): 
     await main();
   } catch (err) {
     error = err;
-    console.error(`crank-mem ${name}: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`crank-mem ${name}: ${errorMessage(err)}`);
   }
   flushDebug({
     hook: name,

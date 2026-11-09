@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { errorMessage } from "./config.ts";
 import { debugEvent } from "./debug.ts";
 
 // The memory files under .crank/: their names, cerebrum's size limits, and the
@@ -69,7 +70,7 @@ export function backupCerebrum(crankDir: string, text: string | Buffer): string 
     return path.join(".crank", BACKUP_DIR, name);
   } catch (err) {
     debugEvent("cerebrum-backup-failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return null;
   }

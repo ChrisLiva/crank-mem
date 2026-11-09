@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { CrankConfig } from "./config.ts";
+import { errorMessage, type CrankConfig } from "./config.ts";
 import { debugEvent } from "./debug.ts";
 import type { HookPayload } from "./hook-io.ts";
 import {
@@ -93,7 +93,7 @@ export function signalDigest(
     );
     if (readStopState() === null) ensureDaemon(config);
   } catch (err) {
-    debugEvent("signal-failed", { error: err instanceof Error ? err.message : String(err) });
+    debugEvent("signal-failed", { error: errorMessage(err) });
   }
 }
 
@@ -142,7 +142,7 @@ export function ensureDaemon(config: Pick<CrankConfig, "clone_root">): void {
     child.on("error", () => {});
     child.unref();
   } catch (err) {
-    debugEvent("daemon-start-failed", { error: err instanceof Error ? err.message : String(err) });
+    debugEvent("daemon-start-failed", { error: errorMessage(err) });
   }
 }
 

@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { errorMessage } from "../hooks/lib/config.ts";
 import { memoryPath, migrateStore, restoreMemory } from "../hooks/lib/memory.ts";
 import { latestSnapshot, snapshotDir } from "../hooks/lib/store-upkeep.ts";
 import { openNearestProject, reportMigration } from "./project.ts";
@@ -20,9 +21,7 @@ export async function run(args: string[]): Promise<number> {
   try {
     result = await restoreMemory(store, source);
   } catch (err) {
-    console.error(
-      `crank-mem: cannot restore: ${err instanceof Error ? err.message : String(err)}.`,
-    );
+    console.error(`crank-mem: cannot restore: ${errorMessage(err)}.`);
     return 1;
   }
   if (result.status !== "restored") {

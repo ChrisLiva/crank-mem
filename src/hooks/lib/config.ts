@@ -9,6 +9,9 @@ export type Obj = Record<string, unknown>;
 export const isObj = (v: unknown): v is Obj =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+export const errorMessage = (err: unknown): string =>
+  err instanceof Error ? err.message : String(err);
+
 export const CRANK_DIR = ".crank";
 export const CONFIG_FILE = "config.json";
 /** Per-checkout settings, kept out of git by .crank/.gitignore's `/*` line. */

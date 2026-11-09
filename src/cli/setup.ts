@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { embed, EMBED_MODEL, modelPresent, modelsDir } from "../daemon/embedder.ts";
+import { errorMessage } from "../hooks/lib/config.ts";
 import { ensureCrankHome } from "../hooks/lib/user-state.ts";
 import { parseArgs, positive } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
@@ -69,7 +70,7 @@ function buildDashboard(): InstallResult {
     fs.mkdirSync(dist, { recursive: true });
     fs.writeFileSync(path.join(dist, ".crank-version"), cliVersion());
   } catch (err) {
-    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+    return { ok: false, detail: errorMessage(err) };
   }
   return built;
 }
@@ -124,9 +125,7 @@ export async function run(args: string[]): Promise<number> {
   try {
     await embed(["warm up"], { remote: true, host, fetchTimeoutMs });
   } catch (err) {
-    console.error(
-      `crank-mem: could not download the model (${err instanceof Error ? err.message : String(err)})`,
-    );
+    console.error(`crank-mem: could not download the model (${errorMessage(err)})`);
     return 1;
   }
   console.log(`crank-mem: downloaded ${EMBED_MODEL} to ${dir}`);
