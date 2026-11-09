@@ -898,4 +898,25 @@ describe("flags", () => {
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("Run `crank-mem <command> --help` for its flags.");
   });
+
+  test("an unknown command prints the usage and exits 1; a bare call, help and --version exit 0", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "crank-cmd-"));
+    const home = makeCrankHome();
+    for (const [args, status] of [
+      [["frobnicate"], 1],
+      [["toString"], 1],
+      [[], 0],
+      [["help"], 0],
+    ] as const) {
+      const run = runCli(dir, [...args], { CRANK_HOME: home });
+      expect([args, run.status, run.stdout.includes("Usage: crank-mem <command> [flags]")]).toEqual(
+        [args, status, true],
+      );
+    }
+    for (const flag of ["--version", "-v"]) {
+      const run = runCli(dir, [flag], { CRANK_HOME: home });
+      expect(run.status).toBe(0);
+      expect(run.stdout).toMatch(/^.+\n$/);
+    }
+  });
 });
