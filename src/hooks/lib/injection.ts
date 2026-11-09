@@ -10,12 +10,14 @@ import {
   MEMORY_OLDER_NOTE,
   formatLine,
   memoryPath,
+  memoryStatus,
   openMemory,
   type ObservationLine,
 } from "./memory.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
 import type { CrankConfig } from "./config.ts";
-import type { AnatomyIndex } from "./store.ts";
+import { loadIndex, type AnatomyIndex } from "./store.ts";
+import type { UsageEvent } from "./usage.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
 // file map, the code pointer, and the recall pointer when recallApplies) → staleness/drift/
@@ -154,7 +156,7 @@ type Recall =
   | { status: "missing" | "older" | "newer" | "unreadable" };
 
 /** The recall bullet shows with a readable store, and while digests run with none yet, since they will fill it. */
-export function recallApplies(running: boolean, status: Recall["status"]): boolean {
+function recallApplies(running: boolean, status: Recall["status"]): boolean {
   return status === "open" || (running && status === "missing");
 }
 
@@ -524,10 +526,7 @@ export function injectionSources(
   index: AnatomyIndex,
   codex: boolean,
 ): InjectionSources & { codex: boolean; recall: Recall; gate: DigestGate } {
-  let cerebrumMd: string | null = null;
-  try {
-    cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
-  } catch {}
+  const cerebrumMd = readCerebrum(crankDir);
 
   const gate = digestGate(config, codex, root);
   const recall = readRecall(root, gate);
@@ -542,6 +541,60 @@ export function injectionSources(
     recall,
     gate,
   };
+}
+
+/** Excerpt budget per spawn: a quarter of the session injection, paid per subagent. */
+const SUBAGENT_EXCERPT_BYTES = 2048;
+const SUBAGENT_EXCERPT_LABEL =
+  "- Excerpt of `.crank/cerebrum.md`, this project's memory; grep it for more. Memory is not proof: verify a claim against the cited file before relying on it.";
+
+type SubagentStartUsage = Extract<UsageEvent, { channel: "subagent-start" }>;
+
+/**
+ * The SubagentStart injection. Read-only, with no index refresh: a compact
+ * cerebrum excerpt labelled by section name, balanced at SUBAGENT_EXCERPT_BYTES,
+ * CODE_BULLET (the outline/unfold pointer) with no gate, so a project root
+ * always yields an injection, plus the recall pointer where recallApplies.
+ * Returns the text and the usage event; the caller records the event.
+ */
+export function subagentInjection(
+  root: string,
+  crankDir: string,
+  config: CrankConfig,
+  opts: { agentType: string | null },
+): { text: string; usage: SubagentStartUsage } {
+  const running = digestGate(config, false, root).running;
+  const recall = recallApplies(running, memoryStatus(memoryPath(root)));
+
+  const md = readCerebrum(crankDir);
+  // Balanced: at this budget the session-start order leaves no room for memory.
+  const excerpt = md
+    ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, { index: loadIndex(crankDir), root }, true).text
+    : "";
+
+  const lines = [INJECTION_HEADING];
+  if (excerpt) lines.push(SUBAGENT_EXCERPT_LABEL);
+  lines.push(CODE_BULLET);
+  if (recall) lines.push(RECALL_BULLET);
+  if (excerpt) lines.push("", excerpt);
+  return {
+    text: lines.join("\n"),
+    usage: {
+      channel: "subagent-start",
+      agentType: opts.agentType,
+      excerptBytes: bytes(excerpt),
+      recallPointer: recall,
+    },
+  };
+}
+
+/** The one read of cerebrum.md; any read error reads as absent. */
+function readCerebrum(crankDir: string): string | null {
+  try {
+    return fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
+  } catch {
+    return null;
+  }
 }
 
 function readRecall(root: string, gate: DigestGate): Recall {
