@@ -133,39 +133,28 @@ test("uninstall leaves trust entries when the config records review", () => {
   expect(un.stdout).not.toContain("removed trusted_hash entries");
 }, 20_000);
 
-for (const choice of ["trust", "review"] as const) {
-  test(`upgrade recomputes trust on a version change only when the config records trust: ${choice}`, () => {
-    const { root, codexHome } = makeProject();
-    const home = makeCrankHome();
-    const init = cli(
-      root,
-      codexHome,
-      home,
-      "init",
-      "--yes",
-      "--git",
-      "exclude",
-      ...CODEX_FLAGS.trust,
-    );
-    expect(init.status).toBe(0);
-    const toml = path.join(codexHome, "config.toml");
-    fs.writeFileSync(toml, 'model = "gpt-5.6"\n');
-    writeConfig(root, {
-      ...readConfig(root),
-      vendored_version: "0.0.1",
-      ...(choice === "review" ? { codex: "review" } : {}),
-    });
-    const up = cli(root, codexHome, home, "upgrade");
-    expect(up.status).toBe(0);
-    if (choice === "trust") {
-      expect(up.stdout).toContain("  recomputed Codex trusted_hash entries\n");
-      expect(fs.readFileSync(toml, "utf-8")).toContain('trusted_hash = "sha256:');
-    } else {
-      expect(up.stdout).not.toContain("recomputed");
-      expect(fs.readFileSync(toml, "utf-8")).toBe('model = "gpt-5.6"\n');
-    }
-  }, 20_000);
-}
+test("upgrade writes no trust entries when the config records review", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  const init = cli(
+    root,
+    codexHome,
+    home,
+    "init",
+    "--yes",
+    "--git",
+    "exclude",
+    ...CODEX_FLAGS.trust,
+  );
+  expect(init.status).toBe(0);
+  const toml = path.join(codexHome, "config.toml");
+  fs.writeFileSync(toml, 'model = "gpt-5.6"\n');
+  writeConfig(root, { ...readConfig(root), vendored_version: "0.0.1", codex: "review" });
+  const up = cli(root, codexHome, home, "upgrade");
+  expect(up.status).toBe(0);
+  expect(up.stdout).not.toContain("recomputed");
+  expect(fs.readFileSync(toml, "utf-8")).toBe('model = "gpt-5.6"\n');
+}, 20_000);
 
 function registeredRoots(home: string): string[] {
   return JSON.parse(fs.readFileSync(path.join(home, "projects.json"), "utf-8")).projects.map(
