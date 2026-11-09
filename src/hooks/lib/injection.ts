@@ -136,21 +136,17 @@ export interface InjectionSources {
   cerebrumMd: string | null;
   adrFilenames: string[];
   index: AnatomyIndex;
-  /** Shown as an italic note near the top when a refresh was skipped or partial. */
-  stalenessNote?: string;
-  /** Appended below the staleness note when the vendored hooks lag the clone. */
-  driftNote?: string;
+  /** Italic notes near the top, in display order. Absent: none. */
+  notes?: string[];
   adrPath: string;
   /** Codex session: name AGENTS.md alone and no Read tool (ADR 0003). */
   codex?: boolean;
   /** Project root; when set, the excerpt tags cited files that vanished or changed. */
   projectRoot?: string;
-  /** The session's digest gate: `gate.running` means digests run for this session, so recall applies with no store yet. Absent: digests off. */
-  gate?: DigestGate;
+  /** Digests run for this session, so recall applies with no store yet. Absent: false. */
+  running?: boolean;
   /** What the memory store offers this session. Absent: no recall section or pointer. */
   recall?: Recall;
-  /** Capture-health notes, shown italic after the drift note. */
-  captureNotes?: string[];
 }
 
 type Recall =
@@ -437,7 +433,7 @@ export function composeInjection(
   sources: InjectionSources,
   budgetBytes: number,
 ): { text: string; excerpt: Excerpt | null; shown: Shown } {
-  const running = sources.gate?.running ?? false;
+  const running = sources.running ?? false;
   const recall = sources.recall;
   const recallPointer = recall ? recallApplies(running, recall.status) : false;
   const parts: string[] = [instructions(sources.index, sources.codex ?? false, recallPointer)];
@@ -459,8 +455,7 @@ export function composeInjection(
     return true;
   };
 
-  const notes = [sources.stalenessNote, sources.driftNote, ...(sources.captureNotes ?? [])];
-  for (const note of notes) if (note && fit(`_Note: ${note}_`)) shown.notes++;
+  for (const note of sources.notes ?? []) if (note && fit(`_Note: ${note}_`)) shown.notes++;
 
   if (recall?.status === "open") {
     const { nextSteps, recent } = recall;
@@ -587,6 +582,10 @@ export function sessionStartInjection(
 ): { text: string; excerpt: Excerpt | null; usage: SessionStartUsage } {
   const gate = digestGate(config, opts.codex, root);
   const recall = readRecall(root, gate);
+  const drift = driftNote(config);
+  const notes = [opts.stalenessNote, drift, ...captureNotes(gate, recall.status)].filter(
+    (note) => note !== null,
+  );
   const sources = {
     cerebrumMd: readCerebrum(crankDir),
     adrFilenames: listAdrFilenames(root, config.adr_path),
@@ -595,19 +594,10 @@ export function sessionStartInjection(
     projectRoot: root,
     codex: opts.codex,
     recall,
-    gate,
+    running: gate.running,
+    notes,
   } satisfies InjectionSources;
-  const drift = driftNote(config);
-  const notes = captureNotes(gate, recall.status);
-  const { text, excerpt, shown } = composeInjection(
-    {
-      ...sources,
-      stalenessNote: opts.stalenessNote ?? undefined,
-      driftNote: drift ?? undefined,
-      captureNotes: notes,
-    },
-    config.injection_budget_bytes,
-  );
+  const { text, excerpt, shown } = composeInjection(sources, config.injection_budget_bytes);
   debugEvent("injected", {
     source: opts.source,
     fileCount: index.meta.fileCount,

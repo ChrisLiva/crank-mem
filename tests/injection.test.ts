@@ -297,7 +297,7 @@ describe("composeInjection", () => {
 
   test("staleness note is included when set", () => {
     const out = composeInjection(
-      { ...sources, stalenessNote: "index refresh skipped (lock busy)" },
+      { ...sources, notes: ["index refresh skipped (lock busy)"] },
       8192,
     ).text;
     expect(out).toContain("index refresh skipped");
@@ -307,8 +307,10 @@ describe("composeInjection", () => {
     const out = composeInjection(
       {
         ...sources,
-        stalenessNote: "index refresh skipped (lock busy)",
-        driftNote: "crank-mem hooks are at 0.3.2, clone is at 0.5.0 — run `crank-mem upgrade`.",
+        notes: [
+          "index refresh skipped (lock busy)",
+          "crank-mem hooks are at 0.3.2, clone is at 0.5.0 — run `crank-mem upgrade`.",
+        ],
       },
       8192,
     ).text;
