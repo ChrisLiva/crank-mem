@@ -25,14 +25,25 @@ interface Pattern {
 }
 
 const TS_JS: Pattern[] = [
-  { re: /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/, kind: "fn" },
+  {
+    re: /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/,
+    kind: "fn",
+  },
   { re: /^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/, kind: "class" },
-  { re: /^(?:export\s+)?(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:<[^>]*>\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=>/, kind: "fn" },
+  {
+    re: /^(?:export\s+)?(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:<[^>]*>\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=>/,
+    kind: "fn",
+  },
   { re: /^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/, kind: "section" },
 ];
 
 const LANG_PATTERNS: Record<string, Pattern[]> = {
-  ".ts": TS_JS, ".tsx": TS_JS, ".js": TS_JS, ".jsx": TS_JS, ".mjs": TS_JS, ".cjs": TS_JS,
+  ".ts": TS_JS,
+  ".tsx": TS_JS,
+  ".js": TS_JS,
+  ".jsx": TS_JS,
+  ".mjs": TS_JS,
+  ".cjs": TS_JS,
   ".py": [
     { re: /^(?:async\s+)?def\s+(\w+)/, kind: "fn" },
     { re: /^class\s+(\w+)/, kind: "class" },

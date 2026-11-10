@@ -1,20 +1,24 @@
 import * as path from "node:path";
 import {
-  readStdin, parsePayload, findProjectRoot, emitAdditionalContext, runAdvisoryHook, isCodexPayload,
+  readStdin,
+  parsePayload,
+  findProjectRoot,
+  emitAdditionalContext,
+  runAdvisoryHook,
+  isCodexPayload,
 } from "./lib/hook-io.ts";
 import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex, commitIndex } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
-import { composeInjection, injectionSources } from "./lib/injection.ts";
-import { driftNote } from "./lib/drift.ts";
-import { trimJournal } from "./lib/journal.ts";
-import { estimateProseTokens } from "./lib/tokens.ts";
+import { sessionStartInjection } from "./lib/injection.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
+import { hookActor, recordUsage } from "./lib/usage.ts";
 
 // SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
-// included; compact only skips the journal trim. Refreshes the index under
-// lock, then emits the injection via hookSpecificOutput.additionalContext.
+// included. Refreshes the index under lock, then emits the injection via
+// hookSpecificOutput.additionalContext. sessionStartInjection applies the digest
+// gate (ADR 0010); no state carries an upkeep prompt, and journal.md is never read.
 // Advisory-only: every path exits 0.
 
 const REFRESH_BUDGET_MS = 2_000;
@@ -30,7 +34,7 @@ async function main(): Promise<void> {
   const config = loadConfig(crankDir);
   enableDebug(crankDir, config.debug);
 
-  let stalenessNote: string | undefined;
+  let stalenessNote: string | null = null;
   let index = commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (current) => {
     const startedRefresh = Date.now();
     const result = refreshIndex(root, config, current, REFRESH_BUDGET_MS);
@@ -54,38 +58,13 @@ async function main(): Promise<void> {
       "index refresh ran out of time before covering every file — the file map may be slightly stale";
   }
 
-  // `compact` fires mid-turn, while the agent may be appending an entry, and
-  // the trim is an unlocked read-modify-write — so trim only on the sources
-  // that start a turn. Reading for the injection is always safe.
-  const source = typeof payload.source === "string" ? payload.source : null;
-  if (source !== "compact") trimJournal(crankDir);
-  const sources = injectionSources(root, crankDir, config, index);
-  const drift = driftNote(config);
-  const context = composeInjection(
-    {
-      ...sources,
-      stalenessNote,
-      driftNote: drift ?? undefined,
-      codex: isCodexPayload(payload),
-    },
-    config.injection_budget_bytes
-  ).text;
-
-  emitAdditionalContext("SessionStart", context);
-  debugEvent("injected", {
-    source,
-    fileCount: index.meta.fileCount,
-    injectionTokens: estimateProseTokens(context),
-    // Bytes bind, not tokens: see injection_budget_bytes in config.ts.
-    injectionBytes: Buffer.byteLength(context, "utf-8"),
-    budgetBytes: config.injection_budget_bytes,
-    hasCerebrum: sources.cerebrumMd !== null,
-    drift: drift !== null,
-    journalBullets: sources.journalBullets.length,
-    journalChanged: sources.journalChanged ?? null,
-    adrCount: sources.adrFilenames.length,
-    stale: stalenessNote !== undefined,
+  const result = sessionStartInjection(root, crankDir, config, index, {
+    codex: isCodexPayload(payload),
+    source: typeof payload.source === "string" ? payload.source : null,
+    stalenessNote,
   });
+  emitAdditionalContext("SessionStart", result.text);
+  recordUsage(root, hookActor(payload), result.usage);
   console.error(`crank-mem: injected project memory (${index.meta.fileCount} files indexed)`);
 }
 

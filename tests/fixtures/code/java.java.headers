@@ -1,0 +1,9 @@
+src/java.java:4-23 class Box
+src/java.java:12-14 method Box.Box
+src/java.java:16-22 method Box.area
+src/java.java:25-25 class Point
+src/java.java:27-29 interface Shape
+src/java.java:28-28 method Shape.area
+src/java.java:31-33 interface Marker
+src/java.java:35-41 enum Color
+src/java.java:38-40 method Color.code

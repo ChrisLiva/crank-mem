@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+# The distiller must redact this fixture's synthetic token:
+# tests/fixtures/transcript.expected.txt asserts `token=[redacted]`.
+[[allowlists]]
+description = "transcript redaction fixture"
+paths = ['''(^|/)tests/fixtures/transcript\.jsonl$''']

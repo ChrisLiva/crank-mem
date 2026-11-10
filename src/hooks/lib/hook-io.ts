@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CRANK_DIR } from "./config.ts";
+import { CRANK_DIR, errorMessage, isSensitiveFile } from "./config.ts";
 import { flushDebug } from "./debug.ts";
 
 // Hook I/O helpers. Hooks are advisory-only: they must never fail the tool
@@ -38,15 +38,10 @@ export function parsePayload(raw: string): HookPayload | null {
  */
 export function isCodexPayload(payload: HookPayload): boolean {
   if (typeof payload.turn_id === "string") return true;
-  return typeof payload.transcript_path === "string" && path.basename(payload.transcript_path).startsWith("rollout-");
-}
-
-/**
- * The agent instructions files to name in model-visible text. Codex reads
- * AGENTS.md; any payload without a Codex marker gets both names.
- */
-export function instructionFiles(codex: boolean): string {
-  return codex ? "AGENTS.md" : "CLAUDE.md, AGENTS.md";
+  return (
+    typeof payload.transcript_path === "string" &&
+    path.basename(payload.transcript_path).startsWith("rollout-")
+  );
 }
 
 /**
@@ -63,10 +58,28 @@ export function findProjectRoot(cwd: string): string | null {
   }
 }
 
+/** `p` (absolute, or relative to `cwd`) as a `/`-separated path under `root`; null for the root itself or outside it. */
+export function repoRelative(root: string, cwd: string, p: string): string | null {
+  const abs = path.isAbsolute(p) ? p : path.resolve(cwd, p);
+  const r = path.relative(root, abs);
+  if (!r || r.startsWith("..") || path.isAbsolute(r)) return null;
+  return r.split(path.sep).join("/");
+}
+
+/** The paths memory may record: repo-relative, never sensitive, deduped in input order. */
+export function memoryPaths(root: string, cwd: string, paths: string[]): string[] {
+  const kept = new Set<string>();
+  for (const p of paths) {
+    const r = repoRelative(root, cwd, p);
+    if (r !== null && !isSensitiveFile(path.posix.basename(r))) kept.add(r);
+  }
+  return [...kept];
+}
+
 /** Emit model-visible context via hookSpecificOutput (both agents). */
 export function emitAdditionalContext(hookEventName: string, context: string): void {
   process.stdout.write(
-    JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: context } })
+    JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: context } }),
   );
 }
 
@@ -84,7 +97,7 @@ export async function runAdvisoryHook(name: string, main: () => Promise<void>): 
     await main();
   } catch (err) {
     error = err;
-    console.error(`crank-mem ${name}: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`crank-mem ${name}: ${errorMessage(err)}`);
   }
   flushDebug({
     hook: name,

@@ -1,116 +1,135 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "./args.ts";
+import { COMMANDS } from "./commands.ts";
 import { choose } from "./prompt.ts";
 import {
-  removeCrankHooksFromFile, removeIgnoreLines, removeCodexFeatures,
-  isLegacyHookCommand, LEGACY_IGNORE_BLOCK,
+  removeCrankHooksFromFile,
+  removeIgnoreLines,
+  isLegacyHookCommand,
+  LEGACY_IGNORE_BLOCK,
 } from "./settings.ts";
-import {
-  crankTrust, removeTrustEntries, userCodexConfigPath,
-} from "./codex-trust.ts";
-import { CRANK_DIR, CONFIG_FILE } from "../hooks/lib/config.ts";
+import { crankTrust, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
+import { CRANK_DIR, CONFIG_FILE, LOCAL_CONFIG_FILE } from "../hooks/lib/config.ts";
 import { INDEX_FILE, ANATOMY_FILE } from "../hooks/lib/store.ts";
 import { LOCK_FILE } from "../hooks/lib/lock.ts";
-import { MARKER_FILE, DEDUP_FILE, CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, isCrankBackup } from "../hooks/lib/cerebrum-nudge.ts";
-import { JOURNAL_FILE } from "../hooks/lib/journal.ts";
+import {
+  MARKER_FILE,
+  DEDUP_FILE,
+  CEREBRUM_FILE,
+  ARCHIVE_FILE,
+  BACKUP_DIR,
+  isCrankBackup,
+  JOURNAL_FILE,
+} from "../hooks/lib/cerebrum-files.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
+import { MEMORY_FILE } from "../hooks/lib/memory.ts";
+import { SNAPSHOT_DIR } from "../hooks/lib/store-upkeep.ts";
+import { USAGE_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
 import { openProject } from "./project.ts";
-import { latestBackupDir, restoreBackup, absentAtInit } from "./backups.ts";
+import { restoreInstall } from "./backups.ts";
+import { removeInstall } from "./install.ts";
+import { attemptRemoval, installPaths, type Report } from "./install-support.ts";
 
 // Remove all crank-mem wiring. Default is surgical: strip exactly the
 // entries/lines we added (safe alongside post-init user edits). --restore
-// instead restores the init-time backups byte-identically. Never touches the
-// ADR directory.
+// runs between two surgical passes: it puts back each project file as it was
+// before crank-mem first changed it and leaves files outside the project, such
+// as ~/.codex/config.toml, as is.
+// Never touches the ADR directory.
 
 export async function run(args: string[]): Promise<number> {
-  const { flags } = parseArgs(args, []);
+  const { flags } = parseArgs(args, COMMANDS.uninstall.value);
+
+  // Both removal passes and the legacy sweep can hit the same file, so each
+  // distinct stderr line prints once per run, in first-seen order.
+  const seen = new Set<string>();
+  const warn = (line: string): void => {
+    if (seen.has(line)) return;
+    seen.add(line);
+    console.error(line);
+  };
+  const print = (r: Report): Report => {
+    for (const line of r.lines) console.log(line);
+    for (const warning of r.warnings) warn(warning);
+    return r;
+  };
 
   // A leftover pre-rename install (only crank/, no .crank/) can't be opened as
   // a project — sweep it and stop, so the new CLI can clean up after itself.
   const cwd = process.cwd();
   if (!fs.existsSync(path.join(cwd, CRANK_DIR, "config.json")) && legacyPresent(cwd)) {
-    sweepLegacy(cwd);
+    const swept = print(sweepLegacy(cwd));
     console.log("crank-mem: removed legacy crank/ install.");
-    return 0;
+    return swept.failed ? 1 : 0;
   }
 
   const project = openProject();
   if (!project) return 1;
-  const { root, crankDir, config } = project;
+  const { root, crankDir } = project;
 
   const restore =
     flags.restore === true ||
     (!flags.yes &&
-      (await choose("Restore modified files from the init-time backup?", ["restore", "surgical"], "surgical")) === "restore");
+      (await choose(
+        "Restore the files crank-mem changed, as they were before it first changed them?",
+        ["restore", "surgical"],
+        "surgical",
+      )) === "restore");
 
-  const codexHooksJson = path.join(root, ".codex", "hooks.json");
-
-  // Trust entries first: keys come from hooks.json as it stands, before we
-  // strip our groups out of it. Both spellings go — older releases keyed on
-  // the raw PascalCase event and left those entries orphaned.
-  if (config.codex_trust_written) {
-    removeTrustEntries(userCodexConfigPath(), crankTrust(codexHooksJson).keys);
-    console.log(`  removed trusted_hash entries from ${userCodexConfigPath()}`);
-  }
-
+  let status = print(removeInstall(project)).failed ? 1 : 0;
   if (restore) {
-    const backupDir = latestBackupDir(crankDir);
-    if (!backupDir) {
-      console.error("crank-mem: no backups found — falling back to surgical removal.");
+    const result = restoreInstall(crankDir);
+    if (result.status === "no-backups") {
+      warn("crank-mem: no backups found — falling back to surgical removal.");
+    } else if (result.status === "unreadable") {
+      warn(
+        `crank-mem: could not read ${result.manifest} (${result.detail}) — falling back to surgical removal.`,
+      );
+      status = 1;
     } else {
-      for (const restored of restoreBackup(backupDir)) console.log(`  restored ${restored}`);
-    }
-  }
-
-  // Surgical removal is idempotent — run it even after a restore, in case the
-  // backup predates some wiring. It only ever strips crank-mem's own entries.
-  for (const f of [
-    path.join(root, ".claude", "settings.json"),
-    path.join(root, ".claude", "settings.local.json"),
-    codexHooksJson,
-  ]) {
-    if (removeCrankHooksFromFile(f)) console.log(`  removed crank hooks from ${path.relative(root, f)}`);
-    // Delete a now-empty object only when the manifest proves we created the
-    // file — a user's own literal {} must survive.
-    if (!absentAtInit(crankDir, f)) continue;
-    try {
-      if (fs.existsSync(f) && JSON.stringify(JSON.parse(fs.readFileSync(f, "utf-8"))) === "{}") {
-        fs.unlinkSync(f);
-        console.log(`  deleted now-empty ${path.relative(root, f)}`);
+      for (const p of result.paths) {
+        if (p.outcome === "copied") console.log(`  restored ${p.path}`);
+        else if (p.outcome === "removed") console.log(`  removed ${p.path} (crank-mem created it)`);
+        else if (p.outcome === "outside")
+          console.log(`  left ${p.path} as is (outside this project)`);
+        else {
+          warn(`crank-mem: could not restore ${p.path} (${p.code})`);
+          status = 1;
+        }
       }
-    } catch {}
+    }
+    // A second pass strips whatever the restored copies still carry, in
+    // case a backup predates some wiring. It only strips crank-mem's entries.
+    if (print(removeInstall(project)).failed) status = 1;
   }
-
-  const gitignore = path.join(root, ".gitignore");
-  removeIgnoreLines(gitignore);
-  try {
-    if (fs.existsSync(gitignore) && fs.readFileSync(gitignore, "utf-8").trim() === "") fs.unlinkSync(gitignore);
-  } catch {}
-  removeIgnoreLines(path.join(root, ".git", "info", "exclude"));
-  removeCodexFeatures(path.join(root, ".codex", "config.toml"));
 
   // A migrated project that was re-init'd on top of an old checkout still
   // carries the pre-rename crank/ dir and its duplicate hook wiring — sweep it.
-  sweepLegacy(root);
+  if (print(sweepLegacy(root)).failed) status = 1;
 
   removeEmptyDirs(root, [".codex", ".claude"]);
 
   const deleteCrank =
     flags["delete-crank"] === true ||
-    (flags["keep-crank"] !== true && !flags.yes &&
-      (await choose("Delete the .crank/ data directory?", ["delete", "keep"], "keep")) === "delete");
+    (flags["keep-crank"] !== true &&
+      !flags.yes &&
+      (await choose("Delete the .crank/ data directory?", ["delete", "keep"], "keep")) ===
+        "delete");
 
   if (deleteCrank) {
     const left = deleteOwnedFiles(crankDir);
     if (left.length === 0) console.log("  deleted .crank/");
-    else console.log(`  deleted crank-mem's files from .crank/, kept what other tools wrote: ${left.join(", ")}`);
+    else
+      console.log(
+        `  deleted crank-mem's files from .crank/, kept what other tools wrote: ${left.join(", ")}`,
+      );
   } else {
     console.log("  kept .crank/ (delete it manually when ready)");
   }
 
   console.log("crank-mem: uninstalled.");
-  return 0;
+  return status;
 }
 
 /**
@@ -127,34 +146,39 @@ function legacyPresent(root: string): boolean {
  * prompting: legacy hook entries, its Codex trust hashes, ignore lines, and
  * the directory itself. Idempotent — a no-op when there is nothing legacy.
  */
-function sweepLegacy(root: string): void {
-  const codexHooksJson = path.join(root, ".codex", "hooks.json");
+function sweepLegacy(root: string): Report {
+  const { claudeShared, claudeLocal, codexHooks, gitignore, gitExclude } = installPaths(root);
+  const r: Report = { lines: [], warnings: [], failed: false };
 
   // Trust keys come from the legacy entries' positions in hooks.json, read
   // before we strip them. Removal is a safe no-op if trust was never written.
-  const legacyKeys = crankTrust(codexHooksJson, isLegacyHookCommand).keys;
-  if (legacyKeys.length) {
-    removeTrustEntries(userCodexConfigPath(), legacyKeys);
-    console.log(`  removed legacy trusted_hash entries from ${userCodexConfigPath()}`);
+  attemptRemoval(r, root, userCodexConfigPath(), () => {
+    const legacyKeys = crankTrust(codexHooks, isLegacyHookCommand).keys;
+    if (legacyKeys.length) {
+      removeTrustEntries(userCodexConfigPath(), legacyKeys);
+      r.lines.push(`  removed legacy trusted_hash entries from ${userCodexConfigPath()}`);
+    }
+  });
+
+  for (const f of [claudeShared, claudeLocal, codexHooks]) {
+    attemptRemoval(r, root, f, () => {
+      if (removeCrankHooksFromFile(f, isLegacyHookCommand))
+        r.lines.push(`  removed legacy crank hooks from ${path.relative(root, f)}`);
+    });
   }
 
-  for (const f of [
-    path.join(root, ".claude", "settings.json"),
-    path.join(root, ".claude", "settings.local.json"),
-    codexHooksJson,
-  ]) {
-    if (removeCrankHooksFromFile(f, isLegacyHookCommand))
-      console.log(`  removed legacy crank hooks from ${path.relative(root, f)}`);
-  }
-
-  removeIgnoreLines(path.join(root, ".gitignore"), LEGACY_IGNORE_BLOCK);
-  removeIgnoreLines(path.join(root, ".git", "info", "exclude"), LEGACY_IGNORE_BLOCK);
+  attemptRemoval(r, root, gitignore, () => removeIgnoreLines(gitignore, LEGACY_IGNORE_BLOCK));
+  attemptRemoval(r, root, gitExclude, () => removeIgnoreLines(gitExclude, LEGACY_IGNORE_BLOCK));
 
   // Delete the directory only when it's provably ours (see legacyPresent).
-  if (legacyPresent(root)) {
-    fs.rmSync(path.join(root, "crank"), { recursive: true, force: true });
-    console.log("  deleted legacy crank/");
-  }
+  const legacyDir = path.join(root, "crank");
+  attemptRemoval(r, root, legacyDir, () => {
+    if (legacyPresent(root)) {
+      fs.rmSync(legacyDir, { recursive: true, force: true });
+      r.lines.push("  deleted legacy crank/");
+    }
+  });
+  return r;
 }
 
 /**
@@ -164,8 +188,25 @@ function sweepLegacy(root: string): void {
  */
 function deleteOwnedFiles(crankDir: string): string[] {
   const owned = [
-    CONFIG_FILE, INDEX_FILE, ANATOMY_FILE, LOCK_FILE, MARKER_FILE, DEDUP_FILE, JOURNAL_FILE, LOG_FILE,
-    CEREBRUM_FILE, ARCHIVE_FILE, BACKUP_DIR, "hooks",
+    CONFIG_FILE,
+    LOCAL_CONFIG_FILE,
+    INDEX_FILE,
+    ANATOMY_FILE,
+    LOCK_FILE,
+    MARKER_FILE,
+    DEDUP_FILE,
+    JOURNAL_FILE,
+    LOG_FILE,
+    CEREBRUM_FILE,
+    ARCHIVE_FILE,
+    BACKUP_DIR,
+    SNAPSHOT_DIR,
+    "hooks",
+    MEMORY_FILE,
+    `${MEMORY_FILE}-wal`,
+    `${MEMORY_FILE}-shm`,
+    USAGE_FILE,
+    USAGE_ROTATED_FILE,
   ];
   for (const name of owned) fs.rmSync(path.join(crankDir, name), { recursive: true, force: true });
   for (const name of readdirOrEmpty(crankDir)) {

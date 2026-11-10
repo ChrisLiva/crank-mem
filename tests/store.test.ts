@@ -3,7 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  emptyIndex, loadIndex, commitIndex, renderAnatomyMd, INDEX_FILE, ANATOMY_FILE,
+  emptyIndex,
+  loadIndex,
+  commitIndex,
+  renderAnatomyMd,
+  INDEX_FILE,
+  ANATOMY_FILE,
   type FileEntry,
 } from "../src/hooks/lib/store.ts";
 
@@ -39,16 +44,23 @@ describe("index store", () => {
   // load, not reset the index to empty and force a full re-scan.
   test("an index carrying retired entry fields still loads", () => {
     const dir = tmpDir();
-    fs.writeFileSync(path.join(dir, INDEX_FILE), JSON.stringify({
-      version: 1,
-      meta: { lastScanned: "2026-07-16T00:00:00Z", fileCount: 1 },
-      files: {
-        "src/a.ts": {
-          description: "Alpha", tokens: 100, size: 350, mtimeMs: 123,
-          updatedAt: "2026-07-16T00:00:00Z", source: "scan",
+    fs.writeFileSync(
+      path.join(dir, INDEX_FILE),
+      JSON.stringify({
+        version: 1,
+        meta: { lastScanned: "2026-07-16T00:00:00Z", fileCount: 1 },
+        files: {
+          "src/a.ts": {
+            description: "Alpha",
+            tokens: 100,
+            size: 350,
+            mtimeMs: 123,
+            updatedAt: "2026-07-16T00:00:00Z",
+            source: "scan",
+          },
         },
-      },
-    }));
+      }),
+    );
     const loaded = loadIndex(dir);
     expect(loaded.meta.fileCount).toBe(1);
     expect(loaded.files["src/a.ts"]!.description).toBe("Alpha");
@@ -99,7 +111,10 @@ describe("index store", () => {
   test("renderAnatomyMd includes files and symbol sub-bullets", () => {
     const idx = emptyIndex();
     idx.files["src/b.ts"] = {
-      description: "Beta", tokens: 600, size: 2100, mtimeMs: 1,
+      description: "Beta",
+      tokens: 600,
+      size: 2100,
+      mtimeMs: 1,
       symbols: [{ name: "beta", kind: "fn", startLine: 1, endLine: 20, tokens: 550 }],
     };
     idx.meta.fileCount = 1;
@@ -118,7 +133,12 @@ describe("index store", () => {
     idx.meta.churn = { head: "abc", paths: ["hot.ts", "deleted.ts"] };
     const md = renderAnatomyMd(idx);
     const active = md.slice(md.indexOf("## Most active files"), md.indexOf("## All files"));
-    expect(active.trim().split("\n").slice(2)).toEqual(["- `new.ts` (~7 tok)", "- `hot.ts` — Hot (~600 tok)"]);
-    expect(md.slice(md.indexOf("## All files"))).toContain("- `hot.ts` — Hot (~600 tok)\n  - fn (fn, L1–L9, ~500 tok)");
+    expect(active.trim().split("\n").slice(2)).toEqual([
+      "- `new.ts` (~7 tok)",
+      "- `hot.ts` — Hot (~600 tok)",
+    ]);
+    expect(md.slice(md.indexOf("## All files"))).toContain(
+      "- `hot.ts` — Hot (~600 tok)\n  - fn (fn, L1–L9, ~500 tok)",
+    );
   });
 });

@@ -1,0 +1,25 @@
+src/tsx.tsx
+  5-8│export function Card(props: { title: string }): JSX.Element { … }
+10-12│function* ids(): Generator<number> { … }
+14-14│function pick(a: string): string;
+15-17│function pick(a: unknown): unknown { … }
+19-19│export const Badge = ({ label }: { label: string }) => …
+21-23│var Legacy = function () { … }
+35-35│function track(target: unknown, key: string) { … }
+37-49│class Panel extends React.Component<{ open: boolean }> {
+39-41│  toggle = () => { … }
+42-44│  format = function (v: number) { … }
+45-48│  render() { … }
+51-53│abstract class Base {
+52-52│  protected abstract draw(): JSX.Element
+55-58│interface Props {
+57-57│  onSelect(id: number): void
+60-60│type Size = "s" | "m";
+62-64│enum Tone { … }
+66-70│namespace UI {
+67-69│  export function frame(): JSX.Element { … }
+72-74│module "m" {
+73-73│  export function fromM(): void;
+76-78│export default function () { … }
+80-84│export default class {
+81-83│  show() { … }

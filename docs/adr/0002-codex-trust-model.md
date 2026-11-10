@@ -5,6 +5,7 @@ Amended 2026-07-19 against rust-v0.144.6 source (byte-identical to 0.144.5 in
 `hooks/`, `config/`, `features/`): the original `[features]` finding and two
 hash-formula key names were wrong; corrected below, and `codex-trust.ts`
 fixed to match.
+Amended 2026-11-07: `uninstall --restore` no longer replays `~/.codex/config.toml`; see Decision.
 
 ## Findings
 
@@ -66,5 +67,8 @@ fixed 2026-07-19 with vectors pinned in `tests/codex-trust.test.ts`.)
 
 Default: print instructions ("open codex once, accept the hooks review").
 `init --codex-trust write` opts into computing and writing `trusted_hash`
-entries to `~/.codex/config.toml`; that file then joins backups, `uninstall`
-removes exactly those entries, and `upgrade` recomputes hashes.
+entries to `~/.codex/config.toml`, and `upgrade` recomputes hashes. init and
+upgrade copy `~/.codex/config.toml` into their backups, but `uninstall
+--restore` never replays it: restoring a user-wide file from one project
+clobbers the trust entries other projects wrote since. `uninstall` removes
+exactly crank-mem's entries.

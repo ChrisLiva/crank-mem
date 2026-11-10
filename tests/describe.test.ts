@@ -16,7 +16,9 @@ describe("describeFile", () => {
     expect(describeFile(tmpFile("tsconfig.json", "{}"))).toBe("TypeScript compiler configuration");
   });
   test("package.json uses its own description field", () => {
-    expect(describeFile(tmpFile("package.json", '{"description":"My great tool"}'))).toBe("My great tool");
+    expect(describeFile(tmpFile("package.json", '{"description":"My great tool"}'))).toBe(
+      "My great tool",
+    );
   });
   test("package.json without description falls back to label", () => {
     expect(describeFile(tmpFile("package.json", "{}"))).toBe("Package manifest");
@@ -25,16 +27,26 @@ describe("describeFile", () => {
     expect(describeFile(tmpFile("notes.md", "# Design Notes\n\nbody"))).toBe("Design Notes");
   });
   test("docblock summary", () => {
-    expect(describeFile(tmpFile("a.ts", "/**\n * Parses widgets.\n * @param x\n */\nexport function p() {}"))).toBe("Parses widgets.");
+    expect(
+      describeFile(
+        tmpFile("a.ts", "/**\n * Parses widgets.\n * @param x\n */\nexport function p() {}"),
+      ),
+    ).toBe("Parses widgets.");
   });
   test("python docstring", () => {
-    expect(describeFile(tmpFile("a.py", '"""Frobnicates the baz."""\ndef f(): pass'))).toBe("Frobnicates the baz.");
+    expect(describeFile(tmpFile("a.py", '"""Frobnicates the baz."""\ndef f(): pass'))).toBe(
+      "Frobnicates the baz.",
+    );
   });
   test("header line comment", () => {
-    expect(describeFile(tmpFile("b.ts", "// Widget registry.\nconst x = 1;"))).toBe("Widget registry.");
+    expect(describeFile(tmpFile("b.ts", "// Widget registry.\nconst x = 1;"))).toBe(
+      "Widget registry.",
+    );
   });
   test("declaration fallback", () => {
-    expect(describeFile(tmpFile("c.ts", "export class WidgetStore {}\n"))).toBe("Defines WidgetStore");
+    expect(describeFile(tmpFile("c.ts", "export class WidgetStore {}\n"))).toBe(
+      "Defines WidgetStore",
+    );
   });
   test("json description field", () => {
     expect(describeFile(tmpFile("thing.json", '{"description":"A config"}'))).toBe("A config");
@@ -50,64 +62,107 @@ describe("describeFile", () => {
 
 describe("describeFile extraction rules", () => {
   test("C preprocessor lines are not descriptions", () => {
-    expect(describeFile(tmpFile("a.hpp", "#pragma once\n\n#include <vector>\n\nstruct Mesh {};\n"))).toBe("Defines Mesh");
-    expect(describeFile(tmpFile("b.h", "#ifndef B_H\n#define B_H\n//#include <old.h>\n// Vertex buffer helpers.\nint f(void);\n#endif\n")))
-      .toBe("Vertex buffer helpers.");
+    expect(
+      describeFile(tmpFile("a.hpp", "#pragma once\n\n#include <vector>\n\nstruct Mesh {};\n")),
+    ).toBe("Defines Mesh");
+    expect(
+      describeFile(
+        tmpFile(
+          "b.h",
+          "#ifndef B_H\n#define B_H\n//#include <old.h>\n// Vertex buffer helpers.\nint f(void);\n#endif\n",
+        ),
+      ),
+    ).toBe("Vertex buffer helpers.");
   });
 
   test("a plain /* */ license block is skipped whole, the next block describes", () => {
-    const src = "/*\n * Copyright (c) 2020 Acme\n *\n * Permission is hereby granted, free of charge, to any person\n * obtaining a copy of this software.\n */\n\n/* Slices meshes into layers. */\n#include \"c.h\"\n";
+    const src =
+      '/*\n * Copyright (c) 2020 Acme\n *\n * Permission is hereby granted, free of charge, to any person\n * obtaining a copy of this software.\n */\n\n/* Slices meshes into layers. */\n#include "c.h"\n';
     expect(describeFile(tmpFile("c.cpp", src))).toBe("Slices meshes into layers.");
   });
 
   test("separator and copyright line comments are skipped", () => {
-    const src = "/////////////////\n// Copyright 2021 Acme\n/////////////////\n\n// Edge collapse queue.\n#include \"e.h\"\n";
+    const src =
+      '/////////////////\n// Copyright 2021 Acme\n/////////////////\n\n// Edge collapse queue.\n#include "e.h"\n';
     expect(describeFile(tmpFile("e.cpp", src))).toBe("Edge collapse queue.");
   });
 
   test("line-comment license text is skipped up to the blank line", () => {
-    const src = "// This file is part of libigl.\n//\n// This Source Code Form is subject to the terms of the Mozilla Public License\n// v. 2.0. If a copy of the MPL was not distributed with this file, You can\n\n// Winding numbers.\nint w();\n";
+    const src =
+      "// This file is part of libigl.\n//\n// This Source Code Form is subject to the terms of the Mozilla Public License\n// v. 2.0. If a copy of the MPL was not distributed with this file, You can\n\n// Winding numbers.\nint w();\n";
     expect(describeFile(tmpFile("w.cpp", src))).toBe("Winding numbers.");
   });
 
   test("python module docstring keeps apostrophes", () => {
-    expect(describeFile(tmpFile("p.py", '#!/usr/bin/env python\n"""Parse the user\'s config file."""\nimport os\n'))).toBe("Parse the user's config file.");
+    expect(
+      describeFile(
+        tmpFile("p.py", '#!/usr/bin/env python\n"""Parse the user\'s config file."""\nimport os\n'),
+      ),
+    ).toBe("Parse the user's config file.");
   });
 
   test("a function docstring is not the module docstring", () => {
-    expect(describeFile(tmpFile("n.py", 'import os\n\n\ndef load():\n    """Load the thing."""\n    return 1\n'))).toBe("Defines load");
+    expect(
+      describeFile(
+        tmpFile("n.py", 'import os\n\n\ndef load():\n    """Load the thing."""\n    return 1\n'),
+      ),
+    ).toBe("Defines load");
   });
 
   test("json without a description field gets none, even with glob stars", () => {
-    expect(describeFile(tmpFile("h.json", '{\n  "files": { "includes": ["**/src/**/*", "!**/dist"] }\n}\n'))).toBe("");
+    expect(
+      describeFile(
+        tmpFile("h.json", '{\n  "files": { "includes": ["**/src/**/*", "!**/dist"] }\n}\n'),
+      ),
+    ).toBe("");
   });
 
   test("a docblock after the first import does not describe the file", () => {
-    expect(describeFile(tmpFile("d.ts", 'import x from "y";\n\n/** Widget options. */\nexport interface Opts {}\n'))).toBe("Defines Opts");
+    expect(
+      describeFile(
+        tmpFile("d.ts", 'import x from "y";\n\n/** Widget options. */\nexport interface Opts {}\n'),
+      ),
+    ).toBe("Defines Opts");
   });
 
   test("a docblock after a license block still describes the file", () => {
-    const src = '/* Copyright 2024 Acme. SPDX-License-Identifier: MIT */\n/**\n * Widget engine.\n */\nimport x from "y";\n';
+    const src =
+      '/* Copyright 2024 Acme. SPDX-License-Identifier: MIT */\n/**\n * Widget engine.\n */\nimport x from "y";\n';
     expect(describeFile(tmpFile("w.ts", src))).toBe("Widget engine.");
   });
 
   test("generator banners stay as the description", () => {
-    expect(describeFile(tmpFile("db.go", "// Code generated by sqlc. DO NOT EDIT.\n\npackage db\n"))).toBe("Code generated by sqlc. DO NOT EDIT.");
-    const routes = "/* eslint-disable */\n// @ts-nocheck\n// noinspection JSUnusedGlobalSymbols\n// This file was automatically generated by TanStack Router.\nimport x from 'y';\n";
-    expect(describeFile(tmpFile("routeTree.gen.ts", routes))).toBe("This file was automatically generated by TanStack Router.");
+    expect(
+      describeFile(tmpFile("db.go", "// Code generated by sqlc. DO NOT EDIT.\n\npackage db\n")),
+    ).toBe("Code generated by sqlc. DO NOT EDIT.");
+    const routes =
+      "/* eslint-disable */\n// @ts-nocheck\n// noinspection JSUnusedGlobalSymbols\n// This file was automatically generated by TanStack Router.\nimport x from 'y';\n";
+    expect(describeFile(tmpFile("routeTree.gen.ts", routes))).toBe(
+      "This file was automatically generated by TanStack Router.",
+    );
   });
 });
 
 describe("isGenerated", () => {
   test("recognizes generator banners in the first lines", () => {
-    expect(isGenerated("// Code generated by protoc-gen-go. DO NOT EDIT.\npackage v1\n")).toBe(true);
-    expect(isGenerated('// @generated by protoc-gen-es v2.13.0 with parameter "target=ts"\n')).toBe(true);
-    expect(isGenerated("/* eslint-disable */\n// @ts-nocheck\n// This file was automatically generated by TanStack Router.\n")).toBe(true);
+    expect(isGenerated("// Code generated by protoc-gen-go. DO NOT EDIT.\npackage v1\n")).toBe(
+      true,
+    );
+    expect(isGenerated('// @generated by protoc-gen-es v2.13.0 with parameter "target=ts"\n')).toBe(
+      true,
+    );
+    expect(
+      isGenerated(
+        "/* eslint-disable */\n// @ts-nocheck\n// This file was automatically generated by TanStack Router.\n",
+      ),
+    ).toBe(true);
     expect(isGenerated("# Generated by CMake\n")).toBe(true);
   });
 
   test("ignores hand-written files that mention generation", () => {
-    expect(isGenerated("// Generated IDs are cached by the store.\nexport const x = 1;\n")).toBe(false);
+    expect(isGenerated("// Generated IDs are cached by the store.\nexport const x = 1;\n")).toBe(
+      false,
+    );
     expect(isGenerated("int f();\n".repeat(20) + "// generated by autoexplicit.sh\n")).toBe(false);
   });
 });

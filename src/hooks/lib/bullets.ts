@@ -1,10 +1,13 @@
-// Markdown bullet grouping, shared by the journal (episodic entries) and the
-// cerebrum excerpt (semantic memory). Both files are agent-written prose, where
-// a single logical bullet routinely wraps across several physical lines and
+// Markdown bullet grouping, shared by the cerebrum excerpt (injection.ts) and
+// consolidation (src/daemon/cerebrum-edit.ts). Cerebrum is prose, where a
+// single logical bullet routinely wraps across several physical lines and
 // carries sub-bullets — so "one bullet = one line" loses most of the content.
 //
 // Grouping is deliberately dumb: no inline markdown is parsed, and lines are
 // carried verbatim, so a block can be written back byte-identically.
+
+/** A `YYYY-MM-DD` date. Global: use matchAll, match or replace, never test or exec. */
+export const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
 
 export interface Block {
   kind: "bullet" | "other";

@@ -1,0 +1,10 @@
+src/java.java
+ 4-23│@Deprecated public class Box {
+12-14│    public Box(int size) { … }
+16-22│    public int area() { … }
+25-25│record Point(int x, int y) { … }
+27-29│interface Shape {
+28-28│    double area();
+31-33│@interface Marker { … }
+35-41│enum Color {
+38-40│    int code() { … }

@@ -1,0 +1,13 @@
+src/c-sharp.cs:1-1 namespace App
+src/c-sharp.cs:4-29 class Foo
+src/c-sharp.cs:11-14 method Foo.Foo
+src/c-sharp.cs:16-18 method Foo.~Foo
+src/c-sharp.cs:20-20 method Foo.operator +
+src/c-sharp.cs:22-22 method Foo.this[]
+src/c-sharp.cs:24-28 method Foo.Area
+src/c-sharp.cs:31-31 class Point
+src/c-sharp.cs:33-36 struct Pair
+src/c-sharp.cs:38-41 interface IShape
+src/c-sharp.cs:40-40 method IShape.Area
+src/c-sharp.cs:43-47 enum Color
+src/c-sharp.cs:49-49 type Handler

@@ -1,0 +1,12 @@
+src/go.go
+  4-6│func Add(a, b int) int { … }
+ 8-12│func Map[T any](xs []T, f func(T) T) []T { … }
+14-16│type Foo struct { … }
+18-20│func (f Foo) Len() int { … }
+22-24│type G2[T any] struct { … }
+26-27│func (s *G2[T]) M() { … }
+29-31│type Shape interface { … }
+33-33│type ID int
+35-35│type A = int
+38-38│	B struct { … }
+39-39│	C int

@@ -1,0 +1,5 @@
+src/bash.sh:4-6 fn f
+src/bash.sh:8-10 fn g
+src/bash.sh:13-15 fn h
+src/bash.sh:17-19 fn s
+src/bash.sh:21-21 fn outer

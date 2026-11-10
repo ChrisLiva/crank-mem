@@ -1,0 +1,14 @@
+src/php.php
+  3-3│namespace App\Models;
+ 5-11│function helper(int $x): int { … }
+14-27│#[Entity] class User {
+20-26│    public function name(): string { … }
+29-32│interface HasName {
+31-31│    public function name(): string;
+34-40│trait Greets {
+36-39│    public function greet(): string { … }
+42-50│enum Suit: string {
+46-49│    public function label(): string { … }
+52-56│namespace Other {
+53-55│    class Inner {
+54-54│        function f() { … }

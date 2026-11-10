@@ -25,7 +25,7 @@ function firstLine(file: string): string {
   try {
     const buf = Buffer.alloc(65_536);
     let out = "";
-    for (let pos = 0; out.length < 8 * 1024 * 1024; ) {
+    for (let pos = 0; out.length < 8 * 1024 * 1024;) {
       const n = fs.readSync(fd, buf, 0, buf.length, pos);
       if (n === 0) return out;
       const chunk = buf.toString("utf-8", 0, n);
@@ -42,14 +42,21 @@ function firstLine(file: string): string {
 
 function subdirs(dir: string): string[] {
   try {
-    return fs.readdirSync(dir).filter((d) => /^\d+$/.test(d)).sort();
+    return fs
+      .readdirSync(dir)
+      .filter((d) => /^\d+$/.test(d))
+      .sort();
   } catch {
     return [];
   }
 }
 
 /** Count this project's root Codex threads since `sinceMs` (all when null) and how many lack the injection. */
-export function codexInjectionGaps(sessionsDir: string, root: string, sinceMs: number | null): InjectionGaps {
+export function codexInjectionGaps(
+  sessionsDir: string,
+  root: string,
+  sinceMs: number | null,
+): InjectionGaps {
   const gaps: InjectionGaps = { roots: 0, missed: 0 };
   for (const y of subdirs(sessionsDir)) {
     for (const m of subdirs(path.join(sessionsDir, y))) {
@@ -59,7 +66,9 @@ export function codexInjectionGaps(sessionsDir: string, root: string, sinceMs: n
         const dir = path.join(sessionsDir, y, m, d);
         let files: string[];
         try {
-          files = fs.readdirSync(dir).filter((f) => f.startsWith("rollout-") && f.endsWith(".jsonl"));
+          files = fs
+            .readdirSync(dir)
+            .filter((f) => f.startsWith("rollout-") && f.endsWith(".jsonl"));
         } catch {
           continue;
         }
@@ -70,7 +79,8 @@ export function codexInjectionGaps(sessionsDir: string, root: string, sinceMs: n
             const p = meta?.payload;
             if (meta?.type !== "session_meta" || p?.cwd !== root) continue;
             if (p.parent_thread_id || p.thread_source === "subagent") continue;
-            if (sinceMs !== null && !(Date.parse(p.timestamp ?? meta.timestamp) >= sinceMs)) continue;
+            if (sinceMs !== null && !(Date.parse(p.timestamp ?? meta.timestamp) >= sinceMs))
+              continue;
             const text = fs.readFileSync(file, "utf-8");
             if (!text.includes(TURN)) continue;
             gaps.roots++;

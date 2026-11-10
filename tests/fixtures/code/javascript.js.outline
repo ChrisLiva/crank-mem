@@ -1,0 +1,14 @@
+src/javascript.js
+  2-4│function add(a, b) { … }
+  6-8│function* count(n) { … }
+10-18│class Counter {
+12-14│  bump = (by) => { … }
+15-17│  reset() { … }
+20-22│const f = () => { … }
+25-27│var g = function () { … }
+29-31│export default function () { … }
+33-37│export class Store {
+34-36│  get(key) { … }
+39-39│const App = () => …
+41-41│export default class { … }
+47-50│function outer() { … }
