@@ -45,34 +45,39 @@ export function distill(file: string, after: Position | null, maxChars: number):
   const calls = indexCalls(all);
   const covered = coveredRecords(all, after);
 
-  const parts: string[] = [];
-  let length = 0;
+  const kept: Kept = { parts: [], length: 0, truncated: false };
   let next: Position | null = null;
   let records = 0;
-  let truncated = false;
   const paths = new Set<string>();
   for (const r of covered) {
     const conversation = isConversation(r);
     const text = conversation ? renderRecord(r, calls).join(BLOCK_SEP) : "";
-    if (text) {
-      const added = (parts.length ? BLOCK_SEP.length : 0) + text.length;
-      if (length + added > maxChars) {
-        truncated = true;
-        if (parts.length) break;
-        parts.push(cut(text, maxChars)); // a lone over-limit record goes alone, cut
-      } else {
-        parts.push(text);
-        length += added;
-      }
-    }
+    if (text && !keep(kept, text, maxChars)) break;
     if (conversation) {
       records++;
       for (const p of toolPaths(r)) paths.add(p);
     }
     next = positionOf(r) ?? next;
-    if (truncated) break;
+    if (kept.truncated) break;
   }
+  const { parts, truncated } = kept;
   return { text: parts.join(BLOCK_SEP), next, truncated, records, paths: [...paths] };
+}
+
+type Kept = { parts: string[]; length: number; truncated: boolean };
+
+/** Adds a record's text to `kept`; false when `maxChars` holds the record back. */
+function keep(kept: Kept, text: string, maxChars: number): boolean {
+  const added = (kept.parts.length ? BLOCK_SEP.length : 0) + text.length;
+  if (kept.length + added <= maxChars) {
+    kept.parts.push(text);
+    kept.length += added;
+    return true;
+  }
+  kept.truncated = true;
+  if (kept.parts.length) return false;
+  kept.parts.push(cut(text, maxChars)); // a lone over-limit record goes alone, cut
+  return true;
 }
 
 function toolPaths(r: Rec): string[] {
@@ -169,28 +174,41 @@ function renderRecord(r: Rec, calls: Map<string, Call>): string[] {
     typeof content === "string" ? [{ type: "text", text: content }] : blocksOf(r);
   const out: string[] = [];
   for (const b of blocks) {
-    if (b.type === "text" && typeof b.text === "string") {
-      const text = clean(b.text);
-      if (text.trim()) out.push(`${role}\n${text}`);
-    } else if (b.type === "tool_use") {
-      const call = typeof b.id === "string" ? calls.get(b.id) : undefined;
-      const name = call?.name ?? (typeof b.name === "string" ? b.name : "unknown");
-      if (call?.skip) continue;
-      const body = call?.sensitive
-        ? SENSITIVE
-        : cut(clean(JSON.stringify(b.input ?? {})), INPUT_CAP);
-      out.push(`[TOOL_USE ${name}] ${body}`);
-    } else if (b.type === "tool_result") {
-      const call = typeof b.tool_use_id === "string" ? calls.get(b.tool_use_id) : undefined;
-      const name = call?.name ?? "unknown";
-      if (call?.skip) continue;
-      const cap = LONG_RESULT_TOOLS.has(name) ? LONG_RESULT_CAP : RESULT_CAP;
-      const body = call?.sensitive ? SENSITIVE : cut(clean(resultText(b.content)), cap);
-      out.push(`[TOOL_RESULT ${name}] ${body}`);
-    }
-    // thinking, top-level image and any other block type are left out
+    const line = renderBlock(b, role, calls);
+    if (line !== null) out.push(line);
   }
   return out;
+}
+
+/** One block's line, or null when the block is left out. */
+function renderBlock(b: Block, role: string, calls: Map<string, Call>): string | null {
+  if (b.type === "text") return renderText(b, role);
+  if (b.type === "tool_use") return renderToolUse(b, calls);
+  if (b.type === "tool_result") return renderToolResult(b, calls);
+  return null; // thinking, top-level image and any other block type are left out
+}
+
+function renderText(b: Block, role: string): string | null {
+  if (typeof b.text !== "string") return null;
+  const text = clean(b.text);
+  return text.trim() ? `${role}\n${text}` : null;
+}
+
+function renderToolUse(b: Block, calls: Map<string, Call>): string | null {
+  const call = typeof b.id === "string" ? calls.get(b.id) : undefined;
+  const name = call?.name ?? (typeof b.name === "string" ? b.name : "unknown");
+  if (call?.skip) return null;
+  const body = call?.sensitive ? SENSITIVE : cut(clean(JSON.stringify(b.input ?? {})), INPUT_CAP);
+  return `[TOOL_USE ${name}] ${body}`;
+}
+
+function renderToolResult(b: Block, calls: Map<string, Call>): string | null {
+  const call = typeof b.tool_use_id === "string" ? calls.get(b.tool_use_id) : undefined;
+  const name = call?.name ?? "unknown";
+  if (call?.skip) return null;
+  const cap = LONG_RESULT_TOOLS.has(name) ? LONG_RESULT_CAP : RESULT_CAP;
+  const body = call?.sensitive ? SENSITIVE : cut(clean(resultText(b.content)), cap);
+  return `[TOOL_RESULT ${name}] ${body}`;
 }
 
 function resultText(content: unknown): string {
