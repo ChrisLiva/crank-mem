@@ -91,14 +91,14 @@ function insertionPoint(lines: string[], heading: string): number {
   return at;
 }
 
-export function applyEdits(
-  md: string,
+/** Pass 1: apply the replace and remove edits to `blocks` in place, archiving each bullet they change. */
+function changeBullets(
+  blocks: NumberedBlock[],
   edits: CerebrumEdit[],
   today: string,
-): { md: string; archived: string[]; skipped: CerebrumEdit[] } {
-  const blocks = walk(md);
+  skipped: Set<number>,
+): string[] {
   const archived: string[] = [];
-  const skipped = new Set<number>();
   const changed = new Set<number>();
   for (const [i, edit] of edits.entries()) {
     if (edit.op === "add") continue;
@@ -115,7 +115,16 @@ export function applyEdits(
     );
     block.lines = [...(written === null ? [] : [written]), ...block.lines.slice(end)];
   }
-  let lines = blocks.flatMap((b) => b.lines);
+  return archived;
+}
+
+/** Pass 2: insert the add edits into `lines`, each measured against the limits after the adds before it. */
+function addBullets(
+  lines: string[],
+  edits: CerebrumEdit[],
+  today: string,
+  skipped: Set<number>,
+): string[] {
   for (const [i, edit] of edits.entries()) {
     if (edit.op !== "add") continue;
     const written = writeBullet(edit.bullet, today);
@@ -131,5 +140,22 @@ export function applyEdits(
     }
     lines = next;
   }
+  return lines;
+}
+
+export function applyEdits(
+  md: string,
+  edits: CerebrumEdit[],
+  today: string,
+): { md: string; archived: string[]; skipped: CerebrumEdit[] } {
+  const blocks = walk(md);
+  const skipped = new Set<number>();
+  const archived = changeBullets(blocks, edits, today, skipped);
+  const lines = addBullets(
+    blocks.flatMap((b) => b.lines),
+    edits,
+    today,
+    skipped,
+  );
   return { md: lines.join("\n"), archived, skipped: edits.filter((_, i) => skipped.has(i)) };
 }

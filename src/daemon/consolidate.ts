@@ -209,6 +209,47 @@ function dueBullets(
 }
 
 /**
+ * Apply the output edits that narrow to `CerebrumEdit`s. `failed` holds the proposals an edit named
+ * but could not land: it did not narrow, or `applyEdits` skipped it.
+ */
+function applyOutputEdits(
+  md: string,
+  output: OutputEdit[],
+  sentProposals: Set<number>,
+): { next: string; archived: string[]; failed: Set<number> } {
+  const edits: CerebrumEdit[] = [];
+  const failed = new Set<number>();
+  for (const e of output) {
+    const edit = narrow(e, sentProposals);
+    if (edit) edits.push(edit);
+    else if (e.op !== "remove" && e.proposal !== undefined) failed.add(e.proposal);
+  }
+  const { md: next, archived, skipped } = applyEdits(md, edits, localDate(Date.now()));
+  for (const e of skipped) if (e.op !== "remove" && e.proposal !== null) failed.add(e.proposal);
+  return { next, archived, failed };
+}
+
+/**
+ * Back up `md`, replace it with `next` unless cerebrum changed since it was read, then append the
+ * archived bullets. "retry" when the backup failed, "conflict" when cerebrum changed.
+ */
+function writeCerebrum(
+  crankDir: string,
+  md: string,
+  next: string,
+  archived: string[],
+): "retry" | "conflict" | "written" {
+  if (backupCerebrum(crankDir, md) === null) return "retry";
+  if (!writeTextAtomic(path.join(crankDir, CEREBRUM_FILE), next, md)) return "conflict";
+  if (archived.length > 0) {
+    const archive = path.join(crankDir, ARCHIVE_FILE);
+    const head = fs.existsSync(archive) ? "" : ARCHIVE_HEADER;
+    fs.appendFileSync(archive, head + archived.map((a) => `${a}\n`).join(""));
+  }
+  return "written";
+}
+
+/**
  * Review the project's pending proposals, stale flags and due bullets against its code, and apply
  * the checked edits to cerebrum.md. "not-due" when the project has no cerebrum, nothing waits, or
  * the last run started less than `everyMs` ago.
@@ -247,30 +288,18 @@ export async function consolidate(
   }
 
   const sentStale = new Set(work.stale.map((s) => s.id));
-  const edits: CerebrumEdit[] = [];
-  const failed = new Set<number>();
-  for (const e of r.output.edits) {
-    const edit = narrow(e, sentProposals);
-    if (edit) edits.push(edit);
-    else if (e.op !== "remove" && e.proposal !== undefined) failed.add(e.proposal);
-  }
-  const { md: next, archived, skipped } = applyEdits(md, edits, localDate(Date.now()));
-  for (const e of skipped) if (e.op !== "remove" && e.proposal !== null) failed.add(e.proposal);
+  const { next, archived, failed } = applyOutputEdits(md, r.output.edits, sentProposals);
 
   const run = { startedMs, model: r.model, costUsd: r.costUsd };
   if (next !== md) {
-    if (backupCerebrum(crankDir, md) === null) {
+    const written = writeCerebrum(crankDir, md, next, archived);
+    if (written === "retry") {
       memory.recordConsolidation({ ...run, outcome: "retry", sent: [...sentProposals] });
       return "retry";
     }
-    if (!writeTextAtomic(file, next, md)) {
+    if (written === "conflict") {
       memory.recordConsolidation({ ...run, outcome: "conflict" });
       return "conflict";
-    }
-    if (archived.length > 0) {
-      const archive = path.join(crankDir, ARCHIVE_FILE);
-      const head = fs.existsSync(archive) ? "" : ARCHIVE_HEADER;
-      fs.appendFileSync(archive, head + archived.map((a) => `${a}\n`).join(""));
     }
   }
   memory.recordConsolidation({
