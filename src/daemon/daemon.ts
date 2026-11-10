@@ -170,25 +170,8 @@ class Daemon {
       pruneProjects();
       // Digests stopped (credential or login).
       if (readStopState() !== null) this.stopping = true;
-      // Entries whose transcript is gone have nothing left to digest.
-      const seenMs = Date.now();
-      for (const item of readSpool()) {
-        if (!fs.existsSync(item.entry.transcriptPath)) deleteEntry(item.stem);
-        else if (!this.midSessionFromMs.has(item.stem))
-          this.midSessionFromMs.set(item.stem, seenMs);
-      }
-      if (!this.stopping && this.job === null) {
-        const now = Date.now();
-        const unheld = readSpool().filter(
-          (item) => (this.holds.get(item.stem)?.untilMs ?? 0) <= now,
-        );
-        const next = eligible(
-          unheld,
-          { fromMs: this.midSessionFromMs, everyMs: this.opts.midSessionMs },
-          now,
-        );
-        if (next) this.startJob(next.stem);
-      }
+      this.pruneSpool();
+      if (!this.stopping && this.job === null) this.startNext();
     } catch (err) {
       console.error(`crank-mem daemon: sweep failed: ${errorMessage(err)}`);
     }
@@ -200,6 +183,27 @@ class Daemon {
     if (readSpool().length > 0) this.busySince = Date.now();
     else if (Date.now() - this.busySince >= this.opts.idleMs) return "exit";
     return "continue";
+  }
+
+  /** Entries whose transcript is gone have nothing left to digest; the rest open their mid-session window on first sight. */
+  private pruneSpool(): void {
+    const seenMs = Date.now();
+    for (const item of readSpool()) {
+      if (!fs.existsSync(item.entry.transcriptPath)) deleteEntry(item.stem);
+      else if (!this.midSessionFromMs.has(item.stem)) this.midSessionFromMs.set(item.stem, seenMs);
+    }
+  }
+
+  /** Start a job for the first unheld entry that is eligible now, if any. */
+  private startNext(): void {
+    const now = Date.now();
+    const unheld = readSpool().filter((item) => (this.holds.get(item.stem)?.untilMs ?? 0) <= now);
+    const next = eligible(
+      unheld,
+      { fromMs: this.midSessionFromMs, everyMs: this.opts.midSessionMs },
+      now,
+    );
+    if (next) this.startJob(next.stem);
   }
 
   private startJob(stem: string): void {

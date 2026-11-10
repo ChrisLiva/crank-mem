@@ -110,18 +110,32 @@ async function digest(
   if (outcome === "appended") {
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
     await embedPending(memory);
-    try {
-      memory.maintain();
-    } catch (err) {
-      console.error(`crank-mem: maintenance skipped (${errorMessage(err)})`);
-    }
-    try {
-      await consolidate(entry.projectRoot, memory, opts);
-    } catch (err) {
-      process.stderr.write(`crank-mem: consolidation skipped (${errorMessage(err)})\n`);
-    }
+    maintainQuietly(memory);
+    await consolidateQuietly(entry.projectRoot, memory, opts);
   }
   return 0;
+}
+
+/** The store's daily pass; a failure prints one line and never changes the exit code. */
+function maintainQuietly(memory: Memory): void {
+  try {
+    memory.maintain();
+  } catch (err) {
+    console.error(`crank-mem: maintenance skipped (${errorMessage(err)})`);
+  }
+}
+
+/** Consolidation after a digest; a failure prints one line and never changes the exit code. */
+async function consolidateQuietly(
+  root: string,
+  memory: Memory,
+  opts: { timeoutMs: number; everyMs: number },
+): Promise<void> {
+  try {
+    await consolidate(root, memory, opts);
+  } catch (err) {
+    process.stderr.write(`crank-mem: consolidation skipped (${errorMessage(err)})\n`);
+  }
 }
 
 /**

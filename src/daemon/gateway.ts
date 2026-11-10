@@ -194,21 +194,8 @@ export async function askClaude<T>(
   return classify(run, req.validate);
 }
 
-/** Settle a finished `-p` run. Credential failures also read `subtype: "success"` (exp/c1), so `subtype` alone decides nothing. */
-function classify<T>(run: Run, validate: (value: unknown) => value is T): ModelResult<T> {
-  const result = lastResult(run.stdout);
-  const modelUsage = isObj(result?.modelUsage) ? result.modelUsage : {};
-  const providers = Object.values(modelUsage)
-    .filter(isObj)
-    .map((u) => u.provider)
-    .filter((p) => p !== undefined);
-  const other = providers.find((p) => p !== "firstParty");
-  if (other !== undefined)
-    return {
-      kind: "stopped",
-      reason: "credential",
-      detail: `claude -p ran on provider ${String(other)}`,
-    };
+/** A `-p` run that failed on the login: "Not logged in" in failure text, or HTTP 401/403. */
+function loginStop(run: Run, result: Obj | null): ModelResult<never> | null {
   // Only failure text counts: a non-JSON line (exp/d.out) or an error result's `result` (plan/bare.jsonl).
   // JSON lines also carry the digest's own text, which may quote the error.
   const plainText = run.stdout.split("\n").filter((line) => parseJson(line) === undefined);
@@ -224,6 +211,26 @@ function classify<T>(run: Run, validate: (value: unknown) => value is T): ModelR
       detail: `claude -p: HTTP ${result.api_error_status}`,
     };
   }
+  return null;
+}
+
+/** Settle a finished `-p` run. Credential failures also read `subtype: "success"` (exp/c1), so `subtype` alone decides nothing. */
+function classify<T>(run: Run, validate: (value: unknown) => value is T): ModelResult<T> {
+  const result = lastResult(run.stdout);
+  const modelUsage = isObj(result?.modelUsage) ? result.modelUsage : {};
+  const providers = Object.values(modelUsage)
+    .filter(isObj)
+    .map((u) => u.provider)
+    .filter((p) => p !== undefined);
+  const other = providers.find((p) => p !== "firstParty");
+  if (other !== undefined)
+    return {
+      kind: "stopped",
+      reason: "credential",
+      detail: `claude -p ran on provider ${String(other)}`,
+    };
+  const login = loginStop(run, result);
+  if (login) return login;
   if (!result)
     return { kind: "retry", detail: `claude -p printed no result line (exit ${run.code})` };
   if (result.is_error === true) {
