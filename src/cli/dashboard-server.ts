@@ -8,6 +8,7 @@ import { memoryPath, memoryStatus, withReader, type MemoryRead } from "../hooks/
 import { readUsage } from "../hooks/lib/usage.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
 import {
+  ACTIVITY_DAYS,
   isObservationType,
   isProposalState,
   type ConsolidationRow,
@@ -18,8 +19,8 @@ import {
 import { EMBED_MODEL } from "../daemon/embedder.ts";
 import { queryVector } from "./recall.ts";
 import { registeredRoots } from "./registry.ts";
-import { captureRows } from "./stats.ts";
-import { usageMetrics } from "./usage-metrics.ts";
+import { captureSummary } from "./stats.ts";
+import { activityDays, usageMetrics, windowStart } from "./usage-metrics.ts";
 
 // The dashboard's HTTP server: loopback only, and every request carries the
 // session cookie, which the URL's `?token=` trades for once. The checks run
@@ -232,10 +233,20 @@ async function consolidations(root: string, params: URLSearchParams): Promise<An
   return { status: 200, body };
 }
 
-/** `GET …/health`: the capture rows `crank-mem stats` prints, without its padding. */
+/** `GET …/health`: the project's `HealthSummary`. */
 async function health(root: string): Promise<Answer> {
-  const rows = await captureRows(root, loadConfig(path.join(root, CRANK_DIR)));
-  return { status: 200, body: { rows } };
+  return { status: 200, body: await captureSummary(root, loadConfig(path.join(root, CRANK_DIR))) };
+}
+
+/** `GET …/activity`: one `ActivityDay` per local day of the window, or the store's note. */
+async function activity(root: string, params: URLSearchParams): Promise<Answer> {
+  const days = ACTIVITY_DAYS.find((d) => String(d) === params.get("days"));
+  if (days === undefined) return { status: 400 };
+  const start = windowStart(Date.now(), days);
+  const body = await withReader(memoryPath(root), (memory) => ({
+    days: activityDays(memory.activity(start.getTime()), start, days),
+  }));
+  return { status: 200, body };
 }
 
 /** `GET …/usage`: the Usage view's metrics over the log; a store that does not open gives no titles, and its note. */
@@ -274,6 +285,7 @@ async function projectRoute(
   if (route === "/consolidations") return consolidations(project.root, params);
   if (route === "/health") return health(project.root);
   if (route === "/usage") return usage(project.root, params);
+  if (route === "/activity") return activity(project.root, params);
   const one = /^\/observations\/([^/]*)$/.exec(route);
   if (one) return observation(project.root, one[1]!);
   return null;

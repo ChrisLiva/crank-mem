@@ -28,6 +28,7 @@ import {
   registeredProject,
   runCli,
   seedMemory,
+  spoolEntry,
   startDashboard,
   stopDigests,
   tempDir,
@@ -984,10 +985,18 @@ describe("curation view", () => {
   }, 20_000);
 });
 
+/** Turns digests on in the project at `root`. */
+function digestOn(root: string): void {
+  const crankDir = path.join(root, ".crank");
+  saveConfig(crankDir, { ...loadConfig(crankDir), digest: true });
+}
+
 describe("health view", () => {
-  test("GET …/health answers the capture rows `stats` prints, unpadded and in order", async () => {
+  test("GET …/health answers the project's capture summary, and `stats` prints the same values", async () => {
     const home = makeCrankHome();
     const root = registeredProject(home);
+    const other = registeredProject(home);
+    digestOn(root);
     const [a] = seedMemory(root, [{ title: "Lock retry is two seconds" }, { title: "日本 ✓" }], {
       costUsd: 0.002,
       proposals: [{ kind: "memory", bullet: "- **P**: x" }],
@@ -1009,44 +1018,127 @@ describe("health view", () => {
         costUsd: 0,
       }),
     );
+    spoolEntry(home, "ours", root, Date.now());
+    spoolEntry(home, "parked", root, Date.now(), true);
+    spoolEntry(home, "theirs", other, Date.now());
     const dash = await startDashboard(home, ["--port", "0"]);
     const health = await memoryJson(dash, root, "health");
 
+    expect(health).toMatchObject({
+      digest: "on",
+      stopReason: null,
+      spool: { waiting: 1, parked: 1 },
+      store: "open",
+      memory: {
+        observations: 2,
+        lastDigestMs: threeHoursAgo,
+        pendingProposals: 1,
+        staleFlags: 1,
+        lastConsolidation: { startedMs: threeHoursAgo, outcome: "conflict" },
+      },
+    });
     const run = runCli(root, ["stats"], { CRANK_HOME: home });
     expect(run.status).toBe(0);
-    const lines = run.stdout.split("\n");
-    const first = lines.findIndex((l) => l.startsWith("  digest:"));
-    const last = lines.findIndex((l) => l.startsWith("  embedder:"));
-    const printed = lines
-      .slice(first, last + 1)
-      .map((l) => /^ {2}([^:]+):\s+(.*)$/.exec(l)!.slice(1, 3));
-    expect(printed.find(([label]) => label === "consolidation")).toEqual([
-      "consolidation",
-      "3h ago (conflict)",
-    ]);
-    expect(health).toEqual({ rows: printed });
+    for (const line of [
+      "spool:            2 waiting, 1 parked",
+      "observations:     2",
+      "proposals:        1",
+      "stale:            1",
+      "consolidation:    3h ago (conflict)",
+    ]) {
+      expect(run.stdout).toContain(`  ${line}\n`);
+    }
   }, 20_000);
 
-  test("a missing or newer store answers the single memory row `stats` prints for it", async () => {
+  test("a missing or newer store answers its status with no memory figures", async () => {
     const home = makeCrankHome();
     const missing = registeredProject(home);
     const newer = registeredProject(home);
     plantMemory(newer, "newer");
+    digestOn(missing);
+    digestOn(newer);
+    stopDigests(home);
     const dash = await startDashboard(home, ["--port", "0"]);
-    for (const [root, value] of [
-      [missing, "none yet"],
-      [newer, "newer than this version; run crank-mem upgrade"],
+    for (const [root, store] of [
+      [missing, "missing"],
+      [newer, "newer"],
     ] as const) {
-      const { rows } = (await memoryJson(dash, root, "health")) as { rows: [string, string][] };
-      expect(rows.map(([label]) => label)).toEqual([
-        "digest",
-        "daemon",
-        "spool",
-        "memory",
-        "last snapshot",
-        "embedder",
-      ]);
-      expect(rows.find(([label]) => label === "memory")).toEqual(["memory", value]);
+      expect(await memoryJson(dash, root, "health")).toMatchObject({
+        digest: "stopped",
+        stopReason: "login",
+        store,
+        memory: null,
+      });
     }
+  }, 20_000);
+});
+
+describe("activity", () => {
+  test("GET …/activity counts each local day's digests, observations, cost and decisions", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const [a] = seedMemory(root, [{ title: "a" }, { title: "b" }], {
+      costUsd: 0.002,
+      proposals: [
+        { kind: "memory", bullet: "- **P**: x" },
+        { kind: "memory", bullet: "- **Q**: y" },
+      ],
+    }) as [number];
+    seedMemory(root, [], { stale: [{ id: a, reason: "moved" }] });
+    seedMemory(root, [{ title: "old" }], { costUsd: 1 });
+    const tenDaysAgo = Date.now() - 10 * 86_400_000;
+    const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
+    const db = new mod.DatabaseSync(memoryPath(root));
+    try {
+      db.prepare("UPDATE digests SET created_at = ? WHERE cost_usd = 1").run(tenDaysAgo);
+      db.prepare("UPDATE observations SET created_at = ? WHERE title = 'old'").run(tenDaysAgo);
+    } finally {
+      db.close();
+    }
+    withWritable(root, (memory) => {
+      const [q, p] = memory.proposalRows({ state: null, beforeId: null, limit: 10 });
+      if (q === undefined || p === undefined) throw new Error("expected two proposals");
+      memory.recordConsolidation({
+        outcome: "ok",
+        startedMs: Date.now(),
+        model: "m",
+        costUsd: 0.003,
+        sent: [p.id, q.id],
+        decided: [
+          { id: p.id, state: "accepted", reason: "holds" },
+          { id: q.id, state: "rejected", reason: "wrong" },
+        ],
+        verdicts: [],
+      });
+    });
+    const dash = await startDashboard(home, ["--port", "0"]);
+
+    const { days } = (await memoryJson(dash, root, "activity?days=7")) as {
+      days: Record<string, number | string>[];
+    };
+    expect(days).toHaveLength(7);
+    const { date, costUsd, ...today } = days[6]!;
+    expect(today).toEqual({
+      digests: 2,
+      observations: 2,
+      consolidations: 1,
+      accepted: 1,
+      rejected: 1,
+      staleFlags: 1,
+    });
+    expect(costUsd).toBeCloseTo(0.005, 10);
+    expect(days.slice(0, 6).every((d) => d.digests === 0 && d.costUsd === 0)).toBe(true);
+    expect(new Set(days.map((d) => d.date)).size).toBe(7);
+
+    const month = (await memoryJson(dash, root, "activity?days=30")) as { days: unknown[] };
+    expect(month.days).toHaveLength(30);
+    expect((await dash.get(`/api/projects/${projectId(root)}/activity?days=5`)).status).toBe(400);
+  }, 20_000);
+
+  test("a project without a store answers the store's note", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    expect(await memoryJson(dash, root, "activity?days=7")).toEqual({ note: NO_MEMORY_NOTE });
   }, 20_000);
 });

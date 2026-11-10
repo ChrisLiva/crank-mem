@@ -1,5 +1,8 @@
 import type {
+  ActivityDay,
+  ActivityWindow,
   ConsolidationRow,
+  HealthSummary,
   Observation,
   ObservationLine,
   ObservationType,
@@ -10,16 +13,20 @@ import type {
 } from "../../src/hooks/lib/wire";
 
 export {
+  ACTIVITY_DAYS,
   OBSERVATION_TYPES,
   PROPOSAL_STATES,
-  USAGE_CHANNELS,
+  type ActivityDay,
+  type ActivityWindow,
   type ConsolidationRow,
+  type HealthSummary,
   type Observation,
   type ObservationLine,
   type ObservationType,
   type ProposalRow,
   type ProposalState,
   type StaleRow,
+  type UsageChannel,
   type UsageMetrics,
 } from "../../src/hooks/lib/wire";
 
@@ -118,19 +125,27 @@ export function fetchConsolidations(
   return getJson(projectPath(projectId, "/consolidations", beforeParams(before)));
 }
 
-/** The capture rows `crank-mem stats` prints, as label and value pairs. */
-export async function fetchHealth(projectId: string): Promise<[label: string, value: string][]> {
-  return (await getJson<{ rows: [string, string][] }>(projectPath(projectId, "/health"))).rows;
+export function fetchHealth(projectId: string): Promise<HealthSummary> {
+  return getJson(projectPath(projectId, "/health"));
 }
 
-export const USAGE_DAYS = [7, 30, 90] as const;
-export type UsageDays = (typeof USAGE_DAYS)[number];
+/** One entry per local day of the window, oldest first, or the store's note. */
+export async function fetchActivity(
+  projectId: string,
+  days: ActivityWindow,
+): Promise<ActivityDay[] | Note> {
+  const body = await getJson<{ days: ActivityDay[] } | Note>(
+    projectPath(projectId, "/activity", new URLSearchParams({ days: String(days) })),
+  );
+  return "note" in body ? body : body.days;
+}
+
 /** `UsageMetrics`, with the store's note when memory.db did not open, so `surfaced` has no titles. */
 export type UsageAnswer = UsageMetrics & { note?: string };
 
 export function fetchUsage(
   projectId: string,
-  days: UsageDays,
+  days: ActivityWindow,
   manual: boolean,
 ): Promise<UsageAnswer> {
   const params = new URLSearchParams({ days: String(days), manual: manual ? "1" : "0" });

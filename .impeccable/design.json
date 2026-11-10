@@ -1,0 +1,693 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-10T12:00:00Z",
+  "title": "Design System: crank-mem dashboard",
+  "extensions": {
+    "colorMeta": {
+      "background": {
+        "role": "neutral",
+        "displayName": "Paper Zinc",
+        "canonical": "#fafafa",
+        "dark": "#09090b",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Ink Zinc",
+        "canonical": "#18181b",
+        "dark": "#f4f4f5",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "card": {
+        "role": "neutral",
+        "displayName": "Card White",
+        "canonical": "#ffffff",
+        "dark": "#111113",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Wash Zinc",
+        "canonical": "#f4f4f5",
+        "dark": "#1c1c1f",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "muted-foreground": {
+        "role": "neutral",
+        "displayName": "Quiet Zinc",
+        "canonical": "#63636b",
+        "dark": "#a1a1aa",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "accent": {
+        "role": "neutral",
+        "displayName": "Hover Wash",
+        "canonical": "#f4f4f5",
+        "dark": "#1c1c1f",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline Zinc",
+        "canonical": "#e4e4e7",
+        "dark": "#27272a",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "input": {
+        "role": "neutral",
+        "displayName": "Field Zinc",
+        "canonical": "#d4d4d8",
+        "dark": "#3f3f46",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "ring": {
+        "role": "primary",
+        "displayName": "Signal Blue",
+        "canonical": "#2563eb",
+        "dark": "#3b82f6",
+        "tonalRamp": [
+          "#172554",
+          "#1e3a8a",
+          "#1d4ed8",
+          "#2563eb",
+          "#3b82f6",
+          "#60a5fa",
+          "#bfdbfe",
+          "#eff6ff"
+        ]
+      },
+      "link": {
+        "role": "primary",
+        "displayName": "Link Blue",
+        "canonical": "#1d4ed8",
+        "dark": "#60a5fa",
+        "tonalRamp": [
+          "#172554",
+          "#1e3a8a",
+          "#1d4ed8",
+          "#2563eb",
+          "#3b82f6",
+          "#60a5fa",
+          "#bfdbfe",
+          "#eff6ff"
+        ]
+      },
+      "selected": {
+        "role": "primary",
+        "displayName": "Selection Wash",
+        "canonical": "#eff6ff",
+        "dark": "#172033",
+        "tonalRamp": [
+          "#172554",
+          "#1e3a8a",
+          "#1d4ed8",
+          "#2563eb",
+          "#3b82f6",
+          "#60a5fa",
+          "#bfdbfe",
+          "#eff6ff"
+        ]
+      },
+      "destructive": {
+        "role": "status",
+        "displayName": "Destructive",
+        "canonical": "#b91c1c",
+        "dark": "#f87171",
+        "tonalRamp": [
+          "#450a0a",
+          "#7f1d1d",
+          "#b91c1c",
+          "#dc2626",
+          "#f87171",
+          "#fca5a5",
+          "#fecaca",
+          "#fef2f2"
+        ]
+      },
+      "ok": {
+        "role": "status",
+        "displayName": "Ok Green",
+        "canonical": "#15803d",
+        "dark": "#4ade80",
+        "tonalRamp": [
+          "#052e16",
+          "#14532d",
+          "#15803d",
+          "#16a34a",
+          "#4ade80",
+          "#86efac",
+          "#bbf7d0",
+          "#f0fdf4"
+        ]
+      },
+      "ok-soft": {
+        "role": "status",
+        "displayName": "Ok Soft",
+        "canonical": "#f0fdf4",
+        "dark": "#0f2418",
+        "tonalRamp": [
+          "#052e16",
+          "#14532d",
+          "#15803d",
+          "#16a34a",
+          "#4ade80",
+          "#86efac",
+          "#bbf7d0",
+          "#f0fdf4"
+        ]
+      },
+      "ok-line": {
+        "role": "status",
+        "displayName": "Ok Line",
+        "canonical": "#bbf7d0",
+        "dark": "#14532d",
+        "tonalRamp": [
+          "#052e16",
+          "#14532d",
+          "#15803d",
+          "#16a34a",
+          "#4ade80",
+          "#86efac",
+          "#bbf7d0",
+          "#f0fdf4"
+        ]
+      },
+      "warn": {
+        "role": "status",
+        "displayName": "Warn Amber",
+        "canonical": "#a16207",
+        "dark": "#facc15",
+        "tonalRamp": [
+          "#422006",
+          "#713f12",
+          "#a16207",
+          "#ca8a04",
+          "#facc15",
+          "#fde047",
+          "#fef08a",
+          "#fefce8"
+        ]
+      },
+      "warn-soft": {
+        "role": "status",
+        "displayName": "Warn Soft",
+        "canonical": "#fefce8",
+        "dark": "#2a2208",
+        "tonalRamp": [
+          "#422006",
+          "#713f12",
+          "#a16207",
+          "#ca8a04",
+          "#facc15",
+          "#fde047",
+          "#fef08a",
+          "#fefce8"
+        ]
+      },
+      "warn-line": {
+        "role": "status",
+        "displayName": "Warn Line",
+        "canonical": "#fde68a",
+        "dark": "#713f12",
+        "tonalRamp": [
+          "#422006",
+          "#713f12",
+          "#a16207",
+          "#ca8a04",
+          "#facc15",
+          "#fde047",
+          "#fef08a",
+          "#fefce8"
+        ]
+      },
+      "bad": {
+        "role": "status",
+        "displayName": "Bad Red",
+        "canonical": "#b91c1c",
+        "dark": "#f87171",
+        "tonalRamp": [
+          "#450a0a",
+          "#7f1d1d",
+          "#b91c1c",
+          "#dc2626",
+          "#f87171",
+          "#fca5a5",
+          "#fecaca",
+          "#fef2f2"
+        ]
+      },
+      "bad-soft": {
+        "role": "status",
+        "displayName": "Bad Soft",
+        "canonical": "#fef2f2",
+        "dark": "#2a1111",
+        "tonalRamp": [
+          "#450a0a",
+          "#7f1d1d",
+          "#b91c1c",
+          "#dc2626",
+          "#f87171",
+          "#fca5a5",
+          "#fecaca",
+          "#fef2f2"
+        ]
+      },
+      "bad-line": {
+        "role": "status",
+        "displayName": "Bad Line",
+        "canonical": "#fecaca",
+        "dark": "#7f1d1d",
+        "tonalRamp": [
+          "#450a0a",
+          "#7f1d1d",
+          "#b91c1c",
+          "#dc2626",
+          "#f87171",
+          "#fca5a5",
+          "#fecaca",
+          "#fef2f2"
+        ]
+      },
+      "off": {
+        "role": "status",
+        "displayName": "Off Grey",
+        "canonical": "#52525b",
+        "dark": "#a1a1aa",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "off-soft": {
+        "role": "status",
+        "displayName": "Off Soft",
+        "canonical": "#f4f4f5",
+        "dark": "#1c1c1f",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "off-line": {
+        "role": "status",
+        "displayName": "Off Line",
+        "canonical": "#e4e4e7",
+        "dark": "#3f3f46",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "series-1": {
+        "role": "chart",
+        "displayName": "Series Blue",
+        "canonical": "#2a78d6",
+        "dark": "#3987e5",
+        "tonalRamp": [
+          "#0f2a4d",
+          "#16407a",
+          "#1f5aa8",
+          "#2a78d6",
+          "#5a98e2",
+          "#8bb8ec",
+          "#bcd7f5",
+          "#ebf3fd"
+        ]
+      },
+      "series-2": {
+        "role": "chart",
+        "displayName": "Series Orange",
+        "canonical": "#eb6834",
+        "dark": "#d95926",
+        "tonalRamp": [
+          "#431407",
+          "#7c2d12",
+          "#c2410c",
+          "#eb6834",
+          "#fb923c",
+          "#fdba74",
+          "#fed7aa",
+          "#fff7ed"
+        ]
+      },
+      "series-3": {
+        "role": "chart",
+        "displayName": "Series Green",
+        "canonical": "#1baf7a",
+        "dark": "#199e70",
+        "tonalRamp": [
+          "#022c22",
+          "#064e3b",
+          "#047857",
+          "#1baf7a",
+          "#34d399",
+          "#6ee7b7",
+          "#a7f3d0",
+          "#ecfdf5"
+        ]
+      },
+      "grid": {
+        "role": "chart",
+        "displayName": "Grid",
+        "canonical": "#ececef",
+        "dark": "#232327",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "axis": {
+        "role": "chart",
+        "displayName": "Axis",
+        "canonical": "#d4d4d8",
+        "dark": "#3f3f46",
+        "tonalRamp": [
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page heading of a scrolling view: Projects, Usage."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Focused project name and detail-pane headings."
+      },
+      "figure": { "displayName": "Figure", "purpose": "The value in a stat card." },
+      "section": { "displayName": "Section", "purpose": "Card, chart and list titles." },
+      "body": { "displayName": "Body", "purpose": "Table cells, prose, reasons, narratives." },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Column heads, stat labels, notes, pills, metadata. Sentence case."
+      },
+      "axis": { "displayName": "Axis", "purpose": "Chart ticks and dates, kbd keys." },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Paths, ids, models, queries, channels, commands."
+      }
+    },
+    "shadows": [
+      {
+        "name": "tooltip-lift",
+        "value": "0 4px 12px rgb(0 0 0 / 0.08)",
+        "purpose": "Chart tooltips only; everything else is flat with hairline borders."
+      }
+    ],
+    "motion": [
+      {
+        "name": "copied-hold",
+        "value": "1500ms",
+        "purpose": "How long the Command's copy button shows its check."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "transition-duration: 0s; animation-duration: 0s",
+        "purpose": "Applied to every element under prefers-reduced-motion: reduce."
+      }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "pill-ok",
+      "description": "A state word in a soft-tinted capsule; one per project row, also proposal state and consolidation outcome.",
+      "html": "<span class=\"ds-pill ds-pill-ok\">Healthy</span> <span class=\"ds-pill ds-pill-warn\">Daemon down</span> <span class=\"ds-pill ds-pill-bad\">Stopped</span> <span class=\"ds-pill ds-pill-off\">Digests off</span>",
+      "css": ".ds-pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border: 1px solid; border-radius: 9999px; font: 500 12px/1 ui-sans-serif, system-ui, sans-serif; white-space: nowrap; } .ds-pill-ok { background: var(--ok-soft, #f0fdf4); border-color: var(--ok-line, #bbf7d0); color: var(--ok, #15803d); } .ds-pill-warn { background: var(--warn-soft, #fefce8); border-color: var(--warn-line, #fde68a); color: var(--warn, #a16207); } .ds-pill-bad { background: var(--bad-soft, #fef2f2); border-color: var(--bad-line, #fecaca); color: var(--bad, #b91c1c); } .ds-pill-off { background: var(--off-soft, #f4f4f5); border-color: var(--off-line, #e4e4e7); color: var(--off, #52525b); }"
+    },
+    {
+      "name": "Command",
+      "kind": "custom",
+      "refersTo": "command",
+      "description": "A copyable command in mono, placed beside every fix sentence that has a remedy.",
+      "html": "<span class=\"ds-command\">crank-mem digest resume<button type=\"button\" class=\"ds-command-copy\" aria-label=\"Copy crank-mem digest resume\"><svg viewBox=\"0 0 24 24\" width=\"12\" height=\"12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"8\" y=\"8\" width=\"14\" height=\"14\" rx=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/></svg></button></span>",
+      "css": ".ds-command { display: inline-flex; align-items: center; gap: 4px; padding: 2px 2px 2px 8px; border: 1px solid var(--border, #e4e4e7); border-radius: 6px; background: var(--muted, #f4f4f5); color: var(--foreground, #18181b); font: 12px/1.33 ui-monospace, 'SF Mono', Menlo, monospace; } .ds-command-copy { display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 4px; background: transparent; color: var(--muted-foreground, #63636b); cursor: pointer; } .ds-command-copy:hover { background: var(--accent, #f4f4f5); color: var(--foreground, #18181b); } .ds-command-copy:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: 2px; }"
+    },
+    {
+      "name": "Fix Line",
+      "kind": "custom",
+      "refersTo": "command",
+      "description": "The fact that stalls capture in the tone's colour, then its command; as a banner above a focused project's stats.",
+      "html": "<p class=\"ds-fix ds-fix-bad\"><span class=\"ds-fix-text\">Digests stopped: claude is not logged in. Log in, then resume.</span><span class=\"ds-command\">crank-mem digest resume</span></p>",
+      "css": ".ds-fix { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; padding: 12px 16px; border: 1px solid var(--border, #e4e4e7); border-radius: 8px; background: var(--card, #fff); font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; } .ds-fix-bad { background: var(--bad-soft, #fef2f2); border-color: var(--bad-line, #fecaca); } .ds-fix-bad .ds-fix-text { color: var(--bad, #b91c1c); } .ds-fix .ds-command { display: inline-flex; padding: 2px 8px; border: 1px solid var(--border, #e4e4e7); border-radius: 6px; background: var(--muted, #f4f4f5); font: 12px/1.33 ui-monospace, 'SF Mono', Menlo, monospace; }"
+    },
+    {
+      "name": "Stat Card",
+      "kind": "card",
+      "refersTo": "stat-card",
+      "description": "One figure: label, value, context line. Value takes a tone only for warn, bad or off.",
+      "html": "<div class=\"ds-stat\"><div class=\"ds-stat-label\">Month cost</div><div class=\"ds-stat-value\">$0.01</div><div class=\"ds-stat-detail\">list price, not billed</div></div>",
+      "css": ".ds-stat { display: grid; gap: 4px; align-content: start; padding: 12px 16px; border: 1px solid var(--border, #e4e4e7); border-radius: 8px; background: var(--card, #fff); font-family: ui-sans-serif, system-ui, sans-serif; max-width: 220px; } .ds-stat-label, .ds-stat-detail { font-size: 12px; color: var(--muted-foreground, #63636b); } .ds-stat-value { font-size: 24px; line-height: 1.25; font-weight: 600; letter-spacing: -0.025em; font-variant-numeric: tabular-nums; color: var(--foreground, #18181b); }"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "button",
+      "refersTo": "segmented",
+      "description": "The 7/30/90-day window; the pressed option takes the wash fill.",
+      "html": "<div class=\"ds-seg\" role=\"group\" aria-label=\"Window\"><button type=\"button\" aria-pressed=\"false\">7 days</button><button type=\"button\" aria-pressed=\"true\">30 days</button><button type=\"button\" aria-pressed=\"false\">90 days</button></div>",
+      "css": ".ds-seg { display: inline-flex; padding: 2px; border: 1px solid var(--border, #e4e4e7); border-radius: 6px; background: var(--card, #fff); } .ds-seg button { height: 24px; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: var(--muted-foreground, #63636b); font: 500 12px ui-sans-serif, system-ui, sans-serif; cursor: pointer; } .ds-seg button:hover { color: var(--foreground, #18181b); } .ds-seg button[aria-pressed=true] { background: var(--accent, #f4f4f5); color: var(--foreground, #18181b); } .ds-seg button:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: 2px; }"
+    },
+    {
+      "name": "View Tabs",
+      "kind": "nav",
+      "refersTo": "view-tab",
+      "description": "Health, Curation, Usage, Memory under the top bar; the current view carries an ink underline.",
+      "html": "<nav class=\"ds-tabs\" aria-label=\"Views\"><button type=\"button\" aria-current=\"page\">Health</button><button type=\"button\">Curation</button><button type=\"button\">Usage</button><button type=\"button\">Memory</button></nav>",
+      "css": ".ds-tabs { display: flex; gap: 4px; padding: 0 16px; border-bottom: 1px solid var(--border, #e4e4e7); background: var(--card, #fff); } .ds-tabs button { position: relative; height: 40px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground, #63636b); font: 14px ui-sans-serif, system-ui, sans-serif; cursor: pointer; } .ds-tabs button:hover { color: var(--foreground, #18181b); } .ds-tabs button[aria-current=page] { color: var(--foreground, #18181b); font-weight: 500; } .ds-tabs button[aria-current=page]::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px; border-radius: 9999px; background: var(--foreground, #18181b); } .ds-tabs button:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: -2px; }"
+    },
+    {
+      "name": "Project Switcher",
+      "kind": "input",
+      "refersTo": "select",
+      "description": "Native select in the top bar, led by the project's status dot.",
+      "html": "<label class=\"ds-switch\"><span class=\"ds-switch-dot\"></span><select aria-label=\"Project\"><option>crank-mem</option><option>other-project</option></select></label>",
+      "css": ".ds-switch { position: relative; display: inline-flex; align-items: center; } .ds-switch-dot { position: absolute; left: 10px; width: 8px; height: 8px; border-radius: 9999px; background: var(--ok, #15803d); pointer-events: none; } .ds-switch select { height: 32px; max-width: 224px; padding: 0 32px 0 24px; border: 1px solid var(--input, #d4d4d8); border-radius: 6px; background: var(--card, #fff); color: var(--foreground, #18181b); font: 500 14px ui-sans-serif, system-ui, sans-serif; appearance: none; } .ds-switch select:hover { background: var(--accent, #f4f4f5); } .ds-switch select:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: 2px; }"
+    },
+    {
+      "name": "List Row",
+      "kind": "custom",
+      "refersTo": "list-row",
+      "description": "A selectable row in Curation, Memory and Top queries; j/k move the selection.",
+      "html": "<div class=\"ds-list\"><button type=\"button\" class=\"ds-row\" aria-current=\"true\"><span class=\"ds-row-title\">Hooks exit 0 on every path</span><span class=\"ds-row-meta\">decision · Nov 10, 2026 · <code>#42</code></span></button><button type=\"button\" class=\"ds-row\"><span class=\"ds-row-title\">Spool entries park after three failures</span><span class=\"ds-row-meta\">discovery · Nov 9, 2026 · <code>#41</code></span></button></div>",
+      "css": ".ds-list { max-width: 400px; border: 1px solid var(--border, #e4e4e7); background: var(--card, #fff); } .ds-row { display: grid; gap: 4px; width: 100%; padding: 10px 16px; border: 0; border-bottom: 1px solid var(--border, #e4e4e7); background: transparent; text-align: left; font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--foreground, #18181b); cursor: pointer; } .ds-row:hover { background: color-mix(in oklab, var(--accent, #f4f4f5) 70%, transparent); } .ds-row[aria-current=true], .ds-row[aria-current=true]:hover { background: var(--selected, #eff6ff); } .ds-row:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: -2px; } .ds-row-title { font-weight: 500; } .ds-row-meta { font-size: 12px; color: var(--muted-foreground, #63636b); } .ds-row-meta code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; }"
+    },
+    {
+      "name": "Chart Card",
+      "kind": "card",
+      "refersTo": "panel-card",
+      "description": "Day-columns chart shell: title, totals note, legend, Table toggle, one axis.",
+      "html": "<section class=\"ds-chart\"><header><div><h3>Consolidation decisions</h3><p>1 consolidation run, last 30 days</p></div><div class=\"ds-chart-tools\"><span class=\"ds-key\"><i style=\"background:var(--series-3,#1baf7a)\"></i>Accepted</span><span class=\"ds-key\"><i style=\"background:var(--series-2,#eb6834)\"></i>Rejected</span><button type=\"button\" aria-pressed=\"false\">Table</button></div></header><svg viewBox=\"0 0 300 80\" width=\"100%\" height=\"80\"><line x1=\"30\" x2=\"300\" y1=\"10\" y2=\"10\" stroke=\"var(--grid,#ececef)\"/><line x1=\"30\" x2=\"300\" y1=\"45\" y2=\"45\" stroke=\"var(--grid,#ececef)\"/><line x1=\"30\" x2=\"300\" y1=\"79\" y2=\"79\" stroke=\"var(--axis,#d4d4d8)\"/><rect x=\"270\" y=\"45\" width=\"16\" height=\"34\" fill=\"var(--series-3,#1baf7a)\"/><path d=\"M270,43V14Q270,10 274,10H282Q286,10 286,14V43Z\" fill=\"var(--series-2,#eb6834)\"/></svg></section>",
+      "css": ".ds-chart { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border, #e4e4e7); border-radius: 8px; background: var(--card, #fff); font-family: ui-sans-serif, system-ui, sans-serif; } .ds-chart header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; } .ds-chart h3 { margin: 0; font-size: 14px; font-weight: 600; } .ds-chart p { margin: 2px 0 0; font-size: 12px; color: var(--muted-foreground, #63636b); } .ds-chart-tools { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted-foreground, #63636b); } .ds-key { display: flex; align-items: center; gap: 6px; } .ds-key i { width: 10px; height: 10px; border-radius: 2px; } .ds-chart-tools button { padding: 2px 6px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer; } .ds-chart-tools button:hover, .ds-chart-tools button[aria-pressed=true] { background: var(--accent, #f4f4f5); color: var(--foreground, #18181b); } .ds-chart-tools button:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: 2px; }"
+    },
+    {
+      "name": "Bar List",
+      "kind": "custom",
+      "refersTo": "panel-card",
+      "description": "Ranked share bars on one scale; lists side by side share the same maximum.",
+      "html": "<ul class=\"ds-bars\"><li><span><code>search</code></span><span class=\"ds-track\"><span style=\"width:100%\"></span></span><span>12</span></li><li><span><code>timeline</code></span><span class=\"ds-track\"><span style=\"width:42%\"></span></span><span>5</span></li><li><span><code>get</code></span><span class=\"ds-track\"><span style=\"width:17%\"></span></span><span>2</span></li></ul>",
+      "css": ".ds-bars { display: grid; gap: 6px; max-width: 360px; margin: 0; padding: 0; list-style: none; font: 12px ui-sans-serif, system-ui, sans-serif; color: var(--foreground, #18181b); } .ds-bars li { display: grid; grid-template-columns: minmax(0, 9rem) 1fr 3rem; align-items: center; gap: 12px; } .ds-bars code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; } .ds-track { height: 8px; border-radius: 9999px; background: var(--muted, #f4f4f5); } .ds-track span { display: block; height: 8px; border-radius: 9999px; background: var(--series-2, #eb6834); } .ds-bars li > span:last-child { text-align: right; font-variant-numeric: tabular-nums; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Instrument Panel Beside the Terminal",
+    "overview": "The dashboard is the developer-tool dashboard a user already knows, played straight: an overview table first, then per-project views, on a neutral zinc ground with hairline borders, one blue accent, and small charts. It sits beside a terminal and an agent session and is read cold, so every surface answers a question in a glance and points at the command that changes the answer. It is a window, not a control panel: nothing on the page edits, accepts or rejects.\n\nDensity is medium-high and calm. Cards are flat white on an off-white ground (near-black in dark mode), separated by 1px zinc lines rather than shadows. Colour is spent only where it carries meaning: blue for links, focus, selection and the first data series; green, amber, red and grey only for state, and always beside a word. The system does not develop its own visual identity; the quality bar is Vercel's dashboard and GitHub Actions and Insights.\n\nLight and dark follow the system (`prefers-color-scheme`). Dark values are their own steps tuned for the dark surface, not an inversion; they live in the sidecar's `colorMeta.<token>.dark`.",
+    "keyCharacteristics": [
+      "Neutral zinc ground, white cards, 1px hairline borders, no decorative shadow.",
+      "One blue accent for links, focus ring, selection tint and series 1.",
+      "Status tones (ok, warn, bad, off) each come as text, soft fill and line, and never appear without words.",
+      "System UI sans with tabular figures; mono for paths, ids, models, queries and commands.",
+      "8px-radius cards, fully rounded pills, small charts on one axis with a Table toggle.",
+      "Every fix sentence pairs with a copyable command."
+    ],
+    "rules": [
+      {
+        "name": "The State Has Words Rule",
+        "body": "A status tone never stands alone: a pill carries its label (\"Healthy\", \"Stopped\", \"stale\"), a toned figure sits under its label, and a fix sentence states the fact in words.",
+        "section": "colors"
+      },
+      {
+        "name": "The Quiet When Healthy Rule",
+        "body": "An ok state does not tint figures. Stat values take a tone only for warn, bad or off; healthy values stay ink.",
+        "section": "colors"
+      },
+      {
+        "name": "The Series Are Not Status Rule",
+        "body": "Charts draw with series-1..3 in a fixed order, never with the ok/warn/bad tones, even when a series means \"accepted\" or \"rejected\".",
+        "section": "colors"
+      },
+      {
+        "name": "The Typed Things Are Mono Rule",
+        "body": "Paths, ids, model names, search queries, channel names and commands set in mono; everything else is sans.",
+        "section": "typography"
+      },
+      {
+        "name": "The Columns Line Up Rule",
+        "body": "Counts, costs, times and axis labels use tabular figures; numeric table columns align right.",
+        "section": "typography"
+      },
+      {
+        "name": "The Cards Below Large Rule",
+        "body": "Below `lg` (1024px) the projects table becomes a list of stacked cards: name and status pill, root in mono, one metadata line, and the fix line under it. The table only renders from `lg` up.",
+        "section": "layout"
+      },
+      {
+        "name": "The Place Is the URL Rule",
+        "body": "Project, view, tab and selected item live in the query string, so a reload reopens the same place.",
+        "section": "layout"
+      },
+      {
+        "name": "The Hairline Not Shadow Rule",
+        "body": "Cards, tables and banners separate with a 1px border, never a shadow.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Fix Has a Command Rule",
+        "body": "Every fix sentence that has a remedy carries it as a copyable Command; a fix without a command (parked entries) says why none applies.",
+        "section": "components"
+      },
+      {
+        "name": "The One Axis Rule",
+        "body": "A chart plots on one axis, stacks its series in a fixed order, and offers a Table toggle with the same numbers.",
+        "section": "components"
+      },
+      {
+        "name": "The Shared Scale Rule",
+        "body": "Bar lists shown side by side share one maximum, so equal counts draw equal bars.",
+        "section": "components"
+      },
+      {
+        "name": "The Empty States Say What Happened Rule",
+        "body": "An empty list or chart states the fact plainly and, when one exists, the command that changes it (\"No projects yet: run crank-mem init in a project.\").",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "**Do** pair every status tone with its word: a Pill label, a figure under its label, or a fix sentence.",
+      "**Do** give each project row exactly one status pill, from the first problem in capture order.",
+      "**Do** put a copyable Command beside every fix sentence that has a remedy.",
+      "**Do** plot charts on one axis with series-1, series-2, series-3 in that order, and keep the Table toggle.",
+      "**Do** pass one shared `max` to bar lists that sit side by side.",
+      "**Do** switch the projects table to stacked cards below `lg` (1024px).",
+      "**Do** set paths, ids, models, queries and commands in mono, and numbers in tabular figures.",
+      "**Do** write empty states as the fact plus the command, in GLOSSARY.md's words."
+    ],
+    "donts": [
+      "**Don't** add a second accent hue; blue is the only one.",
+      "**Don't** use ok/warn/bad/off tones for decoration, chart series or category tags.",
+      "**Don't** separate cards with shadows; use the 1px hairline.",
+      "**Don't** add controls that edit, accept or reject memory; the dashboard is read-only.",
+      "**Don't** set labels in uppercase or add eyebrow text above headings."
+    ]
+  }
+}

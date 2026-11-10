@@ -61,6 +61,48 @@ export type ConsolidationRow = {
   costUsd: number;
 };
 
+/** Whether memory.db opened for reading, or why not. */
+export type StoreStatus = "open" | "missing" | "older" | "newer" | "unreadable";
+
+/**
+ * One project's capture health as values: what `crank-mem stats` prints as capture rows,
+ * except that the spool counts only this project's entries. `memory` is null unless the
+ * store opened; `monthCostUsd` is digests plus consolidations since the local month began.
+ */
+export type HealthSummary = {
+  digest: "on" | "off" | "stopped";
+  stopReason: string | null;
+  daemonAlive: boolean;
+  spool: { waiting: number; parked: number };
+  store: StoreStatus;
+  memory: {
+    observations: number;
+    unembedded: number;
+    lastDigestMs: number | null;
+    monthCostUsd: number;
+    pendingProposals: number;
+    staleFlags: number;
+    lastConsolidation: { startedMs: number; outcome: ConsolidationOutcome } | null;
+  } | null;
+  lastSnapshotMs: number | null;
+  embedderReady: boolean;
+};
+
+/** One local day of a store's upkeep: digests and observations made, list-price cost, consolidation decisions. */
+export type ActivityDay = {
+  date: string;
+  digests: number;
+  observations: number;
+  costUsd: number;
+  consolidations: number;
+  accepted: number;
+  rejected: number;
+  staleFlags: number;
+};
+
+export const ACTIVITY_DAYS = [7, 30, 90] as const;
+export type ActivityWindow = (typeof ACTIVITY_DAYS)[number];
+
 export const USAGE_CHANNELS = [
   "session-start",
   "subagent-start",

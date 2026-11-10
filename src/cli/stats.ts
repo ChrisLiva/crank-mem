@@ -21,7 +21,8 @@ import {
   CODEX_REVIEW_HINT,
 } from "./codex-trust.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
-import { daemonAlive, readParked, readSpool } from "../hooks/lib/spool.ts";
+import { daemonAlive, readParked, readSpool, type SpoolItem } from "../hooks/lib/spool.ts";
+import type { HealthSummary } from "../hooks/lib/wire.ts";
 import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
 import { latestSnapshot } from "../hooks/lib/store-upkeep.ts";
 import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
@@ -131,48 +132,78 @@ function dollars(usd: number): string {
 }
 
 /**
- * Whether digests run, what waits for them user-wide, what the store holds, and
- * whether search by meaning works, as label and value pairs: `stats` pads them
- * and the dashboard's Health view answers them as they are.
+ * Whether digests run, what waits for them from this project, what the store holds,
+ * and whether search by meaning works: the dashboard's Health view reads it, and
+ * `captureRows` prints it.
  */
-export async function captureRows(
-  root: string,
-  config: CrankConfig,
-): Promise<[label: string, value: string][]> {
+export async function captureSummary(root: string, config: CrankConfig): Promise<HealthSummary> {
   const stop = readStopState();
-  const rows: [label: string, value: string][] = [
-    ["digest", !config.digest ? "off" : stop ? `stopped (${stop.reason})` : "on"],
-    ["daemon", daemonAlive() ? "alive" : "not running"],
-    ["spool", `${readSpool().length} waiting, ${readParked().length} parked`],
-  ];
+  const ours = (items: SpoolItem[]) => items.filter(({ entry }) => entry.projectRoot === root);
   const store = memoryPath(root);
   const opened = openMemory(store, "read");
+  let memory: HealthSummary["memory"] = null;
   if (opened.status === "open") {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    let s;
     try {
-      s = opened.memory.stats(EMBED_MODEL, monthStart);
+      const s = opened.memory.stats(EMBED_MODEL, monthStart);
+      memory = {
+        observations: s.observations,
+        unembedded: s.unembedded,
+        lastDigestMs: s.lastDigestMs,
+        monthCostUsd: s.costUsdSince,
+        pendingProposals: s.pendingProposals,
+        staleFlags: s.staleRows,
+        lastConsolidation: s.lastConsolidation,
+      };
     } finally {
       opened.memory.close();
     }
-    rows.push(["observations", String(s.observations)]);
-    rows.push(["unembedded", String(s.unembedded)]);
-    rows.push(["last digest", s.lastDigestMs === null ? "never" : ageOf(s.lastDigestMs)]);
-    rows.push(["month cost", `${dollars(s.costUsdSince)} (list price)`]);
-    rows.push(["proposals", String(s.pendingProposals)]);
-    rows.push(["stale", String(s.staleRows)]);
-    const last = s.lastConsolidation;
+  }
+  return {
+    digest: !config.digest ? "off" : stop ? "stopped" : "on",
+    stopReason: config.digest && stop ? stop.reason : null,
+    daemonAlive: daemonAlive(),
+    spool: { waiting: ours(readSpool()).length, parked: ours(readParked()).length },
+    store: opened.status,
+    memory,
+    lastSnapshotMs: latestSnapshot(store)?.atMs ?? null,
+    embedderReady: await embedderReady(),
+  };
+}
+
+/**
+ * `captureSummary` as the label and value pairs `stats` pads, except that the
+ * spool row counts what waits user-wide.
+ */
+async function captureRows(
+  root: string,
+  config: CrankConfig,
+): Promise<[label: string, value: string][]> {
+  const s = await captureSummary(root, config);
+  const rows: [label: string, value: string][] = [
+    ["digest", s.digest === "stopped" ? `stopped (${s.stopReason})` : s.digest],
+    ["daemon", s.daemonAlive ? "alive" : "not running"],
+    ["spool", `${readSpool().length} waiting, ${readParked().length} parked`],
+  ];
+  const m = s.memory;
+  if (m !== null) {
+    rows.push(["observations", String(m.observations)]);
+    rows.push(["unembedded", String(m.unembedded)]);
+    rows.push(["last digest", m.lastDigestMs === null ? "never" : ageOf(m.lastDigestMs)]);
+    rows.push(["month cost", `${dollars(m.monthCostUsd)} (list price)`]);
+    rows.push(["proposals", String(m.pendingProposals)]);
+    rows.push(["stale", String(m.staleFlags)]);
+    const last = m.lastConsolidation;
     rows.push([
       "consolidation",
       last === null ? "never" : `${ageOf(last.startedMs)} (${last.outcome})`,
     ]);
-  } else {
-    rows.push(["memory", MEMORY_STATE[opened.status]]);
+  } else if (s.store !== "open") {
+    rows.push(["memory", MEMORY_STATE[s.store]]);
   }
-  const latest = latestSnapshot(store);
-  rows.push(["last snapshot", latest === null ? "never" : ageOf(latest.atMs)]);
-  rows.push(["embedder", (await embedderReady()) ? "ready" : "not ready (run crank-mem setup)"]);
+  rows.push(["last snapshot", s.lastSnapshotMs === null ? "never" : ageOf(s.lastSnapshotMs)]);
+  rows.push(["embedder", s.embedderReady ? "ready" : "not ready (run crank-mem setup)"]);
   return rows;
 }
 

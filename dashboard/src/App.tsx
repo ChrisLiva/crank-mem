@@ -1,16 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { cn } from "cn";
-import { fetchProjects, type Dot, type Project } from "./api";
+import { fetchHealth, fetchProjects, type HealthSummary, type Project } from "./api";
+import { usePerProject } from "./hooks/use-per-project";
+import { usePoll } from "./hooks/use-poll";
+import { projectStatus, projectTone } from "./status";
 import { CurationView } from "./views/curation";
 import { HealthView } from "./views/health";
 import { MemoryView } from "./views/memory";
+import { Dot } from "./views/shared";
 import { UsageView } from "./views/usage";
 
 const VIEWS = [
-  ["memory", "Memory"],
-  ["curation", "Curation"],
   ["health", "Health"],
+  ["curation", "Curation"],
   ["usage", "Usage"],
+  ["memory", "Memory"],
 ] as const;
 type View = (typeof VIEWS)[number][0];
 
@@ -22,7 +26,7 @@ function readPlace(): Place {
   const view = q.get("view");
   return {
     project: q.get("project"),
-    view: VIEWS.find(([v]) => v === view)?.[0] ?? "memory",
+    view: VIEWS.find(([v]) => v === view)?.[0] ?? "health",
     tab: q.get("tab"),
     item: q.get("item"),
   };
@@ -37,39 +41,30 @@ function writePlace(place: Place): void {
   history.replaceState(null, "", `?${q}`);
 }
 
-const DOT_CLASS: Record<Dot, string> = {
-  green: "bg-emerald-500",
-  amber: "bg-amber-500",
-  grey: "bg-muted-foreground",
-};
-
 export function App() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [place, setPlace] = useState(readPlace);
-  const [expanded, setExpanded] = useState(() => new Set<string>());
 
-  useEffect(() => {
-    fetchProjects()
-      .then((list) => {
-        setProjects(list);
-        setPlace((p) =>
-          list.some((x) => x.id === p.project)
-            ? p
-            : { project: list[0]?.id ?? null, view: "memory", tab: null, item: null },
-        );
-      })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+  usePoll(async () => {
+    try {
+      const list = await fetchProjects();
+      setProjects(list);
+      setError(null);
+      setPlace((p) =>
+        list.some((x) => x.id === p.project)
+          ? p
+          : { ...p, project: list[0]?.id ?? null, tab: null, item: null },
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }, []);
+  const health = usePerProject(projects ?? [], fetchHealth);
 
   useEffect(() => {
     if (projects !== null) writePlace(place);
   }, [projects, place]);
-
-  const project = place.project;
-  useEffect(() => {
-    if (project !== null) setExpanded((s) => (s.has(project) ? s : new Set(s).add(project)));
-  }, [project]);
 
   const setItem = useCallback((item: string | null) => setPlace((p) => ({ ...p, item })), []);
   const setTab = useCallback((tab: string) => setPlace((p) => ({ ...p, tab, item: null })), []);
@@ -77,146 +72,207 @@ export function App() {
     (id: number) => setPlace((p) => ({ ...p, view: "memory", tab: null, item: String(id) })),
     [],
   );
-  const go = (projectId: string, view: View) =>
-    setPlace({ project: projectId, view, tab: null, item: null });
-  const toggle = (id: string) => {
-    const open = expanded.has(id);
-    setExpanded((s) => {
-      const next = new Set(s);
-      if (open) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    if (!open && id !== place.project) go(id, "memory");
-  };
-
-  if (error !== null) return <p className="p-4 text-destructive">{error}</p>;
-  if (projects === null) return null;
-  if (projects.length === 0)
-    return <p className="p-4">No projects yet: run crank-mem init in a project.</p>;
+  const focus = useCallback(
+    (project: string) =>
+      setPlace((p) => (p.project === project ? p : { ...p, project, tab: null, item: null })),
+    [],
+  );
+  const go = (view: View) => setPlace((p) => ({ ...p, view, tab: null, item: null }));
 
   return (
-    <div className="flex h-screen flex-col text-[13px] leading-normal">
-      <header className="flex h-11 flex-none items-center gap-3 border-b px-4">
-        <span className="font-semibold tracking-tight">crank-mem</span>
-        <span className="font-mono text-xs text-muted-foreground">{location.host}</span>
-      </header>
-      <main className="grid min-h-0 flex-1 grid-cols-[236px_minmax(340px,420px)_1fr]">
-        <ProjectNav projects={projects} expanded={expanded} place={place} toggle={toggle} go={go} />
-        <ViewSwitch
-          place={place}
-          setItem={setItem}
-          setTab={setTab}
-          openObservation={openObservation}
-        />
-      </main>
+    <div className="flex min-h-dvh flex-col text-sm leading-normal md:h-dvh">
+      <TopBar projects={projects} health={health} place={place} go={go} focus={focus} />
+      {error !== null ? (
+        <Message tone="error">
+          {error}. The dashboard server may have stopped: run crank-mem dashboard again.
+        </Message>
+      ) : projects === null ? null : projects.length === 0 ? (
+        <Message>No projects yet: run crank-mem init in a project.</Message>
+      ) : (
+        place.project !== null && (
+          <ViewSwitch
+            projects={projects}
+            health={health}
+            place={{ ...place, project: place.project }}
+            go={go}
+            focus={focus}
+            setItem={setItem}
+            setTab={setTab}
+            openObservation={openObservation}
+          />
+        )
+      )}
     </div>
   );
 }
 
-/** The project list, each project expanding to its views. */
-function ProjectNav({
-  projects,
-  expanded,
-  place,
-  toggle,
-  go,
-}: {
-  projects: Project[];
-  expanded: Set<string>;
-  place: Place;
-  toggle: (id: string) => void;
-  go: (projectId: string, view: View) => void;
-}) {
+function Message({ tone, children }: { tone?: "error"; children: ReactNode }) {
   return (
-    <nav aria-label="Projects" className="min-h-0 overflow-auto border-r bg-sidebar px-2 py-2.5">
-      <div className="px-2 pt-1 pb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-        Projects
-      </div>
-      {projects.map((p) => {
-        const open = expanded.has(p.id);
-        return (
-          <div key={p.id}>
-            <button
-              type="button"
-              aria-expanded={open}
-              title={p.root}
-              onClick={() => toggle(p.id)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent"
-            >
-              <span
-                className={cn(
-                  "inline-block w-3 text-muted-foreground transition-transform",
-                  open && "rotate-90",
-                )}
-              >
-                ›
-              </span>
-              <span
-                data-dot={p.dot}
-                title={`health: ${p.dot}`}
-                className={cn("size-[7px] flex-none rounded-full", DOT_CLASS[p.dot])}
-              />
-              <span className="truncate">{p.name}</span>
-            </button>
-            {open &&
-              VIEWS.map(([view, label]) => {
-                const active = place.project === p.id && place.view === view;
-                return (
-                  <button
-                    key={view}
-                    type="button"
-                    aria-current={active || undefined}
-                    onClick={() => go(p.id, view)}
-                    className={cn(
-                      "flex w-full rounded-md py-1.5 pr-2 pl-[30px] text-left hover:bg-accent",
-                      active && "bg-accent font-semibold",
-                    )}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-          </div>
-        );
-      })}
-    </nav>
+    <p
+      className={cn(
+        "mx-auto mt-16 max-w-md px-6 text-center text-muted-foreground",
+        tone === "error" && "text-destructive",
+      )}
+    >
+      {children}
+    </p>
   );
 }
 
-/** Columns 2 and 3: the view the place names, keyed by project so a switch starts it fresh. */
-function ViewSwitch({
+function Mark() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden className="size-5">
+      <rect width="16" height="16" rx="3.5" className="fill-foreground" />
+      <path
+        d="M4 11V5h3a2 2 0 0 1 0 4H4m4 0 3 2"
+        fill="none"
+        className="stroke-background"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** The wordmark, the views as tabs, the project the views show, and the host. */
+function TopBar({
+  projects,
+  health,
   place,
+  go,
+  focus,
+}: {
+  projects: Project[] | null;
+  health: Record<string, HealthSummary | undefined>;
+  place: Place;
+  go: (view: View) => void;
+  focus: (project: string) => void;
+}) {
+  const current = projects?.find((p) => p.id === place.project);
+  const currentHealth = current && health[current.id];
+  const status = currentHealth ? projectStatus(currentHealth) : null;
+  return (
+    <header className="sticky top-0 z-20 flex-none border-b bg-card">
+      <div className="flex h-14 items-center gap-4 px-4 md:px-6">
+        <span className="flex items-center gap-2 font-semibold tracking-tight">
+          <Mark />
+          crank-mem
+        </span>
+        {projects !== null && projects.length > 0 && (
+          <label className="relative flex items-center">
+            <span className="sr-only">Project</span>
+            {current && (
+              <Dot
+                tone={projectTone(current, health[current.id])}
+                className="pointer-events-none absolute left-2.5"
+              />
+            )}
+            {status && (
+              <span id="project-status" className="sr-only">
+                {status.label}
+              </span>
+            )}
+            <select
+              aria-describedby={status ? "project-status" : undefined}
+              title={status?.label}
+              value={place.project ?? ""}
+              onChange={(e) => focus(e.target.value)}
+              className="h-8 max-w-56 appearance-none truncate rounded-md border border-input bg-card pr-8 pl-6 text-sm font-medium hover:bg-accent [&_option]:bg-popover"
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <svg
+              viewBox="0 0 16 16"
+              aria-hidden
+              className="pointer-events-none absolute right-2 size-3.5 text-muted-foreground"
+            >
+              <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          </label>
+        )}
+        <span className="flex-1" />
+        <span className="hidden items-center gap-2 rounded-md border px-2 py-1 font-mono text-xs text-muted-foreground sm:flex">
+          {location.host}
+          <span className="rounded-sm bg-muted px-1.5 font-sans text-[11px] font-medium text-foreground">
+            read-only
+          </span>
+        </span>
+      </div>
+      <nav aria-label="Views" className="-mb-px flex gap-1 overflow-x-auto px-2 md:px-4">
+        {VIEWS.map(([view, label]) => (
+          <button
+            key={view}
+            type="button"
+            aria-current={place.view === view ? "page" : undefined}
+            onClick={() => go(view)}
+            className="relative h-10 rounded-md px-3 text-sm text-muted-foreground outline-offset-[-2px] hover:text-foreground aria-[current=page]:font-medium aria-[current=page]:text-foreground aria-[current=page]:after:absolute aria-[current=page]:after:inset-x-2 aria-[current=page]:after:bottom-0 aria-[current=page]:after:h-0.5 aria-[current=page]:after:rounded-full aria-[current=page]:after:bg-foreground"
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+    </header>
+  );
+}
+
+/** The view the place names, keyed by project so a switch starts it fresh. */
+function ViewSwitch({
+  projects,
+  health,
+  place,
+  go,
+  focus,
   setItem,
   setTab,
   openObservation,
 }: {
-  place: Place;
+  projects: Project[];
+  health: Record<string, HealthSummary | undefined>;
+  place: Place & { project: string };
+  go: (view: View) => void;
+  focus: (project: string) => void;
   setItem: (item: string | null) => void;
   setTab: (tab: string) => void;
   openObservation: (id: number) => void;
 }) {
-  return place.project === null ? null : place.view === "memory" ? (
+  if (place.view === "health")
+    return (
+      <HealthView
+        projects={projects}
+        health={health}
+        projectId={place.project}
+        focus={focus}
+        openCuration={() => go("curation")}
+      />
+    );
+  if (place.view === "curation")
+    return (
+      <CurationView
+        key={place.project}
+        projectId={place.project}
+        tab={place.tab}
+        setTab={setTab}
+        item={place.item}
+        setItem={setItem}
+        openObservation={openObservation}
+      />
+    );
+  if (place.view === "usage")
+    return (
+      <UsageView
+        key={place.project}
+        projectId={place.project}
+        item={place.item}
+        setItem={setItem}
+        openObservation={openObservation}
+      />
+    );
+  return (
     <MemoryView key={place.project} projectId={place.project} item={place.item} setItem={setItem} />
-  ) : place.view === "curation" ? (
-    <CurationView
-      key={place.project}
-      projectId={place.project}
-      tab={place.tab}
-      setTab={setTab}
-      item={place.item}
-      setItem={setItem}
-      openObservation={openObservation}
-    />
-  ) : place.view === "health" ? (
-    <HealthView key={place.project} projectId={place.project} item={place.item} setItem={setItem} />
-  ) : (
-    <UsageView
-      key={place.project}
-      projectId={place.project}
-      item={place.item}
-      setItem={setItem}
-      openObservation={openObservation}
-    />
   );
 }

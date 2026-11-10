@@ -1,5 +1,12 @@
 import type * as sqlite from "node:sqlite";
-import type { DigestSummary, Memory, PendingWork, Position, SearchQuery } from "./memory.ts";
+import type {
+  ActivityEvents,
+  DigestSummary,
+  Memory,
+  PendingWork,
+  Position,
+  SearchQuery,
+} from "./memory.ts";
 import type {
   ConsolidationOutcome,
   ConsolidationRow,
@@ -340,4 +347,24 @@ export function consolidationRows(
     model: row.model === null ? null : String(row.model),
     costUsd: Number(row.cost_usd),
   }));
+}
+
+export function activity(db: sqlite.DatabaseSync, sinceMs: number): ActivityEvents {
+  const priced = (sql: string) =>
+    all(db, sql, sinceMs).map((r) => ({ atMs: Number(r.at), costUsd: Number(r.cost) }));
+  const times = (sql: string) => all(db, sql, sinceMs).map((r) => Number(r.at));
+  return {
+    digests: priced("SELECT created_at AS at, cost_usd AS cost FROM digests WHERE created_at >= ?"),
+    observations: times("SELECT created_at AS at FROM observations WHERE created_at >= ?"),
+    consolidations: priced(
+      "SELECT started_at AS at, cost_usd AS cost FROM consolidations WHERE started_at >= ?",
+    ),
+    decisions: all(
+      db,
+      `SELECT decided_at AS at, state FROM proposals
+         WHERE decided_at >= ? AND state IN ('accepted', 'rejected')`,
+      sinceMs,
+    ).map((r) => ({ atMs: Number(r.at), state: r.state as "accepted" | "rejected" })),
+    staleFlags: times("SELECT stale_at AS at FROM observations WHERE stale_at >= ?"),
+  };
 }
