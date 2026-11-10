@@ -247,34 +247,7 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
       db.close();
       return { status: "newer" };
     }
-    if (read) {
-      if (v < SCHEMA_VERSION) {
-        db.close();
-        return { status: v === 0 ? "missing" : "older" };
-      }
-      return { status: "open", memory: createMemory(db, file) };
-    }
-    let migratedFrom: number | null = null;
-    if (v < SCHEMA_VERSION) {
-      if (v === 0) {
-        db.exec("PRAGMA journal_mode=WAL");
-      } else {
-        // VACUUM INTO cannot run inside migrate's transaction, so the snapshot comes first.
-        try {
-          snapshotBeforeMigration(db, file, v);
-        } catch (err) {
-          db.close();
-          return { status: "unmigrated", detail: errorMessage(err) };
-        }
-      }
-      const from = migrate(db);
-      if (from === "newer") {
-        db.close();
-        return { status: "newer" };
-      }
-      migratedFrom = from;
-    }
-    return { status: "open", memory: createMemory(db, file), migratedFrom };
+    return read ? readerAt(db, file, v) : writerAt(db, file, v);
   } catch {
     try {
       db?.close();
@@ -283,6 +256,38 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
     }
     return { status: "unreadable" };
   }
+}
+
+/** The reader over `db` at user_version `v`, at most SCHEMA_VERSION; an older store closes `db`. */
+function readerAt(db: sqlite.DatabaseSync, file: string, v: number): MemoryRead {
+  if (v < SCHEMA_VERSION) {
+    db.close();
+    return { status: v === 0 ? "missing" : "older" };
+  }
+  return { status: "open", memory: createMemory(db, file) };
+}
+
+/** The writer over `db` at user_version `v`, at most SCHEMA_VERSION, migrated first when older. */
+function writerAt(db: sqlite.DatabaseSync, file: string, v: number): MemoryWrite {
+  if (v === SCHEMA_VERSION)
+    return { status: "open", memory: createMemory(db, file), migratedFrom: null };
+  if (v === 0) {
+    db.exec("PRAGMA journal_mode=WAL");
+  } else {
+    // VACUUM INTO cannot run inside migrate's transaction, so the snapshot comes first.
+    try {
+      snapshotBeforeMigration(db, file, v);
+    } catch (err) {
+      db.close();
+      return { status: "unmigrated", detail: errorMessage(err) };
+    }
+  }
+  const from = migrate(db);
+  if (from === "newer") {
+    db.close();
+    return { status: "newer" };
+  }
+  return { status: "open", memory: createMemory(db, file), migratedFrom: from };
 }
 
 const READ_NOTES: Record<Exclude<MemoryRead["status"], "open">, string> = {
