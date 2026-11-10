@@ -259,9 +259,40 @@ async function readTarget(file: string): Promise<Target | null> {
   };
   const cannotRead = (e: unknown): Target =>
     refuse(`cannot read ${file} (${(e as NodeJS.ErrnoException).code}).`, "refused");
+  const real = checkedPath(file, at, refuse, cannotRead);
+  if (typeof real !== "string") return real;
+  const grammar = grammarFor(file);
+  if (grammar === null) {
+    const ext = path.extname(path.basename(file)).toLowerCase();
+    return refuse(
+      ext ? `no grammar for ${ext} files.` : `no grammar for ${path.basename(file)}.`,
+      "no-reader",
+    );
+  }
+  let text: string;
+  try {
+    text = fs.readFileSync(real, "utf8");
+  } catch (e) {
+    return cannotRead(e);
+  }
+  const symbols = await codeSymbols(text, grammar);
+  if (symbols === null) return refuse(NOT_INSTALLED, "no-reader");
+  return { ...at, outcome: "ok", text, symbols };
+}
+
+/**
+ * `file`'s real path once it passes the outside, existence and sensitive checks, in that order,
+ * or the refusal the first failing check took.
+ */
+function checkedPath(
+  file: string,
+  at: { root: string; path: string | null },
+  refuse: (reason: string, outcome: Exclude<CodeOutcome, "ok">) => Target,
+  cannotRead: (e: unknown) => Target,
+): string | Target {
   const outsideLine = `${file} is outside this project.`;
   const abs = path.resolve(process.cwd(), file);
-  const realRoot = fs.realpathSync(project.root);
+  const realRoot = fs.realpathSync(at.root);
   const within = (p: string) => p === realRoot || p.startsWith(realRoot + path.sep);
   if (at.path === null) {
     let anc = abs;
@@ -280,23 +311,7 @@ async function readTarget(file: string): Promise<Target | null> {
   if (isSensitiveFile(path.basename(abs)) || isSensitiveFile(path.basename(real))) {
     return refuse(`${file} is a sensitive file; crank-mem does not read it.`, "refused");
   }
-  const grammar = grammarFor(file);
-  if (grammar === null) {
-    const ext = path.extname(path.basename(file)).toLowerCase();
-    return refuse(
-      ext ? `no grammar for ${ext} files.` : `no grammar for ${path.basename(file)}.`,
-      "no-reader",
-    );
-  }
-  let text: string;
-  try {
-    text = fs.readFileSync(real, "utf8");
-  } catch (e) {
-    return cannotRead(e);
-  }
-  const symbols = await codeSymbols(text, grammar);
-  if (symbols === null) return refuse(NOT_INSTALLED, "no-reader");
-  return { ...at, outcome: "ok", text, symbols };
+  return real;
 }
 
 const HEAD_CAP = 160;

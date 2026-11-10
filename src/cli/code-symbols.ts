@@ -671,34 +671,50 @@ function walk(
       if (inner) symbols.push(...walk(inner, parent, rules, text));
       continue;
     }
-    const { start, head: headNode } = rules.widen?.(node) ?? { start: node, head: node };
-    const body = rules.body ? rules.body(node) : node.childForFieldName("body");
-    const name = rules.name ? rules.name(node) : (node.childForFieldName("name")?.text ?? "");
-    const scope = rules.scope?.(node) ?? name;
-    const qualifier = parent ? `${parent.qualifier}.${scope}` : scope;
-    const lineStart = text.lastIndexOf("\n", headNode.startIndex - 1) + 1;
-    const startLine = start.startPosition.row + 1;
-    symbols.push({
-      qualified: parent ? `${parent.qualifier}.${name}` : name,
-      kind,
-      start: startLine,
-      end: endLine(headNode),
-      docStart: docStart(node, start, headNode, rules),
-      indent: /^[ \t]*/.exec(text.slice(lineStart, headNode.startIndex))![0],
-      head: headText(
-        text.slice(headNode.startIndex, body ? headEnd(body, rules) : headNode.endIndex),
-      ),
-      fold: body === null ? "none" : text.startsWith("{", body.startIndex) ? "brace" : "other",
-      children:
-        body && rules.container(kind)
-          ? walk(
-              rules.members?.(node, body) ?? body.namedChildren,
-              { kind, qualifier },
-              rules,
-              text,
-            )
-          : [],
-    });
+    symbols.push(buildSymbol(node, kind, parent, rules, text));
   }
   return symbols;
+}
+
+/** A symbol node's family hooks, each resolved to its default when the family leaves it out. */
+function resolveHooks(
+  node: Node,
+  parent: { qualifier: string } | null,
+  rules: FamilyRules,
+): { start: Node; headNode: Node; body: Node | null; name: string; qualifier: string } {
+  const { start, head: headNode } = rules.widen?.(node) ?? { start: node, head: node };
+  const body = rules.body ? rules.body(node) : node.childForFieldName("body");
+  const name = rules.name ? rules.name(node) : (node.childForFieldName("name")?.text ?? "");
+  const scope = rules.scope?.(node) ?? name;
+  const qualifier = parent ? `${parent.qualifier}.${scope}` : scope;
+  return { start, headNode, body, name, qualifier };
+}
+
+/** One `CodeSymbol` for a symbol node, with its members walked as children. */
+function buildSymbol(
+  node: Node,
+  kind: SymbolKind,
+  parent: { kind: SymbolKind; qualifier: string } | null,
+  rules: FamilyRules,
+  text: string,
+): CodeSymbol {
+  const { start, headNode, body, name, qualifier } = resolveHooks(node, parent, rules);
+  const lineStart = text.lastIndexOf("\n", headNode.startIndex - 1) + 1;
+  const startLine = start.startPosition.row + 1;
+  return {
+    qualified: parent ? `${parent.qualifier}.${name}` : name,
+    kind,
+    start: startLine,
+    end: endLine(headNode),
+    docStart: docStart(node, start, headNode, rules),
+    indent: /^[ \t]*/.exec(text.slice(lineStart, headNode.startIndex))![0],
+    head: headText(
+      text.slice(headNode.startIndex, body ? headEnd(body, rules) : headNode.endIndex),
+    ),
+    fold: body === null ? "none" : text.startsWith("{", body.startIndex) ? "brace" : "other",
+    children:
+      body && rules.container(kind)
+        ? walk(rules.members?.(node, body) ?? body.namedChildren, { kind, qualifier }, rules, text)
+        : [],
+  };
 }
