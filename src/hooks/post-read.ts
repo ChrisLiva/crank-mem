@@ -11,7 +11,7 @@ import {
 } from "./lib/hook-io.ts";
 import { CRANK_DIR, loadConfig } from "./lib/config.ts";
 import { debugEvent, enableDebug, safePath } from "./lib/debug.ts";
-import { formatLine, memoryPath, openMemory } from "./lib/memory.ts";
+import { formatLine, memoryPath, openMemory, type MemoryReader } from "./lib/memory.ts";
 import { shellReadPaths } from "./lib/shell-reads.ts";
 import { transcriptStem } from "./lib/spool.ts";
 import { SEEN_DIR, crankHome, ensureCrankHome, writeJsonAtomic } from "./lib/user-state.ts";
@@ -51,6 +51,51 @@ function changedSince(file: string, ms: number): boolean {
   }
 }
 
+function agentOf(payload: HookPayload): string {
+  return typeof payload.agent_id === "string" && /^[\w-]+$/.test(payload.agent_id)
+    ? payload.agent_id
+    : "main";
+}
+
+type Histories = {
+  sections: string[];
+  shown: { path: string; ids: number[] }[];
+  empty: string[];
+  cut: string[];
+};
+
+/** Each unseen path's history section, in order, until the next one would pass MAX_BYTES. */
+function histories(memory: MemoryReader, root: string, unseen: string[]): Histories {
+  const out: Histories = { sections: [], shown: [], empty: [], cut: [] };
+  for (const [i, rel] of unseen.entries()) {
+    const lines = memory.fileHistory(rel, HISTORY_LINES);
+    if (lines.length === 0) {
+      out.empty.push(rel);
+      continue;
+    }
+    const tag = changedSince(path.join(root, rel), lines[0]!.createdAtMs)
+      ? " [file changed since]"
+      : "";
+    const section = `History of ${rel}:${tag}\n` + lines.map(formatLine).join("\n");
+    if (Buffer.byteLength([...out.sections, section].join(SEP)) > MAX_BYTES) {
+      out.cut = unseen.slice(i);
+      break;
+    }
+    out.sections.push(section);
+    out.shown.push({ path: rel, ids: lines.map((l) => l.id) });
+  }
+  return out;
+}
+
+function markSeen(seenFile: string, seen: string[], marked: string[]): void {
+  try {
+    ensureCrankHome();
+    writeJsonAtomic(seenFile, [...seen, ...marked]);
+  } catch {
+    // A lost marker costs only a repeat of this history.
+  }
+}
+
 async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());
   if (!payload) return;
@@ -66,10 +111,7 @@ async function main(): Promise<void> {
 
   const stem = transcriptStem(payload.transcript_path);
   if (!stem) return;
-  const agent =
-    typeof payload.agent_id === "string" && /^[\w-]+$/.test(payload.agent_id)
-      ? payload.agent_id
-      : "main";
+  const agent = agentOf(payload);
 
   const rels = memoryPaths(root, cwd, paths);
   if (rels.length === 0) return;
@@ -83,41 +125,18 @@ async function main(): Promise<void> {
   if (opened.status !== "open") return;
 
   const unseen = rels.filter((r) => !seen.includes(r));
-  const sections: string[] = [];
-  const shown: { path: string; ids: number[] }[] = [];
-  const empty: string[] = [];
-  let cut: string[] = [];
+  let found: Histories;
   try {
-    for (const [i, rel] of unseen.entries()) {
-      const lines = opened.memory.fileHistory(rel, HISTORY_LINES);
-      if (lines.length === 0) {
-        empty.push(rel);
-        continue;
-      }
-      const tag = changedSince(path.join(root, rel), lines[0]!.createdAtMs)
-        ? " [file changed since]"
-        : "";
-      const section = `History of ${rel}:${tag}\n` + lines.map(formatLine).join("\n");
-      if (Buffer.byteLength([...sections, section].join(SEP)) > MAX_BYTES) {
-        cut = unseen.slice(i);
-        break;
-      }
-      sections.push(section);
-      shown.push({ path: rel, ids: lines.map((l) => l.id) });
-    }
+    found = histories(opened.memory, root, unseen);
   } finally {
     opened.memory.close();
   }
+  const { sections, shown, empty, cut } = found;
 
   const context = sections.join(SEP);
   if (sections.length > 0) {
     const marked = shown.map((s) => s.path);
-    try {
-      ensureCrankHome();
-      writeJsonAtomic(seenFile, [...seen, ...marked]);
-    } catch {
-      // A lost marker costs only a repeat of this history.
-    }
+    markSeen(seenFile, seen, marked);
     emitAdditionalContext("PostToolUse", context);
     debugEvent("file-history", { paths: marked.map(safePath) });
   }
