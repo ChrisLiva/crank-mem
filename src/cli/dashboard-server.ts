@@ -241,7 +241,7 @@ async function activity(root: string, params: URLSearchParams): Promise<Answer> 
 
 /** `GET …/usage`: the Usage view's metrics over the log; a store that does not open gives no titles, and its note. */
 async function usage(root: string, params: URLSearchParams): Promise<Answer> {
-  const days = ([7, 30, 90] as const).find((d) => String(d) === params.get("days"));
+  const days = ACTIVITY_DAYS.find((d) => String(d) === params.get("days"));
   const manual = params.get("manual") ?? "0";
   if (days === undefined || (manual !== "0" && manual !== "1")) return { status: 400 };
   // A new line, never an assignment: readUsage hands back cached lines until the file changes.

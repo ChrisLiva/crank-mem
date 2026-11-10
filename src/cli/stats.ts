@@ -22,7 +22,7 @@ import {
 } from "./codex-trust.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
 import { daemonAlive, readParked, readSpool, type SpoolItem } from "../hooks/lib/spool.ts";
-import { projectStatus, type HealthSummary } from "../hooks/lib/wire.ts";
+import { formatUsd, projectStatus, type HealthSummary } from "../hooks/lib/wire.ts";
 import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
 import { latestSnapshot } from "../hooks/lib/store-upkeep.ts";
 import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
@@ -126,11 +126,6 @@ const MEMORY_STATE = {
   unreadable: "unreadable",
 } as const;
 
-/** To the cent, or to two significant digits under a cent: one Haiku digest costs about $0.002. */
-function dollars(usd: number): string {
-  return usd > 0 && usd < 0.01 ? `$${usd.toPrecision(2)}` : `$${usd.toFixed(2)}`;
-}
-
 /**
  * Whether digests run, what waits for them from this project, what the store holds,
  * and whether search by meaning works: the dashboard's Health view reads it, and
@@ -197,7 +192,7 @@ async function captureRows(
     rows.push(["observations", String(m.observations)]);
     rows.push(["unembedded", String(m.unembedded)]);
     rows.push(["last digest", m.lastDigestMs === null ? "never" : ageOf(m.lastDigestMs)]);
-    rows.push(["month cost", `${dollars(m.monthCostUsd)} (list price)`]);
+    rows.push(["month cost", `${formatUsd(m.monthCostUsd)} (list price)`]);
     rows.push(["proposals", String(m.pendingProposals)]);
     rows.push(["stale", String(m.staleFlags)]);
     const last = m.lastConsolidation;

@@ -14,6 +14,7 @@ import type {
 
 export {
   ACTIVITY_DAYS,
+  formatUsd,
   OBSERVATION_TYPES,
   PROPOSAL_STATES,
   type ActivityDay,

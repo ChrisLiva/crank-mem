@@ -311,7 +311,7 @@ View tabs sit under the top bar: 14px quiet text, 40px tall; hover turns ink; th
 A full-width button: 10px by 16px padding, hairline bottom rule, a medium title line and a 12px metadata line. Hover takes a 70% wash; the selected row takes the selection wash and keeps it on hover. j/k and the arrow keys move the selection, and the List Foot shows the kbd hint and an "Older" control when more pages exist.
 
 ### Day Columns Chart
-A titled card: section title, a one-line note stating the window's totals, a legend when there is more than one series, and a Table toggle that swaps the plot for the same numbers by day. Stacked columns up to 24px wide sit on one count axis with four "nice" ticks (1, 2 or 5 times a power of ten), grid lines, an axis-grey baseline, and dates ending in "Today". Hover or arrow keys pick a day, wash its band, and show a tooltip listing every series with a total.
+A titled card: section title, a one-line note stating the window's totals, a legend when there is more than one series, and a Table toggle that swaps the plot for the same numbers by day. Stacked columns up to 24px wide sit on one count axis with ticks about four steps apart (1, 2 or 5 times a power of ten), grid lines, an axis-grey baseline, and dates ending in "Today". Hover or arrow keys pick a day, wash its band, and show a tooltip listing every series with a total.
 
 ### Sparkline and Bar List
 The sparkline is a 96 by 24px series-1 line with an end dot on its own zero-based axis; flat and axis-grey when every value is zero. The bar list ranks rows on 8px round bars over a wash track, with label, bar and a right-aligned tabular count.

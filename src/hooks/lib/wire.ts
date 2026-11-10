@@ -1,5 +1,5 @@
 // The shapes, constants and guards the dashboard server answers in and the
-// dashboard page reads, and the status rule (`projectStatus`) they share.
+// dashboard page reads, and the status rule (`projectStatus`) whose result they carry.
 // This file imports nothing, so the dashboard's tsconfig, which cannot
 // resolve `node:` imports, compiles it too.
 
@@ -67,14 +67,18 @@ type StoreStatus = "open" | "missing" | "older" | "newer" | "unreadable";
 
 export type Tone = "ok" | "warn" | "bad" | "off";
 
-/** What a project's capture needs: a tone, a short label, and the fact and command that fix it when one exists. */
+/** Dollars to the cent, or to two significant digits under a cent: one Haiku digest costs about $0.002. */
+export function formatUsd(usd: number): string {
+  return usd > 0 && usd < 0.01 ? `$${usd.toPrecision(2)}` : `$${usd.toFixed(2)}`;
+}
+
+/** What a project's capture needs; `fix` is null when nothing does. */
 export type Status = { tone: Tone; label: string; fix: { text: string; command?: string } | null };
 
 /**
- * One project's capture health as values: what `crank-mem stats` prints as capture rows,
- * except that the spool counts only this project's entries. `memory` is null unless the
- * store opened; `monthCostUsd` is digests plus consolidations since the local month began.
- * `status` is `projectStatus` over the other fields.
+ * One project's capture health; its spool counts only this project's entries. `memory` is
+ * null unless the store opened; `monthCostUsd` is digests plus consolidations since the
+ * local month began. `status` is `projectStatus` over the other fields.
  */
 export type HealthSummary = {
   digest: "on" | "off" | "stopped";
@@ -162,7 +166,7 @@ export function projectStatus(h: Omit<HealthSummary, "status">): Status {
   return { tone: "ok", label: "Healthy", fix: null };
 }
 
-/** One local day of a store's upkeep: digests and observations made, list-price cost, consolidation decisions. */
+/** One local day of a store's upkeep; `costUsd` is list price. */
 export type ActivityDay = {
   date: string;
   digests: number;

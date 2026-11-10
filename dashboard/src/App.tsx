@@ -96,7 +96,6 @@ export function App() {
   );
 }
 
-/** The page under the top bar: the fetch error, nothing while loading, the empty state, or the current view. */
 function Body({
   error,
   projects,
@@ -149,7 +148,6 @@ function Mark() {
   );
 }
 
-/** The wordmark, the views as tabs, the project the views show, and the host. */
 function TopBar({
   projects,
   health,

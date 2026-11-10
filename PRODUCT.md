@@ -42,7 +42,7 @@ Because that upkeep happens out of sight, the dashboard (`crank-mem dashboard`) 
 - **Read-only, always.** The dashboard never changes project memory. The server opens each store read-only; consolidation alone keeps `cerebrum.md`. This is a settled product decision, not a phase.
 - Four views, as tabs in job order: Health (every project's capture status in one table, with the command that fixes a stalled project, then the selected project's figures and per-day charts), Curation, Usage and Memory. A project switcher in the top bar picks the project the views show. Lists move with j/k and the arrow keys.
 - Local only: the server answers only `127.0.0.1` and `localhost` Host headers on its port, requires the token or session cookie, and serves the static build from `dashboard/dist/`.
-- Built by `crank-mem setup` (and rebuilt by `upgrade`) with Vite, React, Tailwind and Radix; the package has no dev server, and the CLI refuses to serve a build whose version stamp is missing.
+- Built by `crank-mem setup` (and rebuilt by `upgrade`) with Vite, React, Tailwind and Radix; the package has no dev server, and the CLI refuses to serve a build whose `.crank-version` stamp is missing or not the clone's version.
 - The wire shapes the page reads live in `src/hooks/lib/wire.ts`.
 - Codex sessions are not digested; only Claude Code sessions reach the store. Digest costs are list-price figures, not billed amounts.
 - Sensitive files are never indexed and secrets are redacted before storage; the dashboard must not show what crank-mem keeps out of the index.

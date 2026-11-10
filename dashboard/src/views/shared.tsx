@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { Check, Copy } from "lucide-react";
-import type { Note, Page, Tone } from "@/api";
+import { ACTIVITY_DAYS, type ConsolidationRow, type Note, type Page, type Tone } from "@/api";
 import { Button } from "@/components/ui/button";
 import { usePoll } from "@/hooks/use-poll";
 import { useListKeys } from "@/hooks/use-list-keys";
@@ -21,16 +21,20 @@ export function formatAgo(ms: number, now = Date.now()): string {
   return `${Math.round(d / 86_400_000)}d ago`;
 }
 
-/** Dollars to the cent, or to two significant digits under a cent, as `crank-mem stats` prints them. */
-export function formatUsd(usd: number): string {
-  return usd > 0 && usd < 0.01 ? `$${usd.toPrecision(2)}` : `$${usd.toFixed(2)}`;
-}
+export const WINDOWS = ACTIVITY_DAYS.map((d) => ({ value: d, label: `${d} days` }));
 
 export const TONE_TEXT: Record<Tone, string> = {
   ok: "text-ok",
   warn: "text-warn",
   bad: "text-bad",
   off: "text-off",
+};
+export const OUTCOME_TONE: Record<ConsolidationRow["outcome"], Tone> = {
+  ok: "ok",
+  retry: "warn",
+  conflict: "bad",
+  rejected: "bad",
+  stopped: "bad",
 };
 const TONE_PILL: Record<Tone, string> = {
   ok: "border-ok-line bg-ok-soft text-ok",
@@ -68,7 +72,6 @@ export function Dot({ tone, className }: { tone: Tone; className?: string }) {
   );
 }
 
-/** A command in mono with a button that copies it. */
 export function Command({ command }: { command: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -93,7 +96,6 @@ export function Command({ command }: { command: string }) {
   );
 }
 
-/** A bordered card holding one figure: label, value, and a line of context under it. */
 export function Stat({
   label,
   value,
@@ -121,7 +123,6 @@ export function Stat({
   );
 }
 
-/** A segmented control of standard buttons; the pressed one is the current value. */
 export function Segmented<T extends string | number>({
   label,
   options,
@@ -182,7 +183,7 @@ export const LIST_COLUMN =
 export const DETAIL_COLUMN = "min-h-0 overflow-auto";
 export const DETAIL_BODY = "grid max-w-3xl gap-6 px-6 pt-6 pb-12 md:px-8";
 
-/** A list row button: the left bar and background mark the selected row. */
+/** A list row button; the selected row takes the selection wash. */
 export function Row({
   selected,
   onClick,

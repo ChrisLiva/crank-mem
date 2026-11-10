@@ -4,6 +4,7 @@ import {
   fetchConsolidations,
   fetchProposals,
   fetchStale,
+  formatUsd,
   PROPOSAL_STATES,
   type ConsolidationRow,
   type ProposalRow,
@@ -17,11 +18,11 @@ import {
   DETAIL_BODY,
   DETAIL_COLUMN,
   formatTime,
-  formatUsd,
   LABEL,
   LIST_COLUMN,
   ListFoot,
   ObservationLink,
+  OUTCOME_TONE,
   Pairs,
   Pill,
   Prose,
@@ -115,8 +116,6 @@ const STATE_TONE: Record<ProposalState, Tone> = {
   rejected: "bad",
   expired: "off",
 };
-const OUTCOME_TONE = (outcome: ConsolidationRow["outcome"]): Tone =>
-  outcome === "ok" ? "ok" : outcome === "retry" ? "warn" : "bad";
 
 function proposalSpec(projectId: string, state: ProposalState | null): ListSpec<ProposalRow> {
   return {
@@ -220,7 +219,7 @@ function consolidationSpec(projectId: string): ListSpec<ConsolidationRow> {
     row: (c) => (
       <>
         <span className="flex min-w-0 items-center gap-2">
-          <Pill tone={OUTCOME_TONE(c.outcome)}>{c.outcome}</Pill>
+          <Pill tone={OUTCOME_TONE[c.outcome]}>{c.outcome}</Pill>
           <span className="flex-1 tabular-nums">{formatTime(c.startedAtMs)}</span>
           <span className="text-xs text-muted-foreground tabular-nums">{formatUsd(c.costUsd)}</span>
         </span>
@@ -234,7 +233,7 @@ function consolidationSpec(projectId: string): ListSpec<ConsolidationRow> {
             Consolidation {formatTime(c.startedAtMs)}
           </h1>
           <Meta>
-            <Pill tone={OUTCOME_TONE(c.outcome)}>{c.outcome}</Pill>
+            <Pill tone={OUTCOME_TONE[c.outcome]}>{c.outcome}</Pill>
             <span className="font-mono">#{c.id}</span>
           </Meta>
         </div>

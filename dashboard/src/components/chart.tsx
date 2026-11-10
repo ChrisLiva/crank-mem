@@ -6,11 +6,11 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { cn } from "cn";
 
 export type Series = { key: string; label: string; color: string; values: number[] };
 
 const AXIS_W = 40;
+const PLOT_H = 168;
 const PAD_TOP = 8;
 const AXIS_H = 22;
 const MAX_BAR = 24;
@@ -84,8 +84,6 @@ export function DayColumns({
   format = (n) => n.toLocaleString(),
   tickFormat,
   empty,
-  height = 168,
-  actions,
 }: {
   title: string;
   note?: ReactNode;
@@ -95,8 +93,6 @@ export function DayColumns({
   /** Axis labels, given each tick and the step between ticks; counts get whole ticks when this is unset. */
   tickFormat?: (n: number, step: number) => string;
   empty: string;
-  height?: number;
-  actions?: ReactNode;
 }) {
   const [table, setTable] = useState(false);
   return (
@@ -108,7 +104,6 @@ export function DayColumns({
         </div>
         <div className="flex items-center gap-3">
           {series.length > 1 && <Legend series={series} />}
-          {actions}
           <button
             type="button"
             aria-pressed={table}
@@ -120,7 +115,7 @@ export function DayColumns({
         </div>
       </header>
       {table ? (
-        <DayTable dates={dates} series={series} format={format} height={height} />
+        <DayTable dates={dates} series={series} format={format} />
       ) : (
         <Plot
           title={title}
@@ -129,7 +124,6 @@ export function DayColumns({
           format={format}
           tickFormat={tickFormat}
           empty={empty}
-          height={height}
         />
       )}
     </section>
@@ -140,15 +134,13 @@ function DayTable({
   dates,
   series,
   format,
-  height,
 }: {
   dates: string[];
   series: Series[];
   format: (n: number) => string;
-  height: number;
 }) {
   return (
-    <div className="overflow-auto" style={{ maxHeight: height + AXIS_H }}>
+    <div className="overflow-auto" style={{ maxHeight: PLOT_H + AXIS_H }}>
       <table className="w-full text-xs tabular-nums">
         <thead className="sticky top-0 bg-card text-muted-foreground">
           <tr>
@@ -187,7 +179,6 @@ function Plot({
   format,
   tickFormat,
   empty,
-  height,
 }: {
   title: string;
   dates: string[];
@@ -195,7 +186,6 @@ function Plot({
   format: (n: number) => string;
   tickFormat: ((n: number, step: number) => string) | undefined;
   empty: string;
-  height: number;
 }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [active, setActive] = useState<number | null>(null);
@@ -206,7 +196,7 @@ function Plot({
   const top = ticks[ticks.length - 1]!;
   const tickStep = ticks[1]! - ticks[0]!;
   const plotW = Math.max(0, width - AXIS_W);
-  const plotH = height - PAD_TOP;
+  const plotH = PLOT_H - PAD_TOP;
   const band = n === 0 ? 0 : plotW / n;
   const barW = Math.max(2, Math.min(MAX_BAR, band - GAP * 2));
   const y = (v: number) => PAD_TOP + plotH - (v / top) * plotH;
@@ -227,7 +217,7 @@ function Plot({
       {width > 0 && (
         <svg
           width={width}
-          height={height + AXIS_H}
+          height={PLOT_H + AXIS_H}
           role="img"
           aria-label={`${title}: ${format(totals.reduce((a, b) => a + b, 0))} over ${n} days. Use the Table button for each day's values.`}
           tabIndex={0}
@@ -285,7 +275,7 @@ function Plot({
                   (i === n - 1 || n - 1 - i >= labelEvery) && (
                     <text
                       x={cx}
-                      y={height + 15}
+                      y={PLOT_H + 15}
                       textAnchor="middle"
                       className="fill-muted-foreground text-[11px]"
                     >
@@ -296,7 +286,7 @@ function Plot({
                   x={x0}
                   y={0}
                   width={band}
-                  height={height}
+                  height={PLOT_H}
                   fill="transparent"
                   onPointerEnter={() => setActive(i)}
                 />
@@ -361,17 +351,9 @@ function Tooltip({
 }
 
 /** A small trend line for a table cell, on its own axis from zero; flat and muted when every value is zero. */
-export function Sparkline({
-  values,
-  label,
-  width = 96,
-  height = 24,
-}: {
-  values: number[];
-  label: string;
-  width?: number;
-  height?: number;
-}) {
+export function Sparkline({ values, label }: { values: number[]; label: string }) {
+  const width = 96;
+  const height = 24;
   const max = Math.max(0, ...values);
   const step = values.length > 1 ? (width - 6) / (values.length - 1) : 0;
   const point = (v: number, i: number) =>
@@ -402,21 +384,17 @@ export function Sparkline({
   );
 }
 
-/** Share bars for a ranked list: one row per item, bar lengths on one scale up to `max` (the largest row by default). */
+/** Share bars for a ranked list: one row per item, bar lengths on one scale up to `max`. */
 export function BarList({
   rows,
   max = Math.max(1, ...rows.map((r) => r.value)),
-  format = (n) => n.toLocaleString(),
-  className,
 }: {
   rows: { key: string; label: ReactNode; value: number; color?: string }[];
   /** The scale's top, shared when several lists sit side by side. */
   max?: number;
-  format?: (n: number) => string;
-  className?: string;
 }) {
   return (
-    <ul className={cn("grid gap-1.5", className)}>
+    <ul className="grid gap-1.5">
       {rows.map((r) => (
         <li key={r.key} className="grid grid-cols-[minmax(0,9rem)_1fr_3rem] items-center gap-3">
           <span className="truncate text-xs">{r.label}</span>
@@ -431,7 +409,7 @@ export function BarList({
               />
             )}
           </span>
-          <span className="text-right text-xs tabular-nums">{format(r.value)}</span>
+          <span className="text-right text-xs tabular-nums">{r.value.toLocaleString()}</span>
         </li>
       ))}
     </ul>

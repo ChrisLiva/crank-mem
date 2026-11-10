@@ -1,7 +1,6 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { cn } from "cn";
 import {
-  ACTIVITY_DAYS,
   fetchUsage,
   type ActivityWindow,
   type UsageAnswer,
@@ -19,6 +18,7 @@ import {
   Segmented,
   Stat,
   useSelection,
+  WINDOWS,
 } from "./shared";
 
 /** A share as a whole percent, or `—` when there was nothing to divide. */
@@ -43,9 +43,6 @@ const KINDS: { key: string; label: string; color: string; channels: UsageChannel
   { key: "code", label: "Code reading", color: "var(--series-3)", channels: ["outline", "unfold"] },
 ];
 
-const WINDOWS = ACTIVITY_DAYS.map((d) => ({ value: d, label: `${d} days` }));
-
-/** The usage log for one project: shares, calls per day by kind, calls per channel, and what recall found. */
 export function UsageView({
   projectId,
   item,
@@ -60,21 +57,21 @@ export function UsageView({
   const [days, setDays] = useState<ActivityWindow>(30);
   const [manual, setManual] = useState(false);
   const key = JSON.stringify([projectId, days, manual]);
-  const keyRef = useRef(key);
-  keyRef.current = key;
   const [loaded, setLoaded] = useState<{ key: string; metrics: UsageAnswer } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  usePoll(async () => {
-    const asked = key;
-    try {
-      const metrics = await fetchUsage(projectId, days, manual);
-      if (keyRef.current !== asked) return;
-      setLoaded({ key: asked, metrics });
-      setError(null);
-    } catch (err) {
-      if (keyRef.current === asked) setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [key]);
+  usePoll(
+    async (isCurrent) => {
+      try {
+        const metrics = await fetchUsage(projectId, days, manual);
+        if (!isCurrent()) return;
+        setLoaded({ key, metrics });
+        setError(null);
+      } catch (err) {
+        if (isCurrent()) setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [key],
+  );
 
   const metrics = loaded?.key === key ? loaded.metrics : null;
   const stale = loaded !== null && metrics === null;
@@ -322,7 +319,7 @@ function Queries({
   );
 }
 
-/** The rows each ranked list shows, of the up to 50 the metrics answer. */
+/** The rows each ranked list shows, of the `TOP` the metrics answer. */
 const RANKED = 10;
 
 /** A titled list of counted rows, most counted first. */

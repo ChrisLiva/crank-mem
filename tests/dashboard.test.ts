@@ -961,7 +961,6 @@ describe("curation view", () => {
   }, 20_000);
 });
 
-/** Turns digests on in the project at `root`. */
 function digestOn(root: string): void {
   const crankDir = path.join(root, ".crank");
   saveConfig(crankDir, { ...loadConfig(crankDir), digest: true });

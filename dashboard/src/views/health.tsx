@@ -1,9 +1,9 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { cn } from "cn";
 import {
-  ACTIVITY_DAYS,
   fetchActivity,
   fetchConsolidations,
+  formatUsd,
   type ActivityDay,
   type ActivityWindow,
   type ConsolidationRow,
@@ -21,12 +21,13 @@ import {
   Dot,
   formatAgo,
   formatTime,
-  formatUsd,
+  OUTCOME_TONE,
   Pairs,
   Pill,
   Segmented,
   Stat,
   TONE_TEXT,
+  WINDOWS,
 } from "./shared";
 
 const TREND_DAYS = 30;
@@ -42,7 +43,7 @@ type Line = {
   focus: () => void;
 };
 
-/** The projects overview, then the focused project's capture, upkeep charts and last consolidation. */
+/** The projects overview, then `ProjectDetail` for the focused project. */
 export function HealthView({
   projects,
   health,
@@ -280,8 +281,6 @@ function ProjectRows({ line: l }: { line: Line }) {
   );
 }
 
-const WINDOWS = ACTIVITY_DAYS.map((d) => ({ value: d, label: `${d} days` }));
-
 /** The focused project: its capture figures, its upkeep per day over a chosen window, and its last consolidation. */
 function ProjectDetail({
   project,
@@ -293,22 +292,22 @@ function ProjectDetail({
   openCuration: () => void;
 }) {
   const [days, setDays] = useState<ActivityWindow>(30);
-  const asked = useRef(days);
-  asked.current = days;
   const [activity, setActivity] = useState<{
     days: ActivityWindow;
     data: ActivityDay[] | Note;
   } | null>(null);
   const [run, setRun] = useState<ConsolidationRow | null>(null);
-  usePoll(async () => {
-    const want = days;
-    const [data, runs] = await Promise.all([
-      fetchActivity(project.id, want),
-      fetchConsolidations(project.id, null),
-    ]);
-    if (asked.current === want) setActivity({ days: want, data });
-    setRun("note" in runs ? null : (runs.rows[0] ?? null));
-  }, [project.id, days]);
+  usePoll(
+    async (isCurrent) => {
+      const [data, runs] = await Promise.all([
+        fetchActivity(project.id, days),
+        fetchConsolidations(project.id, null),
+      ]);
+      if (isCurrent()) setActivity({ days, data });
+      setRun("note" in runs ? null : (runs.rows[0] ?? null));
+    },
+    [project.id, days],
+  );
   const status = health === undefined ? null : health.status;
 
   return (
@@ -404,7 +403,6 @@ function Stats({ health: h }: { health: HealthSummary }) {
 const usdTick = (n: number, step: number) =>
   n === 0 ? "$0" : `$${n.toFixed(Math.max(2, Math.ceil(-Math.log10(step))))}`;
 
-/** `n` and the noun, plural unless `n` is 1. */
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 function Charts({
@@ -502,12 +500,7 @@ function Charts({
           <Pairs
             bare
             pairs={[
-              [
-                "Outcome",
-                <Pill tone={run.outcome === "ok" ? "ok" : run.outcome === "retry" ? "warn" : "bad"}>
-                  {run.outcome}
-                </Pill>,
-              ],
+              ["Outcome", <Pill tone={OUTCOME_TONE[run.outcome]}>{run.outcome}</Pill>],
               ["Started", `${formatTime(run.startedAtMs)} (${formatAgo(run.startedAtMs)})`],
               ["Took", `${Math.max(1, Math.round((run.finishedAtMs - run.startedAtMs) / 1000))} s`],
               ["Model", <span className="font-mono text-xs">{run.model ?? "none"}</span>],
