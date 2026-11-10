@@ -46,8 +46,8 @@ the `.crank/` ignore block back to `.gitignore` or `.git/info/exclude` when
 it is missing. An upgrade that changes nothing
 writes no backup.
 
-Hook commands are guarded, `[ ! -f <script> ] || bun <script>`, so a clone or
-worktree that has the committed settings file but no `.crank/hooks/` exits 0
+Hook commands are guarded, `[ ! -f <script> ] || bun <script>`, so a
+checkout that has the committed settings file but no `.crank/hooks/` exits 0
 instead of reporting a hook error. Codex hashes each hook command for its
 trust check, so the first upgrade that rewrites the Codex commands makes
 Codex ask once for a hooks review: open codex in the project and accept it.
@@ -82,7 +82,7 @@ with `@vscode/tree-sitter-wasm` for `outline` and `unfold`.
 `anatomy-index.json` (data), `anatomy.md` (human/agent view), `cerebrum.md`
 (semantic memory, kept by consolidation), `cerebrum-archive.md` (bullets
 consolidation removed or replaced, each with its reason; never injected),
-`memory.db` (digested memory, kept out of git), `config.json`, `config.local.json` (the per-checkout digest switch, kept out of git), `hooks/` (vendored), `backups/` (init/upgrade snapshots,
+`memory.db` (digested memory, kept out of git), `config.json`, `config.local.json` (the per-checkout digest switch, kept out of git), `hooks/` (vendored), `backups/` (init/upgrade backups,
 plus `backups/cerebrum/`: the last 5 copies of cerebrum.md, taken before each
 consolidation edit and before an upgrade replaces the 0.8.1 template preamble, and `backups/memory/`: the daily snapshots of
 `memory.db`), `usage.jsonl` (the always-on usage log, kept out of git: one line
@@ -111,7 +111,7 @@ readable `memory.db` or digests are running, a recall pointer to
 ## Digests
 
 `crank-mem digest on` turns digests on for a checkout of a project. It writes
-the switch to the gitignored `.crank/config.local.json`, so a teammate's clone
+the switch to the gitignored `.crank/config.local.json`, so a teammate's checkout
 or a linked worktree stays off until someone runs it there. Claude Code's Stop and
 SessionEnd hooks then drop a signal for the session into a per-user spool under
 `~/.crank` (or `$CRANK_HOME`), which crank-mem creates at mode 0700; a
