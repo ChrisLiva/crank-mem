@@ -24,7 +24,7 @@ export {
 } from "../../src/hooks/lib/wire";
 
 /** A non-2xx answer from the dashboard server. */
-export class HttpError extends Error {
+class HttpError extends Error {
   constructor(
     readonly path: string,
     readonly status: number,
@@ -34,7 +34,7 @@ export class HttpError extends Error {
 }
 
 /** GETs `path` from the dashboard server as JSON, throwing `HttpError` on a non-2xx status. */
-export async function getJson<T>(path: string): Promise<T> {
+async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path, { credentials: "same-origin" });
   if (!res.ok) throw new HttpError(path, res.status);
   return (await res.json()) as T;

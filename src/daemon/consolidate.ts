@@ -93,7 +93,7 @@ type OutputEdit = {
   proposal?: number;
   reason?: string;
 };
-export type Consolidation = {
+type Consolidation = {
   edits: OutputEdit[];
   proposals: { id: number; verdict: (typeof PROPOSAL_VERDICTS)[number]; reason: string }[];
   stale: { id: number; verdict: (typeof STALE_VERDICTS)[number] }[];

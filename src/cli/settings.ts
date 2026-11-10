@@ -218,7 +218,7 @@ export const CRANK_ALLOW_RULES = [
   "Bash(crank-mem unfold *)",
 ] as const;
 /** The rule earlier releases wrote, which pre-approved every crank-mem subcommand. */
-export const LEGACY_ALLOW_RULE = "Bash(crank-mem *)";
+const LEGACY_ALLOW_RULE = "Bash(crank-mem *)";
 
 /**
  * Put CRANK_ALLOW_RULES in a Claude settings file's permissions.allow,

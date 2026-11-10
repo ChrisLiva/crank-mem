@@ -12,7 +12,7 @@ import { memoryPath } from "./memory.ts";
 export const USAGE_FILE = "usage.jsonl";
 export const USAGE_ROTATED_FILE = "usage.1.jsonl";
 /** An append that would take usage.jsonl past this first renames it to USAGE_ROTATED_FILE. */
-export const USAGE_MAX_BYTES = 4 * 1024 * 1024;
+const USAGE_MAX_BYTES = 4 * 1024 * 1024;
 /** Every list in a line, nested ones included, keeps only its first USAGE_MAX_LIST entries. */
 const USAGE_MAX_LIST = 100;
 

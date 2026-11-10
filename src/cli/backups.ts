@@ -53,7 +53,7 @@ export function backupFile(backupDir: string, originalPath: string): void {
   saveManifest(backupDir, m);
 }
 
-export type RestoredPath =
+type RestoredPath =
   | { path: string; outcome: "copied" }
   | { path: string; outcome: "removed" } // earliest record says absent, and the file existed
   | { path: string; outcome: "outside" } // outside the project root, left as is
