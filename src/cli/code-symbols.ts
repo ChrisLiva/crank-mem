@@ -115,7 +115,8 @@ interface FamilyRules {
   passThrough(node: Node): Node[] | null;
   /** `start`: the node whose first line is the symbol's first line; `head`: the node the head text starts at; both default to the node. */
   widen?(node: Node): { start: Node; head: Node };
-  name(node: Node): string;
+  /** The symbol's name; absent: the node's `name` field text, or empty. */
+  name?(node: Node): string;
   /** The segment members qualify under; defaults to `name`. */
   scope?(node: Node): string;
   /** The node whose start ends the head, or null when bodiless; defaults to the field `body`. */
@@ -413,7 +414,7 @@ const rustImplType = (node: Node) => {
   return (type?.type === "generic_type" ? type.childForFieldName("type") : type)?.text ?? "";
 };
 
-const rust: FamilyRules = {
+const rust: FamilyRules & { name(node: Node): string } = {
   kind(node, parent) {
     if (node.type === "function_item" || node.type === "function_signature_item") {
       return parent === "impl" || parent === "trait" ? "method" : "fn";
@@ -441,7 +442,6 @@ const bash: FamilyRules = {
   kind: (node) => (node.type === "function_definition" ? "fn" : null),
   container: () => false,
   passThrough: () => null,
-  name: (node) => node.childForFieldName("name")?.text ?? "",
 };
 
 const JAVA_KINDS: Record<string, SymbolKind> = {
@@ -459,7 +459,6 @@ const java: FamilyRules = {
   kind: (node) => (Object.hasOwn(JAVA_KINDS, node.type) ? JAVA_KINDS[node.type]! : null),
   container: (kind) => JAVA_CONTAINERS.has(kind),
   passThrough: (node) => (node.type === "enum_body_declarations" ? node.namedChildren : null),
-  name: (node) => node.childForFieldName("name")?.text ?? "",
   comments: new Set(["line_comment", "block_comment"]),
 };
 
@@ -561,11 +560,9 @@ const PHP_CONTAINERS: ReadonlySet<SymbolKind> = new Set([
 ]);
 
 const php: FamilyRules = {
-  ...java,
   kind: (node) => (Object.hasOwn(PHP_KINDS, node.type) ? PHP_KINDS[node.type]! : null),
   container: (kind) => PHP_CONTAINERS.has(kind),
   passThrough: () => null,
-  comments: new Set(["comment"]),
 };
 
 const PS_KINDS: Record<string, SymbolKind> = {
@@ -676,7 +673,7 @@ function walk(
     }
     const { start, head: headNode } = rules.widen?.(node) ?? { start: node, head: node };
     const body = rules.body ? rules.body(node) : node.childForFieldName("body");
-    const name = rules.name(node);
+    const name = rules.name ? rules.name(node) : (node.childForFieldName("name")?.text ?? "");
     const scope = rules.scope?.(node) ?? name;
     const qualifier = parent ? `${parent.qualifier}.${scope}` : scope;
     const lineStart = text.lastIndexOf("\n", headNode.startIndex - 1) + 1;
