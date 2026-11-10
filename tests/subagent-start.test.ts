@@ -114,7 +114,10 @@ describe("subagent-start hook (black-box)", () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "crank-none-"));
     const noCerebrum = makeCrankProject();
     fs.rmSync(path.join(noCerebrum, ".crank/cerebrum.md"));
-    for (const root of [fresh, noCerebrum])
+    const dirCerebrum = makeCrankProject();
+    fs.rmSync(path.join(dirCerebrum, ".crank/cerebrum.md"));
+    fs.mkdirSync(path.join(dirCerebrum, ".crank/cerebrum.md")); // the read fails with EISDIR
+    for (const root of [fresh, noCerebrum, dirCerebrum])
       expect(context(root)).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}`);
     const none = runHook(HOOK, JSON.stringify(claudeSubagentStart(outside)), undefined, {
       CRANK_HOME: HOME,

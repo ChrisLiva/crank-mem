@@ -1,22 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import * as fs from "node:fs";
-import * as path from "node:path";
 import {
   composeInjection,
   excerptOf,
-  subagentInjection,
   ADR_RECENT_COUNT,
-  CODE_BULLET,
   INDEX_ENTRY_CHARS,
-  INJECTION_HEADING,
   MEMORY_RECENT_COUNT,
   PREFS_TOKEN_CAP,
-  RECALL_BULLET,
-  sessionStartInjection,
 } from "../src/hooks/lib/injection.ts";
-import { loadConfig } from "../src/hooks/lib/config.ts";
-import { makeCrankProject, seedMemory } from "./helpers.ts";
-import { emptyIndex, loadIndex, type AnatomyIndex } from "../src/hooks/lib/store.ts";
+import { emptyIndex, type AnatomyIndex } from "../src/hooks/lib/store.ts";
 import { estimateProseTokens } from "../src/hooks/lib/tokens.ts";
 
 function fixtureIndex(fileCount: number): AnatomyIndex {
@@ -239,6 +230,17 @@ describe("excerptOf", () => {
   test("a budget too small for even one bullet yields nothing rather than a fragment", () => {
     expect(excerptOf(CEREBRUM, 10).text).toBe("");
   });
+
+  // The subagent excerpt passes balanced; unbalanced, preferences take a 2 KB budget whole.
+  test("unbalanced, a 2 KB budget spends every byte on preferences", () => {
+    const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
+    const bullet = (s: string, i: number): string =>
+      `- **${s} ${i}**: ${clause.repeat(4).trim()} (2026-09-${10 + i}).`;
+    const prefs = Array.from({ length: 7 }, (_, i) => bullet("Pref", i));
+    const memory = Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i));
+    const md = `# Cerebrum\n\n## User Preferences\n${prefs.join("\n")}\n\n## Memory\n${memory.join("\n")}\n`;
+    expect(excerptOf(md, 2048).text).not.toMatch(/^### Memory$/m);
+  });
 });
 
 describe("composeInjection", () => {
@@ -410,92 +412,5 @@ describe("composeInjection", () => {
     expect(out).toContain("`.crank/anatomy.md` indexes 3 file(s)");
     expect(out).not.toContain("## Cerebrum");
     expect(out).not.toContain("## ADRs");
-  });
-});
-
-describe("subagentInjection", () => {
-  test("a balanced 2 KB excerpt carries memory under the label and the code pointer, then degrades to the pointers", () => {
-    const root = makeCrankProject();
-    const crankDir = path.join(root, ".crank");
-    const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
-    const bullet = (s: string, i: number): string =>
-      `- **${s} ${i}**: ${clause.repeat(4).trim()} (2026-09-${10 + i}).`;
-    const prefs = Array.from({ length: 7 }, (_, i) => bullet("Pref", i));
-    const memory = Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i));
-    const md = `# Cerebrum\n\n## User Preferences\n${prefs.join("\n")}\n\n## Memory\n${memory.join("\n")}\n`;
-    const cerebrum = path.join(crankDir, "cerebrum.md");
-    fs.writeFileSync(cerebrum, md);
-    const run = () =>
-      subagentInjection(root, crankDir, loadConfig(crankDir), { agentType: "Explore" });
-
-    const { text, usage } = run();
-    const excerpt = text.slice(text.indexOf("\n\n") + 2);
-    expect(Buffer.byteLength(excerpt, "utf-8")).toBeLessThanOrEqual(2048);
-    expect(excerpt).toMatch(/^### Memory\n- /m);
-    // Unbalanced, the same budget spends every byte on preferences.
-    expect(excerptOf(md, 2048).text).not.toMatch(/^### Memory$/m);
-    expect(text.split("\n").slice(0, 3)).toEqual([
-      INJECTION_HEADING,
-      "- Excerpt of `.crank/cerebrum.md`, this project's memory; grep it for more. Memory is not proof: verify a claim against the cited file before relying on it.",
-      CODE_BULLET,
-    ]);
-    expect(text.includes(RECALL_BULLET)).toBe(false);
-    expect(usage).toEqual({
-      channel: "subagent-start",
-      agentType: "Explore",
-      excerptBytes: Buffer.byteLength(excerpt, "utf-8"),
-      recallPointer: false,
-    });
-
-    const bare: ReturnType<typeof subagentInjection> = {
-      text: `${INJECTION_HEADING}\n${CODE_BULLET}`,
-      usage: {
-        channel: "subagent-start",
-        agentType: "Explore",
-        excerptBytes: 0,
-        recallPointer: false,
-      },
-    };
-    fs.rmSync(cerebrum);
-    expect(run()).toEqual(bare);
-    fs.mkdirSync(cerebrum); // the read now fails with EISDIR
-    expect(run()).toEqual(bare);
-
-    seedMemory(root, [{ title: "a stored observation" }]);
-    const recalled = run();
-    expect(recalled.text).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}\n${RECALL_BULLET}`);
-    expect(recalled.usage.recallPointer).toBe(true);
-  });
-});
-
-describe("sessionStartInjection", () => {
-  test("the excerpt and its bullet counts are null exactly when cerebrum.md is absent or empty", () => {
-    const root = makeCrankProject();
-    const crankDir = path.join(root, ".crank");
-    const cerebrum = path.join(crankDir, "cerebrum.md");
-    const run = () =>
-      sessionStartInjection(root, crankDir, loadConfig(crankDir), loadIndex(crankDir), {
-        codex: false,
-        source: null,
-        stalenessNote: null,
-      });
-
-    // The template holds both headings and no bullet.
-    const template = run();
-    expect(template.excerpt).not.toBeNull();
-    expect(template.usage.cerebrumBullets).toEqual({ shown: 0, total: 0 });
-    expect(template.usage.channel).toBe("session-start");
-    expect(template.usage.source).toBeNull();
-    expect(template.usage.budget).toBe(8192);
-
-    fs.writeFileSync(cerebrum, "");
-    const empty = run();
-    expect(empty.excerpt).toBeNull();
-    expect(empty.usage.cerebrumBullets).toBeNull();
-
-    fs.rmSync(cerebrum);
-    const absent = run();
-    expect(absent.excerpt).toBeNull();
-    expect(absent.usage.cerebrumBullets).toBeNull();
   });
 });

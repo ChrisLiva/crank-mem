@@ -135,6 +135,13 @@ describe("usage capture: the session-start line", () => {
     const [blank] = usageLines(template);
     expect(blank!.cerebrum).toBe(false);
     expect(blank!.cerebrumBullets).toEqual({ shown: 0, total: 0 });
+
+    const empty = makeCrankProject();
+    fs.writeFileSync(path.join(empty, ".crank/cerebrum.md"), "");
+    expect(sessionStart(empty, claudeSessionStart(empty)).status).toBe(0);
+    const [emptyLine] = usageLines(empty);
+    expect(emptyLine!.cerebrum).toBe(false);
+    expect(emptyLine!.cerebrumBullets).toBeNull();
   });
 
   test("a session id that is not a string records a null session", () => {
@@ -217,6 +224,24 @@ describe("usage capture: the subagent-start line", () => {
     const [blank] = usageLines(template);
     expect(blank!.excerptBytes).toBe(0);
     expect(blank!.agentType).toBe("general-purpose");
+    expect(blank!.recallPointer).toBe(false);
+
+    const recalled = makeCrankProject();
+    fs.rmSync(path.join(recalled, ".crank/cerebrum.md"));
+    seedMemory(recalled, [{ title: "one" }]);
+    expect(subagentStart(recalled, claudeSubagentStart(recalled, "Explore")).status).toBe(0);
+    const [noFile] = usageLines(recalled);
+    expect(noFile!.excerptBytes).toBe(0);
+    expect(noFile!.recallPointer).toBe(true);
+
+    const unreadable = makeCrankProject();
+    const cerebrum = path.join(unreadable, ".crank/cerebrum.md");
+    fs.rmSync(cerebrum);
+    fs.mkdirSync(cerebrum); // the read fails with EISDIR
+    expect(subagentStart(unreadable, claudeSubagentStart(unreadable, "Explore")).status).toBe(0);
+    const [dir] = usageLines(unreadable);
+    expect(dir!.excerptBytes).toBe(0);
+    expect(dir!.recallPointer).toBe(false);
 
     const untyped = makeCrankProject();
     const payload = claudeSubagentStart(untyped) as Record<string, unknown>;
