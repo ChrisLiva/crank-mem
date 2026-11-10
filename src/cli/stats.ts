@@ -54,7 +54,9 @@ function memoryLines(
   let cerebrumMd: string | null = null;
   try {
     cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
-  } catch {}
+  } catch {
+    // Unreadable: cerebrumMd stays null and the row reads missing.
+  }
   const { excerpt: e } = sessionStartInjection(root, crankDir, config, index, {
     codex: false,
     source: null,
@@ -187,7 +189,9 @@ export async function run(_args: string[]): Promise<number> {
   let indexSize = 0;
   try {
     indexSize = fs.statSync(path.join(crankDir, INDEX_FILE)).size;
-  } catch {}
+  } catch {
+    // No index yet: the size reads 0.
+  }
 
   console.log(`crank-mem stats`);
   console.log(

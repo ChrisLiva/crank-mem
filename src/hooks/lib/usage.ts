@@ -128,12 +128,16 @@ export function recordUsage(root: string, actor: UsageActor, event: UsageEvent):
     let size = 0;
     try {
       size = fs.statSync(file).size;
-    } catch {}
+    } catch {
+      // No usage.jsonl yet: size stays 0 and this line starts the file.
+    }
     if (size + Buffer.byteLength(line, "utf-8") > USAGE_MAX_BYTES) {
       fs.renameSync(file, path.join(path.dirname(file), USAGE_ROTATED_FILE));
     }
     fs.appendFileSync(file, line);
-  } catch {}
+  } catch {
+    // Advisory: a read-only .crank/ or a full disk loses this line, never the hook.
+  }
 }
 
 /** The agent and session a hook payload names. */
@@ -205,7 +209,9 @@ function readUsageFile(file: string): UsageLine[] {
       try {
         const line: unknown = JSON.parse(text);
         if (isUsageLine(line)) lines.push(line);
-      } catch {}
+      } catch {
+        // A malformed line is skipped; readUsage never throws.
+      }
     }
   } catch {
     return [];

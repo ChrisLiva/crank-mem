@@ -247,7 +247,9 @@ export function settleEntry(stem: string, updatedAt: number, how: "delete" | "pa
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
         try {
           fs.renameSync(claim, file);
-        } catch {}
+        } catch {
+          // The rename failed too: the rmSync below drops the claim.
+        }
       }
     }
     fs.rmSync(claim, { force: true });

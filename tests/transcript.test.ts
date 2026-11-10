@@ -44,7 +44,7 @@ describe("distill on the fixture transcript", () => {
       expect(text).not.toContain("/Users/");
       expect(text).not.toContain("/home/");
     }
-    expect(/^[\x00-\x7f]*$/.test(expectedText)).toBe(true);
+    expect(/^\p{ASCII}*$/u.test(expectedText)).toBe(true);
     expect(expectedText.endsWith("\n")).toBe(false);
     expect(expectedText.length).toBeGreaterThanOrEqual(2000);
   });

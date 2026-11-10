@@ -125,7 +125,9 @@ export function lastAuditMs(crankDir: string): number | null {
       const ms = fs.statSync(dir).mtimeMs;
       if (newest === null || ms > newest) newest = ms;
     }
-  } catch {}
+  } catch {
+    // No backups/ dir or an unreadable entry: lastAuditMs never throws.
+  }
   return newest;
 }
 
