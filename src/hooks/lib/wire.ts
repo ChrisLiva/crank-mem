@@ -63,7 +63,7 @@ export type ConsolidationRow = {
 };
 
 /** Whether memory.db opened for reading, or why not. */
-export type StoreStatus = "open" | "missing" | "older" | "newer" | "unreadable";
+type StoreStatus = "open" | "missing" | "older" | "newer" | "unreadable";
 
 export type Tone = "ok" | "warn" | "bad" | "off";
 

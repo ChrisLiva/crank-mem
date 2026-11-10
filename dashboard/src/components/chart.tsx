@@ -46,7 +46,7 @@ function niceTicks(max: number, integer: boolean, count = 4): number[] {
 }
 
 /** `2026-11-04` as "Nov 4" in the reader's locale. */
-export function shortDate(date: string): string {
+function shortDate(date: string): string {
   const [y, m, d] = date.split("-").map(Number) as [number, number, number];
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
