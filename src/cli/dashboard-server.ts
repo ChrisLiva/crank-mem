@@ -292,6 +292,80 @@ function unauthorized(res: http.ServerResponse): void {
   res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" }).end(UNAUTHORIZED_BODY);
 }
 
+function refuseHost(req: http.IncomingMessage, res: http.ServerResponse, port: number): boolean {
+  if (req.headers.host === `127.0.0.1:${port}` || req.headers.host === `localhost:${port}`) {
+    return false;
+  }
+  res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" }).end(FORBIDDEN_HOST_BODY);
+  return true;
+}
+
+function refuseMethod(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  if (req.method === "GET" || req.method === "HEAD") return false;
+  res.writeHead(405, { Allow: "GET, HEAD" }).end();
+  return true;
+}
+
+/** Trades `/?token=` for the session cookie, or answers 401 for a wrong token. */
+function tradeToken(res: http.ServerResponse, url: URL, token: string): boolean {
+  const given = url.searchParams.get("token");
+  if (url.pathname !== "/" || given === null) return false;
+  if (!sameToken(given, token)) {
+    unauthorized(res);
+    return true;
+  }
+  res
+    .writeHead(303, {
+      Location: "/",
+      "Set-Cookie": `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/`,
+    })
+    .end();
+  return true;
+}
+
+function refuseCookie(req: http.IncomingMessage, res: http.ServerResponse, token: string): boolean {
+  const cookie = cookieValue(req.headers.cookie, COOKIE);
+  if (cookie !== null && sameToken(cookie, token)) return false;
+  unauthorized(res);
+  return true;
+}
+
+function serveProjects(res: http.ServerResponse, url: URL): boolean {
+  if (url.pathname !== "/api/projects") return false;
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" }).end(projectsBody());
+  return true;
+}
+
+function serveProjectRoute(res: http.ServerResponse, url: URL): boolean {
+  const scoped = /^\/api\/projects\/([^/]+)(\/.*)$/.exec(url.pathname);
+  if (!scoped) return false;
+  const project = projectById(scoped[1]!);
+  if (project === null) {
+    res.writeHead(404).end();
+    return true;
+  }
+  projectRoute(project, scoped[2]!, url.searchParams)
+    .then((answer) => sendAnswer(res, answer ?? { status: 404 }))
+    .catch(() => {
+      if (res.headersSent) return res.destroy();
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" }).end(INTERNAL_ERROR_BODY);
+    });
+  return true;
+}
+
+function serveStatic(res: http.ServerResponse, url: URL, distDir: string): void {
+  const file = staticFile(distDir, url.pathname);
+  if (file === null) {
+    res.writeHead(404).end();
+    return;
+  }
+  const type = CONTENT_TYPES[path.extname(file)] ?? "application/octet-stream";
+  if (file === path.join(path.resolve(distDir), "index.html")) {
+    res.setHeader("Cache-Control", "no-store");
+  }
+  res.writeHead(200, { "Content-Type": type }).end(fs.readFileSync(file));
+}
+
 export async function serveDashboard(opts: {
   port: number;
   distDir: string;
@@ -301,59 +375,14 @@ export async function serveDashboard(opts: {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
     if ((req.url ?? "").startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
     const port = (server.address() as AddressInfo).port;
-    if (req.headers.host !== `127.0.0.1:${port}` && req.headers.host !== `localhost:${port}`) {
-      res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" }).end(FORBIDDEN_HOST_BODY);
-      return;
-    }
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      res.writeHead(405, { Allow: "GET, HEAD" }).end();
-      return;
-    }
+    if (refuseHost(req, res, port)) return;
+    if (refuseMethod(req, res)) return;
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    const given = url.searchParams.get("token");
-    if (url.pathname === "/" && given !== null) {
-      if (!sameToken(given, opts.token)) return unauthorized(res);
-      res
-        .writeHead(303, {
-          Location: "/",
-          "Set-Cookie": `${COOKIE}=${opts.token}; HttpOnly; SameSite=Strict; Path=/`,
-        })
-        .end();
-      return;
-    }
-    const cookie = cookieValue(req.headers.cookie, COOKIE);
-    if (cookie === null || !sameToken(cookie, opts.token)) return unauthorized(res);
-    if (url.pathname === "/api/projects") {
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" }).end(projectsBody());
-      return;
-    }
-    const scoped = /^\/api\/projects\/([^/]+)(\/.*)$/.exec(url.pathname);
-    if (scoped) {
-      const project = projectById(scoped[1]!);
-      if (project === null) {
-        res.writeHead(404).end();
-        return;
-      }
-      projectRoute(project, scoped[2]!, url.searchParams)
-        .then((answer) => sendAnswer(res, answer ?? { status: 404 }))
-        .catch(() => {
-          if (res.headersSent) return res.destroy();
-          res
-            .writeHead(500, { "Content-Type": "text/plain; charset=utf-8" })
-            .end(INTERNAL_ERROR_BODY);
-        });
-      return;
-    }
-    const file = staticFile(opts.distDir, url.pathname);
-    if (file === null) {
-      res.writeHead(404).end();
-      return;
-    }
-    const type = CONTENT_TYPES[path.extname(file)] ?? "application/octet-stream";
-    if (file === path.join(path.resolve(opts.distDir), "index.html")) {
-      res.setHeader("Cache-Control", "no-store");
-    }
-    res.writeHead(200, { "Content-Type": type }).end(fs.readFileSync(file));
+    if (tradeToken(res, url, opts.token)) return;
+    if (refuseCookie(req, res, opts.token)) return;
+    if (serveProjects(res, url)) return;
+    if (serveProjectRoute(res, url)) return;
+    serveStatic(res, url, opts.distDir);
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

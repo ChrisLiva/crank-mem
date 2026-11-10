@@ -23,22 +23,27 @@ const RUNNERS: Record<string, Runner> = {
   uninstall: async (args) => (await import("./uninstall.ts")).run(args),
 } satisfies Record<keyof typeof COMMANDS, Runner>;
 
+/** Runs a command that has a runner; `null` when `cmd` names none. */
+async function runCommand(cmd: string | undefined, rest: string[]): Promise<number | null> {
+  const spec = cmd === undefined ? undefined : commandSpec(cmd);
+  if (!spec) return null;
+  if (rest.includes("--help") || rest.includes("-h")) {
+    console.log(commandHelp(spec));
+    return 0;
+  }
+  const unknown = spec.unknownIsText ? null : unknownFlag(rest, spec.value, spec.bool);
+  if (unknown !== null) {
+    console.error(`crank-mem: unknown flag --${unknown}\n${spec.usage}`);
+    return 1;
+  }
+  const runner = cmd !== undefined && Object.hasOwn(RUNNERS, cmd) ? RUNNERS[cmd] : undefined;
+  return runner ? runner(rest) : null;
+}
+
 async function main(): Promise<number> {
   const [cmd, ...rest] = process.argv.slice(2);
-  const spec = cmd === undefined ? undefined : commandSpec(cmd);
-  if (spec) {
-    if (rest.includes("--help") || rest.includes("-h")) {
-      console.log(commandHelp(spec));
-      return 0;
-    }
-    const unknown = spec.unknownIsText ? null : unknownFlag(rest, spec.value, spec.bool);
-    if (unknown !== null) {
-      console.error(`crank-mem: unknown flag --${unknown}\n${spec.usage}`);
-      return 1;
-    }
-    const runner = cmd !== undefined && Object.hasOwn(RUNNERS, cmd) ? RUNNERS[cmd] : undefined;
-    if (runner) return runner(rest);
-  }
+  const code = await runCommand(cmd, rest);
+  if (code !== null) return code;
   switch (cmd) {
     case "--version":
     case "-v":

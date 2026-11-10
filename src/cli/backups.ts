@@ -131,6 +131,32 @@ export function createdByCrank(crankDir: string, file: string): boolean {
   return "record" in read && read.record.get(file)?.backupFile === null;
 }
 
+/** Replays one recorded path's earliest copy; null when there was nothing to do. */
+function restoreEntry(
+  root: string,
+  original: string,
+  { dir, backupFile }: { dir: string; backupFile: string | null },
+): RestoredPath | null {
+  if (!path.isAbsolute(original) || repoRelative(root, root, original) === null) {
+    return { path: original, outcome: "outside" };
+  }
+  try {
+    if (backupFile !== null) {
+      fs.mkdirSync(path.dirname(original), { recursive: true });
+      fs.copyFileSync(path.join(dir, backupFile), original);
+      return { path: original, outcome: "copied" };
+    }
+    if (fs.existsSync(original)) {
+      fs.unlinkSync(original);
+      return { path: original, outcome: "removed" };
+    }
+    return null;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return { path: original, outcome: "failed", code: typeof code === "string" ? code : "error" };
+  }
+}
+
 /** Replays the earliest copy of each recorded path inside the project. Never throws. */
 export function restoreInstall(crankDir: string): RestoreResult {
   if (manifestDirs(crankDir).length === 0) return { status: "no-backups" };
@@ -139,29 +165,10 @@ export function restoreInstall(crankDir: string): RestoreResult {
   const root = path.dirname(crankDir);
   const cerebrum = path.join(crankDir, CEREBRUM_FILE);
   const paths: RestoredPath[] = [];
-  for (const [original, { dir, backupFile }] of read.record) {
+  for (const [original, entry] of read.record) {
     if (original === cerebrum) continue;
-    if (!path.isAbsolute(original) || repoRelative(root, root, original) === null) {
-      paths.push({ path: original, outcome: "outside" });
-      continue;
-    }
-    try {
-      if (backupFile !== null) {
-        fs.mkdirSync(path.dirname(original), { recursive: true });
-        fs.copyFileSync(path.join(dir, backupFile), original);
-        paths.push({ path: original, outcome: "copied" });
-      } else if (fs.existsSync(original)) {
-        fs.unlinkSync(original);
-        paths.push({ path: original, outcome: "removed" });
-      }
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      paths.push({
-        path: original,
-        outcome: "failed",
-        code: typeof code === "string" ? code : "error",
-      });
-    }
+    const restored = restoreEntry(root, original, entry);
+    if (restored !== null) paths.push(restored);
   }
   return { status: "replayed", paths };
 }

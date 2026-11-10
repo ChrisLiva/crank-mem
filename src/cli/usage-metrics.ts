@@ -66,28 +66,38 @@ function followedThrough(lines: UsageLine[], i: number): boolean {
   return false;
 }
 
-export function usageMetrics(
+type MetricsOptions = {
+  nowMs: number;
+  days: 7 | 30 | 90;
+  manual: boolean;
+  titles: (ids: number[]) => Map<number, string>;
+  observationCount: number;
+};
+
+/** The lines of one channel, in order. */
+function ofChannel<C extends UsageChannel>(lines: UsageLine[], channel: C): Line<C>[] {
+  return lines.filter((l): l is Line<C> => l.channel === channel);
+}
+
+/** The window's first local midnight, and its lines in time order. */
+function windowLines(
   events: UsageLine[],
-  opts: {
-    nowMs: number;
-    days: 7 | 30 | 90;
-    manual: boolean;
-    titles: (ids: number[]) => Map<number, string>;
-    observationCount: number;
-  },
-): UsageMetrics {
+  opts: MetricsOptions,
+): { start: Date; lines: UsageLine[] } {
   const start = new Date(opts.nowMs);
   start.setHours(0, 0, 0, 0);
   start.setDate(start.getDate() - (opts.days - 1));
   const lines = events
     .filter((e) => e.ts >= start.getTime() && (opts.manual || e.agent !== "manual"))
     .sort((a, b) => a.ts - b.ts);
-  const of = <C extends UsageChannel>(channel: C) =>
-    lines.filter((l): l is Line<C> => l.channel === channel);
+  return { start, lines };
+}
 
+/** One entry per local day of the window, counting its lines by channel. */
+function perDayGrid(lines: UsageLine[], start: Date, days: number): UsageMetrics["perDay"] {
   const perDay: UsageMetrics["perDay"] = [];
   const byDate = new Map<string, Record<UsageChannel, number>>();
-  for (let i = 0; i < opts.days; i++) {
+  for (let i = 0; i < days; i++) {
     const day = new Date(start);
     day.setDate(start.getDate() + i);
     const entry = { date: localDate(day.getTime()), counts: zeroCounts() };
@@ -98,8 +108,11 @@ export function usageMetrics(
     const counts = byDate.get(localDate(line.ts));
     if (counts) counts[line.channel]++;
   }
+  return perDay;
+}
 
-  const searches = of("search");
+/** The share of sessioned searches with results that a later line opens. */
+function followThrough(lines: UsageLine[]): number | null {
   let followable = 0;
   let followed = 0;
   lines.forEach((line, i) => {
@@ -107,7 +120,11 @@ export function usageMetrics(
     followable++;
     if (followedThrough(lines, i)) followed++;
   });
+  return share(followed, followable);
+}
 
+/** Searches grouped by normalized query, most run first. */
+function topQueries(searches: Line<"search">[]): UsageMetrics["topQueries"] {
   const groups = new Map<string, Line<"search">[]>();
   for (const s of searches) {
     const query = s.query.toLowerCase().trim().replace(/\s+/g, " ");
@@ -115,7 +132,7 @@ export function usageMetrics(
     if (runs) runs.push(s);
     else groups.set(query, [s]);
   }
-  const topQueries = [...groups]
+  return [...groups]
     .map(([query, runs]) => ({
       query,
       count: runs.length,
@@ -128,31 +145,52 @@ export function usageMetrics(
     }))
     .sort((a, b) => b.count - a.count || b.lastMs - a.lastMs)
     .slice(0, TOP);
+}
 
+/** The most shown ids with their titles, and the titles map `titlesOf` returned. */
+function surfacedCounts(
+  lines: UsageLine[],
+  titlesOf: MetricsOptions["titles"],
+): { surfaced: UsageMetrics["surfaced"]; titles: Map<number, string> } {
   const shown = new Map<number, number>();
   for (const line of lines) {
     for (const id of shownIds(line)) shown.set(id, (shown.get(id) ?? 0) + 1);
   }
-  const titles = shown.size === 0 ? new Map<number, string>() : opts.titles([...shown.keys()]);
+  const titles = shown.size === 0 ? new Map<number, string>() : titlesOf([...shown.keys()]);
   const surfaced = [...shown]
     .sort(([a, x], [b, y]) => y - x || b - a)
     .slice(0, TOP)
     .map(([id, count]) => ({ id, count, title: titles.get(id) ?? DELETED_TITLE }));
+  return { surfaced, titles };
+}
 
+/** The paths file history found no memory for, most often first. */
+function filesWithoutMemory(lines: UsageLine[]): UsageMetrics["filesWithoutMemory"] {
   const emptyFiles = new Map<string, number>();
-  for (const line of of("file-history")) {
+  for (const line of ofChannel(lines, "file-history")) {
     for (const p of line.empty) emptyFiles.set(p, (emptyFiles.get(p) ?? 0) + 1);
   }
+  return topPaths(emptyFiles);
+}
+
+export function usageMetrics(events: UsageLine[], opts: MetricsOptions): UsageMetrics {
+  const { start, lines } = windowLines(events, opts);
+  const perDay = perDayGrid(lines, start, opts.days);
+  const searches = ofChannel(lines, "search");
+  const followed = followThrough(lines);
+  const queries = topQueries(searches);
+  const { surfaced, titles } = surfacedCounts(lines, opts.titles);
+  const emptyFiles = filesWithoutMemory(lines);
 
   return {
     perDay,
     searches: searches.length,
     zeroResultShare: share(searches.filter((s) => s.ids.length === 0).length, searches.length),
     keywordShare: share(searches.filter((s) => s.mode === "keyword").length, searches.length),
-    followThrough: share(followed, followable),
-    topQueries,
+    followThrough: followed,
+    topQueries: queries,
     surfaced,
     neverSurfacedShare: share(opts.observationCount - titles.size, opts.observationCount),
-    filesWithoutMemory: topPaths(emptyFiles),
+    filesWithoutMemory: emptyFiles,
   };
 }
