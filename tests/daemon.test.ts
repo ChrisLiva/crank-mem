@@ -63,16 +63,25 @@ function daemonPid(home: string): number | undefined {
   return pid;
 }
 
-afterEach(async () => {
+/** Records and kills each test home's daemon. */
+function killHomes(): void {
   for (const home of homes.splice(0)) {
     daemonPid(home);
     killDaemon(home);
   }
+}
+
+/** Kills the process group of every daemon pid recorded so far. */
+function killDaemonGroups(): void {
   for (const pid of daemonPids) {
     try {
       process.kill(-pid, "SIGKILL");
     } catch {}
   }
+}
+
+/** Kills each started daemon handle's process group still running and waits for it to exit. */
+async function killHandles(): Promise<void> {
   for (const h of handles.splice(0)) {
     if (h.proc.exitCode === null && h.proc.signalCode === null) {
       try {
@@ -81,6 +90,10 @@ afterEach(async () => {
     }
     await h.exited;
   }
+}
+
+/** Kills each other child still running and waits for it to exit. */
+async function killOthers(): Promise<void> {
   for (const child of others.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = new Promise((resolve) => child.once("exit", resolve));
@@ -88,6 +101,13 @@ afterEach(async () => {
       await exited;
     }
   }
+}
+
+afterEach(async () => {
+  killHomes();
+  killDaemonGroups();
+  await killHandles();
+  await killOthers();
   await waitFor(() => [...daemonPids].every((pid) => !alive(pid)), 5_000);
   for (const dir of temps.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });

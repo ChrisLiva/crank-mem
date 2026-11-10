@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { makeCrankProject, REPO_ROOT, runCli, tempDir } from "./helpers.ts";
+import { makeCrankProject, REPO_ROOT, runCli, tempDir, type CliRun } from "./helpers.ts";
 
 const FIXTURES = path.join(REPO_ROOT, "tests/fixtures/code");
 const A_TS = [
@@ -231,28 +231,85 @@ describe("unfold", () => {
   }, 30_000);
 });
 
+const CAP = 25_000;
+const pad = (n: number) => String(n).padStart(4, "0");
+const CONT =
+  /^… (?<k>\d+) more symbols from L(?<s>\d+): crank-mem outline src\/many\.ts --from \k<s>$/;
+
+/** src/many.ts's lines (399 function pairs, a 800-method class, 600 more pairs) and every symbol outline prints for it, in order. */
+function manyFixture(): { manyLines: string[]; expected: { start: number; text: string }[] } {
+  const pairLine = (n: number) =>
+    `function a${pad(n)}(x: number) { return x; } function b${pad(n)}(x: number) { return x; }`;
+  const manyLines: string[] = [];
+  const expected: { start: number; text: string }[] = [];
+  const pair = (n: number) => {
+    manyLines.push(pairLine(n));
+    for (const name of ["a", "b"])
+      expected.push({ start: n, text: `function ${name}${pad(n)}(x: number) { … }` });
+  };
+  for (let n = 1; n <= 399; n++) pair(n);
+  manyLines.push("class Big {");
+  expected.push({ start: 400, text: "class Big {" });
+  for (let n = 401; n <= 1200; n++) {
+    manyLines.push(`  m${pad(n)}(): void {}`);
+    expected.push({ start: n, text: `  m${pad(n)}(): void { … }` });
+  }
+  manyLines.push("}");
+  for (let n = 1202; n <= 1801; n++) pair(n);
+  return { manyLines, expected };
+}
+
+/** Each symbol line's start, pushing the text of those at or past `from` onto `seen`. */
+function pageStarts(symbolLines: string[], from: number, seen: string[]): number[] {
+  const starts: number[] = [];
+  for (const line of symbolLines) {
+    const [gutter, text] = line.split("│") as [string, string];
+    const start = Number(gutter.trim().split("-")[0]);
+    starts.push(start);
+    if (start >= from) seen.push(text);
+  }
+  return starts;
+}
+
+/** Pages through src/many.ts with --from, checking each page, and returns the symbols first seen on each page and whether a page reprinted class Big as context. */
+function pageMany(
+  outline: (file: string, from?: number) => CliRun,
+  expected: { start: number; text: string }[],
+): { seen: string[]; sawBigContext: boolean } {
+  const seen: string[] = [];
+  let from = 1;
+  let sawBigContext = false;
+  for (let pages = 0; ; pages++) {
+    expect(pages).toBeLessThan(20);
+    const run = outline("src/many.ts", from === 1 ? undefined : from);
+    expect([from, run.status, run.stdout.length <= CAP, run.stdout.endsWith("\n")]).toEqual([
+      from,
+      0,
+      true,
+      true,
+    ]);
+    const lines = run.stdout.slice(0, -1).split("\n");
+    expect(lines[0]).toBe("src/many.ts");
+    const last = CONT.exec(lines.at(-1)!)?.groups;
+    if (from === 1) expect(last).toBeDefined();
+    const symbolLines = lines.slice(1, last ? -1 : undefined);
+    const widths = new Set(symbolLines.map((line) => line.split("│")[0]!.length));
+    expect(widths.size).toBe(1);
+    const starts = pageStarts(symbolLines, from, seen);
+    if (from > 400 && from <= 1201 && symbolLines[0]!.trimStart() === "400-1201│class Big {")
+      sawBigContext = true;
+    if (!last) break;
+    const s = Number(last.s);
+    expect(starts.every((start) => start < s)).toBe(true);
+    expect(Number(last.k)).toBe(expected.filter((e) => e.start >= s).length);
+    from = s;
+  }
+  return { seen, sawBigContext };
+}
+
 describe("cap", () => {
   test("outline pages within the cap and unfold folds what does not fit", () => {
-    const CAP = 25_000;
-    const pad = (n: number) => String(n).padStart(4, "0");
-    const pairLine = (n: number) =>
-      `function a${pad(n)}(x: number) { return x; } function b${pad(n)}(x: number) { return x; }`;
-    const manyLines: string[] = [];
-    const expected: { start: number; text: string }[] = [];
-    const pair = (n: number) => {
-      manyLines.push(pairLine(n));
-      for (const name of ["a", "b"])
-        expected.push({ start: n, text: `function ${name}${pad(n)}(x: number) { … }` });
-    };
-    for (let n = 1; n <= 399; n++) pair(n);
-    manyLines.push("class Big {");
-    expected.push({ start: 400, text: "class Big {" });
-    for (let n = 401; n <= 1200; n++) {
-      manyLines.push(`  m${pad(n)}(): void {}`);
-      expected.push({ start: n, text: `  m${pad(n)}(): void { … }` });
-    }
-    manyLines.push("}");
-    for (let n = 1202; n <= 1801; n++) pair(n);
+    const { manyLines, expected } = manyFixture();
     const crowdedLine = Array.from({ length: 1500 }, (_, i) => `function c${pad(i + 1)}() {}`).join(
       " ",
     );
@@ -264,43 +321,8 @@ describe("cap", () => {
     });
     const outline = (file: string, from?: number) =>
       runCli(root, ["outline", file, ...(from === undefined ? [] : ["--from", String(from)])]);
-    const CONT =
-      /^… (?<k>\d+) more symbols from L(?<s>\d+): crank-mem outline src\/many\.ts --from \k<s>$/;
 
-    const seen: string[] = [];
-    let from = 1;
-    let sawBigContext = false;
-    for (let pages = 0; ; pages++) {
-      expect(pages).toBeLessThan(20);
-      const run = outline("src/many.ts", from === 1 ? undefined : from);
-      expect([from, run.status, run.stdout.length <= CAP, run.stdout.endsWith("\n")]).toEqual([
-        from,
-        0,
-        true,
-        true,
-      ]);
-      const lines = run.stdout.slice(0, -1).split("\n");
-      expect(lines[0]).toBe("src/many.ts");
-      const last = CONT.exec(lines.at(-1)!)?.groups;
-      if (from === 1) expect(last).toBeDefined();
-      const symbolLines = lines.slice(1, last ? -1 : undefined);
-      const widths = new Set(symbolLines.map((line) => line.split("│")[0]!.length));
-      expect(widths.size).toBe(1);
-      const starts: number[] = [];
-      for (const line of symbolLines) {
-        const [gutter, text] = line.split("│") as [string, string];
-        const start = Number(gutter.trim().split("-")[0]);
-        starts.push(start);
-        if (start >= from) seen.push(text);
-      }
-      if (from > 400 && from <= 1201 && symbolLines[0]!.trimStart() === "400-1201│class Big {")
-        sawBigContext = true;
-      if (!last) break;
-      const s = Number(last.s);
-      expect(starts.every((start) => start < s)).toBe(true);
-      expect(Number(last.k)).toBe(expected.filter((e) => e.start >= s).length);
-      from = s;
-    }
+    const { seen, sawBigContext } = pageMany(outline, expected);
     expect(seen).toEqual(expected.map((e) => e.text));
     expect(sawBigContext).toBe(true);
     expect(outline("src/many.ts", 99999)).toEqual({
