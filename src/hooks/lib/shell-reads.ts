@@ -7,7 +7,10 @@ const READERS = new Set(["cat", "sed", "head", "tail", "awk", "nl"]);
 const PROGRAM_FIRST = new Set(["sed", "awk"]);
 /** `crank-mem` subcommands whose first non-flag word, outside a `--from` value, is the file they read. */
 const CODE_READERS = new Set(["outline", "unfold"]);
-const REDIRECTS = new Set([">", ">>", "2>", "&>"]);
+/** An output redirect alone, such as `>`, `2>>` or `&>`, whose target is the next word. */
+const BARE_REDIRECT = /^(\d*|&)>>?$/;
+/** An output redirect with its target attached, such as `>out`, `2>/dev/null` or `2>&1`. */
+const ATTACHED_REDIRECT = /^(\d*|&)>/;
 
 /** The command with each heredoc body, terminator line included, removed. */
 function dropHeredocs(command: string): string {
@@ -82,8 +85,9 @@ function readerArgs(rest: string[]): string[] {
   const args: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i]!;
-    if (REDIRECTS.has(w) || w === "<<") i++;
-    else if (w.startsWith(">") || w === "<" || w.startsWith("<<") || w.startsWith("-")) continue;
+    if (BARE_REDIRECT.test(w) || w === "<<") i++;
+    else if (ATTACHED_REDIRECT.test(w) || w === "<" || w.startsWith("<<") || w.startsWith("-"))
+      continue;
     else args.push(w);
   }
   return args;
