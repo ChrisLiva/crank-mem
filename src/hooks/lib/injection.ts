@@ -337,26 +337,43 @@ export function citationStatus(
   byName: Map<string, string[]>,
   sinceMs: number | null,
 ): { missing: string[]; modified: string[] } {
-  let cutoffMs = sinceMs;
-  if (cutoffMs === null) {
-    for (const [, y, m, d] of bullet.matchAll(ISO_DATE)) {
-      const end = new Date(Number(y), Number(m) - 1, Number(d) + 1).getTime();
-      if (cutoffMs === null || end > cutoffMs) cutoffMs = end;
-    }
-  }
+  const cutoffMs = sinceMs ?? latestDateEnd(bullet);
   const missing = new Set<string>();
   const modified = new Set<string>();
   for (const rel of fileCitations(bullet)) {
-    const hits = cited.index.files[rel]
-      ? [rel]
-      : (byName.get(path.posix.basename(rel)) ?? []).filter((c) => c.endsWith("/" + rel));
-    if (hits.length === 1) {
-      if (cutoffMs !== null && cited.index.files[hits[0]!]!.mtimeMs > cutoffMs) modified.add(rel);
-    } else if (!hits.length && rel.includes("/") && !fs.existsSync(path.join(cited.root, rel))) {
-      missing.add(rel);
-    }
+    const status = resolveCitation(rel, cited, byName, cutoffMs);
+    if (status === "missing") missing.add(rel);
+    else if (status === "modified") modified.add(rel);
   }
   return { missing: [...missing], modified: [...modified] };
+}
+
+/** The end of the latest ISO date in a text, local time, in ms; null without a date. */
+function latestDateEnd(text: string): number | null {
+  let latest: number | null = null;
+  for (const [, y, m, d] of text.matchAll(ISO_DATE)) {
+    const end = new Date(Number(y), Number(m) - 1, Number(d) + 1).getTime();
+    if (latest === null || end > latest) latest = end;
+  }
+  return latest;
+}
+
+/** One citation's status: modified past `cutoffMs`, missing, or null for neither. */
+function resolveCitation(
+  rel: string,
+  cited: CitedFiles,
+  byName: Map<string, string[]>,
+  cutoffMs: number | null,
+): "missing" | "modified" | null {
+  const hits = cited.index.files[rel]
+    ? [rel]
+    : (byName.get(path.posix.basename(rel)) ?? []).filter((c) => c.endsWith("/" + rel));
+  if (hits.length === 1) {
+    return cutoffMs !== null && cited.index.files[hits[0]!]!.mtimeMs > cutoffMs ? "modified" : null;
+  }
+  if (!hits.length && rel.includes("/") && !fs.existsSync(path.join(cited.root, rel)))
+    return "missing";
+  return null;
 }
 
 /**
@@ -455,29 +472,11 @@ export function composeInjection(
     return true;
   };
 
-  for (const note of sources.notes ?? []) if (note && fit(`_Note: ${note}_`)) shown.notes++;
+  shown.notes = noteSections(sources.notes ?? [], fit);
 
-  if (recall?.status === "open") {
-    const { nextSteps, recent } = recall;
-    if (nextSteps !== null && bytes(nextSteps) <= NEXT_STEPS_MAX_BYTES) {
-      shown.nextSteps = fit(`## Next steps (last digested session)\n${nextSteps}`);
-    }
-    // Newest first, so the cap drops the oldest whole lines.
-    const lines = recent.map((line) => ({ id: line.id, text: formatLine(line) }));
-    const section = () => ["## Recent memory", ...lines.map((l) => l.text)].join("\n");
-    while (lines.length && bytes(section()) > RECENT_MEMORY_MAX_BYTES) lines.pop();
-    if (lines.length && fit(section())) shown.recentIds = lines.map((l) => l.id);
-  }
+  if (recall?.status === "open") Object.assign(shown, recallSections(recall, fit));
 
-  const adrSection = sources.adrFilenames.length
-    ? [
-        `## ADRs (${sources.adrPath}/ — settled decisions)`,
-        ...[...sources.adrFilenames]
-          .sort()
-          .slice(-ADR_RECENT_COUNT)
-          .map((f) => `- ${f}`),
-      ].join("\n")
-    : null;
+  const adrSection = adrSectionOf(sources);
   // Reserve only what the ADR list can actually claim. A list too long to fit
   // at all is dropped either way, and holding its bytes back would starve the
   // cerebrum of budget that then goes unspent — losing both sections.
@@ -497,6 +496,43 @@ export function composeInjection(
   if (adrSection) shown.adrs = fit(adrSection);
 
   return { text: parts.join(SEP), excerpt, shown };
+}
+
+/** Add each non-empty note through `fit`; returns how many fit. */
+function noteSections(notes: string[], fit: (section: string) => boolean): number {
+  let count = 0;
+  for (const note of notes) if (note && fit(`_Note: ${note}_`)) count++;
+  return count;
+}
+
+/** Add the next steps and recent memory sections through `fit`; returns what they showed. */
+function recallSections(
+  recall: Extract<Recall, { status: "open" }>,
+  fit: (section: string) => boolean,
+): Pick<Shown, "nextSteps" | "recentIds"> {
+  const { nextSteps, recent } = recall;
+  const shown: Pick<Shown, "nextSteps" | "recentIds"> = { nextSteps: false, recentIds: [] };
+  if (nextSteps !== null && bytes(nextSteps) <= NEXT_STEPS_MAX_BYTES) {
+    shown.nextSteps = fit(`## Next steps (last digested session)\n${nextSteps}`);
+  }
+  // Newest first, so the cap drops the oldest whole lines.
+  const lines = recent.map((line) => ({ id: line.id, text: formatLine(line) }));
+  const section = () => ["## Recent memory", ...lines.map((l) => l.text)].join("\n");
+  while (lines.length && bytes(section()) > RECENT_MEMORY_MAX_BYTES) lines.pop();
+  if (lines.length && fit(section())) shown.recentIds = lines.map((l) => l.id);
+  return shown;
+}
+
+/** The ADR section: the newest ADR_RECENT_COUNT filenames, or null without ADRs. */
+function adrSectionOf(sources: InjectionSources): string | null {
+  if (!sources.adrFilenames.length) return null;
+  return [
+    `## ADRs (${sources.adrPath}/ — settled decisions)`,
+    ...[...sources.adrFilenames]
+      .sort()
+      .slice(-ADR_RECENT_COUNT)
+      .map((f) => `- ${f}`),
+  ].join("\n");
 }
 
 /** Load ADR filenames (NNNN-*.md) from the configured directory. */
