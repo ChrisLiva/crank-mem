@@ -80,12 +80,14 @@ export function App() {
   const go = (projectId: string, view: View) =>
     setPlace({ project: projectId, view, tab: null, item: null });
   const toggle = (id: string) => {
-    if (!expanded.has(id)) return go(id, "memory");
+    const open = expanded.has(id);
     setExpanded((s) => {
       const next = new Set(s);
-      next.delete(id);
+      if (open) next.delete(id);
+      else next.add(id);
       return next;
     });
+    if (!open && id !== place.project) go(id, "memory");
   };
 
   if (error !== null) return <p className="p-4 text-destructive">{error}</p>;
