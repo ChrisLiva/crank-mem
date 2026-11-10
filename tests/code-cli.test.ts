@@ -128,6 +128,7 @@ describe("unfold", () => {
       "src/doc2.py": "class A:\n    # doc for m\n    def m(self): pass\n",
       "src/doc.go": "package p\n\n// Foo is a thing.\ntype Foo struct {\n\tx int\n}\n",
       "src/doc.rs": "/// doc\n#[inline]\nfn f() {}\n",
+      "src/doc.php": "<?php\n/** doc */\n#[A]\nclass C {}\n",
       "src/n.cs": "namespace Outer {\n  class K {\n    void M() {}\n  }\n}\n",
       "src/doc.rb":
         "class A\n  # doc for m\n  def m\n  end\n\n  # doc for n\n  def n\n  end\nend\n",
@@ -209,6 +210,10 @@ describe("unfold", () => {
     expect(unfold("src/doc.rs", "f")).toMatchObject({
       status: 0,
       stdout: "src/doc.rs:2-3 fn f\n1│/// doc\n2│#[inline]\n3│fn f() {}\n",
+    });
+    expect(unfold("src/doc.php", "C")).toMatchObject({
+      status: 0,
+      stdout: "src/doc.php:3-4 class C\n2│/** doc */\n3│#[A]\n4│class C {}\n",
     });
     expect(runCli(root, ["outline", "src/n.cs"])).toMatchObject({
       status: 0,
