@@ -7,6 +7,7 @@ import {
   emitAdditionalContext,
   runAdvisoryHook,
   memoryPaths,
+  isProjectFile,
   type HookPayload,
 } from "./lib/hook-io.ts";
 import { CRANK_DIR, loadConfig } from "./lib/config.ts";
@@ -113,7 +114,7 @@ async function main(): Promise<void> {
   if (!stem) return;
   const agent = agentOf(payload);
 
-  const rels = memoryPaths(root, cwd, paths);
+  const rels = memoryPaths(root, cwd, paths).filter((r) => isProjectFile(root, r));
   if (rels.length === 0) return;
 
   const file = memoryPath(root);

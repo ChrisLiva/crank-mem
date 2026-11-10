@@ -268,7 +268,15 @@ describe("usage capture: the file-history line", () => {
     const ctx = additionalContext(first.stdout);
     const again = postRead(root, claudePostRead(root, path.join(root, "a.ts"), TRANSCRIPT), home);
     expect(again.stdout).toBe("");
-    const bash = postRead(root, claudePostBash(root, "cat b.ts", TRANSCRIPT), home);
+    const bash = postRead(
+      root,
+      claudePostBash(
+        root,
+        "cat b.ts ~/.crank/projects.json missing.ts; head -n 300 b.ts",
+        TRANSCRIPT,
+      ),
+      home,
+    );
     expect(bash.stdout).toBe("");
 
     const lines = usageLines(root);
@@ -291,6 +299,14 @@ describe("usage capture: the file-history line", () => {
     );
     expect(lines[1]).toMatchObject({ tool: "Read", shown: [], seen: ["a.ts"], bytes: 0 });
     expect(lines[2]).toMatchObject({ tool: "Bash", empty: ["b.ts"], bytes: 0 });
+    const before = lineCount(root);
+    const missing = postRead(
+      root,
+      claudePostRead(root, path.join(root, "nope.ts"), TRANSCRIPT),
+      home,
+    );
+    expect([missing.status, missing.stdout]).toEqual([0, ""]);
+    expect(lineCount(root)).toBe(before);
   });
 });
 
@@ -322,9 +338,9 @@ describe("usage capture: the file-history cap", () => {
 
 describe("usage capture: the 100-entry list cap", () => {
   test("a line keeps the first 100 entries of a list, in order", () => {
-    const root = makeCrankProject();
-    seedMemory(root, [{ title: "one", filesRead: ["other.ts"] }]);
     const paths = Array.from({ length: 150 }, (_, i) => `p${i}.ts`);
+    const root = makeCrankProject(Object.fromEntries(paths.map((p) => [p, "x\n"])));
+    seedMemory(root, [{ title: "one", filesRead: ["other.ts"] }]);
     const run = postRead(root, claudePostBash(root, `cat ${paths.join(" ")}`, TRANSCRIPT));
     expect(run.status).toBe(0);
     const [line] = usageLines(root);

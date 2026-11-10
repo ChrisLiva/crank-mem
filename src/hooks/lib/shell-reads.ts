@@ -1,6 +1,7 @@
 // The files a Bash command reads with a plain read tool or `crank-mem outline`/`unfold`. A best-effort
-// lexer, not a shell parser: callers filter the candidates through
-// memoryPaths, so a stray word such as a `head -n` count costs nothing.
+// lexer, not a shell parser: post-read filters the candidates through memoryPaths and keeps only
+// regular files, so a stray word such as a `head -n` count costs nothing, while the digest daemon's
+// history lookup filters through memoryPaths alone.
 
 const READERS = new Set(["cat", "sed", "head", "tail", "awk", "nl"]);
 /** Readers whose first non-flag word is a program, not a file. */

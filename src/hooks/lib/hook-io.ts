@@ -76,6 +76,15 @@ export function memoryPaths(root: string, cwd: string, paths: string[]): string[
   return [...kept];
 }
 
+/** Whether `rel` under `root` is a regular file now, following symlinks; false on any error. */
+export function isProjectFile(root: string, rel: string): boolean {
+  try {
+    return fs.statSync(path.join(root, rel), { throwIfNoEntry: false })?.isFile() === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Emit model-visible context via hookSpecificOutput (both agents). */
 export function emitAdditionalContext(hookEventName: string, context: string): void {
   process.stdout.write(
