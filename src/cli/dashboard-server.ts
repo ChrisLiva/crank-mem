@@ -4,6 +4,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
+import { isProjectFile } from "../hooks/lib/hook-io.ts";
 import { memoryPath, memoryStatus, withReader, type MemoryRead } from "../hooks/lib/memory.ts";
 import { readUsage } from "../hooks/lib/usage.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
@@ -254,7 +255,12 @@ async function usage(root: string, params: URLSearchParams): Promise<Answer> {
   const days = ([7, 30, 90] as const).find((d) => String(d) === params.get("days"));
   const manual = params.get("manual") ?? "0";
   if (days === undefined || (manual !== "0" && manual !== "1")) return { status: 400 };
-  const events = readUsage(path.dirname(memoryPath(root)));
+  // A new line, never an assignment: readUsage hands back cached lines until the file changes.
+  const events = readUsage(path.dirname(memoryPath(root))).map((line) =>
+    line.channel === "file-history"
+      ? { ...line, empty: line.empty.filter((p) => isProjectFile(root, p)) }
+      : line,
+  );
   const opts = { nowMs: Date.now(), days, manual: manual === "1" };
   const body = await withReader(memoryPath(root), (memory) =>
     usageMetrics(events, {

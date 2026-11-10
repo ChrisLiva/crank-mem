@@ -812,7 +812,7 @@ function windowLines(now: number, [A, B, C]: number[]) {
     channel: "file-history",
     tool: "Read",
     shown: [{ path: "a.ts", ids: [A] }],
-    empty: ["b.ts"],
+    empty: ["b.ts", "gone.ts", "~/.crank/projects.json"],
     seen: [],
     cut: [],
     bytes: 1,
@@ -836,6 +836,7 @@ const TITLES = ["Alpha one", "Bravo two", "Charlie three", "Delta four"];
 /** A registered project on `home` with four observations and the window journey's log. */
 function windowProject(home: string) {
   const root = registeredProject(home);
+  fs.writeFileSync(path.join(root, "b.ts"), "export const b = 1;\n");
   const ids = seedMemory(
     root,
     TITLES.map((title) => ({ title })),
@@ -979,6 +980,12 @@ describe("usage window: the usage endpoint aggregates the log", () => {
       expect(totals(quarter)).toEqual(
         channelCounts({ search: 3, get: 1, "session-start": 1, "file-history": 1 }),
       );
+
+      fs.writeFileSync(path.join(root, "gone.ts"), "export const gone = 1;\n");
+      expect((await usageOf(dash, root, "days=90&manual=0")).filesWithoutMemory).toEqual([
+        { path: "b.ts", count: 1 },
+        { path: "gone.ts", count: 1 },
+      ]);
     }, 30_000);
   }
 
@@ -1040,6 +1047,7 @@ describe("usage window: the usage endpoint aggregates the log", () => {
         path.join(root, ".crank/usage.jsonl"),
         path.join(other, ".crank/usage.jsonl"),
       );
+      fs.writeFileSync(path.join(other, "b.ts"), "export const b = 1;\n");
     }
     const dash = await startDashboard(home, ["--port", "0"]);
     const good = await usageOf(dash, root, "days=90&manual=0");
