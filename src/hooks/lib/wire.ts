@@ -1,6 +1,7 @@
 // The shapes, constants and guards the dashboard server answers in and the
-// dashboard page reads. This file imports nothing, so the dashboard's
-// tsconfig, which cannot resolve `node:` imports, compiles it too.
+// dashboard page reads, and the status rule (`projectStatus`) they share.
+// This file imports nothing, so the dashboard's tsconfig, which cannot
+// resolve `node:` imports, compiles it too.
 
 /** SCHEMA_V1's observations.type CHECK repeats this list as a literal; schema v1 freezes it. */
 export const OBSERVATION_TYPES = [
