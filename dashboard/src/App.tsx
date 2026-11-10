@@ -81,28 +81,43 @@ export function App() {
   return (
     <div className="flex min-h-dvh flex-col text-sm leading-normal md:h-dvh">
       <TopBar projects={projects} health={health} place={place} go={go} focus={focus} />
-      {error !== null ? (
-        <Message tone="error">
-          {error}. The dashboard server may have stopped: run crank-mem dashboard again.
-        </Message>
-      ) : projects === null ? null : projects.length === 0 ? (
-        <Message>No projects yet: run crank-mem init in a project.</Message>
-      ) : (
-        place.project !== null && (
-          <ViewSwitch
-            projects={projects}
-            health={health}
-            place={{ ...place, project: place.project }}
-            go={go}
-            focus={focus}
-            setItem={setItem}
-            setTab={setTab}
-            openObservation={openObservation}
-          />
-        )
-      )}
+      <Body
+        error={error}
+        projects={projects}
+        health={health}
+        place={place}
+        go={go}
+        focus={focus}
+        setItem={setItem}
+        setTab={setTab}
+        openObservation={openObservation}
+      />
     </div>
   );
+}
+
+/** The page under the top bar: the fetch error, nothing while loading, the empty state, or the current view. */
+function Body({
+  error,
+  projects,
+  place,
+  ...rest
+}: Omit<Parameters<typeof ViewSwitch>[0], "projects" | "place"> & {
+  error: string | null;
+  projects: Project[] | null;
+  place: Place;
+}) {
+  if (error !== null)
+    return (
+      <Message tone="error">
+        {error}. The dashboard server may have stopped: run crank-mem dashboard again.
+      </Message>
+    );
+  if (projects === null) return null;
+  if (projects.length === 0)
+    return <Message>No projects yet: run crank-mem init in a project.</Message>;
+  if (place.project === null) return null;
+  return <ViewSwitch {...rest} projects={projects} place={{ ...place, project: place.project }} />;
 }
 
 function Message({ tone, children }: { tone?: "error"; children: ReactNode }) {

@@ -11,6 +11,7 @@ import {
   type Note,
   type Project,
   type Status,
+  type Tone,
 } from "@/api";
 import { DayColumns, Sparkline } from "@/components/chart";
 import { usePerProject } from "@/hooks/use-per-project";
@@ -343,14 +344,28 @@ function ProjectDetail({
   );
 }
 
+const DIGEST_STAT = {
+  on: { value: "On", tone: "ok" },
+  off: { value: "Off", tone: "off" },
+  stopped: { value: "Stopped", tone: "bad" },
+} as const satisfies Record<HealthSummary["digest"], { value: string; tone: Tone }>;
+
+/** Why the store's observations are or are not searchable by meaning yet. */
+function observationsDetail(h: HealthSummary): string {
+  const m = h.memory;
+  if (m === null) return `store ${h.store}`;
+  if (m.unembedded > 0) return `${m.unembedded} waiting for embeddings`;
+  return h.embedderReady ? "all searchable by meaning" : "embedder not ready";
+}
+
 function Stats({ health: h }: { health: HealthSummary }) {
   const m = h.memory;
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
       <Stat
         label="Digest"
-        value={h.digest === "on" ? "On" : h.digest === "off" ? "Off" : "Stopped"}
-        tone={h.digest === "on" ? "ok" : h.digest === "off" ? "off" : "bad"}
+        value={DIGEST_STAT[h.digest].value}
+        tone={DIGEST_STAT[h.digest].tone}
         detail={
           m?.lastDigestMs != null ? `last digest ${formatAgo(m.lastDigestMs)}` : "no digest yet"
         }
@@ -370,15 +385,7 @@ function Stats({ health: h }: { health: HealthSummary }) {
       <Stat
         label="Observations"
         value={m === null ? "—" : m.observations.toLocaleString()}
-        detail={
-          m === null
-            ? `store ${h.store}`
-            : m.unembedded === 0
-              ? h.embedderReady
-                ? "all searchable by meaning"
-                : "embedder not ready"
-              : `${m.unembedded} waiting for embeddings`
-        }
+        detail={observationsDetail(h)}
       />
       <Stat
         label="Pending proposals"
