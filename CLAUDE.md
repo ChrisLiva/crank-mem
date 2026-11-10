@@ -64,5 +64,6 @@ These fail under machine load, not from a code change. Run the full suite as `ca
 | `tests/code-cli.test.ts` (own `30_000` timeouts, which `--timeout` does not lift): `outline and unfold match the committed expectation for cpp.cpp`, `unfold matches by name, qualified name and line` | Timeout at 30 s | Solo rerun |
 | `tests/debug.test.ts` post-write cases; `tests/session-start.test.ts` → `next steps come from the newest digest, only when short and not none` | 5,000 ms timeout in a full run | Solo rerun |
 | `tests/cli-commands.test.ts` → `flags` → `--help and -h print the command's usage and change nothing` (own `20_000` timeout, about 40 `runCli` spawns) | Timeout at 20 s, even solo, from load average about 3.5 | Ignore unless `src/cli/main.ts`, `src/cli/commands.ts` or `tests/helpers.ts` → `runCli` changed; then compare against the parent commit in a throwaway worktree under the same load |
+| `tests/recall-cli.test.ts` → `search flags` → `a malformed flag value or an empty query prints usage and exits 1` | 5,000 ms timeout in a full run | `bun test tests/recall-cli.test.ts --timeout 20000` |
 
 `docs/testing-load.md` holds the measurements behind this table (commits, load averages, gaps); record new ones there.
