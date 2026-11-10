@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `bun test -t "pattern"` — run tests matching a name
 - `bun run typecheck` — `tsc --noEmit`, then `tsc --noEmit -p dashboard`
 - `cd dashboard && bun run build` — rebuild the dashboard page; vite empties `dashboard/dist/` first and drops its `.crank-version` stamp, so `crank-mem dashboard` refuses as not built until `crank-mem setup` (or any `crank-mem upgrade`) restamps it
-- `bun run format` / `bun run format:check` — oxfmt (pinned exact in `package.json`). `.oxfmtrc.json` leaves out `tests/fixtures/`, whose bytes the `.outline`/`.headers` goldens record, and all markdown, whose ADRs quote probe output verbatim and whose README shows JSONL one record per line
+- `bun run format` / `bun run format:check` — oxfmt (pinned exact in `package.json`). `.oxfmtrc.json` leaves out `tests/fixtures/`, whose bytes the `.outline`/`.headers` goldens record, and all markdown, whose ADRs quote probe output verbatim and whose README shows JSONL one record per line, and `.impeccable/`, which the Impeccable design tool writes in its own style
 
 `bun test` needs `crank-mem setup` (or `bun src/cli/main.ts setup`) run once on the machine: `tests/digest-job.test.ts`, `tests/embedder.test.ts`, `tests/setup.test.ts`, `tests/cli-commands.test.ts` and `tests/dashboard.test.ts` read the real model it downloads into `~/.crank/models`.
 
