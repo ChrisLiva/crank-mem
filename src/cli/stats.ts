@@ -12,7 +12,7 @@ import {
   lastAuditMs,
 } from "../hooks/lib/cerebrum-files.ts";
 import { hasCrankHooks } from "./settings.ts";
-import { installPaths } from "./install.ts";
+import { installPaths } from "./install-support.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
 import {
   codexHome,

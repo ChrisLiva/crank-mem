@@ -1,108 +1,27 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import {
-  CRANK_HOOK_MARKER,
-  addAllowRule,
-  addIgnoreLines,
-  crankHooks,
-  ensureCodexFeatures,
-  ensureCrankGitignore,
-  hasCrankHooks,
-  isCrankHookCommand,
-  mergeHooksIntoFile,
-  removeAllowRule,
-  removeCodexFeatures,
-  removeCrankHooksFromFile,
-  removeIgnoreLines,
-  unignoreCerebrum,
-} from "./settings.ts";
-import {
-  CODEX_REVIEW_HINT,
-  codexTrustStatus,
-  crankTrust,
-  removeTrustEntries,
-  userCodexConfigPath,
-  writeTrustEntries,
-} from "./codex-trust.ts";
+import { hasCrankHooks } from "./settings.ts";
 import { registerProject, unregisterProject } from "./registry.ts";
-import { backupFile, createdByCrank } from "./backups.ts";
 import { templatePath, vendorHooks, vendoredHooksCurrent } from "./vendor.ts";
 import { cliVersion } from "./version.ts";
 import type { OpenedProject } from "./project.ts";
-import {
-  errorMessage,
-  saveConfig,
-  type CodexChoice,
-  type CrankConfig,
-} from "../hooks/lib/config.ts";
+import { saveConfig, type CodexChoice, type CrankConfig } from "../hooks/lib/config.ts";
 import { backupCerebrum, CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
-import { repoRelative } from "../hooks/lib/hook-io.ts";
+import {
+  attemptRepair,
+  installPaths,
+  mergeReports,
+  report,
+  type InstallContext,
+  type InstallItem,
+  type Report,
+} from "./install-support.ts";
+import { claudeWiring, codexWiring } from "./install-agents.ts";
+import { crankGitignore, gitIgnoreState } from "./install-gitignore.ts";
 
 // The ordered list of everything crank-mem installs into a project. Each
 // command prints a Report's lines to stdout and its warnings to stderr; the
 // items themselves print nothing.
-
-export interface Report {
-  lines: string[];
-  warnings: string[];
-  failed: boolean;
-}
-
-export function installPaths(root: string): {
-  claudeShared: string;
-  claudeLocal: string;
-  codexHooks: string;
-  codexConfig: string;
-  gitignore: string;
-  gitExclude: string;
-} {
-  return {
-    claudeShared: path.join(root, ".claude", "settings.json"),
-    claudeLocal: path.join(root, ".claude", "settings.local.json"),
-    codexHooks: path.join(root, ".codex", "hooks.json"),
-    codexConfig: path.join(root, ".codex", "config.toml"),
-    gitignore: path.join(root, ".gitignore"),
-    gitExclude: path.join(root, ".git", "info", "exclude"),
-  };
-}
-
-/** The Claude settings file a git mode wires, and the other one, which must hold no crank hooks. */
-function claudeSettingsFiles(
-  root: string,
-  git: CrankConfig["git"],
-): { wired: string; other: string } {
-  const { claudeShared, claudeLocal } = installPaths(root);
-  return git === "commit"
-    ? { wired: claudeShared, other: claudeLocal }
-    : { wired: claudeLocal, other: claudeShared };
-}
-
-/** The file that holds a git mode's ignore block, or null: commit mode has none, and exclude mode needs a .git directory. */
-function modeIgnoreFile(root: string, git: CrankConfig["git"]): string | null {
-  const { gitignore, gitExclude } = installPaths(root);
-  if (git === "ignore") return gitignore;
-  if (git === "exclude" && fs.existsSync(path.join(root, ".git"))) return gitExclude;
-  return null;
-}
-
-export interface InstallContext {
-  root: string;
-  crankDir: string;
-  /**
-   * The vendored-hooks item's repair sets `vendored_version` here in place once
-   * the new copy is in place; upgrade reads it back to pick its summary line.
-   */
-  config: CrankConfig & { codex: CodexChoice };
-  /** The run's backup dir, created on first call. */
-  backupDir: () => string;
-}
-
-interface InstallItem {
-  /** Install the item for a fresh init; throws on failure. */
-  apply(ctx: InstallContext): Report;
-  repair(ctx: InstallContext): Report;
-  remove(project: OpenedProject): Report;
-}
 
 /** The recorded Codex choice, or for a legacy config the one its wiring implies. */
 export function resolveCodex(root: string, config: CrankConfig): CodexChoice {
@@ -115,21 +34,6 @@ export function printReport(r: Report): void {
   for (const line of r.lines) console.log(line);
   for (const warning of r.warnings) console.error(warning);
 }
-
-function report(lines: string[] = []): Report {
-  return { lines, warnings: [], failed: false };
-}
-
-function mergeReports(reports: Report[]): Report {
-  return {
-    lines: reports.flatMap((r) => r.lines),
-    warnings: reports.flatMap((r) => r.warnings),
-    failed: reports.some((r) => r.failed),
-  };
-}
-
-const isEmptyJson = (text: string): boolean => JSON.stringify(JSON.parse(text)) === "{}";
-const isBlank = (text: string): boolean => text.trim() === "";
 
 const vendoredHooks: InstallItem = {
   apply({ crankDir }) {
@@ -157,225 +61,6 @@ const vendoredHooks: InstallItem = {
     return r;
   },
   remove: () => report(),
-};
-
-// Crank hooks left in the Claude settings file the git mode does not use run
-// every event twice.
-function removeDuplicateClaudeHooks(
-  r: Report,
-  root: string,
-  other: string,
-  backup: (file: string) => void,
-): void {
-  if (!hasCrankHooks(other)) return;
-  removeCrankHooksFromFile(other, isCrankHookCommand, backup);
-  r.lines.push(`  removed duplicate crank hooks from ${path.relative(root, other)}`);
-}
-
-const claudeWiring: InstallItem = {
-  apply(ctx) {
-    const { root, config } = ctx;
-    const backup = backupWith(ctx);
-    const r = report();
-    const { wired, other } = claudeSettingsFiles(root, config.git);
-    mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), backup);
-    addAllowRule(wired, backup);
-    r.lines.push(`  Claude Code: hooks wired into ${path.relative(root, wired)}`);
-    removeDuplicateClaudeHooks(r, root, other, backup);
-    return r;
-  },
-  repair(ctx) {
-    const { root, config } = ctx;
-    const backup = backupWith(ctx);
-    const r = report();
-    attemptRepair(r, "re-wire Claude Code hooks", () => {
-      const { wired, other } = claudeSettingsFiles(root, config.git);
-      removeDuplicateClaudeHooks(r, root, other, backup);
-      if (mergeHooksIntoFile(wired, crankHooks(config.runtime, "claude"), backup))
-        r.lines.push(`  re-wired Claude Code hooks in ${path.relative(root, wired)}`);
-      if (addAllowRule(wired, backup))
-        r.lines.push("  added the crank-mem rules to permissions.allow");
-    });
-    return r;
-  },
-  remove({ root, crankDir }) {
-    const { claudeShared, claudeLocal } = installPaths(root);
-    const r = report();
-    for (const f of [claudeShared, claudeLocal]) {
-      attemptRemoval(r, root, f, () => {
-        const rel = path.relative(root, f);
-        let wrote = false;
-        if (removeCrankHooksFromFile(f)) {
-          r.lines.push(`  removed crank hooks from ${rel}`);
-          wrote = true;
-        }
-        if (removeAllowRule(f)) {
-          r.lines.push(`  removed the crank-mem allow rules from ${rel}`);
-          wrote = true;
-        }
-        pushLine(r.lines, deleteNowEmpty(root, crankDir, f, isEmptyJson));
-        if (!wrote) checkParseable(r, root, f);
-      });
-    }
-    return r;
-  },
-};
-
-function writeCrankTrust(codexHooks: string, backup: (file: string) => void): void {
-  const t = crankTrust(codexHooks);
-  writeTrustEntries(userCodexConfigPath(), t.entries, t.staleKeys, backup);
-}
-
-const codexWiring: InstallItem = {
-  apply(ctx) {
-    const { root, config } = ctx;
-    if (config.codex === "skip") return report(["  Codex: skipped"]);
-    const backup = backupWith(ctx);
-    const { codexHooks, codexConfig } = installPaths(root);
-    mergeHooksIntoFile(codexHooks, crankHooks(config.runtime, "codex"), backup);
-    ensureCodexFeatures(codexConfig, backup);
-    const r = report(["  Codex: hooks wired into .codex/hooks.json"]);
-    if (config.codex === "trust") {
-      writeCrankTrust(codexHooks, backup);
-      r.lines.push(`  Codex trust: trusted_hash entries written to ${userCodexConfigPath()}`);
-    } else {
-      r.lines.push(...CODEX_REVIEW_HINT);
-    }
-    return r;
-  },
-  // A skip install leaves .codex/ alone. Trust is rewritten only when an entry
-  // is missing or stale or an older release's PascalCase orphan is present, so
-  // an install already trusted keeps its config.toml untouched.
-  repair(ctx) {
-    const { root, config } = ctx;
-    const r = report();
-    if (config.codex === "skip") return r;
-    const backup = backupWith(ctx);
-    const { codexHooks, codexConfig } = installPaths(root);
-    attemptRepair(r, "re-wire Codex hooks", () => {
-      if (mergeHooksIntoFile(codexHooks, crankHooks(config.runtime, "codex"), backup)) {
-        r.lines.push(`  re-wired Codex hooks in ${path.relative(root, codexHooks)}`);
-        if (config.codex === "review") r.lines.push(...CODEX_REVIEW_HINT);
-      }
-      if (ensureCodexFeatures(codexConfig, backup))
-        r.lines.push(
-          `  added the crank-mem [features] snippet to ${path.relative(root, codexConfig)}`,
-        );
-      if (config.codex === "trust") {
-        const s = codexTrustStatus(userCodexConfigPath(), root, codexHooks);
-        if (s.missing + s.stale + s.orphans > 0) {
-          writeCrankTrust(codexHooks, backup);
-          r.lines.push("  recomputed Codex trusted_hash entries");
-        }
-      }
-    });
-    return r;
-  },
-  remove({ root, crankDir, config }) {
-    const { codexHooks, codexConfig } = installPaths(root);
-    const r = report();
-    // Trust keys come from hooks.json as it stands, before the hooks strip.
-    // Both spellings go — older releases keyed on the raw PascalCase event.
-    if (config.codex === "trust") {
-      attemptRemoval(r, root, userCodexConfigPath(), () => {
-        const keys = crankTrust(codexHooks).keys;
-        if (keys.length > 0) {
-          removeTrustEntries(userCodexConfigPath(), keys);
-          r.lines.push(`  removed trusted_hash entries from ${userCodexConfigPath()}`);
-        }
-      });
-    }
-    attemptRemoval(r, root, codexHooks, () => {
-      const wrote = removeCrankHooksFromFile(codexHooks);
-      if (wrote) r.lines.push(`  removed crank hooks from ${path.relative(root, codexHooks)}`);
-      pushLine(r.lines, deleteNowEmpty(root, crankDir, codexHooks, isEmptyJson));
-      if (!wrote) checkParseable(r, root, codexHooks);
-    });
-    attemptRemoval(r, root, codexConfig, () => {
-      removeCodexFeatures(codexConfig);
-      pushLine(r.lines, deleteNowEmpty(root, crankDir, codexConfig, isBlank));
-    });
-    return r;
-  },
-};
-
-const crankGitignore: InstallItem = {
-  apply(ctx) {
-    ensureCrankGitignore(ctx.crankDir, backupWith(ctx));
-    return report();
-  },
-  // An install from before the allowlist keeps a denylist that misses state
-  // files added since, and every file another tool sharing .crank/ writes.
-  repair(ctx) {
-    const r = report();
-    attemptRepair(r, "write .crank/.gitignore", () => {
-      if (ensureCrankGitignore(ctx.crankDir, backupWith(ctx)))
-        r.lines.push(`  wrote the allowlist .crank/.gitignore`);
-    });
-    return r;
-  },
-  remove: () => report(),
-};
-
-// Commit mode loses a stale crank-mem ignore block, which keeps cerebrum out of
-// git, and warns when another ignore rule still hides it.
-function unignoreForCommit(r: Report, root: string, backup: (file: string) => void): void {
-  const ignoredBy = unignoreCerebrum(root, (f) => {
-    backup(f);
-    r.lines.push(`  removed the crank-mem .crank/ ignore block from ${path.relative(root, f)}`);
-  });
-  if (ignoredBy)
-    r.warnings.push(
-      `crank-mem: warning: git ignores .crank/cerebrum.md via ${ignoredBy}, so commit mode cannot track it.`,
-    );
-}
-
-const gitIgnoreState: InstallItem = {
-  apply(ctx) {
-    const { root, config } = ctx;
-    const backup = backupWith(ctx);
-    const r = report();
-    if (config.git === "commit") {
-      unignoreForCommit(r, root, backup);
-      return r;
-    }
-    const ignoreFile = modeIgnoreFile(root, config.git);
-    if (ignoreFile) addIgnoreLines(ignoreFile, backup);
-    return r;
-  },
-  // Ignore and exclude mode regain a missing ignore block, whose absence
-  // exposes .crank/ to git.
-  repair(ctx) {
-    const { root, config } = ctx;
-    const backup = backupWith(ctx);
-    const r = report();
-    if (config.git === "commit") {
-      attemptRepair(r, "check .crank/cerebrum.md against git ignores", () =>
-        unignoreForCommit(r, root, backup),
-      );
-      return r;
-    }
-    const ignoreFile = modeIgnoreFile(root, config.git);
-    if (ignoreFile) {
-      attemptRepair(r, `write ${path.relative(root, ignoreFile)}`, () => {
-        if (addIgnoreLines(ignoreFile, backup))
-          r.lines.push(
-            `  added the crank-mem .crank/ ignore block to ${path.relative(root, ignoreFile)}`,
-          );
-      });
-    }
-    return r;
-  },
-  remove({ root, crankDir }) {
-    const { gitignore, gitExclude } = installPaths(root);
-    const r = report();
-    attemptRemoval(r, root, gitignore, () => {
-      removeIgnoreLines(gitignore);
-      pushLine(r.lines, deleteNowEmpty(root, crankDir, gitignore, isBlank));
-    });
-    attemptRemoval(r, root, gitExclude, () => removeIgnoreLines(gitExclude));
-    return r;
-  },
 };
 
 /** Copy the template to .crank/cerebrum.md when none exists; true exactly when it copied. */
@@ -473,74 +158,4 @@ export function repairInstall(ctx: InstallContext): Report {
  */
 export function removeInstall(project: OpenedProject): Report {
   return mergeReports([...ITEMS].reverse().map((item) => item.remove(project)));
-}
-
-function backupWith(ctx: InstallContext): (file: string) => void {
-  return (file) => backupFile(ctx.backupDir(), file);
-}
-
-/** Run one item's repair, turning a throw into `crank-mem: could not <action> (…)` on `r`. */
-function attemptRepair(r: Report, action: string, steps: () => void): void {
-  try {
-    steps();
-  } catch (err) {
-    r.warnings.push(`crank-mem: could not ${action} (${errorMessage(err)})`);
-    r.failed = true;
-  }
-}
-
-function pushLine(lines: string[], line: string | null): void {
-  if (line !== null) lines.push(line);
-}
-
-function removalWarning(root: string, file: string, err: unknown): string {
-  const detail = errorMessage(err);
-  return `crank-mem: could not remove crank-mem's entries from ${repoRelative(root, root, file) ?? file} (${detail})`;
-}
-
-/** Run one file's removal steps, turning a throw into `file`'s warning on `r`. */
-export function attemptRemoval(r: Report, root: string, file: string, steps: () => void): void {
-  try {
-    steps();
-  } catch (err) {
-    r.warnings.push(removalWarning(root, file, err));
-    r.failed = true;
-  }
-}
-
-/** Flag a file that still exists, does not parse, and names crank-mem — its entries stay. */
-function checkParseable(r: Report, root: string, file: string): void {
-  if (!fs.existsSync(file)) return;
-  const text = fs.readFileSync(file, "utf-8");
-  try {
-    JSON.parse(text);
-  } catch {
-    if (text.includes(CRANK_HOOK_MARKER) || text.includes("crank-mem")) {
-      r.warnings.push(removalWarning(root, file, "not valid JSON"));
-      r.failed = true;
-    }
-  }
-}
-
-/**
- * Delete `file` and return `  deleted now-empty <rel>` when it exists, crank-mem
- * created it, and `isEmpty` holds for its text; otherwise null. A user's own
- * blank or `{}` file survives, and an `isEmpty` that throws counts as not
- * empty. An fs error reading or unlinking the file propagates.
- */
-function deleteNowEmpty(
-  root: string,
-  crankDir: string,
-  file: string,
-  isEmpty: (text: string) => boolean,
-): string | null {
-  if (!fs.existsSync(file) || !createdByCrank(crankDir, file)) return null;
-  const text = fs.readFileSync(file, "utf-8");
-  try {
-    if (!isEmpty(text)) return null;
-  } catch {
-    return null;
-  }
-  fs.unlinkSync(file);
-  return `  deleted now-empty ${path.relative(root, file)}`;
 }

@@ -6,7 +6,8 @@ import { COMMANDS } from "./commands.ts";
 import { choose } from "./prompt.ts";
 import { cliVersion, REPO_ROOT } from "./version.ts";
 import { newBackupDir } from "./backups.ts";
-import { applyInstall, installPaths, printReport } from "./install.ts";
+import { applyInstall, printReport } from "./install.ts";
+import { installPaths } from "./install-support.ts";
 import {
   defaultConfig,
   saveConfig,

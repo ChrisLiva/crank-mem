@@ -28,7 +28,8 @@ import { SNAPSHOT_DIR } from "../hooks/lib/store-upkeep.ts";
 import { USAGE_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
 import { openProject } from "./project.ts";
 import { restoreInstall } from "./backups.ts";
-import { attemptRemoval, installPaths, removeInstall, type Report } from "./install.ts";
+import { removeInstall } from "./install.ts";
+import { attemptRemoval, installPaths, type Report } from "./install-support.ts";
 
 // Remove all crank-mem wiring. Default is surgical: strip exactly the
 // entries/lines we added (safe alongside post-init user edits). --restore
