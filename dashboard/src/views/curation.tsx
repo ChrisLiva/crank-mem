@@ -10,9 +10,9 @@ import {
   type ProposalState,
   type Page,
   type StaleRow,
+  type Tone,
 } from "@/api";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { Tone } from "@/status";
 import {
   DETAIL_BODY,
   DETAIL_COLUMN,

@@ -3,7 +3,6 @@ import { cn } from "cn";
 import { fetchHealth, fetchProjects, type HealthSummary, type Project } from "./api";
 import { usePerProject } from "./hooks/use-per-project";
 import { usePoll } from "./hooks/use-poll";
-import { projectStatus, projectTone } from "./status";
 import { CurationView } from "./views/curation";
 import { HealthView } from "./views/health";
 import { MemoryView } from "./views/memory";
@@ -151,7 +150,7 @@ function TopBar({
 }) {
   const current = projects?.find((p) => p.id === place.project);
   const currentHealth = current && health[current.id];
-  const status = currentHealth ? projectStatus(currentHealth) : null;
+  const status = currentHealth ? currentHealth.status : null;
   return (
     <header className="sticky top-0 z-20 flex-none border-b bg-card">
       <div className="flex h-14 items-center gap-4 px-4 md:px-6">
@@ -162,12 +161,7 @@ function TopBar({
         {projects !== null && projects.length > 0 && (
           <label className="relative flex items-center">
             <span className="sr-only">Project</span>
-            {current && (
-              <Dot
-                tone={projectTone(current, health[current.id])}
-                className="pointer-events-none absolute left-2.5"
-              />
-            )}
+            {status && <Dot tone={status.tone} className="pointer-events-none absolute left-2.5" />}
             {status && (
               <span id="project-status" className="sr-only">
                 {status.label}

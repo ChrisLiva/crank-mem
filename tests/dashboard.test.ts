@@ -424,7 +424,7 @@ describe("project registry", () => {
     expect(runs[1]!.status).toBe(0);
   });
 
-  test("GET /api/projects lists inited roots by name, then root, with id, store status and dot", async () => {
+  test("GET /api/projects lists inited roots by name, then root, with id and store status", async () => {
     const home = makeCrankHome();
     const b = registeredProject(home, tempDir("crank-b-"));
     const a = registeredProject(home, tempDir("crank-a-"));
@@ -434,18 +434,17 @@ describe("project registry", () => {
       .map((p) => registeredProject(home, path.join(tieParent, p, "same")))
       .reverse();
     const dash = await startDashboard(home, ["--port", "0"]);
-    const entry = (root: string, memory: string, dot: string) => ({
+    const entry = (root: string, memory: string) => ({
       id: projectId(root),
       name: path.basename(root),
       root,
       memory,
-      dot,
     });
     expect(await projects(dash)).toEqual({
       projects: [
-        entry(a, "open", "grey"),
-        entry(b, "missing", "amber"),
-        ...ties.map((root) => entry(root, "missing", "amber")),
+        entry(a, "open"),
+        entry(b, "missing"),
+        ...ties.map((root) => entry(root, "missing")),
       ],
     });
   }, 20_000);
@@ -480,29 +479,6 @@ describe("project registry", () => {
     fs.rmSync(path.join(standalone, ".crank/config.json"));
     expect(await roots()).toEqual([fs.realpathSync(main)]);
     expect(fs.readFileSync(registryFile(home)).equals(before)).toBe(true);
-  }, 20_000);
-
-  test("the dot follows the store, the project's digest setting and the recorded stop", async () => {
-    const home = makeCrankHome();
-    const root = registeredProject(home, tempDir("crank-a-"));
-    const newer = registeredProject(home, tempDir("crank-b-"));
-    seedMemory(root, [{ title: "seeded" }]);
-    plantMemory(newer, "newer");
-    const crankDir = path.join(root, ".crank");
-    const dash = await startDashboard(home, ["--port", "0"]);
-    const states = async () =>
-      ((await projects(dash)) as { projects: { memory: string; dot: string }[] }).projects.map(
-        (p) => [p.memory, p.dot],
-      );
-    saveConfig(crankDir, { ...loadConfig(crankDir), digest: true });
-    expect(await states()).toEqual([
-      ["open", "green"],
-      ["newer", "amber"],
-    ]);
-    stopDigests(home);
-    expect((await states())[0]).toEqual(["open", "amber"]);
-    saveConfig(crankDir, { ...loadConfig(crankDir), digest: false });
-    expect((await states())[0]).toEqual(["open", "grey"]);
   }, 20_000);
 
   test("a missing, unparsable or all-dropped registry answers an empty list", async () => {
@@ -1071,6 +1047,101 @@ describe("health view", () => {
       });
     }
   }, 20_000);
+
+  test("/health answers each project's status by the first problem it has", async () => {
+    const statusOf = async (dash: Awaited<ReturnType<typeof startDashboard>>, root: string) =>
+      (await memoryJson(dash, root, "health")).status;
+    const now = Date.now();
+
+    const home = makeModelHome();
+    const offOpen = registeredProject(home);
+    seedMemory(offOpen, [{ title: "seeded" }]);
+    const offMissing = registeredProject(home);
+    spoolEntry(home, "off-missing", offMissing, now);
+    const missing = registeredProject(home);
+    digestOn(missing);
+    spoolEntry(home, "missing", missing, now);
+    const newer = registeredProject(home);
+    digestOn(newer);
+    plantMemory(newer, "newer");
+    spoolEntry(home, "newer", newer, now);
+    const down = registeredProject(home);
+    digestOn(down);
+    seedMemory(down, [{ title: "seeded" }]);
+    spoolEntry(home, "down", down, now);
+    spoolEntry(home, "down-parked", down, now, true);
+    const healthy = registeredProject(home);
+    digestOn(healthy);
+    seedMemory(healthy, [{ title: "seeded" }]);
+
+    const digestsOff = {
+      tone: "off",
+      label: "Digests off",
+      fix: { text: "Digests are off in this checkout.", command: "crank-mem digest on" },
+    };
+    const dash = await startDashboard(home, ["--port", "0"]);
+    expect(await statusOf(dash, offOpen)).toEqual(digestsOff);
+    expect(await statusOf(dash, offMissing)).toEqual(digestsOff);
+    expect(await statusOf(dash, missing)).toEqual({
+      tone: "off",
+      label: "No memory yet",
+      fix: { text: "The first digest creates it." },
+    });
+    expect(await statusOf(dash, newer)).toEqual({
+      tone: "bad",
+      label: "Store needs a look",
+      fix: { text: "memory.db is newer than this version.", command: "crank-mem upgrade" },
+    });
+    expect(await statusOf(dash, down)).toEqual({
+      tone: "warn",
+      label: "Daemon down",
+      fix: {
+        text: "1 waiting with no daemon to digest them.",
+        command: "crank-mem digest resume",
+      },
+    });
+    expect(await statusOf(dash, healthy)).toEqual({ tone: "ok", label: "Healthy", fix: null });
+    stopDigests(home);
+    expect(await statusOf(dash, missing)).toEqual({
+      tone: "bad",
+      label: "Stopped",
+      fix: {
+        text: "Digests stopped: claude is not logged in. Log in, then resume.",
+        command: "crank-mem digest resume",
+      },
+    });
+
+    const home2 = makeCrankHome();
+    const parked = registeredProject(home2);
+    digestOn(parked);
+    seedMemory(parked, [{ title: "seeded" }]);
+    spoolEntry(home2, "parked", parked, now, true);
+    const keyword = registeredProject(home2);
+    digestOn(keyword);
+    seedMemory(keyword, [{ title: "seeded" }]);
+    const dash2 = await startDashboard(home2, ["--port", "0"]);
+    expect(await statusOf(dash2, parked)).toEqual({
+      tone: "warn",
+      label: "Parked entries",
+      fix: {
+        text: "1 parked: no digest job could finish them. Each returns when its session writes again.",
+      },
+    });
+    expect(await statusOf(dash2, keyword)).toEqual({
+      tone: "warn",
+      label: "Keyword search only",
+      fix: { text: "The local search model is not installed.", command: "crank-mem setup" },
+    });
+    stopDigests(home2, "credential");
+    expect(await statusOf(dash2, keyword)).toEqual({
+      tone: "bad",
+      label: "Stopped",
+      fix: {
+        text: "Digests stopped on a credential other than your Claude login.",
+        command: "crank-mem digest resume",
+      },
+    });
+  }, 60_000);
 });
 
 describe("activity", () => {

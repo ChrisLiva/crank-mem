@@ -367,11 +367,15 @@ export function spoolFiles(home: string): string[] {
   }
 }
 
-/** Record a `login` stop under a crank home, as the daemon does when claude is logged out. */
-export function stopDigests(home: string): void {
+/**
+ * Record a stop under a crank home, as the daemon does when claude is logged out
+ * (`login`) or runs on a credential other than the user's login (`credential`).
+ */
+export function stopDigests(home: string, reason: "login" | "credential" = "login"): void {
+  const detail = reason === "login" ? "Not logged in" : "API key in use";
   fs.writeFileSync(
     path.join(home, STOP_FILE),
-    JSON.stringify({ reason: "login", atMs: Date.now(), detail: "Not logged in" }),
+    JSON.stringify({ reason, atMs: Date.now(), detail }),
   );
 }
 

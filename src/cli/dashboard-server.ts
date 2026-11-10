@@ -5,9 +5,8 @@ import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { isProjectFile } from "../hooks/lib/hook-io.ts";
-import { memoryPath, memoryStatus, withReader, type MemoryRead } from "../hooks/lib/memory.ts";
+import { memoryPath, memoryStatus, withReader } from "../hooks/lib/memory.ts";
 import { readUsage } from "../hooks/lib/usage.ts";
-import { readStopState } from "../hooks/lib/user-state.ts";
 import {
   ACTIVITY_DAYS,
   isObservationType,
@@ -107,18 +106,8 @@ function projectById(id: string): Project | null {
   return listProjects().find((p) => p.id === id) ?? null;
 }
 
-/** Green: a readable store taking digests. Grey: digests off. Amber: anything needing a look. */
-function projectDot(root: string, memory: MemoryRead["status"]): "green" | "amber" | "grey" {
-  if (memory !== "open") return "amber";
-  if (!loadConfig(path.join(root, CRANK_DIR)).digest) return "grey";
-  return readStopState() === null ? "green" : "amber";
-}
-
 function projectsBody(): string {
-  const projects = listProjects().map((p) => {
-    const memory = memoryStatus(memoryPath(p.root));
-    return { ...p, dot: projectDot(p.root, memory), memory };
-  });
+  const projects = listProjects().map((p) => ({ ...p, memory: memoryStatus(memoryPath(p.root)) }));
   return JSON.stringify({ projects });
 }
 

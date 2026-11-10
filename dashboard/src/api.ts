@@ -26,6 +26,8 @@ export {
   type ProposalRow,
   type ProposalState,
   type StaleRow,
+  type Status,
+  type Tone,
   type UsageChannel,
   type UsageMetrics,
 } from "../../src/hooks/lib/wire";
@@ -48,8 +50,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export type Note = { note: string };
-export type Dot = "green" | "amber" | "grey";
-export type Project = { id: string; name: string; root: string; dot: Dot; memory: string };
+export type Project = { id: string; name: string; root: string; memory: string };
 
 /** One page of a list; `next` is the `before` that asks for the page after it. */
 export type Page<T> = { rows: T[]; next: string | null; mode?: "keyword" | "hybrid" } | Note;

@@ -10,11 +10,11 @@ import {
   type HealthSummary,
   type Note,
   type Project,
+  type Status,
 } from "@/api";
 import { DayColumns, Sparkline } from "@/components/chart";
 import { usePerProject } from "@/hooks/use-per-project";
 import { usePoll } from "@/hooks/use-poll";
-import { projectStatus, projectTone, type Status } from "@/status";
 import {
   Command,
   Dot,
@@ -63,7 +63,7 @@ export function HealthView({
       project: p,
       health: h,
       trend: trend === undefined || "note" in trend ? null : trend,
-      status: h === undefined ? null : projectStatus(h),
+      status: h === undefined ? null : h.status,
       selected: p.id === projectId,
       focus: () => focus(p.id),
     };
@@ -308,13 +308,13 @@ function ProjectDetail({
     if (asked.current === want) setActivity({ days: want, data });
     setRun("note" in runs ? null : (runs.rows[0] ?? null));
   }, [project.id, days]);
-  const status = health === undefined ? null : projectStatus(health);
+  const status = health === undefined ? null : health.status;
 
   return (
     <section aria-labelledby="detail-heading" className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="flex min-w-0 items-center gap-2.5">
-          <Dot tone={projectTone(project, health)} className="size-2.5" />
+          {status && <Dot tone={status.tone} className="size-2.5" />}
           <h2 id="detail-heading" className="text-lg font-semibold tracking-tight">
             {project.name}
           </h2>

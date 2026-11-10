@@ -1,11 +1,10 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { Check, Copy } from "lucide-react";
-import type { Note, Page } from "@/api";
+import type { Note, Page, Tone } from "@/api";
 import { Button } from "@/components/ui/button";
 import { usePoll } from "@/hooks/use-poll";
 import { useListKeys } from "@/hooks/use-list-keys";
-import type { Tone } from "@/status";
 
 export const LABEL = "text-xs font-medium text-muted-foreground";
 

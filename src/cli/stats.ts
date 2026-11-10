@@ -22,7 +22,7 @@ import {
 } from "./codex-trust.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
 import { daemonAlive, readParked, readSpool, type SpoolItem } from "../hooks/lib/spool.ts";
-import type { HealthSummary } from "../hooks/lib/wire.ts";
+import { projectStatus, type HealthSummary } from "../hooks/lib/wire.ts";
 import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
 import { latestSnapshot } from "../hooks/lib/store-upkeep.ts";
 import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
@@ -160,7 +160,7 @@ export async function captureSummary(root: string, config: CrankConfig): Promise
       opened.memory.close();
     }
   }
-  return {
+  const facts: Omit<HealthSummary, "status"> = {
     digest: !config.digest ? "off" : stop ? "stopped" : "on",
     stopReason: config.digest && stop ? stop.reason : null,
     daemonAlive: daemonAlive(),
@@ -170,6 +170,7 @@ export async function captureSummary(root: string, config: CrankConfig): Promise
     lastSnapshotMs: latestSnapshot(store)?.atMs ?? null,
     embedderReady: await embedderReady(),
   };
+  return { ...facts, status: projectStatus(facts) };
 }
 
 /**
