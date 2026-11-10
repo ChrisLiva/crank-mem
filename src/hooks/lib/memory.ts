@@ -4,7 +4,7 @@ import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { ISO_DATE } from "./bullets.ts";
 import { CRANK_DIR, errorMessage } from "./config.ts";
-import { runGit } from "./scanner.ts";
+import { runGit } from "./activity.ts";
 import { dailyUpkeep, saveCurrentStore, snapshotBeforeMigration } from "./store-upkeep.ts";
 import type {
   ConsolidationOutcome,
