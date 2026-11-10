@@ -1005,6 +1005,14 @@ describe("health view", () => {
       stopReason: null,
       spool: { waiting: 1, parked: 1 },
       store: "open",
+      status: {
+        tone: "warn",
+        label: "Daemon down",
+        fix: {
+          text: "1 waiting with no daemon to digest them.",
+          command: "crank-mem digest resume",
+        },
+      },
       memory: {
         observations: 2,
         lastDigestMs: threeHoursAgo,
@@ -1016,6 +1024,7 @@ describe("health view", () => {
     const run = runCli(root, ["stats"], { CRANK_HOME: home });
     expect(run.status).toBe(0);
     for (const line of [
+      "status:           Daemon down — 1 waiting with no daemon to digest them. Run: crank-mem digest resume",
       "spool:            2 waiting, 1 parked",
       "observations:     2",
       "proposals:        1",

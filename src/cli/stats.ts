@@ -175,14 +175,19 @@ export async function captureSummary(root: string, config: CrankConfig): Promise
 
 /**
  * `captureSummary` as the label and value pairs `stats` pads, except that the
- * spool row counts what waits user-wide.
+ * spool row counts what waits user-wide; the status row counts this project's.
  */
 async function captureRows(
   root: string,
   config: CrankConfig,
 ): Promise<[label: string, value: string][]> {
   const s = await captureSummary(root, config);
+  const { label, fix } = s.status;
   const rows: [label: string, value: string][] = [
+    [
+      "status",
+      fix === null ? label : `${label} — ${fix.text}${fix.command ? ` Run: ${fix.command}` : ""}`,
+    ],
     ["digest", s.digest === "stopped" ? `stopped (${s.stopReason})` : s.digest],
     ["daemon", s.daemonAlive ? "alive" : "not running"],
     ["spool", `${readSpool().length} waiting, ${readParked().length} parked`],
