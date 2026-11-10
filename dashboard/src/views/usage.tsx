@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { cn } from "cn";
 import {
   fetchUsage,
@@ -158,131 +158,194 @@ export function UsageView({
       <section aria-label="List" className="flex min-h-0 flex-col border-r">
         <div className="grid gap-2.5 border-b px-3 py-2.5">
           <h2 className="text-sm font-semibold">Usage</h2>
-          <div className="flex items-center gap-1.5">
-            {USAGE_DAYS.map((d) => (
-              <Button
-                key={d}
-                variant="outline"
-                size="xs"
-                aria-label={`${d} days`}
-                aria-pressed={days === d}
-                onClick={() => setDays(d)}
-                className={cn(days === d && "bg-accent text-accent-foreground")}
-              >
-                {d}d
-              </Button>
-            ))}
-            <span className="flex-1" />
-            <Button
-              variant="outline"
-              size="xs"
-              aria-pressed={manual}
-              onClick={() => setManual((m) => !m)}
-              className={cn(manual && "bg-accent text-accent-foreground")}
-            >
-              Include manual
-            </Button>
-          </div>
-          {metrics !== null && (
-            <>
-              {!empty && <DayGrid perDay={metrics.perDay} />}
-              <Shares metrics={metrics} />
-            </>
-          )}
+          <UsageControls
+            days={days}
+            setDays={setDays}
+            manual={manual}
+            setManual={setManual}
+            metrics={metrics}
+            empty={empty}
+          />
         </div>
         <div data-list className="min-h-0 flex-1 overflow-auto">
-          {error !== null ? (
-            <p className="px-4 py-8 text-center text-destructive">{error}</p>
-          ) : empty ? (
-            <p className="px-4 py-8 text-center text-muted-foreground">No usage recorded yet.</p>
-          ) : (
-            metrics !== null && (
-              <>
-                <div className={cn(LABEL, "px-3 pt-2.5 pb-1")}>Top queries</div>
-                {metrics.topQueries.length === 0 && (
-                  <p className="px-3 py-1.5 text-xs text-muted-foreground">No searches yet.</p>
-                )}
-                {metrics.topQueries.map((q) => (
-                  <Row key={q.query} selected={q.query === item} onClick={() => setItem(q.query)}>
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate font-mono text-xs">{q.query}</span>
-                      <span data-count className="tabular-nums">
-                        {q.count}
-                      </span>
-                    </span>
-                    <span className="flex gap-2 text-xs text-muted-foreground">
-                      <span>{q.meanResults.toFixed(1)} results on average</span>
-                      <span className="tabular-nums">{formatTime(q.lastMs)}</span>
-                    </span>
-                  </Row>
-                ))}
-                <Ranked
-                  label="Most surfaced"
-                  note={metrics.note}
-                  rows={metrics.surfaced.map((s) => ({
-                    key: String(s.id),
-                    count: s.count,
-                    body: (
-                      <>
-                        <ObservationLink id={s.id} open={openObservation} />
-                        {metrics.note === undefined && (
-                          <span className="min-w-0 truncate">{s.title}</span>
-                        )}
-                      </>
-                    ),
-                  }))}
-                />
-                <Ranked
-                  label="Files without memory"
-                  rows={metrics.filesWithoutMemory.map((f) => ({
-                    key: f.path,
-                    count: f.count,
-                    body: <span className="min-w-0 truncate font-mono">{f.path}</span>,
-                  }))}
-                />
-              </>
-            )
-          )}
+          <UsageList
+            error={error}
+            empty={empty}
+            metrics={metrics}
+            item={item}
+            setItem={setItem}
+            openObservation={openObservation}
+          />
         </div>
         <ListFoot start={metrics !== null && `${metrics.searches} searches`} />
       </section>
       <section aria-label="Detail" className="min-h-0 overflow-auto">
-        {chosen !== undefined && (
-          <div className="grid max-w-3xl gap-5 px-6 pt-5 pb-10">
-            <div className="grid gap-1.5">
-              <div className="flex flex-wrap gap-x-3.5 text-xs text-muted-foreground">
-                <span>{chosen.count} runs</span>
-                <span>{chosen.meanResults.toFixed(1)} results on average</span>
-                <span>last {formatTime(chosen.lastMs)}</span>
-              </div>
-              <h1 className="font-mono text-lg leading-snug font-semibold">{chosen.query}</h1>
-            </div>
-            <div className="grid gap-1.5">
-              <div className={LABEL}>Recent runs</div>
-              <ul className="grid rounded-lg border bg-card text-card-foreground">
-                {chosen.runs.map((run, i) => (
-                  <li
-                    key={`${run.ts}:${i}`}
-                    data-run
-                    className="flex flex-wrap gap-x-3 gap-y-1 border-b px-3.5 py-2 last:border-b-0"
-                  >
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {formatTime(run.ts)}
-                    </span>
-                    {run.ids.length === 0 ? (
-                      <span className="text-muted-foreground">no results</span>
-                    ) : (
-                      run.ids.map((id) => (
-                        <ObservationLink key={id} id={id} open={openObservation} />
-                      ))
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
+        {chosen !== undefined && <QueryDetail chosen={chosen} openObservation={openObservation} />}
       </section>
     </>
+  );
+}
+
+/** The day buttons, the manual toggle, and once metrics arrive, the day grid and the shares. */
+function UsageControls({
+  days,
+  setDays,
+  manual,
+  setManual,
+  metrics,
+  empty,
+}: {
+  days: UsageDays;
+  setDays: (days: UsageDays) => void;
+  manual: boolean;
+  setManual: Dispatch<SetStateAction<boolean>>;
+  metrics: UsageAnswer | null;
+  empty: boolean;
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-1.5">
+        {USAGE_DAYS.map((d) => (
+          <Button
+            key={d}
+            variant="outline"
+            size="xs"
+            aria-label={`${d} days`}
+            aria-pressed={days === d}
+            onClick={() => setDays(d)}
+            className={cn(days === d && "bg-accent text-accent-foreground")}
+          >
+            {d}d
+          </Button>
+        ))}
+        <span className="flex-1" />
+        <Button
+          variant="outline"
+          size="xs"
+          aria-pressed={manual}
+          onClick={() => setManual((m) => !m)}
+          className={cn(manual && "bg-accent text-accent-foreground")}
+        >
+          Include manual
+        </Button>
+      </div>
+      {metrics !== null && (
+        <>
+          {!empty && <DayGrid perDay={metrics.perDay} />}
+          <Shares metrics={metrics} />
+        </>
+      )}
+    </>
+  );
+}
+
+/** Top queries and the ranked lists, or the error or the empty message in their place. */
+function UsageList({
+  error,
+  empty,
+  metrics,
+  item,
+  setItem,
+  openObservation,
+}: {
+  error: string | null;
+  empty: boolean;
+  metrics: UsageAnswer | null;
+  item: string | null;
+  setItem: (item: string | null) => void;
+  openObservation: (id: number) => void;
+}) {
+  return error !== null ? (
+    <p className="px-4 py-8 text-center text-destructive">{error}</p>
+  ) : empty ? (
+    <p className="px-4 py-8 text-center text-muted-foreground">No usage recorded yet.</p>
+  ) : (
+    metrics !== null && (
+      <>
+        <div className={cn(LABEL, "px-3 pt-2.5 pb-1")}>Top queries</div>
+        {metrics.topQueries.length === 0 && (
+          <p className="px-3 py-1.5 text-xs text-muted-foreground">No searches yet.</p>
+        )}
+        {metrics.topQueries.map((q) => (
+          <Row key={q.query} selected={q.query === item} onClick={() => setItem(q.query)}>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate font-mono text-xs">{q.query}</span>
+              <span data-count className="tabular-nums">
+                {q.count}
+              </span>
+            </span>
+            <span className="flex gap-2 text-xs text-muted-foreground">
+              <span>{q.meanResults.toFixed(1)} results on average</span>
+              <span className="tabular-nums">{formatTime(q.lastMs)}</span>
+            </span>
+          </Row>
+        ))}
+        <Ranked
+          label="Most surfaced"
+          note={metrics.note}
+          rows={metrics.surfaced.map((s) => ({
+            key: String(s.id),
+            count: s.count,
+            body: (
+              <>
+                <ObservationLink id={s.id} open={openObservation} />
+                {metrics.note === undefined && <span className="min-w-0 truncate">{s.title}</span>}
+              </>
+            ),
+          }))}
+        />
+        <Ranked
+          label="Files without memory"
+          rows={metrics.filesWithoutMemory.map((f) => ({
+            key: f.path,
+            count: f.count,
+            body: <span className="min-w-0 truncate font-mono">{f.path}</span>,
+          }))}
+        />
+      </>
+    )
+  );
+}
+
+/** One query's counts and its recent runs. */
+function QueryDetail({
+  chosen,
+  openObservation,
+}: {
+  chosen: UsageMetrics["topQueries"][number];
+  openObservation: (id: number) => void;
+}) {
+  return (
+    <div className="grid max-w-3xl gap-5 px-6 pt-5 pb-10">
+      <div className="grid gap-1.5">
+        <div className="flex flex-wrap gap-x-3.5 text-xs text-muted-foreground">
+          <span>{chosen.count} runs</span>
+          <span>{chosen.meanResults.toFixed(1)} results on average</span>
+          <span>last {formatTime(chosen.lastMs)}</span>
+        </div>
+        <h1 className="font-mono text-lg leading-snug font-semibold">{chosen.query}</h1>
+      </div>
+      <div className="grid gap-1.5">
+        <div className={LABEL}>Recent runs</div>
+        <ul className="grid rounded-lg border bg-card text-card-foreground">
+          {chosen.runs.map((run, i) => (
+            <li
+              key={`${run.ts}:${i}`}
+              data-run
+              className="flex flex-wrap gap-x-3 gap-y-1 border-b px-3.5 py-2 last:border-b-0"
+            >
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {formatTime(run.ts)}
+              </span>
+              {run.ids.length === 0 ? (
+                <span className="text-muted-foreground">no results</span>
+              ) : (
+                run.ids.map((id) => <ObservationLink key={id} id={id} open={openObservation} />)
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }

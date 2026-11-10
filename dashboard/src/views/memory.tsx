@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { cn } from "cn";
 import {
   fetchObservation,
@@ -89,100 +89,184 @@ export function MemoryView({
         <div className="grid gap-2 border-b px-3 py-2.5">
           <h2 className="text-sm font-semibold">Memory</h2>
           {note === null && (
-            <div className="grid gap-1.5">
-              <Input
-                aria-label="Search"
-                placeholder="Search memory…"
-                value={qText}
-                onChange={(e) => setQText(e.target.value)}
-                className="h-8"
-              />
-              <div className="flex gap-1.5">
-                <select
-                  aria-label="Type"
-                  value={type ?? "all"}
-                  onChange={(e) =>
-                    setType(e.target.value === "all" ? null : (e.target.value as ObservationType))
-                  }
-                  className="h-8 rounded-md border border-input bg-transparent px-2 text-sm [&_option]:bg-popover"
-                >
-                  <option value="all">all</option>
-                  {OBSERVATION_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  aria-label="File"
-                  placeholder="File path"
-                  value={fileText}
-                  onChange={(e) => setFileText(e.target.value)}
-                  className="h-8 flex-1"
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  aria-label="Stale"
-                  aria-pressed={stale}
-                  onClick={() => setStale((s) => !s)}
-                  className={cn(stale && "bg-accent text-accent-foreground")}
-                >
-                  Stale
-                </Button>
-              </div>
-            </div>
+            <MemoryFilters
+              qText={qText}
+              setQText={setQText}
+              type={type}
+              setType={setType}
+              fileText={fileText}
+              setFileText={setFileText}
+              stale={stale}
+              setStale={setStale}
+            />
           )}
         </div>
         <div data-list className="min-h-0 flex-1 overflow-auto">
-          {note !== null ? (
-            <p className="px-4 py-8 text-center text-muted-foreground">{note}</p>
-          ) : error !== null ? (
-            <p className="px-4 py-8 text-center text-destructive">{error}</p>
-          ) : current !== null && current.rows.length === 0 ? (
-            <p className="px-4 py-8 text-center text-muted-foreground">Nothing matches.</p>
-          ) : (
-            lines.map((line) => (
-              <Row
-                key={line.id}
-                selected={String(line.id) === item}
-                onClick={() => setItem(String(line.id))}
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <span data-title className="min-w-0 flex-1 truncate font-medium">
-                    {line.title}
-                  </span>
-                  {line.stale && <span className="text-xs text-destructive">stale</span>}
-                </span>
-                <span className="flex gap-2 text-xs text-muted-foreground">
-                  <span>{line.type}</span>
-                  <span className="tabular-nums">{formatTime(line.createdAtMs)}</span>
-                  <span className="font-mono">#{line.id}</span>
-                </span>
-              </Row>
-            ))
-          )}
+          <MemoryList
+            note={note}
+            error={error}
+            current={current}
+            lines={lines}
+            item={item}
+            setItem={setItem}
+          />
         </div>
-        <ListFoot
-          start={
-            <>
-              {current !== null && <span>{current.rows.length} shown</span>}
-              {current?.mode != null && <Badge variant="outline">{current.mode}</Badge>}
-            </>
-          }
-          older={older}
-        />
+        <MemoryFoot current={current} older={older} />
       </section>
       <section aria-label="Detail" className="min-h-0 overflow-auto">
-        {note !== null ? (
-          <p className="px-6 py-8 text-muted-foreground">{note}</p>
-        ) : detail === null ? null : "note" in detail ? (
-          <p className="px-6 py-8 text-muted-foreground">{detail.note}</p>
-        ) : (
-          <ObservationDetail o={detail} />
-        )}
+        <MemoryDetail note={note} detail={detail} />
       </section>
     </>
+  );
+}
+
+/** The search box, the type select, the file filter and the stale toggle. */
+function MemoryFilters({
+  qText,
+  setQText,
+  type,
+  setType,
+  fileText,
+  setFileText,
+  stale,
+  setStale,
+}: {
+  qText: string;
+  setQText: (text: string) => void;
+  type: ObservationType | null;
+  setType: (type: ObservationType | null) => void;
+  fileText: string;
+  setFileText: (text: string) => void;
+  stale: boolean;
+  setStale: Dispatch<SetStateAction<boolean>>;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <Input
+        aria-label="Search"
+        placeholder="Search memory…"
+        value={qText}
+        onChange={(e) => setQText(e.target.value)}
+        className="h-8"
+      />
+      <div className="flex gap-1.5">
+        <select
+          aria-label="Type"
+          value={type ?? "all"}
+          onChange={(e) =>
+            setType(e.target.value === "all" ? null : (e.target.value as ObservationType))
+          }
+          className="h-8 rounded-md border border-input bg-transparent px-2 text-sm [&_option]:bg-popover"
+        >
+          <option value="all">all</option>
+          {OBSERVATION_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <Input
+          aria-label="File"
+          placeholder="File path"
+          value={fileText}
+          onChange={(e) => setFileText(e.target.value)}
+          className="h-8 flex-1"
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label="Stale"
+          aria-pressed={stale}
+          onClick={() => setStale((s) => !s)}
+          className={cn(stale && "bg-accent text-accent-foreground")}
+        >
+          Stale
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** The observation rows, or the note, the error or the empty message in their place. */
+function MemoryList({
+  note,
+  error,
+  current,
+  lines,
+  item,
+  setItem,
+}: {
+  note: string | null;
+  error: string | null;
+  current: { rows: ObservationLine[] } | null;
+  lines: ObservationLine[];
+  item: string | null;
+  setItem: (item: string | null) => void;
+}) {
+  return note !== null ? (
+    <p className="px-4 py-8 text-center text-muted-foreground">{note}</p>
+  ) : error !== null ? (
+    <p className="px-4 py-8 text-center text-destructive">{error}</p>
+  ) : current !== null && current.rows.length === 0 ? (
+    <p className="px-4 py-8 text-center text-muted-foreground">Nothing matches.</p>
+  ) : (
+    lines.map((line) => (
+      <Row
+        key={line.id}
+        selected={String(line.id) === item}
+        onClick={() => setItem(String(line.id))}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <span data-title className="min-w-0 flex-1 truncate font-medium">
+            {line.title}
+          </span>
+          {line.stale && <span className="text-xs text-destructive">stale</span>}
+        </span>
+        <span className="flex gap-2 text-xs text-muted-foreground">
+          <span>{line.type}</span>
+          <span className="tabular-nums">{formatTime(line.createdAtMs)}</span>
+          <span className="font-mono">#{line.id}</span>
+        </span>
+      </Row>
+    ))
+  );
+}
+
+/** The shown count and the search mode, with the button for older pages. */
+function MemoryFoot({
+  current,
+  older,
+}: {
+  current: { rows: ObservationLine[]; mode: string | null } | null;
+  older: (() => void) | null;
+}) {
+  return (
+    <ListFoot
+      start={
+        <>
+          {current !== null && <span>{current.rows.length} shown</span>}
+          {current?.mode != null && <Badge variant="outline">{current.mode}</Badge>}
+        </>
+      }
+      older={older}
+    />
+  );
+}
+
+/** The chosen observation, or the note that stands in for it. */
+function MemoryDetail({
+  note,
+  detail,
+}: {
+  note: string | null;
+  detail: Observation | Note | null;
+}) {
+  return note !== null ? (
+    <p className="px-6 py-8 text-muted-foreground">{note}</p>
+  ) : detail === null ? null : "note" in detail ? (
+    <p className="px-6 py-8 text-muted-foreground">{detail.note}</p>
+  ) : (
+    <ObservationDetail o={detail} />
   );
 }
 

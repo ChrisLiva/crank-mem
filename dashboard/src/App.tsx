@@ -100,95 +100,121 @@ export function App() {
         <span className="font-mono text-xs text-muted-foreground">{location.host}</span>
       </header>
       <main className="grid min-h-0 flex-1 grid-cols-[236px_minmax(340px,420px)_1fr]">
-        <nav
-          aria-label="Projects"
-          className="min-h-0 overflow-auto border-r bg-sidebar px-2 py-2.5"
-        >
-          <div className="px-2 pt-1 pb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            Projects
-          </div>
-          {projects.map((p) => {
-            const open = expanded.has(p.id);
-            return (
-              <div key={p.id}>
-                <button
-                  type="button"
-                  aria-expanded={open}
-                  title={p.root}
-                  onClick={() => toggle(p.id)}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent"
-                >
-                  <span
-                    className={cn(
-                      "inline-block w-3 text-muted-foreground transition-transform",
-                      open && "rotate-90",
-                    )}
-                  >
-                    ›
-                  </span>
-                  <span
-                    data-dot={p.dot}
-                    title={`health: ${p.dot}`}
-                    className={cn("size-[7px] flex-none rounded-full", DOT_CLASS[p.dot])}
-                  />
-                  <span className="truncate">{p.name}</span>
-                </button>
-                {open &&
-                  VIEWS.map(([view, label]) => {
-                    const active = place.project === p.id && place.view === view;
-                    return (
-                      <button
-                        key={view}
-                        type="button"
-                        aria-current={active || undefined}
-                        onClick={() => go(p.id, view)}
-                        className={cn(
-                          "flex w-full rounded-md py-1.5 pr-2 pl-[30px] text-left hover:bg-accent",
-                          active && "bg-accent font-semibold",
-                        )}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-              </div>
-            );
-          })}
-        </nav>
-        {place.project === null ? null : place.view === "memory" ? (
-          <MemoryView
-            key={place.project}
-            projectId={place.project}
-            item={place.item}
-            setItem={setItem}
-          />
-        ) : place.view === "curation" ? (
-          <CurationView
-            key={place.project}
-            projectId={place.project}
-            tab={place.tab}
-            setTab={setTab}
-            item={place.item}
-            setItem={setItem}
-            openObservation={openObservation}
-          />
-        ) : place.view === "health" ? (
-          <HealthView
-            key={place.project}
-            projectId={place.project}
-            item={place.item}
-            setItem={setItem}
-          />
-        ) : (
-          <UsageView
-            key={place.project}
-            projectId={place.project}
-            item={place.item}
-            setItem={setItem}
-            openObservation={openObservation}
-          />
-        )}
+        <ProjectNav projects={projects} expanded={expanded} place={place} toggle={toggle} go={go} />
+        <ViewSwitch
+          place={place}
+          setItem={setItem}
+          setTab={setTab}
+          openObservation={openObservation}
+        />
       </main>
     </div>
+  );
+}
+
+/** The project list, each project expanding to its views. */
+function ProjectNav({
+  projects,
+  expanded,
+  place,
+  toggle,
+  go,
+}: {
+  projects: Project[];
+  expanded: Set<string>;
+  place: Place;
+  toggle: (id: string) => void;
+  go: (projectId: string, view: View) => void;
+}) {
+  return (
+    <nav aria-label="Projects" className="min-h-0 overflow-auto border-r bg-sidebar px-2 py-2.5">
+      <div className="px-2 pt-1 pb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        Projects
+      </div>
+      {projects.map((p) => {
+        const open = expanded.has(p.id);
+        return (
+          <div key={p.id}>
+            <button
+              type="button"
+              aria-expanded={open}
+              title={p.root}
+              onClick={() => toggle(p.id)}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent"
+            >
+              <span
+                className={cn(
+                  "inline-block w-3 text-muted-foreground transition-transform",
+                  open && "rotate-90",
+                )}
+              >
+                ›
+              </span>
+              <span
+                data-dot={p.dot}
+                title={`health: ${p.dot}`}
+                className={cn("size-[7px] flex-none rounded-full", DOT_CLASS[p.dot])}
+              />
+              <span className="truncate">{p.name}</span>
+            </button>
+            {open &&
+              VIEWS.map(([view, label]) => {
+                const active = place.project === p.id && place.view === view;
+                return (
+                  <button
+                    key={view}
+                    type="button"
+                    aria-current={active || undefined}
+                    onClick={() => go(p.id, view)}
+                    className={cn(
+                      "flex w-full rounded-md py-1.5 pr-2 pl-[30px] text-left hover:bg-accent",
+                      active && "bg-accent font-semibold",
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** Columns 2 and 3: the view the place names, keyed by project so a switch starts it fresh. */
+function ViewSwitch({
+  place,
+  setItem,
+  setTab,
+  openObservation,
+}: {
+  place: Place;
+  setItem: (item: string | null) => void;
+  setTab: (tab: string) => void;
+  openObservation: (id: number) => void;
+}) {
+  return place.project === null ? null : place.view === "memory" ? (
+    <MemoryView key={place.project} projectId={place.project} item={place.item} setItem={setItem} />
+  ) : place.view === "curation" ? (
+    <CurationView
+      key={place.project}
+      projectId={place.project}
+      tab={place.tab}
+      setTab={setTab}
+      item={place.item}
+      setItem={setItem}
+      openObservation={openObservation}
+    />
+  ) : place.view === "health" ? (
+    <HealthView key={place.project} projectId={place.project} item={place.item} setItem={setItem} />
+  ) : (
+    <UsageView
+      key={place.project}
+      projectId={place.project}
+      item={place.item}
+      setItem={setItem}
+      openObservation={openObservation}
+    />
   );
 }
