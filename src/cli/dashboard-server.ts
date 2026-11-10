@@ -4,20 +4,17 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
+import { memoryPath, memoryStatus, withReader, type MemoryRead } from "../hooks/lib/memory.ts";
+import { readUsage } from "../hooks/lib/usage.ts";
+import { readStopState } from "../hooks/lib/user-state.ts";
 import {
-  memoryPath,
-  memoryStatus,
   isObservationType,
   isProposalState,
-  withReader,
   type ConsolidationRow,
-  type MemoryRead,
   type ObservationLine,
   type ProposalRow,
   type StaleRow,
-} from "../hooks/lib/memory.ts";
-import { readUsage } from "../hooks/lib/usage.ts";
-import { readStopState } from "../hooks/lib/user-state.ts";
+} from "../hooks/lib/wire.ts";
 import { EMBED_MODEL } from "../daemon/embedder.ts";
 import { queryVector } from "./recall.ts";
 import { registeredRoots } from "./registry.ts";

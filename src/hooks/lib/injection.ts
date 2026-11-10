@@ -14,12 +14,12 @@ import {
   memoryPath,
   memoryStatus,
   openMemory,
-  type ObservationLine,
 } from "./memory.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
 import type { CrankConfig } from "./config.ts";
 import { loadIndex, type AnatomyIndex } from "./store.ts";
 import type { UsageEvent } from "./usage.ts";
+import type { ObservationLine } from "./wire.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
 // file map, the code pointer, and the recall pointer when recallApplies) → staleness/drift/

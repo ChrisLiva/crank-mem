@@ -1,5 +1,6 @@
 import { localDate } from "../hooks/lib/memory.ts";
-import { USAGE_CHANNELS, type UsageChannel, type UsageLine } from "../hooks/lib/usage.ts";
+import type { UsageLine } from "../hooks/lib/usage.ts";
+import { USAGE_CHANNELS, type UsageChannel, type UsageMetrics } from "../hooks/lib/wire.ts";
 
 // The Usage view's numbers, computed from a store's usage lines over a window
 // of whole local days that ends today.
@@ -11,24 +12,6 @@ const RUNS = 10;
 /** A get or timeline this long after a search, in the same session, follows it through. */
 const FOLLOW_MS = 30 * 60 * 1000;
 const DELETED_TITLE = "(deleted)";
-
-export type UsageMetrics = {
-  perDay: { date: string; counts: Record<UsageChannel, number> }[];
-  searches: number;
-  zeroResultShare: number | null;
-  keywordShare: number | null;
-  followThrough: number | null;
-  topQueries: {
-    query: string;
-    count: number;
-    lastMs: number;
-    meanResults: number;
-    runs: { ts: number; ids: number[] }[];
-  }[];
-  surfaced: { id: number; count: number; title: string }[];
-  neverSurfacedShare: number | null;
-  filesWithoutMemory: { path: string; count: number }[];
-};
 
 type Line<C extends UsageChannel> = Extract<UsageLine, { channel: C }>;
 

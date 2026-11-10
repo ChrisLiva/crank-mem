@@ -1,6 +1,13 @@
 import { useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
-import { fetchUsage, USAGE_CHANNELS, USAGE_DAYS, type UsageDays, type UsageMetrics } from "@/api";
+import {
+  fetchUsage,
+  USAGE_CHANNELS,
+  USAGE_DAYS,
+  type UsageAnswer,
+  type UsageDays,
+  type UsageMetrics,
+} from "@/api";
 import { Button } from "@/components/ui/button";
 import { usePoll } from "@/hooks/use-poll";
 import { formatTime, LABEL, ListFoot, ObservationLink, Row, useSelection } from "./shared";
@@ -125,7 +132,7 @@ export function UsageView({
   const key = JSON.stringify([projectId, days, manual]);
   const keyRef = useRef(key);
   keyRef.current = key;
-  const [loaded, setLoaded] = useState<{ key: string; metrics: UsageMetrics } | null>(null);
+  const [loaded, setLoaded] = useState<{ key: string; metrics: UsageAnswer } | null>(null);
   const [error, setError] = useState<string | null>(null);
   usePoll(async () => {
     const asked = key;

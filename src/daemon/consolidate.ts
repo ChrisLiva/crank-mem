@@ -3,14 +3,10 @@ import * as path from "node:path";
 import { ARCHIVE_FILE, CEREBRUM_FILE, backupCerebrum } from "../hooks/lib/cerebrum-files.ts";
 import { CRANK_DIR, isObj } from "../hooks/lib/config.ts";
 import { basenameIndex, citationStatus } from "../hooks/lib/injection.ts";
-import {
-  localDate,
-  type ConsolidationOutcome,
-  type Memory,
-  type PendingWork,
-} from "../hooks/lib/memory.ts";
+import { localDate, type Memory, type PendingWork } from "../hooks/lib/memory.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
 import { writeStopState, writeTextAtomic } from "../hooks/lib/user-state.ts";
+import type { ConsolidationOutcome } from "../hooks/lib/wire.ts";
 import { applyEdits, numberBullets, type CerebrumEdit } from "./cerebrum-edit.ts";
 import { oneLine } from "./digest-prompt.ts";
 import { askClaude, type ModelRequest } from "./gateway.ts";

@@ -1,11 +1,11 @@
+import type { DigestSummary } from "../hooks/lib/memory.ts";
 import {
   OBSERVATION_TYPES,
   PROPOSAL_KINDS,
-  type DigestSummary,
   type Observation,
   type ObservationType,
   type ProposalKind,
-} from "../hooks/lib/memory.ts";
+} from "../hooks/lib/wire.ts";
 import { isObj } from "../hooks/lib/config.ts";
 import type { ModelRequest } from "./gateway.ts";
 

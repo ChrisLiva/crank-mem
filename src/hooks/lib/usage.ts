@@ -18,18 +18,6 @@ const USAGE_MAX_LIST = 100;
 
 export type UsageActor = { agent: "claude" | "codex" | "manual"; session: string | null };
 
-export const USAGE_CHANNELS = [
-  "session-start",
-  "subagent-start",
-  "file-history",
-  "search",
-  "timeline",
-  "get",
-  "outline",
-  "unfold",
-] as const;
-export type UsageChannel = (typeof USAGE_CHANNELS)[number];
-
 export type CodeOutcome = "ok" | "refused" | "no-reader" | "not-found";
 
 export type UsageEvent =

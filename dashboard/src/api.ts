@@ -1,3 +1,28 @@
+import type {
+  ConsolidationRow,
+  Observation,
+  ObservationLine,
+  ObservationType,
+  ProposalRow,
+  ProposalState,
+  StaleRow,
+  UsageMetrics,
+} from "../../src/hooks/lib/wire";
+
+export {
+  OBSERVATION_TYPES,
+  PROPOSAL_STATES,
+  USAGE_CHANNELS,
+  type ConsolidationRow,
+  type Observation,
+  type ObservationLine,
+  type ObservationType,
+  type ProposalRow,
+  type ProposalState,
+  type StaleRow,
+  type UsageMetrics,
+} from "../../src/hooks/lib/wire";
+
 /** A non-2xx answer from the dashboard server. */
 export class HttpError extends Error {
   constructor(
@@ -15,39 +40,10 @@ export async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-// These shapes repeat the server's (`src/cli/dashboard-server.ts`, `src/hooks/lib/memory.ts`) by
-// hand: the dashboard's tsconfig cannot resolve the `node:` imports under the repo's `src/`.
-
-/** The six observation types; schema v1 freezes the list. */
-export const OBSERVATION_TYPES = [
-  "bugfix",
-  "feature",
-  "refactor",
-  "change",
-  "discovery",
-  "decision",
-] as const;
-export type ObservationType = (typeof OBSERVATION_TYPES)[number];
-
 export type Note = { note: string };
 export type Dot = "green" | "amber" | "grey";
 export type Project = { id: string; name: string; root: string; dot: Dot; memory: string };
 
-export type ObservationLine = {
-  id: number;
-  createdAtMs: number;
-  type: ObservationType;
-  title: string;
-  stale: boolean;
-};
-export type Observation = ObservationLine & {
-  sessionId: string;
-  narrative: string;
-  facts: string[];
-  filesRead: string[];
-  filesModified: string[];
-  staleFlag: { atMs: number; reason: string } | null;
-};
 /** One page of a list; `next` is the `before` that asks for the page after it. */
 export type Page<T> = { rows: T[]; next: string | null; mode?: "keyword" | "hybrid" } | Note;
 export type ObservationFilters = {
@@ -95,33 +91,6 @@ export async function fetchObservation(
   }
 }
 
-export const PROPOSAL_STATES = ["pending", "accepted", "rejected", "expired"] as const;
-export type ProposalState = (typeof PROPOSAL_STATES)[number];
-export type ProposalRow = {
-  id: number;
-  kind: "preference" | "memory";
-  bullet: string;
-  state: ProposalState;
-  reason: string | null;
-  createdAtMs: number;
-  decidedAtMs: number | null;
-};
-export type StaleRow = {
-  id: number;
-  title: string;
-  staleAtMs: number;
-  reason: string;
-  reviewed: boolean;
-};
-export type ConsolidationRow = {
-  id: number;
-  startedAtMs: number;
-  finishedAtMs: number;
-  outcome: "ok" | "conflict" | "rejected" | "retry" | "stopped";
-  model: string | null;
-  costUsd: number;
-};
-
 function beforeParams(before: string | null): URLSearchParams {
   const params = new URLSearchParams();
   if (before !== null) params.set("before", before);
@@ -154,46 +123,16 @@ export async function fetchHealth(projectId: string): Promise<[label: string, va
   return (await getJson<{ rows: [string, string][] }>(projectPath(projectId, "/health"))).rows;
 }
 
-export const USAGE_CHANNELS = [
-  "session-start",
-  "subagent-start",
-  "file-history",
-  "search",
-  "timeline",
-  "get",
-  "outline",
-  "unfold",
-] as const;
-export type UsageChannel = (typeof USAGE_CHANNELS)[number];
 export const USAGE_DAYS = [7, 30, 90] as const;
 export type UsageDays = (typeof USAGE_DAYS)[number];
-
-/** The fields of the server's `UsageMetrics` (`src/cli/usage-metrics.ts`) the Usage view reads. */
-export type UsageMetrics = {
-  perDay: { date: string; counts: Record<UsageChannel, number> }[];
-  searches: number;
-  zeroResultShare: number | null;
-  keywordShare: number | null;
-  followThrough: number | null;
-  neverSurfacedShare: number | null;
-  topQueries: {
-    query: string;
-    count: number;
-    lastMs: number;
-    meanResults: number;
-    runs: { ts: number; ids: number[] }[];
-  }[];
-  surfaced: { id: number; count: number; title: string }[];
-  filesWithoutMemory: { path: string; count: number }[];
-  /** The store's note when memory.db did not open, so `surfaced` has no titles. */
-  note?: string;
-};
+/** `UsageMetrics`, with the store's note when memory.db did not open, so `surfaced` has no titles. */
+export type UsageAnswer = UsageMetrics & { note?: string };
 
 export function fetchUsage(
   projectId: string,
   days: UsageDays,
   manual: boolean,
-): Promise<UsageMetrics> {
+): Promise<UsageAnswer> {
   const params = new URLSearchParams({ days: String(days), manual: manual ? "1" : "0" });
   return getJson(projectPath(projectId, "/usage", params));
 }

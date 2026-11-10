@@ -3,16 +3,15 @@ import { redact } from "../daemon/redact.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 import {
   formatLine,
-  isObservationType,
   localDate,
   memoryPath,
   NO_MEMORY_NOTE,
   withReader,
   type MemoryReader,
-  type Observation,
   type SearchQuery,
 } from "../hooks/lib/memory.ts";
 import { cliActor, recordUsage } from "../hooks/lib/usage.ts";
+import { isObservationType, type Observation } from "../hooks/lib/wire.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";

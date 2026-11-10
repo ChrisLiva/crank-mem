@@ -6,6 +6,17 @@ import { ISO_DATE } from "./bullets.ts";
 import { CRANK_DIR, errorMessage } from "./config.ts";
 import { runGit } from "./scanner.ts";
 import { dailyUpkeep, saveCurrentStore, snapshotBeforeMigration } from "./store-upkeep.ts";
+import type {
+  ConsolidationOutcome,
+  ConsolidationRow,
+  Observation,
+  ObservationLine,
+  ObservationType,
+  ProposalKind,
+  ProposalRow,
+  ProposalState,
+  StaleRow,
+} from "./wire.ts";
 
 // The memory store: <project>/.crank/memory.db, one SQLite file per project
 // holding digests and their observations. node:sqlite loads through
@@ -37,18 +48,6 @@ export type StoreMigration =
   | { status: "migrated"; from: number; to: number }
   | { status: "failed"; detail: string };
 
-/** SCHEMA_V1's observations.type CHECK repeats this list as a literal; schema v1 freezes it. */
-export const OBSERVATION_TYPES = [
-  "bugfix",
-  "feature",
-  "refactor",
-  "change",
-  "discovery",
-  "decision",
-] as const;
-export type ObservationType = (typeof OBSERVATION_TYPES)[number];
-export const isObservationType = (value: string): value is ObservationType =>
-  OBSERVATION_TYPES.some((t) => t === value);
 export type Position = { uuid: string; timestamp: string };
 export type SessionKey = { id: string; agent: "claude"; transcriptPath: string };
 export type DigestSummary = {
@@ -66,28 +65,6 @@ export type NewObservation = {
   filesRead: string[];
   filesModified: string[];
 };
-export const PROPOSAL_KINDS = ["preference", "memory"] as const;
-export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
-export const PROPOSAL_STATES = ["pending", "accepted", "rejected", "expired"] as const;
-export type ProposalState = (typeof PROPOSAL_STATES)[number];
-export const isProposalState = (value: string): value is ProposalState =>
-  PROPOSAL_STATES.some((s) => s === value);
-export type ProposalRow = {
-  id: number;
-  kind: ProposalKind;
-  bullet: string;
-  state: ProposalState;
-  reason: string | null;
-  createdAtMs: number;
-  decidedAtMs: number | null;
-};
-export type StaleRow = {
-  id: number;
-  title: string;
-  staleAtMs: number;
-  reason: string;
-  reviewed: boolean;
-};
 export type DigestInput = {
   session: SessionKey;
   expected: Position | null;
@@ -98,21 +75,6 @@ export type DigestInput = {
   observations: NewObservation[];
   proposals: { kind: ProposalKind; bullet: string }[];
   stale: { id: number; reason: string }[];
-};
-export type ObservationLine = {
-  id: number;
-  createdAtMs: number;
-  type: ObservationType;
-  title: string;
-  stale: boolean;
-};
-export type Observation = ObservationLine & {
-  sessionId: string;
-  narrative: string;
-  facts: string[];
-  filesRead: string[];
-  filesModified: string[];
-  staleFlag: { atMs: number; reason: string } | null;
 };
 type SearchHit = ObservationLine;
 export type SearchQuery = {
@@ -132,15 +94,6 @@ type MemoryStats = {
   pendingProposals: number;
   staleRows: number;
   lastConsolidation: { startedMs: number; outcome: ConsolidationOutcome } | null;
-};
-export type ConsolidationOutcome = "ok" | "conflict" | "rejected" | "retry" | "stopped";
-export type ConsolidationRow = {
-  id: number;
-  startedAtMs: number;
-  finishedAtMs: number;
-  outcome: ConsolidationOutcome;
-  model: string | null;
-  costUsd: number;
 };
 export type PendingWork = {
   proposals: { id: number; kind: ProposalKind; bullet: string }[];
