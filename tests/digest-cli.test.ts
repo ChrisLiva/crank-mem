@@ -40,6 +40,7 @@ function localConfigPath(root: string): string {
 
 const ON = "crank-mem: digests on. They run on your Claude login through `claude -p`.\n";
 const OFF = "crank-mem: digests off. Stored memory stays readable.\n";
+const NOT_READY = "crank-mem: warning: search by meaning is not ready; run `crank-mem setup`.\n";
 const USAGE = "Usage: crank-mem digest on|off|resume\n";
 
 describe("digest on|off", () => {
@@ -48,9 +49,10 @@ describe("digest on|off", () => {
     const shared = fs.readFileSync(path.join(root, ".crank/config.json"));
     expect("digest" in readConfig(root)).toBe(false);
     expect(fs.existsSync(localConfigPath(root))).toBe(false);
-    const on = runCli(root, ["digest", "on"]);
+    const on = runCli(root, ["digest", "on"], { CRANK_HOME: makeCrankHome() });
     expect(on.status).toBe(0);
     expect(on.stdout).toBe(ON);
+    expect(on.stderr).toBe(NOT_READY);
     expect(JSON.parse(fs.readFileSync(localConfigPath(root), "utf-8"))).toEqual({ digest: true });
     expect(fs.readFileSync(path.join(root, ".crank/config.json")).equals(shared)).toBe(true);
     const off = runCli(root, ["digest", "off"]);

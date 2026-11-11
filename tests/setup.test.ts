@@ -304,19 +304,7 @@ describe("upgrade installs packages", () => {
   });
 });
 
-const NOT_READY = "crank-mem: warning: search by meaning is not ready; run `crank-mem setup`.\n";
-
 describe("digest on and the embedder", () => {
-  test("warns when the model is absent and still turns digests on", () => {
-    const root = initedCopy();
-    const run = runCli(root, ["digest", "on"], { CRANK_HOME: makeCrankHome() });
-    expect(run.status).toBe(0);
-    expect(run.stderr).toBe(NOT_READY);
-    expect(
-      JSON.parse(fs.readFileSync(path.join(root, ".crank/config.local.json"), "utf-8")),
-    ).toEqual({ digest: true });
-  });
-
   test("says nothing when the model is in place", () => {
     const root = initedCopy();
     const run = runCli(root, ["digest", "on"], { CRANK_HOME: makeModelHome() });
