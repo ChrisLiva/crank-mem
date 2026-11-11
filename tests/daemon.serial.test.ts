@@ -18,6 +18,7 @@ import {
   spoolFiles,
   startDaemon,
   stopDigests,
+  stopState,
   userRecord,
   waitFor,
   type FakeCall,
@@ -266,7 +267,7 @@ describe("daemon ownership (real processes)", () => {
 
 describe("daemon sweeps", () => {
   test("the capture-to-recall journey: Stop, SessionEnd, one sweep, then search and get", () => {
-    const root = digestProject({}, temps);
+    const root = digestProject({ redact: false }, temps);
     const e = setup();
     const transcript = transcriptCopy("s1");
     expect(
@@ -295,6 +296,7 @@ describe("daemon sweeps", () => {
       CLAUDE_CODE_USE_BEDROCK: "1",
       ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
       CLAUDE_CODE_MAX_RETRIES: "9",
+      CRANK_REDACT: "0",
     });
     expect(run.status).toBe(0);
     expect(e.fake.calls().length).toBe(1);
@@ -309,6 +311,7 @@ describe("daemon sweeps", () => {
       "TMPDIR",
       "USER",
     ]);
+    expect(call.env.CLAUDE_CODE_MAX_RETRIES).toBe("0");
     expect(spoolFiles(e.home)).toEqual([]);
     expect(fs.existsSync(path.join(e.home, "daemon.json"))).toBe(false);
 
@@ -449,9 +452,11 @@ describe("daemon retry holds", () => {
       ended: true,
     });
     daemon(["--sweep-ms", "25", "--run-timeout-ms", "1000", "--retry-ms", "200"], e);
-    await waitFor(() => e.fake.calls().length >= 3, 25_000);
+    // A fourth call: three timeouts counted as rejections would have parked the entry.
+    await waitFor(() => e.fake.calls().length >= 4, 25_000);
     for (const call of e.fake.calls()) expect(call.endMs).toBe(null);
     expect(spoolFiles(e.home)).toEqual(["s1.json"]);
+    expect(stopState(e.home)).toBeNull();
   }, 30_000);
 
   test("a hold belongs to one stem, a refusal holds like a failure, and exit 0 clears it", async () => {
@@ -587,9 +592,12 @@ describe("daemon recovery", () => {
         root,
         e.env,
       );
-    expect(stop().status).toBe(0);
+    const first = stop();
+    expect(first.status).toBe(0);
+    expect(first.stdout).toBe("");
     await waitFor(() => daemonPid(e.home) !== undefined, 20_000);
     const killed = daemonPid(e.home)!;
+    expect(alive(killed)).toBe(true);
     killDaemon(e.home);
     await waitFor(() => !alive(killed), 20_000);
     fs.writeFileSync(

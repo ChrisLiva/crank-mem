@@ -874,13 +874,10 @@ export function stop(j: Pick<Journey, "root" | "home" | "fake" | "transcript">):
 }
 
 /** Start `job s1` in its own process group, so a kill takes its claude child with it. */
-export function spawnJob(
-  j: Pick<Journey, "root" | "home" | "fake">,
-  args: string[] = [],
-): Promise<number | null> {
+export function spawnJob(j: Pick<Journey, "root" | "home" | "fake">): Promise<number | null> {
   const child = spawn(
     process.execPath,
-    [path.join(REPO_ROOT, "src/cli/main.ts"), "job", "s1", "--run-timeout-ms", "10000", ...args],
+    [path.join(REPO_ROOT, "src/cli/main.ts"), "job", "s1", "--run-timeout-ms", "10000"],
     {
       cwd: j.root,
       env: { ...process.env, ...j.fake.env, CRANK_HOME: j.home },

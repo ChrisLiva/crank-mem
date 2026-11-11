@@ -43,8 +43,10 @@ describe("digest signals (black-box)", () => {
   test("Stop writes a spool entry keyed by the transcript stem", () => {
     const root = digestProject();
     const home = makeCrankHome();
-    const run = stop(root, home);
+    // Inside a stop_hook_active continuation, Stop still signals and prints nothing.
+    const run = stop(root, home, true);
     expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
     const entry = readEntry(home);
     expect(entry).toMatchObject({
       transcriptPath: TRANSCRIPT,
@@ -82,27 +84,6 @@ describe("digest signals (black-box)", () => {
 
     expect(stop(root, home).status).toBe(0);
     expect(readEntry(home).ended).toBe(false);
-  });
-
-  test("Stop signals even inside a stop_hook_active continuation, and prints nothing", () => {
-    const root = digestProject();
-    const home = makeCrankHome();
-    const run = stop(root, home, true);
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
-    expect(readEntry(home).ended).toBe(false);
-  });
-
-  test("with digest off, neither hook writes a spool", () => {
-    const root = makeCrankProject();
-    const home = makeCrankHome();
-    expect(stop(root, home).status).toBe(0);
-    expect(
-      runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, {
-        CRANK_HOME: home,
-      }).status,
-    ).toBe(0);
-    expect(fs.existsSync(path.join(home, "spool"))).toBe(false);
   });
 
   test("a digest: true committed in config.json alone writes no spool entry", () => {

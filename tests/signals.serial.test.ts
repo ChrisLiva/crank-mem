@@ -65,21 +65,6 @@ function sleepMs(ms: number): Promise<void> {
 }
 
 describe("hook-started daemon (black-box)", () => {
-  test("a Stop with digest on starts a daemon that outlives the hook", async () => {
-    const root = digestProject({ clone_root: REPO_ROOT });
-    const { home, env } = daemonEnv();
-    const run = runHook(
-      STOP,
-      JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT }),
-      root,
-      env,
-    );
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
-    await waitFor(() => daemonPid(home) !== undefined, 20_000);
-    expect(alive(daemonPid(home)!)).toBe(true);
-  }, 30_000);
-
   test("a SessionEnd replaces a daemon whose heartbeat is older than 90 s", async () => {
     const root = digestProject({ clone_root: REPO_ROOT });
     const { home, env } = daemonEnv();
@@ -117,12 +102,17 @@ describe("hook-started daemon (black-box)", () => {
       JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), clone_root: REPO_ROOT }),
     );
     expect(runHook(STOP, payload(offRoot), offRoot, off.env).status).toBe(0);
+    expect(
+      runHook(SESSION_END, JSON.stringify(claudeSessionEnd(offRoot, TRANSCRIPT)), offRoot, off.env)
+        .status,
+    ).toBe(0);
 
     await sleepMs(1_500);
     expect(fs.existsSync(path.join(stopped.home, "daemon.json"))).toBe(false);
     // A daemon would have swept the entry away, since its transcript does not exist.
     expect(spoolFiles(stopped.home)).toEqual(["abc-1.json"]);
     expect(fs.existsSync(path.join(off.home, "daemon.json"))).toBe(false);
+    expect(fs.existsSync(path.join(off.home, "spool"))).toBe(false);
   }, 10_000);
 
   test.each([
