@@ -7,6 +7,7 @@ import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { serveDashboard } from "./dashboard-server.ts";
 import { dashboardCurrent, dashboardDir } from "./setup.ts";
+import { cliVersion } from "./version.ts";
 
 // `crank-mem dashboard`: serve the built dashboard on 127.0.0.1 until a
 // signal. Its only write is <crank home>/dashboard.json, the session token.
@@ -72,7 +73,7 @@ export async function run(args: string[]): Promise<number> {
     return 1;
   }
   const distDir = path.join(dashboardDir(), "dist");
-  if (!dashboardCurrent(distDir)) {
+  if (!dashboardCurrent(distDir, cliVersion())) {
     console.error("crank-mem: the dashboard is not built — run `crank-mem setup`.");
     return 1;
   }

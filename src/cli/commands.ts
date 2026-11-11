@@ -89,10 +89,10 @@ export const COMMANDS = {
     bool: ["no-open"],
   },
   upgrade: {
-    summary: "Re-vendor hooks and repair their wiring after a git pull",
-    usage: "Usage: crank-mem upgrade",
+    summary: "Repair this project's install, or every registered project with --all",
+    usage: "Usage: crank-mem upgrade [--all]",
     value: [],
-    bool: [],
+    bool: ["all"],
   },
   uninstall: {
     summary: "Remove all wiring, offer backup restore",

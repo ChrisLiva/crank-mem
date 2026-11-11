@@ -194,6 +194,41 @@ export function fakeBun(log: string): string {
   return dir;
 }
 
+export type Call = { argv: string; cwd: string };
+
+/**
+ * A fake package manager named `name` that appends each call's argv and cwd,
+ * then exits `exit`, or 1 on the call `failOn` names.
+ */
+export function fakeTool(
+  name: "bun" | "npm",
+  exit: number,
+  failOn?: { argv: string; cwd?: string },
+): { dir: string; calls(): Call[] } {
+  const dir = tempDir(`crank-fake${name}-`);
+  const log = path.join(dir, "calls");
+  const match = failOn
+    ? `[ "$*" = "${failOn.argv}" ]${failOn.cwd ? ` && [ "$(pwd -P)" = "${failOn.cwd}" ]` : ""}`
+    : "false";
+  fs.writeFileSync(
+    path.join(dir, name),
+    `#!/bin/sh\nprintf '%s\\t%s\\n' "$*" "$(pwd -P)" >> "${log}"\necho "${name} failed on purpose" >&2\nif ${match}; then exit 1; fi\nexit ${exit}\n`,
+    { mode: 0o755 },
+  );
+  const calls = () =>
+    fs.existsSync(log)
+      ? fs
+          .readFileSync(log, "utf-8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => {
+            const [argv, cwd] = l.split("\t");
+            return { argv: argv!, cwd: cwd! };
+          })
+      : [];
+  return { dir, calls };
+}
+
 /**
  * An installed copy of this repo at `<home>/versions/<version>`: `src/`, `bin/`, `bun.lock` and
  * `package.json` (its version set to `version`), the repo's `node_modules` linked in, and a
