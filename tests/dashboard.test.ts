@@ -400,18 +400,6 @@ describe("dashboard server", () => {
 });
 
 describe("project registry", () => {
-  test("init registers the root, and each upgrade keeps exactly one entry for it", () => {
-    const home = makeCrankHome();
-    const root = registeredProject(home);
-    for (let i = 0; i < 2; i++) {
-      expect(runCli(root, ["upgrade"], { CRANK_HOME: home }).status).toBe(0);
-    }
-    const file = registry(home);
-    expect(file.version).toBe(1);
-    expect(file.projects.map((p) => p.root)).toEqual([root]);
-    expect(typeof file.projects[0]!.addedAtMs).toBe("number");
-  });
-
   test("uninstall with --keep-crank or --delete-crank removes only its own root", () => {
     for (const flag of ["--keep-crank", "--delete-crank"]) {
       const home = makeCrankHome();
@@ -696,10 +684,17 @@ describe("memory view", () => {
       [newer, MEMORY_NEWER_NOTE],
       [unreadable, MEMORY_UNREADABLE_NOTE],
     ] as const) {
-      for (const route of ["observations", "observations/1"]) {
+      for (const route of [
+        "observations",
+        "observations/1",
+        "proposals",
+        "stale",
+        "consolidations",
+      ]) {
         expect(await memoryJson(dash, root, route)).toEqual({ note });
       }
     }
+    expect(await memoryJson(dash, missing, "activity?days=7")).toEqual({ note: NO_MEMORY_NOTE });
     const lines = (await memoryJson(dash, seeded, "observations")).rows as Line[];
     expect(lines.map((l) => [l.id, l.title])).toEqual([[id!, "Still here"]]);
   }, 20_000);
@@ -951,25 +946,6 @@ describe("curation view", () => {
       expect([query, res.status]).toEqual([query, 400]);
     }
   }, 30_000);
-
-  test("a store that does not open answers every Curation route with the Memory view's note", async () => {
-    const home = makeCrankHome();
-    const missing = registeredCopy(home);
-    const newer = registeredCopy(home);
-    plantMemory(newer, "newer");
-    const unreadable = registeredCopy(home);
-    plantMemory(unreadable, "unreadable");
-    const dash = await startDashboard(home, ["--port", "0"]);
-    for (const [root, note] of [
-      [missing, NO_MEMORY_NOTE],
-      [newer, MEMORY_NEWER_NOTE],
-      [unreadable, MEMORY_UNREADABLE_NOTE],
-    ] as const) {
-      for (const route of ["proposals", "stale", "consolidations"]) {
-        expect(await memoryJson(dash, root, route)).toEqual({ note });
-      }
-    }
-  }, 20_000);
 });
 
 function digestOn(root: string): void {
@@ -1128,12 +1104,5 @@ describe("activity", () => {
     const month = (await memoryJson(dash, root, "activity?days=30")) as { days: unknown[] };
     expect(month.days).toHaveLength(30);
     expect((await dash.get(`/api/projects/${projectId(root)}/activity?days=5`)).status).toBe(400);
-  }, 20_000);
-
-  test("a project without a store answers the store's note", async () => {
-    const home = makeCrankHome();
-    const root = registeredCopy(home);
-    const dash = await startDashboard(home, ["--port", "0"]);
-    expect(await memoryJson(dash, root, "activity?days=7")).toEqual({ note: NO_MEMORY_NOTE });
   }, 20_000);
 });

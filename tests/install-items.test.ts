@@ -241,10 +241,15 @@ test("upgrade writes no trust entries when the config records review", () => {
   expect(fs.readFileSync(toml, "utf-8")).toBe('model = "gpt-5.6"\n');
 });
 
+function registry(home: string): {
+  version: number;
+  projects: { root: string; addedAtMs: number }[];
+} {
+  return JSON.parse(fs.readFileSync(path.join(home, "projects.json"), "utf-8"));
+}
+
 function registeredRoots(home: string): string[] {
-  return JSON.parse(fs.readFileSync(path.join(home, "projects.json"), "utf-8")).projects.map(
-    (p: { root: string }) => p.root,
-  );
+  return registry(home).projects.map((p) => p.root);
 }
 
 for (const git of ["commit", "ignore", "exclude"] as const) {
@@ -264,6 +269,10 @@ for (const git of ["commit", "ignore", "exclude"] as const) {
     expect(up.status).toBe(0);
     expect(up.stdout.split("\n").filter((l) => l.startsWith("  "))).toEqual([]);
     expect(fs.readdirSync(backups)).toEqual(backupsBefore);
+    const registered = registry(home);
+    expect(registered.version).toBe(1);
+    expect(registered.projects.map((p) => p.root)).toEqual([real]);
+    expect(typeof registered.projects[0]!.addedAtMs).toBe("number");
     const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
     expect(un.status).toBe(0);
     expect(snapshot(root)).toEqual(before);
@@ -823,23 +832,6 @@ for (const c of treeCases) {
     c.check(p.root, hooks, before, up.lines);
   });
 }
-
-test("a version-changing upgrade re-vendors and ends on the upgraded line", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  initExcludeNoTrust(root, codexHome, home);
-  writeConfig(root, { ...readConfig(root), vendored_version: "0.0.1" });
-  const stop = path.join(root, ".crank/hooks/stop.ts");
-  fs.utimesSync(stop, OLD_MTIME, OLD_MTIME);
-  const before = backupsListing(root);
-  const up = cli(root, codexHome, home, "upgrade");
-  expect(up.status).toBe(0);
-  expect(lastLine(up.stdout)).toBe(`crank-mem: upgraded vendored hooks 0.0.1 → ${cliVersion()}`);
-  expect(up.stdout).not.toContain("re-vendored");
-  expect(readConfig(root).vendored_version).toBe(cliVersion());
-  expect(fs.statSync(stop).mtimeMs).not.toBe(OLD_MTIME.getTime());
-  expect(fs.existsSync(path.join(newBackup(root, before), "hooks/stop.ts"))).toBe(true);
-}, 20_000);
 
 test("a failed re-vendor prints no summary line and exits 1", () => {
   const { root, codexHome } = makeProject();

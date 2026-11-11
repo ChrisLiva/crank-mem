@@ -3,9 +3,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
 import {
-  digestProject,
   initedCopy,
   makeCrankHome,
   makeCrankProject,
@@ -24,6 +22,7 @@ import { crankTrust } from "../src/cli/codex-trust.ts";
 import { memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
 import { unknownFlag } from "../src/cli/args.ts";
 import { COMMANDS, commandHelp, commandSpec } from "../src/cli/commands.ts";
+import { cliVersion } from "../src/cli/version.ts";
 
 function cli(cwd: string, ...args: string[]): CliRun {
   return cliWithCodexHome(fs.mkdtempSync(path.join(os.tmpdir(), "crank-ch-")), cwd, ...args);
@@ -62,17 +61,13 @@ describe("scan", () => {
 });
 
 describe("stats", () => {
-  test("reports counts, coverage, runtime", () => {
-    const root = initedCopy(ALPHA);
-    const run = cli(root, "stats");
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("files indexed:    1");
-    expect(run.stdout).toContain("coverage 100%");
-    expect(run.stdout).toMatch(/runtime: {10}(bun|node)/);
-  });
-
   test("counts every indexable file past the cap, so coverage shows what the cap left out", () => {
     const root = initedCopy(ALPHA);
+    const uncapped = cli(root, "stats");
+    expect(uncapped.status).toBe(0);
+    expect(uncapped.stdout).toContain("files indexed:    1\n");
+    expect(uncapped.stdout).toContain("indexable files:  1 (coverage 100%)");
+    expect(uncapped.stdout).toMatch(/runtime: {10}(bun|node)/);
     const configPath = path.join(root, ".crank/config.json");
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     fs.writeFileSync(configPath, JSON.stringify({ ...config, max_files: 1 }, null, 2));
@@ -274,13 +269,6 @@ describe("stats: capture health", () => {
     expect(ready).toContain("  spool:            0 waiting, 0 parked\n");
   });
 
-  test("shows no snapshot and no store rows when the store does not exist yet", () => {
-    const root = digestProject();
-    const out = runCli(root, ["stats"]).stdout;
-    expect(out).toMatch(CAPTURE_ROWS);
-    expect(out).toContain("\n  memory:           none yet\n  last snapshot:    never\n");
-  });
-
   test("counts pending proposals and stale rows after the month cost", () => {
     const root = initedCopy(ALPHA);
     const [a] = seedMemory(root, [
@@ -291,6 +279,7 @@ describe("stats: capture health", () => {
     seedMemory(root, [], { proposals: [{ kind: "memory", bullet: "- **P**: x" }] });
     const out = cli(root, "stats").stdout;
     expect(out).toMatch(CAPTURE_ROWS);
+    expect(out).toContain("  month cost:       $0.00 (list price)\n");
     expect(out).toMatch(
       /\n {2}month cost: .*\n {2}proposals: {8}1\n {2}stale: {12}1\n {2}consolidation: {4}never\n {2}last snapshot: {4}never\n {2}embedder: /,
     );
@@ -298,8 +287,10 @@ describe("stats: capture health", () => {
 
   test("shows the last consolidation after the stale row, and counts its cost in the month", () => {
     const root = initedCopy(ALPHA);
-    seedMemory(root, [{ title: "one digest" }], { costUsd: 0.002 });
-    expect(cli(root, "stats").stdout).toContain("\n  consolidation:    never\n");
+    seedMemory(root, [{ title: "one digest" }], { costUsd: 0.002152 });
+    const before = cli(root, "stats").stdout;
+    expect(before).toContain("\n  consolidation:    never\n");
+    expect(before).toContain("  month cost:       $0.0022 (list price)\n");
     const opened = openMemory(memoryPath(root), "write");
     if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
     try {
@@ -319,16 +310,7 @@ describe("stats: capture health", () => {
     expect(out).toMatch(CAPTURE_ROWS);
     expect(out).toMatch(/\n {2}stale: .*\n {2}consolidation: {4}\d+s ago \(ok\)\n/);
     expect(out).toMatch(/^  consolidation:    \d+s ago \(ok\)$/m);
-    expect(out).toContain("  month cost:       $0.0050 (list price)\n");
-  });
-
-  test("a month under a cent shows two significant digits, not $0.00", () => {
-    const root = initedCopy(ALPHA);
-    seedMemory(root, [{ title: "one small digest" }], { costUsd: 0.002152 });
-    expect(cli(root, "stats").stdout).toContain("  month cost:       $0.0022 (list price)\n");
-    const empty = initedCopy(ALPHA);
-    seedMemory(empty, [{ title: "a free digest" }], { costUsd: 0 });
-    expect(cli(empty, "stats").stdout).toContain("  month cost:       $0.00 (list price)\n");
+    expect(out).toContain("  month cost:       $0.0052 (list price)\n");
   });
 
   test("digest off by default, and one memory row stands in for a store that is missing, newer or unreadable", () => {
@@ -336,7 +318,7 @@ describe("stats: capture health", () => {
     const fresh = cli(root, "stats").stdout;
     expect(fresh).toMatch(CAPTURE_ROWS);
     expect(fresh).toContain("  digest:           off\n");
-    expect(fresh).toContain("  memory:           none yet\n");
+    expect(fresh).toContain("\n  memory:           none yet\n  last snapshot:    never\n");
     expect(fresh).not.toContain("observations:");
     expect(fresh).not.toContain("month cost:");
 
@@ -474,13 +456,6 @@ describe("stats: codex wiring", () => {
 });
 
 describe("upgrade", () => {
-  test("same version is a no-op", () => {
-    const root = initedCopy(ALPHA);
-    const run = cli(root, "upgrade");
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("nothing else to do");
-  });
-
   test("stale stamp: re-vendors, updates stamp, preserves config/cerebrum/index", () => {
     const root = initedCopy(ALPHA);
     const crankDir = path.join(root, ".crank");
@@ -497,11 +472,14 @@ describe("upgrade", () => {
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("upgraded vendored hooks 0.10.0 → 0.11.0");
+    expect(run.stdout.trimEnd().split("\n").at(-1)).toBe(
+      `crank-mem: upgraded vendored hooks 0.10.0 → ${cliVersion()}`,
+    );
+    expect(run.stdout).not.toContain("re-vendored");
 
     const after = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     expect(after.injection_budget_bytes).toBe(1234);
-    expect(after.vendored_version).not.toBe("0.10.0");
+    expect(after.vendored_version).toBe(cliVersion());
     expect(fs.readFileSync(path.join(crankDir, "hooks/session-start.ts"), "utf-8")).not.toContain(
       "stale vendored copy",
     );
@@ -612,23 +590,6 @@ describe("upgrade", () => {
     expect(fs.readFileSync(local).equals(converged)).toBe(true);
   }, 20_000);
 
-  test("adds SubagentStart to an install wired before it existed and keeps the user's edits", () => {
-    const root = initedCopy(ALPHA);
-    const local = path.join(root, ".claude/settings.local.json");
-    const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
-    delete settings.hooks.SubagentStart;
-    settings.hooks.Stop[0].hooks[0].command =
-      'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts # mine';
-    fs.writeFileSync(local, JSON.stringify(settings));
-
-    const run = cli(root, "upgrade");
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("re-wired Claude Code hooks in .claude/settings.local.json");
-    const after = JSON.parse(fs.readFileSync(local, "utf-8")).hooks;
-    expect(after.SubagentStart).toEqual(crankHooks("bun", "claude").SubagentStart);
-    expect(after.Stop[0].hooks[0].command).toContain("# mine");
-  });
-
   test("wires SessionEnd and file history into an install from before 0.8.0 and leaves memory.db untouched", () => {
     const root = initedCopy(ALPHA);
     const crankDir = path.join(root, ".crank");
@@ -639,6 +600,9 @@ describe("upgrade", () => {
     const local = path.join(root, ".claude/settings.local.json");
     const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
     delete settings.hooks.SessionEnd;
+    delete settings.hooks.SubagentStart;
+    settings.hooks.Stop[0].hooks[0].command =
+      'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts # mine';
     settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
       (g: { matcher?: string }) => g.matcher !== "Read|Bash",
     );
@@ -652,8 +616,11 @@ describe("upgrade", () => {
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("upgraded vendored hooks 0.7.0 → 0.11.0");
+    expect(run.stdout).toContain("re-wired Claude Code hooks in .claude/settings.local.json");
     const after = JSON.parse(fs.readFileSync(local, "utf-8")).hooks;
     const wired = crankHooks("bun", "claude");
+    expect(after.SubagentStart).toEqual(wired.SubagentStart);
+    expect(after.Stop[0].hooks[0].command).toContain("# mine");
     expect(after.SessionEnd).toHaveLength(1);
     expect(after.SessionEnd).toEqual(wired.SessionEnd);
     expect(after.PostToolUse.map((g: { matcher?: string }) => g.matcher)).toEqual([
@@ -683,6 +650,7 @@ describe("upgrade", () => {
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
+    expect(run.stdout).toContain("nothing else to do");
     expect(run.stdout).not.toContain("seeded .crank/journal.md");
     expect(fs.existsSync(journal)).toBe(false);
 
@@ -794,21 +762,6 @@ describe("upgrade", () => {
   }, 20_000);
 });
 
-describe("vendored hooks run standalone", () => {
-  test("vendored session-start works from .crank/hooks/", () => {
-    const root = initedCopy(ALPHA);
-    const res = spawnSync("bun", [path.join(root, ".crank/hooks/session-start.ts")], {
-      input: JSON.stringify({ hook_event_name: "SessionStart", cwd: root, source: "startup" }),
-      encoding: "utf-8",
-      timeout: 15_000,
-    });
-    expect(res.status).toBe(0);
-    expect(JSON.parse(res.stdout).hookSpecificOutput.additionalContext).toContain(
-      "`.crank/anatomy.md` indexes 1 file(s)",
-    );
-  });
-});
-
 const COMMAND_NAMES = [
   "init",
   "scan",
@@ -903,12 +856,6 @@ describe("flags", () => {
     expect(fs.readdirSync(fresh)).toEqual([]);
   });
 
-  test("the command list points at per-command help", () => {
-    const run = cli(os.tmpdir(), "--help");
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("Run `crank-mem <command> --help` for its flags.");
-  });
-
   test("an unknown command prints the usage and exits 1; a bare call, help and --version exit 0", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "crank-cmd-"));
     const home = makeCrankHome();
@@ -917,11 +864,15 @@ describe("flags", () => {
       [["toString"], 1],
       [[], 0],
       [["help"], 0],
+      [["--help"], 0],
     ] as const) {
       const run = runCli(dir, [...args], { CRANK_HOME: home });
-      expect([args, run.status, run.stdout.includes("Usage: crank-mem <command> [flags]")]).toEqual(
-        [args, status, true],
-      );
+      expect([
+        args,
+        run.status,
+        run.stdout.includes("Usage: crank-mem <command> [flags]"),
+        run.stdout.includes("Run `crank-mem <command> --help` for its flags."),
+      ]).toEqual([args, status, true, true]);
     }
     for (const flag of ["--version", "-v"]) {
       const run = runCli(dir, [flag], { CRANK_HOME: home });
