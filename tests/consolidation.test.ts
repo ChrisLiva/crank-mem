@@ -476,26 +476,23 @@ describe("consolidation edge outcomes", () => {
     return { root, a: a!, file };
   }
 
-  /** The first job reads `src/p.ts`, flags A and proposes P; `rest` holds every later `-p` call's scenario in order. */
+  /** Seeds proposal P and A's stale flag, then the first job reads `src/p.ts`; `rest` holds every later `-p` call's scenario in order. */
   function run(
     root: string,
     a: number,
     rest: FakeScenario[],
     opts: { skipJob?: boolean; env?: Record<string, string>; args?: string[] } = {},
   ): Journey {
+    seedMemory(root, [], {
+      proposals: [{ kind: "memory", bullet: P }],
+      stale: [{ id: a, reason: "a moved" }],
+    });
     const transcript =
       fs.readFileSync(FIXTURE, "utf8") +
       "\n" +
       readRecord("p-read", "2026-01-02T03:04:31.000Z", path.join(root, "src/p.ts")) +
       "\n";
-    const first = {
-      lines: okStreamOf({
-        ...SAMPLE_DIGEST,
-        proposals: [{ kind: "memory", bullet: P }],
-        stale: [{ id: a, reason: "a moved" }],
-      }),
-    };
-    const j = journey(root, [first, ...rest], { transcript, ...opts });
+    const j = journey(root, [laterDigest(), ...rest], { transcript, ...opts });
     if (!opts.skipJob) expect(j.job.status).toBe(0);
     return j;
   }
@@ -652,7 +649,7 @@ describe("consolidation edge outcomes", () => {
     expect(lines[0]!.startsWith("crank-mem: consolidation skipped (")).toBe(true);
     const stats = statsOf(j);
     expect(stats).toContain("\n  consolidation:    never\n");
-    expect(stats).toContain(`\n  observations:     ${SAMPLE_DIGEST.observations.length + 1}\n`);
+    expect(stats).toContain("\n  observations:     1\n");
   }, 30_000);
 
   test("the backup keeps the newest 5 copies", () => {
