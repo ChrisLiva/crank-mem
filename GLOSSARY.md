@@ -19,8 +19,12 @@ One working copy of a project, such as a teammate's copy or a linked worktree.
 _Avoid_: Clone, copy, worktree
 
 **Clone**:
-The copy of the crank-mem repository that the crank-mem command runs from.
+The copy of the crank-mem repository made by `git clone` and run from its own directory, used for development.
 _Avoid_: Install, source, checkout
+
+**Installed copy**:
+A release unpacked under `<crank home>/versions/`, run through the `current` link.
+_Avoid_: Install dir, release dir
 
 ### Agents and sessions
 
@@ -260,12 +264,16 @@ _Avoid_: Stale hooks, version mismatch
 A copy of a file taken before crank-mem changes it, such as an agent's settings file or the cerebrum.
 _Avoid_: Snapshot, copy
 
+**Upgrade**:
+Repairing one project's install, or every registered project's with `--all`.
+_Avoid_: Update, migrate
+
 **Git mode**:
 The choice made at init of how git treats crank-mem's files in a project: commit, ignore or exclude.
 _Avoid_: Tracking mode
 
 **Registry**:
-The per-user list of projects that the dashboard shows.
+The per-user list of projects that the dashboard shows and that `crank-mem upgrade --all` repairs.
 _Avoid_: Project list, index
 
 **Dashboard**:

@@ -10,30 +10,43 @@ start and when an agent reads a file it covers. After a digest, consolidation
 checks what sessions proposed against the code and keeps `cerebrum.md`; no
 hook asks the agent to keep memory. Advisory-only — hooks always exit 0.
 
-## Install
+## For users
+
+### Install
 
 ```sh
-git clone <this repo> ~/GitHub/crank-mem
-ln -s ~/GitHub/crank-mem/bin/crank-mem ~/.local/bin/crank-mem
-crank-mem setup          # once per machine: packages, the dashboard build and the local search model
+curl -fsSL https://github.com/ChrisLiva/crank-mem/releases/latest/download/install.sh | sh
 cd <your project> && crank-mem init
 ```
 
-`setup` installs the clone's packages, then the `dashboard/` packages, builds
-the dashboard into `dashboard/dist/` and stamps the build with the clone's
-version, then downloads the search model.
+The installer downloads the latest release into `~/.crank/versions/<version>`,
+checks it against its `.sha256` (a mismatch installs nothing), then runs that
+version's `crank-mem self-install`. It installs the release's production
+packages, points `~/.crank/current` at the version, links `crank-mem` into
+`~/.local/bin`, downloads the local search model, and offers to add the bin
+dir to your shell's rc file when it is not on PATH. Pass flags after `sh -s --`:
+`--to v<version>` installs that tagged release instead of the latest,
+`--bin-dir <dir>` links `crank-mem` into another directory, and `--yes`
+accepts every question:
 
-Upgrade = `git pull` in the clone, then `crank-mem upgrade` in each project.
-It re-vendors the hooks copied into `.crank/hooks/`, installs the clone's
-packages, rebuilds the dashboard when its build stamp is not the clone's
-version (a failed build prints a warning and the upgrade goes on), adds the
+```sh
+curl -fsSL https://github.com/ChrisLiva/crank-mem/releases/latest/download/install.sh | sh -s -- --to v0.12.0 --bin-dir ~/bin
+```
+
+Run over an install from a clone, `self-install` replaces a `crank-mem` link
+that points into the clone and offers to repoint every registered project at
+`~/.crank/current`.
+
+To update, re-run the install line, then `crank-mem upgrade --all`, which
+repairs every project in `~/.crank/projects.json`. `crank-mem upgrade` in one
+project repairs that project. It re-vendors the hooks copied into `.crank/hooks/`, adds the
 `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`,
 `Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the wired Claude settings file, adds hook wiring the install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
 wrote to the current form, and removes crank hooks from the Claude settings
 file the git mode does not use, since wiring in both runs every hook twice.
 It brings every item back to the choices init recorded in `.crank/config.json`:
 when init wired Codex it re-wires `.codex/hooks.json` and the `[features]`
-snippet in `.codex/config.toml`, it re-vendors `.crank/hooks/` whenever it differs from the clone,
+snippet in `.codex/config.toml`, it re-vendors `.crank/hooks/` whenever it differs from the running crank-mem,
 and it re-seeds a missing `cerebrum.md`. With `--codex-trust write` it
 recomputes the trusted hashes only when one is missing or stale. A failed
 repair prints a warning, every other repair still runs, and the upgrade exits 1.
@@ -54,13 +67,9 @@ Codex ask once for a hooks review: open codex in the project and accept it.
 An install made with `--codex-trust write` skips that, because upgrade
 recomputes the trusted hashes.
 
-Requires bun, or node >= 23.6 (runs TypeScript directly). The dashboard is the
-one built part, and `crank-mem setup` builds it. Hooks
-import only `node:` modules. Three packages each load only when a command needs
-them: `@huggingface/transformers` for search by meaning, and `web-tree-sitter`
-with `@vscode/tree-sitter-wasm` for `outline` and `unfold`.
+Requires bun, or node >= 23.6 (runs TypeScript directly).
 
-## Commands
+### Commands
 
 - `crank-mem init` — wire hooks into `.claude`/`.codex`, add the `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`, `Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the Claude settings file so agents run the recall and code-reading commands without a prompt, seed `.crank/`, first scan; removes crank hooks from the other Claude settings file
 - `crank-mem scan` — full index rebuild
@@ -71,13 +80,14 @@ with `@vscode/tree-sitter-wasm` for `outline` and `unfold`.
 - `crank-mem outline <file>` — print a source file's symbols as folded source with start-end line ranges, members under their class; a long outline ends with a `--from <line>` command for the next page
 - `crank-mem unfold <file> <symbol|line>` — print one symbol in full with line numbers and its doc comment, by bare or qualified name or by any line inside it; every match prints
 - `crank-mem restore-memory [<file>]` — put a `memory.db` snapshot back: the named file, or the newest one in `.crank/backups/memory/`. It checks the snapshot's integrity and schema version, saves the current store as a snapshot first so the restore can be undone, then migrates the restored store to this version
-- `crank-mem setup` — install the clone's packages, build the dashboard into `dashboard/dist/`, and download the local search model into `~/.crank/models`
+- `crank-mem setup` — install crank-mem's packages, build the dashboard into `dashboard/dist/`, and download the local search model into `~/.crank/models`; an installed copy installs only production packages and skips the dashboard build, since its release ships one
 - `crank-mem stats` — index report; memory health (cerebrum bullets injected against total, preferences left out, the oldest bullet left out, cited paths that still exist, days since the last audit); capture health (a status line naming the first problem and the command that fixes it, digest on, off or stopped, daemon, spool waiting and parked, store counts, last digest, the month's cost at list price, pending `proposals`, `stale` rows, the last `consolidation` and its outcome, `last snapshot`, embedder); whether Codex threads got the injection and whether its hook trust is current
 - `crank-mem dashboard` — serve a read-only memory dashboard on `127.0.0.1` until Ctrl-C: a Health board of every registered project (capture status, the command that fixes a stalled one, cost and 30-day digests), then each project's Health, Curation, Usage and Memory views, with per-day charts in Health and Usage. It prints `crank-mem dashboard: http://127.0.0.1:<port>/?token=<token>` and opens that URL in the browser; the token, kept in `~/.crank/dashboard.json`, trades for a session cookie. `--port <n>` picks the port (default `38700` plus your uid mod 100), and `--no-open` skips the browser. It refuses until `setup` has built the dashboard
-- `crank-mem upgrade` — re-vendor hooks and repair their wiring after a `git pull`, rebuild the dashboard when its build is for another version, and add the project to `~/.crank/projects.json`, the list the dashboard shows
+- `crank-mem upgrade [--all]` — re-vendor hooks and repair their wiring after an update, and add the project to `~/.crank/projects.json`, the list the dashboard shows; `--all` installs crank-mem's packages once, then repairs every project in that list, skipping a missing root and a project whose anatomy lock is held
+- `crank-mem self-uninstall` — remove the installed crank-mem: stop the daemon, offer to run `crank-mem uninstall` in every registered project (`--yes` accepts), then remove `~/.crank/versions/`, the `current` link, the `crank-mem` link in the bin dir (`--bin-dir <dir>`, default `~/.local/bin`) and the PATH block in your shell rc file. `--purge` also removes the state crank-mem keeps in `~/.crank` (the spool, models, registry, dashboard token and daemon files) and nothing another tool keeps there
 - `crank-mem uninstall` — remove all wiring, offer backup restore: `--restore` puts each project file crank-mem changed back as it was before crank-mem first changed it and deletes the files crank-mem created, while files outside the project, such as `~/.codex/config.toml`, only lose crank-mem's entries; `--delete-crank` deletes only the files crank-mem writes in `.crank/`, `memory.db` and its `-wal` and `-shm` files included, and removes the directory only when nothing else is left in it; it exits 1, naming the file, when it cannot remove crank-mem's entries from a file (one that is not valid JSON, or one it cannot read or write)
 
-## Layout under `.crank/`
+### Layout under `.crank/`
 
 `anatomy-index.json` (data), `anatomy.md` (human/agent view), `cerebrum.md`
 (semantic memory, kept by consolidation), `cerebrum-archive.md` (bullets
@@ -98,7 +108,7 @@ lock file, the debug log and files another tool writes into `.crank/` stay
 out of git. `init` backs up a `.crank/.gitignore` that another tool wrote
 before replacing it.
 
-## Subagents
+### Subagents
 
 Claude Code fires `SessionStart` only in the main session, so crank-mem wires
 `SubagentStart` too. Each `general-purpose`, `Explore`, `Plan` and
@@ -108,7 +118,7 @@ pointer to `crank-mem outline` and `unfold`, and, when the project has a
 readable `memory.db` or digests are running, a recall pointer to
 `crank-mem search`, `timeline` and `get`; custom and plugin agents get nothing. The parent session does not see it. See ADR 0007.
 
-## Digests
+### Digests
 
 `crank-mem digest on` turns digests on for a checkout of a project. It writes
 the switch to the gitignored `.crank/config.local.json`, so a teammate's checkout
@@ -164,7 +174,7 @@ restore-memory` puts one back.
 The same daily pass deletes observations flagged stale more than 90 days ago,
 so a flag left standing for 90 days ends that observation's retention.
 
-## What gets indexed
+### What gets indexed
 
 When the project root holds `.git`, the file list comes from
 `git ls-files -co --exclude-standard`, so gitignored files stay out. Two
@@ -184,7 +194,7 @@ such as `packages/web` in a monorepo: it also gets no churn ranking. When the ca
 git, gives the indexed count against the total; `crank-mem stats` counts every
 indexable file without the cap.
 
-## Audit skill
+### Audit skill
 
 A bundled agent skill, `crank-mem-audit`, reconciles memory with reality: it
 mines recent Claude Code and Codex sessions (it asks how many days back to
@@ -208,7 +218,7 @@ in Codex. An audit is dated by its backup directory under
 `.crank/backups/`, the one that holds only copies of the memory files:
 `cerebrum.md`, `journal.md` and `cerebrum-archive.md`.
 
-## Debugging
+### Debugging
 
 Hooks are advisory-only and silent by design. Their stderr reaches only the
 terminal, never the model, so a failing hook leaves no record in the project.
@@ -235,5 +245,55 @@ the only way to tell it apart from "nothing to write"), `walk-fallback` (git lis
 `CRANK_DEBUG=0` forces it off. The log is gitignored, capped at 1 MB then
 restarted, never contains sensitive paths, and can never fail a session — a
 write error is swallowed like any other advisory failure.
+
+## For development
+
+### From a clone
+
+```sh
+git clone <this repo> ~/GitHub/crank-mem
+ln -s ~/GitHub/crank-mem/bin/crank-mem ~/.local/bin/crank-mem
+crank-mem setup          # once per machine: packages, the dashboard build and the local search model
+cd <your project> && crank-mem init
+```
+
+`setup` installs the clone's packages, then the `dashboard/` packages, builds
+the dashboard into `dashboard/dist/` and stamps the build with the clone's
+version, then downloads the search model.
+
+Projects initialized from a clone record the clone, not `~/.crank/current`.
+To update, `git pull` in the clone, then `crank-mem upgrade --all`. In a clone
+`upgrade` also installs the clone's packages and rebuilds the dashboard when
+its build stamp is not the clone's version; a failed build prints a warning
+and the upgrade goes on. `self-install` and `self-uninstall` refuse to run
+from a clone.
+
+### Checks
+
+- `bun test` — the whole suite; it needs `crank-mem setup` run once on the
+  machine, since some tests read the real search model and the
+  `dashboard/node_modules` it installs
+- `bun run typecheck` — `tsc` over the CLI and the dashboard
+- `bun run format:check` — oxfmt; `bun run format` rewrites
+
+Run the full suite as `caffeinate -i bun run test`: four parallel workers,
+then the `*.serial.test.ts` files. `docs/testing-load.md` holds the baseline
+and how to read a timeout under load.
+
+### Dashboard build
+
+The page is a Vite + React package in `dashboard/`, the one built part.
+`cd dashboard && bun run build` empties `dashboard/dist/` and drops its
+`.crank-version` stamp, so `crank-mem dashboard` refuses until
+`crank-mem setup` or `crank-mem upgrade` restamps it. Hooks import only
+`node:` modules. Three packages each load only when a command needs them:
+`@huggingface/transformers` for search by meaning, and `web-tree-sitter` with
+`@vscode/tree-sitter-wasm` for `outline` and `unfold`.
+
+### Releasing
+
+A `v*` tag push runs `.github/workflows/release.yml`, which checks the tag
+against `package.json`, packs the release, smoke-installs it on Linux and
+macOS and publishes the GitHub Release. The steps are in `docs/releasing.md`.
 
 See `docs/adr/` for probe-verified agent behavior this design rests on.

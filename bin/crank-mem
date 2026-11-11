@@ -1,6 +1,8 @@
 #!/bin/sh
 # crank-mem launcher: prefer bun, else node >= 23.6 (both run .ts directly).
-# Lives in the clone; put it on PATH via symlink:
+# An installed copy runs it through <crank home>/current; `crank-mem self-install`
+# links it onto PATH as ~/.local/bin/crank-mem -> <crank home>/current/bin/crank-mem.
+# For development, link a clone's launcher instead:
 #   ln -s "<repo>/bin/crank-mem" ~/.local/bin/crank-mem
 DIR=$(CDPATH= cd -- "$(dirname -- "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)
 CLI="$DIR/../src/cli/main.ts"

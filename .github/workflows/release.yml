@@ -1,0 +1,106 @@
+# A `v*` tag push gates the tag, packs the release, smoke-installs it with
+# install.sh on Linux and macOS, then publishes the GitHub Release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: tag matches package.json
+        run: |
+          expected="v$(bun -p 'require("./package.json").version')"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json version ($expected)" >&2
+            exit 1
+          fi
+      - run: bun install --frozen-lockfile
+      - run: cd dashboard && bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run format:check
+
+  pack:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: cd dashboard && bun install --frozen-lockfile && bun run build
+      # The check job proved the tag is v + package.json's version.
+      - run: printf '%s' "${GITHUB_REF_NAME#v}" > dashboard/dist/.crank-version
+      - run: bun scripts/pack-release.ts --out out --dist dashboard/dist
+      - run: cp install.sh out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: out/
+          if-no-files-found: error
+
+  smoke:
+    needs: pack
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: out/
+      - name: install the release with install.sh, then init a project
+        run: |
+          set -eu
+          R="$RUNNER_TEMP/R"
+          mkdir -p "$R/latest/download"
+          cp out/crank-mem.tar.gz out/crank-mem.tar.gz.sha256 out/release.json out/install.sh "$R/latest/download/"
+
+          bun tests/fixtures/release-server.ts --dir "$R" --log "$RUNNER_TEMP/requests.log" > "$RUNNER_TEMP/server.out" &
+          PORT=""
+          for _ in $(seq 1 50); do
+            PORT=$(sed -n 's/^PORT \([0-9]*\)$/\1/p' "$RUNNER_TEMP/server.out")
+            [ -n "$PORT" ] && break
+            sleep 0.2
+          done
+          [ -n "$PORT" ] || { echo "release server printed no PORT line" >&2; exit 1; }
+
+          export CRANK_HOME="$RUNNER_TEMP/crank"
+          CRANK_RELEASE_URL="http://127.0.0.1:$PORT" sh install.sh --yes --bin-dir "$RUNNER_TEMP/bin"
+          cat "$RUNNER_TEMP/requests.log"
+
+          P="$RUNNER_TEMP/project"
+          mkdir -p "$P"
+          git init -q "$P"
+          cd "$P"
+          "$RUNNER_TEMP/bin/crank-mem" init --yes
+          OUT=$(echo "{\"cwd\":\"$P\",\"hook_event_name\":\"SessionStart\",\"source\":\"startup\"}" | bun .crank/hooks/session-start.ts)
+          echo "$OUT" | grep -q additionalContext || { echo "session-start printed no additionalContext: $OUT" >&2; exit 1; }
+          "$RUNNER_TEMP/bin/crank-mem" stats
+
+  release:
+    needs: [smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: out/
+      - run: gh release create "$GITHUB_REF_NAME" --generate-notes out/crank-mem.tar.gz out/crank-mem.tar.gz.sha256 out/release.json out/install.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
