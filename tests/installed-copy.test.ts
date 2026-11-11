@@ -199,6 +199,7 @@ describe("the update notice", () => {
     } finally {
       writeUpdate(DUE);
     }
+    expect(S.requests()).toEqual([]);
   });
 
   test("each human-run command prints the notice on stderr once", () => {
@@ -213,6 +214,7 @@ describe("the update notice", () => {
       expect({ args, status: run.status }).toEqual({ args, status: 0 });
       expect({ args, count: run.stderr.split(NOTICE).length - 1 }).toEqual({ args, count: 1 });
     }
+    expect(S.requests()).toEqual([]);
   }, 60_000);
 
   test("agent-facing commands never print it", () => {
@@ -230,6 +232,7 @@ describe("the update notice", () => {
         stderr: expect.stringContaining("is available"),
       });
     }
+    expect(S.requests()).toEqual([]);
   }, 60_000);
 
   test("a clone prints no notice", () => {
@@ -237,6 +240,7 @@ describe("the update notice", () => {
     expect(run.status).toBe(0);
     expect(run.stdout).not.toMatch(/^  update:/m);
     expect(run.stderr).not.toContain("is available");
+    expect(S.requests()).toEqual([]);
   });
 
   test("the session-start hook never carries it", () => {
@@ -247,9 +251,6 @@ describe("the update notice", () => {
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("additionalContext");
     expect(run.stdout).not.toContain("is available");
-  });
-
-  test("no command above fetches, though a check is due", () => {
     expect(S.requests()).toEqual([]);
   });
 });
