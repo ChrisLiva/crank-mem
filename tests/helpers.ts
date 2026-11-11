@@ -670,37 +670,29 @@ export function makeModelHome(): string {
   return home;
 }
 
-/** Start tests/fixtures/model-server.ts as a child serving `dir`; `requests()` lists the paths it was asked for. */
-export async function startModelServer(
-  dir: string,
-  mode: "ok" | "stall" | "slow",
+/**
+ * Start `script` under this runtime with `args` plus `--log <file>`; it prints `PORT <n>` once
+ * listening on 127.0.0.1 and appends each requested path to the log, which `requests()` lists.
+ */
+export async function startFixtureServer(
+  script: string,
+  args: string[],
 ): Promise<{ url: string; requests(): string[]; stop(): void }> {
-  const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crank-modelsrv-")), "requests.log");
-  fs.writeFileSync(log, "");
-  const proc = spawn(
-    process.execPath,
-    [
-      path.join(REPO_ROOT, "tests/fixtures/model-server.ts"),
-      "--dir",
-      dir,
-      "--mode",
-      mode,
-      "--log",
-      log,
-    ],
-    {
-      stdio: ["ignore", "pipe", "inherit"],
-    },
+  const log = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "crank-fixturesrv-")),
+    "requests.log",
   );
+  fs.writeFileSync(log, "");
+  const proc = spawn(process.execPath, [script, ...args, "--log", log], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
   const stop = () => {
     proc.kill("SIGKILL");
   };
+  const name = path.basename(script);
   const port = await new Promise<number>((resolve, reject) => {
     let out = "";
-    const timer = setTimeout(
-      () => reject(new Error("model server did not print its port")),
-      10_000,
-    );
+    const timer = setTimeout(() => reject(new Error(`${name} did not print its port`)), 10_000);
     proc.stdout!.on("data", (chunk: Buffer) => {
       out += chunk.toString();
       const m = /^PORT (\d+)\n/.exec(out);
@@ -711,7 +703,7 @@ export async function startModelServer(
     });
     proc.once("exit", () => {
       clearTimeout(timer);
-      reject(new Error("model server exited before printing its port"));
+      reject(new Error(`${name} exited before printing its port`));
     });
   }).catch((err) => {
     stop();
@@ -722,6 +714,29 @@ export async function startModelServer(
     requests: () => fs.readFileSync(log, "utf-8").split("\n").filter(Boolean),
     stop,
   };
+}
+
+/** Start tests/fixtures/model-server.ts as a child serving `dir`; `requests()` lists the paths it was asked for. */
+export function startModelServer(
+  dir: string,
+  mode: "ok" | "stall" | "slow",
+): Promise<{ url: string; requests(): string[]; stop(): void }> {
+  return startFixtureServer(path.join(REPO_ROOT, "tests/fixtures/model-server.ts"), [
+    "--dir",
+    dir,
+    "--mode",
+    mode,
+  ]);
+}
+
+/** Start tests/fixtures/release-server.ts as a child answering `GET /<path>` with `<dir>/<path>`. */
+export function startReleaseServer(
+  dir: string,
+): Promise<{ url: string; requests(): string[]; stop(): void }> {
+  return startFixtureServer(path.join(REPO_ROOT, "tests/fixtures/release-server.ts"), [
+    "--dir",
+    dir,
+  ]);
 }
 
 /**

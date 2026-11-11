@@ -43,3 +43,10 @@ export function installedCopy(): boolean {
 export function toolRoot(): string {
   return installedCopy() ? path.join(crankHome(), CURRENT_LINK) : REPO_ROOT;
 }
+
+/** The release host's base URL: `CRANK_RELEASE_URL` when set, trailing `/` trimmed. */
+export function releaseBase(): string {
+  return (
+    process.env.CRANK_RELEASE_URL || "https://github.com/ChrisLiva/crank-mem/releases"
+  ).replace(/\/+$/, "");
+}

@@ -15,6 +15,8 @@ export interface CommandSpec {
   bool: string[];
   /** search reads an unknown flag as query text, so `search --max-turns` finds that option. */
   unknownIsText?: true;
+  /** Runs only from an installed copy; main.ts refuses it in a clone. */
+  installedOnly?: true;
 }
 
 export const COMMANDS = {
@@ -99,6 +101,13 @@ export const COMMANDS = {
     usage: "Usage: crank-mem uninstall [--restore] [--delete-crank|--keep-crank] [--yes]",
     value: [],
     bool: ["restore", "yes", "delete-crank", "keep-crank"],
+  },
+  "self-install": {
+    summary: "Finish installing a downloaded release (install.sh runs it)",
+    usage: "Usage: crank-mem self-install [--yes] [--bin-dir <dir>]",
+    value: ["bin-dir", "model-host", "fetch-timeout-ms"],
+    bool: ["yes"],
+    installedOnly: true,
   },
   daemon: {
     usage: "Usage: crank-mem daemon (internal: Stop and SessionEnd start it)",
