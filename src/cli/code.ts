@@ -52,7 +52,7 @@ const CAP = 25_000;
  * line fit under CAP, with the number of symbol rows it lists after its context rows and whether
  * CAP cut it.
  */
-function outlinePage(
+export function outlinePage(
   file: string,
   entries: { symbol: CodeSymbol; parents: CodeSymbol[] }[],
   n: number,
@@ -317,7 +317,7 @@ function checkedPath(
 const HEAD_CAP = 160;
 
 /** Every symbol, each container before its members, with `parents` outermost first. */
-function preorder(
+export function preorder(
   symbols: CodeSymbol[],
   parents: CodeSymbol[] = [],
 ): { symbol: CodeSymbol; parents: CodeSymbol[] }[] {

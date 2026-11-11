@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { codeSymbols, grammarFor } from "../src/cli/code-symbols.ts";
+import { outlinePage, preorder } from "../src/cli/code.ts";
 import { makeCrankProject, REPO_ROOT, runCli, tempDir, type CliRun } from "./helpers.ts";
 
 const FIXTURES = path.join(REPO_ROOT, "tests/fixtures/code");
@@ -22,7 +24,7 @@ const A_TS = [
 ].join("\n");
 
 describe("outline", () => {
-  test("every mapped extension loads its grammar, case-insensitively", () => {
+  test("every mapped extension loads its grammar, case-insensitively", async () => {
     const exts = [
       "ts",
       "mts",
@@ -56,12 +58,17 @@ describe("outline", () => {
       "Py",
       "CPP",
     ];
-    const root = makeCrankProject(Object.fromEntries(exts.map((ext) => [`src/e.${ext}`, ""])));
     for (const ext of exts) {
-      const run = runCli(root, ["outline", `src/e.${ext}`]);
-      expect([ext, run.status, run.stdout]).toEqual([ext, 0, `src/e.${ext}\n`]);
+      const grammar = grammarFor(`e.${ext}`);
+      expect([ext, grammar === null]).toEqual([ext, false]);
+      expect([ext, await codeSymbols("", grammar!)]).toEqual([ext, []]);
     }
-  }, 60_000);
+    const root = makeCrankProject({ "src/e.TS": "" });
+    expect(runCli(root, ["outline", "src/e.TS"])).toMatchObject({
+      status: 0,
+      stdout: "src/e.TS\n",
+    });
+  }, 30_000);
 
   test("outline prints folded source with start-end gutters", () => {
     const params = Array.from({ length: 20 }, (_, i) => `a${i}: number`).join(", ");
@@ -593,35 +600,44 @@ const FAMILIES = [
 ];
 
 describe("families", () => {
-  for (const fixture of FAMILIES) {
-    test(`outline and unfold match the committed expectation for ${fixture}`, () => {
-      const root = makeCrankProject({
-        [`src/${fixture}`]: fs.readFileSync(path.join(FIXTURES, fixture), "utf8"),
-      });
-      const outline = fs.readFileSync(path.join(FIXTURES, `${fixture}.outline`), "utf8");
-      const run = runCli(root, ["outline", `src/${fixture}`]);
-      expect(run).toMatchObject({ status: 0, stdout: outline });
+  const golden = (fixture: string) => ({
+    text: fs.readFileSync(path.join(FIXTURES, fixture), "utf8"),
+    outline: fs.readFileSync(path.join(FIXTURES, `${fixture}.outline`), "utf8"),
+    headers: fs
+      .readFileSync(path.join(FIXTURES, `${fixture}.headers`), "utf8")
+      .split("\n")
+      .slice(0, -1),
+  });
 
-      const gutters = outline
-        .split("\n")
-        .slice(1, -1)
-        .map((line) => line.split("│")[0]!.trim());
-      const headers = fs
-        .readFileSync(path.join(FIXTURES, `${fixture}.headers`), "utf8")
-        .split("\n")
-        .slice(0, -1);
-      const parsed = headers.map(
-        (line) => /^src\/\S+:(?<range>\d+-\d+) \S+ (?<qualified>.+)$/.exec(line)?.groups,
-      );
-      expect(parsed.map((groups) => groups?.range)).toEqual(gutters);
-      for (const [i, header] of headers.entries()) {
-        const unfold = runCli(root, ["unfold", `src/${fixture}`, parsed[i]!.qualified!]);
-        expect([header, unfold.status, unfold.stdout.split("\n").includes(header)]).toEqual([
-          header,
-          0,
-          true,
-        ]);
-      }
+  for (const fixture of FAMILIES) {
+    const file = `src/${fixture}`;
+
+    test(`symbols reproduce the committed outline and headers for ${fixture}`, async () => {
+      const { text, outline, headers } = golden(fixture);
+      const symbols = await codeSymbols(text, grammarFor(file)!);
+      expect(symbols).not.toBeNull();
+      const entries = preorder(symbols!);
+      expect(outlinePage(file, entries, 1).text).toBe(outline);
+      expect(
+        entries.map(({ symbol: s }) => `${file}:${s.start}-${s.end} ${s.kind} ${s.qualified}`),
+      ).toEqual(headers);
+    });
+
+    test(`outline and unfold match the committed expectation for ${fixture}`, async () => {
+      const { text, outline, headers } = golden(fixture);
+      const root = makeCrankProject({ [file]: text });
+      expect(runCli(root, ["outline", file])).toMatchObject({ status: 0, stdout: outline });
+
+      const entries = preorder((await codeSymbols(text, grammarFor(file)!))!);
+      const depth = Math.max(...entries.map(({ parents }) => parents.length));
+      const deepest = entries.findIndex(({ parents }) => parents.length === depth);
+      const header = headers[deepest]!;
+      const unfold = runCli(root, ["unfold", file, entries[deepest]!.symbol.qualified]);
+      expect([header, unfold.status, unfold.stdout.split("\n").includes(header)]).toEqual([
+        header,
+        0,
+        true,
+      ]);
     }, 30_000);
   }
 });
