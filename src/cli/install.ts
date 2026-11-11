@@ -41,7 +41,7 @@ const vendoredHooks: InstallItem = {
     return report();
   },
   // A version change re-vendors whether or not the trees differ; at the same
-  // version, a pull or a hand edit that leaves .crank/hooks/ unlike the clone
+  // version, a pull or a hand edit that leaves .crank/hooks/ unlike the running crank-mem's
   // re-vendors too. The stamp moves only once the copy is in place.
   repair(ctx) {
     const { crankDir, config } = ctx;
@@ -56,7 +56,7 @@ const vendoredHooks: InstallItem = {
       config.vendored_version = cliVersion();
       saveConfig(crankDir, config);
       if (versionCurrent)
-        r.lines.push("  re-vendored .crank/hooks/, which differed from the clone");
+        r.lines.push("  re-vendored .crank/hooks/, which differed from the running crank-mem");
     });
     return r;
   },
