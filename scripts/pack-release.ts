@@ -10,9 +10,9 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseArgs, stringFlag } from "../src/cli/args.ts";
 import { dashboardCurrent } from "../src/cli/setup.ts";
+import { TARBALL } from "../src/cli/tool-install.ts";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const TARBALL = "crank-mem.tar.gz";
 const SHIPPED = ["bin", "src", "package.json", "bun.lock", "README.md"];
 
 function fail(message: string): never {
