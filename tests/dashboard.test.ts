@@ -1246,4 +1246,15 @@ describe("updates", () => {
       server.stop();
     }
   }, 20_000);
+
+  test("a timer tick while the server's own check is pending fetches nothing", async () => {
+    const server = await startReleaseServer(latestRelease("9.9.9"), { delayMs: 1_000 });
+    try {
+      const { home } = await installedDashboard(server.url, ["--check-every-ms", "50"]);
+      await waitFor(() => checkedAt(home) !== null, 5_000);
+      expect(server.requests()).toEqual([RELEASE_JSON]);
+    } finally {
+      server.stop();
+    }
+  }, 20_000);
 });

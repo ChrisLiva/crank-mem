@@ -736,10 +736,12 @@ export function startModelServer(
 /** Start tests/fixtures/release-server.ts as a child answering `GET /<path>` with `<dir>/<path>`. */
 export function startReleaseServer(
   dir: string,
+  opts: { delayMs?: number } = {},
 ): Promise<{ url: string; requests(): string[]; stop(): void }> {
   return startFixtureServer(path.join(REPO_ROOT, "tests/fixtures/release-server.ts"), [
     "--dir",
     dir,
+    ...(opts.delayMs === undefined ? [] : ["--delay-ms", String(opts.delayMs)]),
   ]);
 }
 
