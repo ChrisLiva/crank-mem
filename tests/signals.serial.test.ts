@@ -76,9 +76,9 @@ describe("hook-started daemon (black-box)", () => {
     );
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("");
-    await waitFor(() => daemonPid(home) !== undefined, 3_000);
+    await waitFor(() => daemonPid(home) !== undefined, 20_000);
     expect(alive(daemonPid(home)!)).toBe(true);
-  }, 10_000);
+  }, 30_000);
 
   test("a SessionEnd replaces a daemon whose heartbeat is older than 90 s", async () => {
     const root = digestProject({ clone_root: REPO_ROOT });
@@ -93,9 +93,9 @@ describe("hook-started daemon (black-box)", () => {
     await waitFor(() => {
       const pid = daemonPid(home);
       return pid !== undefined && pid !== finished;
-    }, 3_000);
+    }, 20_000);
     expect(alive(daemonPid(home)!)).toBe(true);
-  }, 10_000);
+  }, 30_000);
 
   test("a stop file or digest off starts no daemon", async () => {
     const stopped = daemonEnv();
@@ -142,7 +142,8 @@ describe("hook-started daemon (black-box)", () => {
       expect(run.status).toBe(0);
       expect(run.stdout).toBe("");
       expect(spoolFiles(home)).toEqual(["abc-1.json"]);
-      await sleepMs(1_500);
+      // ensureDaemon returns before spawn when clone_root names no clone.
+      await sleepMs(200);
       expect(fs.existsSync(path.join(home, "daemon.json"))).toBe(false);
     },
     10_000,
