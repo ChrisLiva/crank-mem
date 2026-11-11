@@ -1,121 +1,48 @@
-import { useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useState, type ReactNode } from "react";
 import { cn } from "cn";
 import {
   fetchUsage,
-  USAGE_CHANNELS,
-  USAGE_DAYS,
+  type ActivityWindow,
   type UsageAnswer,
-  type UsageDays,
+  type UsageChannel,
   type UsageMetrics,
 } from "@/api";
-import { Button } from "@/components/ui/button";
+import { BarList, DayColumns } from "@/components/chart";
 import { usePoll } from "@/hooks/use-poll";
-import { formatTime, LABEL, ListFoot, ObservationLink, Row, useSelection } from "./shared";
+import {
+  formatAgo,
+  formatTime,
+  ListFoot,
+  ObservationLink,
+  Row,
+  Segmented,
+  Stat,
+  useSelection,
+  WINDOWS,
+} from "./shared";
 
 /** A share as a whole percent, or `—` when there was nothing to divide. */
 function percent(share: number | null): string {
   return share === null ? "—" : `${Math.round(share * 100)}%`;
 }
 
-/** Events per day per channel: one row per channel, one cell per day, darker for more. */
-function DayGrid({ perDay }: { perDay: UsageMetrics["perDay"] }) {
-  const max = Math.max(1, ...perDay.flatMap((d) => Object.values(d.counts)));
-  return (
-    <div className="grid gap-1">
-      {USAGE_CHANNELS.map((channel) => {
-        const total = perDay.reduce((n, d) => n + d.counts[channel], 0);
-        return (
-          <div key={channel} className="flex items-center gap-2 text-xs">
-            <span className="w-24 flex-none truncate text-muted-foreground">{channel}</span>
-            <span className="flex h-3 flex-1 gap-px">
-              {perDay.map((d) => {
-                const n = d.counts[channel];
-                return (
-                  <span
-                    key={d.date}
-                    data-day-cell
-                    title={`${d.date} · ${channel}: ${n}`}
-                    className={cn("flex-1 rounded-[2px]", n === 0 && "bg-muted")}
-                    style={
-                      n === 0
-                        ? undefined
-                        : { backgroundColor: `oklch(0.6 0.14 250 / ${0.25 + (0.75 * n) / max})` }
-                    }
-                  />
-                );
-              })}
-            </span>
-            <span className="w-8 flex-none text-right tabular-nums">{total}</span>
-          </div>
-        );
-      })}
-      <div className="flex justify-between pr-10 pl-26 text-[11px] text-muted-foreground tabular-nums">
-        <span>{perDay[0]?.date}</span>
-        <span>{perDay[perDay.length - 1]?.date}</span>
-      </div>
-    </div>
-  );
-}
+/** The channels in three kinds, each one chart series: what hooks inject, what agents recall, what they read as code. */
+const KINDS: { key: string; label: string; color: string; channels: UsageChannel[] }[] = [
+  {
+    key: "injected",
+    label: "Injected",
+    color: "var(--series-1)",
+    channels: ["session-start", "subagent-start", "file-history"],
+  },
+  {
+    key: "recall",
+    label: "Recall",
+    color: "var(--series-2)",
+    channels: ["search", "timeline", "get"],
+  },
+  { key: "code", label: "Code reading", color: "var(--series-3)", channels: ["outline", "unfold"] },
+];
 
-function Shares({ metrics }: { metrics: UsageMetrics }) {
-  const tiles: [key: string, label: string, share: number | null][] = [
-    ["zero-result", "Zero-result", metrics.zeroResultShare],
-    ["keyword", "Keyword", metrics.keywordShare],
-    ["follow-through", "Follow-through", metrics.followThrough],
-    ["never-surfaced", "Never surfaced", metrics.neverSurfacedShare],
-  ];
-  return (
-    <div className="grid grid-cols-4 gap-1.5">
-      {tiles.map(([key, label, share]) => (
-        <div key={key} className="rounded-md border px-2 py-1.5">
-          <div className="text-[11px] leading-tight text-muted-foreground">{label}</div>
-          <div data-share={key} className="text-base font-semibold tabular-nums">
-            {percent(share)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** The rows each ranked list shows, of the up to 50 the metrics answer. */
-const RANKED = 10;
-
-/** A labeled list of counted rows, most counted first, that j/k do not move through. */
-function Ranked({
-  label,
-  note,
-  rows,
-}: {
-  label: string;
-  note?: string;
-  rows: { key: string; count: number; body: ReactNode }[];
-}) {
-  return (
-    <div data-ranked={label}>
-      <div className={cn(LABEL, "px-3 pt-4 pb-1")}>{label}</div>
-      {note !== undefined && (
-        <p data-note className="px-3 py-1.5 text-xs text-muted-foreground">
-          {note}
-        </p>
-      )}
-      {rows.length === 0 ? (
-        <p className="px-3 py-1.5 text-xs text-muted-foreground">None yet.</p>
-      ) : (
-        rows.slice(0, RANKED).map((row) => (
-          <div key={row.key} className="flex items-center gap-2 border-b px-3 py-1.5 text-xs">
-            <span className="flex min-w-0 flex-1 items-center gap-2">{row.body}</span>
-            <span data-count className="tabular-nums">
-              {row.count}
-            </span>
-          </div>
-        ))
-      )}
-    </div>
-  );
-}
-
-/** Columns 2 and 3 for a project's usage log: the charts strip and top queries, and one query's runs. */
 export function UsageView({
   projectId,
   item,
@@ -127,225 +54,310 @@ export function UsageView({
   setItem: (item: string | null) => void;
   openObservation: (id: number) => void;
 }) {
-  const [days, setDays] = useState<UsageDays>(7);
+  const [days, setDays] = useState<ActivityWindow>(30);
   const [manual, setManual] = useState(false);
   const key = JSON.stringify([projectId, days, manual]);
-  const keyRef = useRef(key);
-  keyRef.current = key;
   const [loaded, setLoaded] = useState<{ key: string; metrics: UsageAnswer } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  usePoll(async () => {
-    const asked = key;
-    try {
-      const metrics = await fetchUsage(projectId, days, manual);
-      if (keyRef.current !== asked) return;
-      setLoaded({ key: asked, metrics });
-      setError(null);
-    } catch (err) {
-      if (keyRef.current === asked) setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [key]);
+  usePoll(
+    async (isCurrent) => {
+      try {
+        const metrics = await fetchUsage(projectId, days, manual);
+        if (!isCurrent()) return;
+        setLoaded({ key, metrics });
+        setError(null);
+      } catch (err) {
+        if (isCurrent()) setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [key],
+  );
 
   const metrics = loaded?.key === key ? loaded.metrics : null;
-  const queries = metrics?.topQueries ?? null;
-  useSelection(queries === null ? null : queries.map((q) => q.query), item, setItem);
-  const empty =
-    metrics !== null && metrics.perDay.every((d) => Object.values(d.counts).every((n) => n === 0));
-  const chosen = queries?.find((q) => q.query === item);
+  const stale = loaded !== null && metrics === null;
+  const shown = metrics ?? loaded?.metrics ?? null;
+  useSelection(metrics === null ? null : metrics.topQueries.map((q) => q.query), item, setItem);
 
   return (
-    <>
-      <section aria-label="List" className="flex min-h-0 flex-col border-r">
-        <div className="grid gap-2.5 border-b px-3 py-2.5">
-          <h2 className="text-sm font-semibold">Usage</h2>
-          <UsageControls
-            days={days}
-            setDays={setDays}
-            manual={manual}
-            setManual={setManual}
-            metrics={metrics}
-            empty={empty}
-          />
+    <main className="min-h-0 flex-1 overflow-auto">
+      <div className="mx-auto grid w-full max-w-[1400px] gap-6 px-4 py-6 md:px-6 md:py-8">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="grid gap-1">
+            <h1 className="text-xl font-semibold tracking-tight">Usage</h1>
+            <p className="text-muted-foreground">
+              What hooks inject into agent sessions, and whether agents call recall and code
+              reading.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Segmented label="Window" options={WINDOWS} value={days} onChange={setDays} />
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={manual}
+                onChange={(e) => setManual(e.target.checked)}
+                className="size-3.5 accent-[var(--ring)]"
+              />
+              Include manual runs
+            </label>
+          </div>
         </div>
-        <div data-list className="min-h-0 flex-1 overflow-auto">
-          <UsageList
-            error={error}
-            empty={empty}
-            metrics={metrics}
-            item={item}
-            setItem={setItem}
-            openObservation={openObservation}
-          />
-        </div>
-        <ListFoot start={metrics !== null && `${metrics.searches} searches`} />
-      </section>
-      <section aria-label="Detail" className="min-h-0 overflow-auto">
-        {chosen !== undefined && <QueryDetail chosen={chosen} openObservation={openObservation} />}
-      </section>
-    </>
-  );
-}
-
-/** The day buttons, the manual toggle, and once metrics arrive, the day grid and the shares. */
-function UsageControls({
-  days,
-  setDays,
-  manual,
-  setManual,
-  metrics,
-  empty,
-}: {
-  days: UsageDays;
-  setDays: (days: UsageDays) => void;
-  manual: boolean;
-  setManual: Dispatch<SetStateAction<boolean>>;
-  metrics: UsageAnswer | null;
-  empty: boolean;
-}) {
-  return (
-    <>
-      <div className="flex items-center gap-1.5">
-        {USAGE_DAYS.map((d) => (
-          <Button
-            key={d}
-            variant="outline"
-            size="xs"
-            aria-label={`${d} days`}
-            aria-pressed={days === d}
-            onClick={() => setDays(d)}
-            className={cn(days === d && "bg-accent text-accent-foreground")}
-          >
-            {d}d
-          </Button>
-        ))}
-        <span className="flex-1" />
-        <Button
-          variant="outline"
-          size="xs"
-          aria-pressed={manual}
-          onClick={() => setManual((m) => !m)}
-          className={cn(manual && "bg-accent text-accent-foreground")}
-        >
-          Include manual
-        </Button>
+        {error !== null ? (
+          <p className="text-destructive">{error}</p>
+        ) : (
+          shown !== null && (
+            <div className={cn("grid gap-6 transition-opacity", stale && "opacity-60")}>
+              <Shares metrics={shown} />
+              <Calls metrics={shown} days={days} />
+              <Queries
+                metrics={shown}
+                item={item}
+                setItem={setItem}
+                openObservation={openObservation}
+              />
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Ranked
+                  title="Most surfaced observations"
+                  note="How often hooks and recall showed each observation to an agent"
+                  empty="No observation shown yet."
+                  extra={shown.note}
+                  rows={shown.surfaced.map((s) => ({
+                    key: String(s.id),
+                    count: s.count,
+                    body: (
+                      <>
+                        <ObservationLink id={s.id} open={openObservation} />
+                        {shown.note === undefined && (
+                          <span className="min-w-0 truncate">{s.title}</span>
+                        )}
+                      </>
+                    ),
+                  }))}
+                />
+                <Ranked
+                  title="Files without memory"
+                  note="Files agents read that no stored observation mentions"
+                  empty="Every file agents read has memory."
+                  rows={shown.filesWithoutMemory.map((f) => ({
+                    key: f.path,
+                    count: f.count,
+                    body: <span className="min-w-0 truncate font-mono text-xs">{f.path}</span>,
+                  }))}
+                />
+              </div>
+            </div>
+          )
+        )}
       </div>
-      {metrics !== null && (
-        <>
-          {!empty && <DayGrid perDay={metrics.perDay} />}
-          <Shares metrics={metrics} />
-        </>
-      )}
-    </>
+    </main>
   );
 }
 
-/** Top queries and the ranked lists, or the error or the empty message in their place. */
-function UsageList({
-  error,
-  empty,
-  metrics,
+function Shares({ metrics: m }: { metrics: UsageMetrics }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+      <Stat label="Searches" value={m.searches.toLocaleString()} detail="crank-mem search calls" />
+      <Stat
+        label="Zero-result searches"
+        value={percent(m.zeroResultShare)}
+        detail="searches that found nothing"
+      />
+      <Stat
+        label="Keyword-only searches"
+        value={percent(m.keywordShare)}
+        detail="ran without the local model"
+      />
+      <Stat
+        label="Follow-through"
+        value={percent(m.followThrough)}
+        detail="results the agent opened"
+      />
+      <Stat
+        label="Never surfaced"
+        value={percent(m.neverSurfacedShare)}
+        detail="stored observations no agent saw"
+      />
+    </div>
+  );
+}
+
+function Calls({ metrics: m, days }: { metrics: UsageMetrics; days: number }) {
+  const total = (channels: UsageChannel[]) =>
+    m.perDay.reduce((n, d) => n + channels.reduce((s, c) => s + d.counts[c], 0), 0);
+  const most = Math.max(1, ...KINDS.flatMap((k) => k.channels.map((c) => total([c]))));
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+      <DayColumns
+        title="Agent calls per day"
+        note={`${KINDS.map((k) => `${total(k.channels)} ${k.label.toLowerCase()}`).join(" · ")}, last ${days} days`}
+        dates={m.perDay.map((d) => d.date)}
+        series={KINDS.map((k) => ({
+          key: k.key,
+          label: k.label,
+          color: k.color,
+          values: m.perDay.map((d) => k.channels.reduce((s, c) => s + d.counts[c], 0)),
+        }))}
+        empty="No usage recorded in this window"
+      />
+      <section className="grid content-start gap-3 rounded-lg border bg-card p-4">
+        <div className="grid gap-0.5">
+          <h3 className="text-sm font-semibold">Calls by channel</h3>
+          <p className="text-xs text-muted-foreground">
+            Each hook and command on one scale, last {days} days
+          </p>
+        </div>
+        {KINDS.map((k) => (
+          <div key={k.key} className="grid gap-1.5">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="size-2.5 rounded-[2px]" style={{ background: k.color }} />
+              {k.label}
+            </div>
+            <BarList
+              max={most}
+              rows={k.channels.map((c) => ({
+                key: c,
+                label: <span className="font-mono">{c}</span>,
+                value: total([c]),
+                color: k.color,
+              }))}
+            />
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function Queries({
+  metrics: m,
   item,
   setItem,
   openObservation,
 }: {
-  error: string | null;
-  empty: boolean;
-  metrics: UsageAnswer | null;
+  metrics: UsageMetrics;
   item: string | null;
   setItem: (item: string | null) => void;
   openObservation: (id: number) => void;
 }) {
-  return error !== null ? (
-    <p className="px-4 py-8 text-center text-destructive">{error}</p>
-  ) : empty ? (
-    <p className="px-4 py-8 text-center text-muted-foreground">No usage recorded yet.</p>
-  ) : (
-    metrics !== null && (
-      <>
-        <div className={cn(LABEL, "px-3 pt-2.5 pb-1")}>Top queries</div>
-        {metrics.topQueries.length === 0 && (
-          <p className="px-3 py-1.5 text-xs text-muted-foreground">No searches yet.</p>
+  const chosen = m.topQueries.find((q) => q.query === item);
+  return (
+    <section
+      className={cn(
+        "grid overflow-hidden rounded-lg border bg-card",
+        m.topQueries.length > 0 && "md:grid-cols-[minmax(18rem,26rem)_1fr]",
+      )}
+    >
+      <div
+        className={cn(
+          "flex min-h-0 flex-col",
+          m.topQueries.length > 0 && "border-b md:border-r md:border-b-0",
         )}
-        {metrics.topQueries.map((q) => (
-          <Row key={q.query} selected={q.query === item} onClick={() => setItem(q.query)}>
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="min-w-0 flex-1 truncate font-mono text-xs">{q.query}</span>
-              <span data-count className="tabular-nums">
-                {q.count}
-              </span>
-            </span>
-            <span className="flex gap-2 text-xs text-muted-foreground">
-              <span>{q.meanResults.toFixed(1)} results on average</span>
-              <span className="tabular-nums">{formatTime(q.lastMs)}</span>
-            </span>
-          </Row>
-        ))}
-        <Ranked
-          label="Most surfaced"
-          note={metrics.note}
-          rows={metrics.surfaced.map((s) => ({
-            key: String(s.id),
-            count: s.count,
-            body: (
-              <>
-                <ObservationLink id={s.id} open={openObservation} />
-                {metrics.note === undefined && <span className="min-w-0 truncate">{s.title}</span>}
-              </>
-            ),
-          }))}
-        />
-        <Ranked
-          label="Files without memory"
-          rows={metrics.filesWithoutMemory.map((f) => ({
-            key: f.path,
-            count: f.count,
-            body: <span className="min-w-0 truncate font-mono">{f.path}</span>,
-          }))}
-        />
-      </>
-    )
+      >
+        <div className="grid gap-0.5 border-b px-4 py-3">
+          <h3 className="text-sm font-semibold">Top queries</h3>
+          <p className="text-xs text-muted-foreground">What agents searched for, most run first</p>
+        </div>
+        <div className="max-h-96 overflow-auto">
+          {m.topQueries.length === 0 ? (
+            <p className="px-4 py-6 text-muted-foreground">
+              No searches in this window. Agents call crank-mem search when the injected memory
+              points them to it.
+            </p>
+          ) : (
+            m.topQueries.map((q) => (
+              <Row key={q.query} selected={q.query === item} onClick={() => setItem(q.query)}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{q.query}</span>
+                  <span className="tabular-nums">{q.count}</span>
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {q.meanResults.toFixed(1)} results on average · {formatAgo(q.lastMs)}
+                </span>
+              </Row>
+            ))
+          )}
+        </div>
+        {m.topQueries.length > 0 && <ListFoot start={`${m.searches} searches`} />}
+      </div>
+      {m.topQueries.length > 0 && (
+        <div className="min-w-0 p-4 md:p-5">
+          {chosen === undefined ? (
+            <p className="text-muted-foreground">Choose a query to see its recent runs.</p>
+          ) : (
+            <div className="grid gap-4">
+              <div className="grid gap-1">
+                <h4 className="font-mono text-base font-semibold break-all">{chosen.query}</h4>
+                <p className="text-xs text-muted-foreground">
+                  {chosen.count} runs · {chosen.meanResults.toFixed(1)} results on average · last{" "}
+                  {formatTime(chosen.lastMs)}
+                </p>
+              </div>
+              <ul className="grid rounded-lg border">
+                {chosen.runs.map((run, i) => (
+                  <li
+                    key={`${run.ts}:${i}`}
+                    className="flex flex-wrap gap-x-3 gap-y-1 border-b px-3.5 py-2 last:border-b-0"
+                  >
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {formatTime(run.ts)}
+                    </span>
+                    {run.ids.length === 0 ? (
+                      <span className="text-muted-foreground">no results</span>
+                    ) : (
+                      run.ids.map((id) => (
+                        <ObservationLink key={id} id={id} open={openObservation} />
+                      ))
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
-/** One query's counts and its recent runs. */
-function QueryDetail({
-  chosen,
-  openObservation,
+/** The rows each ranked list shows, of the `TOP` the metrics answer. */
+const RANKED = 10;
+
+/** A titled list of counted rows, most counted first. */
+function Ranked({
+  title,
+  note,
+  extra,
+  empty,
+  rows,
 }: {
-  chosen: UsageMetrics["topQueries"][number];
-  openObservation: (id: number) => void;
+  title: string;
+  note: string;
+  extra?: string;
+  empty: string;
+  rows: { key: string; count: number; body: ReactNode }[];
 }) {
   return (
-    <div className="grid max-w-3xl gap-5 px-6 pt-5 pb-10">
-      <div className="grid gap-1.5">
-        <div className="flex flex-wrap gap-x-3.5 text-xs text-muted-foreground">
-          <span>{chosen.count} runs</span>
-          <span>{chosen.meanResults.toFixed(1)} results on average</span>
-          <span>last {formatTime(chosen.lastMs)}</span>
-        </div>
-        <h1 className="font-mono text-lg leading-snug font-semibold">{chosen.query}</h1>
+    <section className="flex min-w-0 flex-col rounded-lg border bg-card">
+      <div className="grid gap-0.5 border-b px-4 py-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <p className="text-xs text-muted-foreground">{note}</p>
+        {extra !== undefined && <p className="text-xs text-muted-foreground">{extra}</p>}
       </div>
-      <div className="grid gap-1.5">
-        <div className={LABEL}>Recent runs</div>
-        <ul className="grid rounded-lg border bg-card text-card-foreground">
-          {chosen.runs.map((run, i) => (
+      {rows.length === 0 ? (
+        <p className="px-4 py-6 text-muted-foreground">{empty}</p>
+      ) : (
+        <ul>
+          {rows.slice(0, RANKED).map((row) => (
             <li
-              key={`${run.ts}:${i}`}
-              data-run
-              className="flex flex-wrap gap-x-3 gap-y-1 border-b px-3.5 py-2 last:border-b-0"
+              key={row.key}
+              className="flex items-center gap-3 border-b px-4 py-2 text-sm last:border-b-0"
             >
-              <span className="text-xs text-muted-foreground tabular-nums">
-                {formatTime(run.ts)}
-              </span>
-              {run.ids.length === 0 ? (
-                <span className="text-muted-foreground">no results</span>
-              ) : (
-                run.ids.map((id) => <ObservationLink key={id} id={id} open={openObservation} />)
-              )}
+              <span className="flex min-w-0 flex-1 items-center gap-2">{row.body}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">{row.count}</span>
             </li>
           ))}
         </ul>
-      </div>
-    </div>
+      )}
+    </section>
   );
 }

@@ -1,13 +1,16 @@
 // The files a Bash command reads with a plain read tool or `crank-mem outline`/`unfold`. A best-effort
-// lexer, not a shell parser: callers filter the candidates through
-// memoryPaths, so a stray word such as a `head -n` count costs nothing.
+// lexer, not a shell parser: callers filter the candidates through memoryPaths, so a stray word
+// such as a `head -n` count costs nothing.
 
 const READERS = new Set(["cat", "sed", "head", "tail", "awk", "nl"]);
 /** Readers whose first non-flag word is a program, not a file. */
 const PROGRAM_FIRST = new Set(["sed", "awk"]);
 /** `crank-mem` subcommands whose first non-flag word, outside a `--from` value, is the file they read. */
 const CODE_READERS = new Set(["outline", "unfold"]);
-const REDIRECTS = new Set([">", ">>", "2>", "&>"]);
+/** An output redirect alone, such as `>`, `2>>` or `&>`, whose target is the next word. */
+const BARE_REDIRECT = /^(\d*|&)>>?$/;
+/** An output redirect with its target attached, such as `>out`, `2>/dev/null` or `2>&1`. */
+const ATTACHED_REDIRECT = /^(\d*|&)>/;
 
 /** The command with each heredoc body, terminator line included, removed. */
 function dropHeredocs(command: string): string {
@@ -82,8 +85,9 @@ function readerArgs(rest: string[]): string[] {
   const args: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i]!;
-    if (REDIRECTS.has(w) || w === "<<") i++;
-    else if (w.startsWith(">") || w === "<" || w.startsWith("<<") || w.startsWith("-")) continue;
+    if (BARE_REDIRECT.test(w) || w === "<<") i++;
+    else if (ATTACHED_REDIRECT.test(w) || w === "<" || w.startsWith("<<") || w.startsWith("-"))
+      continue;
     else args.push(w);
   }
   return args;

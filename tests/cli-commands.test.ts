@@ -220,7 +220,7 @@ describe("stats: memory health", () => {
 describe("stats: capture health", () => {
   // The capture rows in their order, each label padded to the value column.
   const CAPTURE_ROWS =
-    /\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|proposals|stale|consolidation|memory|last snapshot): .*\n)+ {2}embedder: /;
+    /\n {2}status: .*\n {2}digest: .*\n {2}daemon: .*\n {2}spool: .*\n(?: {2}(?:observations|unembedded|last digest|month cost|proposals|stale|consolidation|memory|last snapshot): .*\n)+ {2}embedder: /;
 
   function digestOn(root: string): void {
     expect(runCli(root, ["digest", "on"]).status).toBe(0);

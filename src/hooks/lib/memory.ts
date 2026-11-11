@@ -102,6 +102,14 @@ export type PendingWork = {
   lastStartMs: number | null;
   lastOkStartMs: number | null;
 };
+/** Each upkeep event at or after a time, as its timestamp, with list-price cost where the event has one. */
+export type ActivityEvents = {
+  digests: { atMs: number; costUsd: number }[];
+  observations: number[];
+  consolidations: { atMs: number; costUsd: number }[];
+  decisions: { atMs: number; state: "accepted" | "rejected" }[];
+  staleFlags: number[];
+};
 type RunBase = { startedMs: number; model: string | null; costUsd: number };
 type ConsolidationRecord =
   | (RunBase & {
@@ -146,6 +154,7 @@ export interface Memory {
   staleRows(q: { before: { staleAtMs: number; id: number } | null; limit: number }): StaleRow[];
   /** Consolidation runs newest first by id, with ids below `beforeId` when it is set. */
   consolidationRows(q: { beforeId: number | null; limit: number }): ConsolidationRow[];
+  activity(sinceMs: number): ActivityEvents;
   recordConsolidation(run: ConsolidationRecord): void;
   /**
    * The daily pass (store-upkeep's `dailyUpkeep`) at `nowMs`, default `Date.now()`. Null when not due;
@@ -377,6 +386,7 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     proposalRows: (q) => queries.proposalRows(db, q),
     staleRows: (q) => queries.staleRows(db, q),
     consolidationRows: (q) => queries.consolidationRows(db, q),
+    activity: (sinceMs) => queries.activity(db, sinceMs),
     recordConsolidation: (run) => writes.recordConsolidation(db, run),
     maintain: (nowMs) => writes.maintain(db, file, nowMs),
     close: () => db.close(),

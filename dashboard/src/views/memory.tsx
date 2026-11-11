@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { cn } from "cn";
+import { Check } from "lucide-react";
 import {
   fetchObservation,
   fetchObservations,
@@ -10,11 +11,23 @@ import {
   type ObservationLine,
   type ObservationType,
 } from "@/api";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useListKeys } from "@/hooks/use-list-keys";
-import { formatTime, LABEL, ListFoot, Pairs, Row, usePaged } from "./shared";
+import {
+  DETAIL_BODY,
+  DETAIL_COLUMN,
+  formatTime,
+  LABEL,
+  LIST_COLUMN,
+  ListFoot,
+  Pairs,
+  Pill,
+  Prose,
+  Row,
+  SPLIT,
+  usePaged,
+} from "./shared";
 
 const TYPE_DELAY_MS = 300;
 
@@ -84,10 +97,15 @@ export function MemoryView({
   useListKeys(lines.length, selected, selectIndex);
 
   return (
-    <>
-      <section aria-label="List" className="flex min-h-0 flex-col border-r">
-        <div className="grid gap-2 border-b px-3 py-2.5">
-          <h2 className="text-sm font-semibold">Memory</h2>
+    <main className={SPLIT}>
+      <section aria-label="List" className={LIST_COLUMN}>
+        <div className="grid gap-3 border-b px-4 py-4">
+          <div className="grid gap-0.5">
+            <h1 className="text-base font-semibold">Memory</h1>
+            <p className="text-xs text-muted-foreground">
+              Observations digests stored from past sessions
+            </p>
+          </div>
           {note === null && (
             <MemoryFilters
               qText={qText}
@@ -113,10 +131,10 @@ export function MemoryView({
         </div>
         <MemoryFoot current={current} older={older} />
       </section>
-      <section aria-label="Detail" className="min-h-0 overflow-auto">
+      <section aria-label="Detail" className={DETAIL_COLUMN}>
         <MemoryDetail note={note} detail={detail} />
       </section>
-    </>
+    </main>
   );
 }
 
@@ -152,13 +170,14 @@ function MemoryFilters({
       <div className="flex gap-1.5">
         <select
           aria-label="Type"
+          title="Type"
           value={type ?? "all"}
           onChange={(e) =>
             setType(e.target.value === "all" ? null : (e.target.value as ObservationType))
           }
-          className="h-8 rounded-md border border-input bg-transparent px-2 text-sm [&_option]:bg-popover"
+          className="h-8 rounded-md border border-input bg-card px-2 text-sm [&_option]:bg-popover"
         >
-          <option value="all">all</option>
+          <option value="all">all types</option>
           {OBSERVATION_TYPES.map((t) => (
             <option key={t} value={t}>
               {t}
@@ -175,12 +194,12 @@ function MemoryFilters({
         <Button
           variant="outline"
           size="sm"
-          aria-label="Stale"
           aria-pressed={stale}
           onClick={() => setStale((s) => !s)}
-          className={cn(stale && "bg-accent text-accent-foreground")}
+          className="aria-pressed:border-ring aria-pressed:bg-selected aria-pressed:text-foreground"
         >
-          Stale
+          {stale && <Check aria-hidden className="size-3.5" />}
+          Include stale
         </Button>
       </div>
     </div>
@@ -220,7 +239,7 @@ function MemoryList({
           <span data-title className="min-w-0 flex-1 truncate font-medium">
             {line.title}
           </span>
-          {line.stale && <span className="text-xs text-destructive">stale</span>}
+          {line.stale && <Pill tone="bad">stale</Pill>}
         </span>
         <span className="flex gap-2 text-xs text-muted-foreground">
           <span>{line.type}</span>
@@ -245,7 +264,7 @@ function MemoryFoot({
       start={
         <>
           {current !== null && <span>{current.rows.length} shown</span>}
-          {current?.mode != null && <Badge variant="outline">{current.mode}</Badge>}
+          {current?.mode != null && <span>{current.mode} search</span>}
         </>
       }
       older={older}
@@ -262,9 +281,9 @@ function MemoryDetail({
   detail: Observation | Note | null;
 }) {
   return note !== null ? (
-    <p className="px-6 py-8 text-muted-foreground">{note}</p>
+    <p className="px-6 py-8 text-muted-foreground md:px-8">{note}</p>
   ) : detail === null ? null : "note" in detail ? (
-    <p className="px-6 py-8 text-muted-foreground">{detail.note}</p>
+    <p className="px-6 py-8 text-muted-foreground md:px-8">{detail.note}</p>
   ) : (
     <ObservationDetail o={detail} />
   );
@@ -285,24 +304,24 @@ function Files({ paths }: { paths: string[] }) {
 
 function ObservationDetail({ o }: { o: Observation }) {
   return (
-    <div className="grid max-w-3xl gap-5 px-6 pt-5 pb-10">
-      <div className="grid gap-1.5">
+    <div className={DETAIL_BODY}>
+      <div className="grid gap-2">
+        <h1 className="text-lg leading-snug font-semibold">{o.title}</h1>
         <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-xs text-muted-foreground">
-          <Badge variant="secondary">{o.type}</Badge>
+          <span className="font-medium text-foreground">{o.type}</span>
           <span className="font-mono">#{o.id}</span>
           <span>{formatTime(o.createdAtMs)}</span>
           <span>
             session <span className="font-mono">{o.sessionId}</span>
           </span>
         </div>
-        <h1 className="text-lg leading-snug font-semibold">{o.title}</h1>
       </div>
       {o.staleFlag !== null && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3.5 py-3">
-          <div className={cn(LABEL, "text-destructive")}>
-            Stale since {formatTime(o.staleFlag.atMs)}
+        <div className="grid gap-1 rounded-lg border border-bad-line bg-bad-soft px-4 py-3">
+          <div className={cn(LABEL, "text-bad")}>Stale since {formatTime(o.staleFlag.atMs)}</div>
+          <div>
+            <Prose text={o.staleFlag.reason} />
           </div>
-          <div>{o.staleFlag.reason}</div>
         </div>
       )}
       <div className="grid gap-1.5">

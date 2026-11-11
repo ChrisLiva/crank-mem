@@ -136,7 +136,7 @@ describe("post-read once per agent per session", () => {
 });
 
 describe("post-read change tag", () => {
-  test("a file written after its newest observation is tagged; an older or missing one is not", () => {
+  test("a file written after its newest observation is tagged, an older one is not, and a deleted one shows no history", () => {
     const { root, seedMs } = seeded();
     const file = path.join(root, "src/a.ts");
     setMtime(file, seedMs + HOUR);
@@ -148,9 +148,7 @@ describe("post-read change tag", () => {
       "History of src/a.ts:\n#",
     );
     seedMemory(root, [{ title: "Gone", filesRead: ["src/gone.ts"] }]);
-    expect(context(run(root, claudePostBash(root, "cat src/gone.ts", TRANSCRIPT)))).toStartWith(
-      "History of src/gone.ts:\n#",
-    );
+    expect(run(root, claudePostBash(root, "cat src/gone.ts", TRANSCRIPT)).stdout).toBe("");
   });
 });
 

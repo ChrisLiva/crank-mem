@@ -28,6 +28,7 @@ import {
   registeredProject,
   runCli,
   seedMemory,
+  spoolEntry,
   startDashboard,
   stopDigests,
   tempDir,
@@ -423,7 +424,7 @@ describe("project registry", () => {
     expect(runs[1]!.status).toBe(0);
   });
 
-  test("GET /api/projects lists inited roots by name, then root, with id, store status and dot", async () => {
+  test("GET /api/projects lists inited roots by name, then root, with id and store status", async () => {
     const home = makeCrankHome();
     const b = registeredProject(home, tempDir("crank-b-"));
     const a = registeredProject(home, tempDir("crank-a-"));
@@ -433,18 +434,17 @@ describe("project registry", () => {
       .map((p) => registeredProject(home, path.join(tieParent, p, "same")))
       .reverse();
     const dash = await startDashboard(home, ["--port", "0"]);
-    const entry = (root: string, memory: string, dot: string) => ({
+    const entry = (root: string, memory: string) => ({
       id: projectId(root),
       name: path.basename(root),
       root,
       memory,
-      dot,
     });
     expect(await projects(dash)).toEqual({
       projects: [
-        entry(a, "open", "grey"),
-        entry(b, "missing", "amber"),
-        ...ties.map((root) => entry(root, "missing", "amber")),
+        entry(a, "open"),
+        entry(b, "missing"),
+        ...ties.map((root) => entry(root, "missing")),
       ],
     });
   }, 20_000);
@@ -479,29 +479,6 @@ describe("project registry", () => {
     fs.rmSync(path.join(standalone, ".crank/config.json"));
     expect(await roots()).toEqual([fs.realpathSync(main)]);
     expect(fs.readFileSync(registryFile(home)).equals(before)).toBe(true);
-  }, 20_000);
-
-  test("the dot follows the store, the project's digest setting and the recorded stop", async () => {
-    const home = makeCrankHome();
-    const root = registeredProject(home, tempDir("crank-a-"));
-    const newer = registeredProject(home, tempDir("crank-b-"));
-    seedMemory(root, [{ title: "seeded" }]);
-    plantMemory(newer, "newer");
-    const crankDir = path.join(root, ".crank");
-    const dash = await startDashboard(home, ["--port", "0"]);
-    const states = async () =>
-      ((await projects(dash)) as { projects: { memory: string; dot: string }[] }).projects.map(
-        (p) => [p.memory, p.dot],
-      );
-    saveConfig(crankDir, { ...loadConfig(crankDir), digest: true });
-    expect(await states()).toEqual([
-      ["open", "green"],
-      ["newer", "amber"],
-    ]);
-    stopDigests(home);
-    expect((await states())[0]).toEqual(["open", "amber"]);
-    saveConfig(crankDir, { ...loadConfig(crankDir), digest: false });
-    expect((await states())[0]).toEqual(["open", "grey"]);
   }, 20_000);
 
   test("a missing, unparsable or all-dropped registry answers an empty list", async () => {
@@ -984,10 +961,17 @@ describe("curation view", () => {
   }, 20_000);
 });
 
+function digestOn(root: string): void {
+  const crankDir = path.join(root, ".crank");
+  saveConfig(crankDir, { ...loadConfig(crankDir), digest: true });
+}
+
 describe("health view", () => {
-  test("GET …/health answers the capture rows `stats` prints, unpadded and in order", async () => {
+  test("GET …/health answers the project's capture summary, and `stats` prints the same values", async () => {
     const home = makeCrankHome();
     const root = registeredProject(home);
+    const other = registeredProject(home);
+    digestOn(root);
     const [a] = seedMemory(root, [{ title: "Lock retry is two seconds" }, { title: "日本 ✓" }], {
       costUsd: 0.002,
       proposals: [{ kind: "memory", bullet: "- **P**: x" }],
@@ -1009,44 +993,231 @@ describe("health view", () => {
         costUsd: 0,
       }),
     );
+    spoolEntry(home, "ours", root, Date.now());
+    spoolEntry(home, "parked", root, Date.now(), true);
+    spoolEntry(home, "theirs", other, Date.now());
     const dash = await startDashboard(home, ["--port", "0"]);
     const health = await memoryJson(dash, root, "health");
 
+    expect(health).toMatchObject({
+      digest: "on",
+      stopReason: null,
+      spool: { waiting: 1, parked: 1 },
+      store: "open",
+      status: {
+        tone: "warn",
+        label: "Daemon down",
+        fix: {
+          text: "1 waiting with no daemon to digest them.",
+          command: "crank-mem digest resume",
+        },
+      },
+      memory: {
+        observations: 2,
+        lastDigestMs: threeHoursAgo,
+        pendingProposals: 1,
+        staleFlags: 1,
+        lastConsolidation: { startedMs: threeHoursAgo, outcome: "conflict" },
+      },
+    });
     const run = runCli(root, ["stats"], { CRANK_HOME: home });
     expect(run.status).toBe(0);
-    const lines = run.stdout.split("\n");
-    const first = lines.findIndex((l) => l.startsWith("  digest:"));
-    const last = lines.findIndex((l) => l.startsWith("  embedder:"));
-    const printed = lines
-      .slice(first, last + 1)
-      .map((l) => /^ {2}([^:]+):\s+(.*)$/.exec(l)!.slice(1, 3));
-    expect(printed.find(([label]) => label === "consolidation")).toEqual([
-      "consolidation",
-      "3h ago (conflict)",
-    ]);
-    expect(health).toEqual({ rows: printed });
+    for (const line of [
+      "status:           Daemon down — 1 waiting with no daemon to digest them. Run: crank-mem digest resume",
+      "spool:            2 waiting, 1 parked",
+      "observations:     2",
+      "proposals:        1",
+      "stale:            1",
+      "consolidation:    3h ago (conflict)",
+    ]) {
+      expect(run.stdout).toContain(`  ${line}\n`);
+    }
   }, 20_000);
 
-  test("a missing or newer store answers the single memory row `stats` prints for it", async () => {
+  test("a missing or newer store answers its status with no memory figures", async () => {
     const home = makeCrankHome();
     const missing = registeredProject(home);
     const newer = registeredProject(home);
     plantMemory(newer, "newer");
+    digestOn(missing);
+    digestOn(newer);
+    stopDigests(home);
     const dash = await startDashboard(home, ["--port", "0"]);
-    for (const [root, value] of [
-      [missing, "none yet"],
-      [newer, "newer than this version; run crank-mem upgrade"],
+    for (const [root, store] of [
+      [missing, "missing"],
+      [newer, "newer"],
     ] as const) {
-      const { rows } = (await memoryJson(dash, root, "health")) as { rows: [string, string][] };
-      expect(rows.map(([label]) => label)).toEqual([
-        "digest",
-        "daemon",
-        "spool",
-        "memory",
-        "last snapshot",
-        "embedder",
-      ]);
-      expect(rows.find(([label]) => label === "memory")).toEqual(["memory", value]);
+      expect(await memoryJson(dash, root, "health")).toMatchObject({
+        digest: "stopped",
+        stopReason: "login",
+        store,
+        memory: null,
+      });
     }
+  }, 20_000);
+
+  test("/health answers each project's status by the first problem it has", async () => {
+    const statusOf = async (dash: Awaited<ReturnType<typeof startDashboard>>, root: string) =>
+      (await memoryJson(dash, root, "health")).status;
+    const now = Date.now();
+
+    const home = makeModelHome();
+    const offOpen = registeredProject(home);
+    seedMemory(offOpen, [{ title: "seeded" }]);
+    const offMissing = registeredProject(home);
+    spoolEntry(home, "off-missing", offMissing, now);
+    const missing = registeredProject(home);
+    digestOn(missing);
+    spoolEntry(home, "missing", missing, now);
+    const newer = registeredProject(home);
+    digestOn(newer);
+    plantMemory(newer, "newer");
+    spoolEntry(home, "newer", newer, now);
+    const down = registeredProject(home);
+    digestOn(down);
+    seedMemory(down, [{ title: "seeded" }]);
+    spoolEntry(home, "down", down, now);
+    spoolEntry(home, "down-parked", down, now, true);
+    const healthy = registeredProject(home);
+    digestOn(healthy);
+    seedMemory(healthy, [{ title: "seeded" }]);
+
+    const digestsOff = {
+      tone: "off",
+      label: "Digests off",
+      fix: { text: "Digests are off in this checkout.", command: "crank-mem digest on" },
+    };
+    const dash = await startDashboard(home, ["--port", "0"]);
+    expect(await statusOf(dash, offOpen)).toEqual(digestsOff);
+    expect(await statusOf(dash, offMissing)).toEqual(digestsOff);
+    expect(await statusOf(dash, missing)).toEqual({
+      tone: "off",
+      label: "No memory yet",
+      fix: { text: "The first digest creates it." },
+    });
+    expect(await statusOf(dash, newer)).toEqual({
+      tone: "bad",
+      label: "Store needs a look",
+      fix: { text: "memory.db is newer than this version.", command: "crank-mem upgrade" },
+    });
+    expect(await statusOf(dash, down)).toEqual({
+      tone: "warn",
+      label: "Daemon down",
+      fix: {
+        text: "1 waiting with no daemon to digest them.",
+        command: "crank-mem digest resume",
+      },
+    });
+    expect(await statusOf(dash, healthy)).toEqual({ tone: "ok", label: "Healthy", fix: null });
+    stopDigests(home);
+    expect(await statusOf(dash, missing)).toEqual({
+      tone: "bad",
+      label: "Stopped",
+      fix: {
+        text: "Digests stopped: claude is not logged in. Log in, then resume.",
+        command: "crank-mem digest resume",
+      },
+    });
+
+    const home2 = makeCrankHome();
+    const parked = registeredProject(home2);
+    digestOn(parked);
+    seedMemory(parked, [{ title: "seeded" }]);
+    spoolEntry(home2, "parked", parked, now, true);
+    const keyword = registeredProject(home2);
+    digestOn(keyword);
+    seedMemory(keyword, [{ title: "seeded" }]);
+    const dash2 = await startDashboard(home2, ["--port", "0"]);
+    expect(await statusOf(dash2, parked)).toEqual({
+      tone: "warn",
+      label: "Parked entries",
+      fix: {
+        text: "1 parked: no digest job could finish them. Each returns when its session writes again.",
+      },
+    });
+    expect(await statusOf(dash2, keyword)).toEqual({
+      tone: "warn",
+      label: "Keyword search only",
+      fix: { text: "The local search model is not installed.", command: "crank-mem setup" },
+    });
+    stopDigests(home2, "credential");
+    expect(await statusOf(dash2, keyword)).toEqual({
+      tone: "bad",
+      label: "Stopped",
+      fix: {
+        text: "Digests stopped on a credential other than your Claude login.",
+        command: "crank-mem digest resume",
+      },
+    });
+  }, 60_000);
+});
+
+describe("activity", () => {
+  test("GET …/activity counts each local day's digests, observations, cost and decisions", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const [a] = seedMemory(root, [{ title: "a" }, { title: "b" }], {
+      costUsd: 0.002,
+      proposals: [
+        { kind: "memory", bullet: "- **P**: x" },
+        { kind: "memory", bullet: "- **Q**: y" },
+      ],
+    }) as [number];
+    seedMemory(root, [], { stale: [{ id: a, reason: "moved" }] });
+    seedMemory(root, [{ title: "old" }], { costUsd: 1 });
+    const tenDaysAgo = Date.now() - 10 * 86_400_000;
+    const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
+    const db = new mod.DatabaseSync(memoryPath(root));
+    try {
+      db.prepare("UPDATE digests SET created_at = ? WHERE cost_usd = 1").run(tenDaysAgo);
+      db.prepare("UPDATE observations SET created_at = ? WHERE title = 'old'").run(tenDaysAgo);
+    } finally {
+      db.close();
+    }
+    withWritable(root, (memory) => {
+      const [q, p] = memory.proposalRows({ state: null, beforeId: null, limit: 10 });
+      if (q === undefined || p === undefined) throw new Error("expected two proposals");
+      memory.recordConsolidation({
+        outcome: "ok",
+        startedMs: Date.now(),
+        model: "m",
+        costUsd: 0.003,
+        sent: [p.id, q.id],
+        decided: [
+          { id: p.id, state: "accepted", reason: "holds" },
+          { id: q.id, state: "rejected", reason: "wrong" },
+        ],
+        verdicts: [],
+      });
+    });
+    const dash = await startDashboard(home, ["--port", "0"]);
+
+    const { days } = (await memoryJson(dash, root, "activity?days=7")) as {
+      days: Record<string, number | string>[];
+    };
+    expect(days).toHaveLength(7);
+    const { date, costUsd, ...today } = days[6]!;
+    expect(today).toEqual({
+      digests: 2,
+      observations: 2,
+      consolidations: 1,
+      accepted: 1,
+      rejected: 1,
+      staleFlags: 1,
+    });
+    expect(costUsd).toBeCloseTo(0.005, 10);
+    expect(days.slice(0, 6).every((d) => d.digests === 0 && d.costUsd === 0)).toBe(true);
+    expect(new Set(days.map((d) => d.date)).size).toBe(7);
+
+    const month = (await memoryJson(dash, root, "activity?days=30")) as { days: unknown[] };
+    expect(month.days).toHaveLength(30);
+    expect((await dash.get(`/api/projects/${projectId(root)}/activity?days=5`)).status).toBe(400);
+  }, 20_000);
+
+  test("a project without a store answers the store's note", async () => {
+    const home = makeCrankHome();
+    const root = registeredProject(home);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    expect(await memoryJson(dash, root, "activity?days=7")).toEqual({ note: NO_MEMORY_NOTE });
   }, 20_000);
 });

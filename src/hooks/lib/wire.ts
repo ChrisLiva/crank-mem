@@ -1,6 +1,7 @@
 // The shapes, constants and guards the dashboard server answers in and the
-// dashboard page reads. This file imports nothing, so the dashboard's
-// tsconfig, which cannot resolve `node:` imports, compiles it too.
+// dashboard page reads, and the status rule (`projectStatus`) whose result they carry.
+// This file imports nothing, so the dashboard's tsconfig, which cannot
+// resolve `node:` imports, compiles it too.
 
 /** SCHEMA_V1's observations.type CHECK repeats this list as a literal; schema v1 freezes it. */
 export const OBSERVATION_TYPES = [
@@ -60,6 +61,125 @@ export type ConsolidationRow = {
   model: string | null;
   costUsd: number;
 };
+
+/** Whether memory.db opened for reading, or why not. */
+type StoreStatus = "open" | "missing" | "older" | "newer" | "unreadable";
+
+export type Tone = "ok" | "warn" | "bad" | "off";
+
+/** Dollars to the cent, or to two significant digits under a cent: one Haiku digest costs about $0.002. */
+export function formatUsd(usd: number): string {
+  return usd > 0 && usd < 0.01 ? `$${usd.toPrecision(2)}` : `$${usd.toFixed(2)}`;
+}
+
+/** What a project's capture needs; `fix` is null when nothing does. */
+export type Status = { tone: Tone; label: string; fix: { text: string; command?: string } | null };
+
+/**
+ * One project's capture health; its spool counts only this project's entries. `memory` is
+ * null unless the store opened; `monthCostUsd` is digests plus consolidations since the
+ * local month began. `status` is `projectStatus` over the other fields.
+ */
+export type HealthSummary = {
+  digest: "on" | "off" | "stopped";
+  stopReason: string | null;
+  daemonAlive: boolean;
+  spool: { waiting: number; parked: number };
+  store: StoreStatus;
+  memory: {
+    observations: number;
+    unembedded: number;
+    lastDigestMs: number | null;
+    monthCostUsd: number;
+    pendingProposals: number;
+    staleFlags: number;
+    lastConsolidation: { startedMs: number; outcome: ConsolidationOutcome } | null;
+  } | null;
+  lastSnapshotMs: number | null;
+  embedderReady: boolean;
+  status: Status;
+};
+
+const STORE_FIX = {
+  missing: { text: "The first digest creates it." },
+  older: { text: "memory.db predates this version.", command: "crank-mem upgrade" },
+  newer: { text: "memory.db is newer than this version.", command: "crank-mem upgrade" },
+  unreadable: {
+    text: "memory.db is not a readable database.",
+    command: "crank-mem restore-memory",
+  },
+} as const;
+
+/**
+ * The first problem in order of how much capture it stops: digests off or stopped,
+ * a store that does not open, a daemon that is down while entries wait, parked
+ * entries, an embedder that is not ready.
+ */
+export function projectStatus(h: Omit<HealthSummary, "status">): Status {
+  if (h.digest === "off")
+    return {
+      tone: "off",
+      label: "Digests off",
+      fix: { text: "Digests are off in this checkout.", command: "crank-mem digest on" },
+    };
+  if (h.digest === "stopped")
+    return {
+      tone: "bad",
+      label: "Stopped",
+      fix: {
+        text:
+          h.stopReason === "credential"
+            ? "Digests stopped on a credential other than your Claude login."
+            : "Digests stopped: claude is not logged in. Log in, then resume.",
+        command: "crank-mem digest resume",
+      },
+    };
+  if (h.store !== "open")
+    return {
+      tone: h.store === "missing" ? "off" : "bad",
+      label: h.store === "missing" ? "No memory yet" : "Store needs a look",
+      fix: STORE_FIX[h.store],
+    };
+  if (!h.daemonAlive && h.spool.waiting > 0)
+    return {
+      tone: "warn",
+      label: "Daemon down",
+      fix: {
+        text: `${h.spool.waiting} waiting with no daemon to digest them.`,
+        command: "crank-mem digest resume",
+      },
+    };
+  if (h.spool.parked > 0)
+    return {
+      tone: "warn",
+      label: "Parked entries",
+      fix: {
+        text: `${h.spool.parked} parked: no digest job could finish them. Each returns when its session writes again.`,
+      },
+    };
+  if (!h.embedderReady)
+    return {
+      tone: "warn",
+      label: "Keyword search only",
+      fix: { text: "The local search model is not installed.", command: "crank-mem setup" },
+    };
+  return { tone: "ok", label: "Healthy", fix: null };
+}
+
+/** One local day of a store's upkeep; `costUsd` is list price. */
+export type ActivityDay = {
+  date: string;
+  digests: number;
+  observations: number;
+  costUsd: number;
+  consolidations: number;
+  accepted: number;
+  rejected: number;
+  staleFlags: number;
+};
+
+export const ACTIVITY_DAYS = [7, 30, 90] as const;
+export type ActivityWindow = (typeof ACTIVITY_DAYS)[number];
 
 export const USAGE_CHANNELS = [
   "session-start",

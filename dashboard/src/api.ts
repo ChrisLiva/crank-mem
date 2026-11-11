@@ -1,5 +1,8 @@
 import type {
+  ActivityDay,
+  ActivityWindow,
   ConsolidationRow,
+  HealthSummary,
   Observation,
   ObservationLine,
   ObservationType,
@@ -10,16 +13,23 @@ import type {
 } from "../../src/hooks/lib/wire";
 
 export {
+  ACTIVITY_DAYS,
+  formatUsd,
   OBSERVATION_TYPES,
   PROPOSAL_STATES,
-  USAGE_CHANNELS,
+  type ActivityDay,
+  type ActivityWindow,
   type ConsolidationRow,
+  type HealthSummary,
   type Observation,
   type ObservationLine,
   type ObservationType,
   type ProposalRow,
   type ProposalState,
   type StaleRow,
+  type Status,
+  type Tone,
+  type UsageChannel,
   type UsageMetrics,
 } from "../../src/hooks/lib/wire";
 
@@ -41,8 +51,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export type Note = { note: string };
-export type Dot = "green" | "amber" | "grey";
-export type Project = { id: string; name: string; root: string; dot: Dot; memory: string };
+export type Project = { id: string; name: string; root: string; memory: string };
 
 /** One page of a list; `next` is the `before` that asks for the page after it. */
 export type Page<T> = { rows: T[]; next: string | null; mode?: "keyword" | "hybrid" } | Note;
@@ -118,19 +127,27 @@ export function fetchConsolidations(
   return getJson(projectPath(projectId, "/consolidations", beforeParams(before)));
 }
 
-/** The capture rows `crank-mem stats` prints, as label and value pairs. */
-export async function fetchHealth(projectId: string): Promise<[label: string, value: string][]> {
-  return (await getJson<{ rows: [string, string][] }>(projectPath(projectId, "/health"))).rows;
+export function fetchHealth(projectId: string): Promise<HealthSummary> {
+  return getJson(projectPath(projectId, "/health"));
 }
 
-export const USAGE_DAYS = [7, 30, 90] as const;
-export type UsageDays = (typeof USAGE_DAYS)[number];
+/** One entry per local day of the window, oldest first, or the store's note. */
+export async function fetchActivity(
+  projectId: string,
+  days: ActivityWindow,
+): Promise<ActivityDay[] | Note> {
+  const body = await getJson<{ days: ActivityDay[] } | Note>(
+    projectPath(projectId, "/activity", new URLSearchParams({ days: String(days) })),
+  );
+  return "note" in body ? body : body.days;
+}
+
 /** `UsageMetrics`, with the store's note when memory.db did not open, so `surfaced` has no titles. */
 export type UsageAnswer = UsageMetrics & { note?: string };
 
 export function fetchUsage(
   projectId: string,
-  days: UsageDays,
+  days: ActivityWindow,
   manual: boolean,
 ): Promise<UsageAnswer> {
   const params = new URLSearchParams({ days: String(days), manual: manual ? "1" : "0" });

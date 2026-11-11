@@ -1,9 +1,14 @@
-import { localDate } from "../hooks/lib/memory.ts";
+import { localDate, type ActivityEvents } from "../hooks/lib/memory.ts";
 import type { UsageLine } from "../hooks/lib/usage.ts";
-import { USAGE_CHANNELS, type UsageChannel, type UsageMetrics } from "../hooks/lib/wire.ts";
+import {
+  USAGE_CHANNELS,
+  type ActivityDay,
+  type UsageChannel,
+  type UsageMetrics,
+} from "../hooks/lib/wire.ts";
 
-// The Usage view's numbers, computed from a store's usage lines over a window
-// of whole local days that ends today.
+// The Usage view's numbers from a store's usage lines, and the store's daily
+// upkeep from its own rows, each over a window of whole local days that ends today.
 
 /** The longest list the metrics answer. */
 const TOP = 50;
@@ -79,14 +84,29 @@ function ofChannel<C extends UsageChannel>(lines: UsageLine[], channel: C): Line
   return lines.filter((l): l is Line<C> => l.channel === channel);
 }
 
+/** The local midnight that starts a window of `days` whole local days ending today. */
+export function windowStart(nowMs: number, days: number): Date {
+  const start = new Date(nowMs);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (days - 1));
+  return start;
+}
+
+/** The window's local dates, oldest first. */
+function windowDates(start: Date, days: number): string[] {
+  return Array.from({ length: days }, (_, i) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + i);
+    return localDate(day.getTime());
+  });
+}
+
 /** The window's first local midnight, and its lines in time order. */
 function windowLines(
   events: UsageLine[],
   opts: MetricsOptions,
 ): { start: Date; lines: UsageLine[] } {
-  const start = new Date(opts.nowMs);
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - (opts.days - 1));
+  const start = windowStart(opts.nowMs, opts.days);
   const lines = events
     .filter((e) => e.ts >= start.getTime() && (opts.manual || e.agent !== "manual"))
     .sort((a, b) => a.ts - b.ts);
@@ -97,10 +117,8 @@ function windowLines(
 function perDayGrid(lines: UsageLine[], start: Date, days: number): UsageMetrics["perDay"] {
   const perDay: UsageMetrics["perDay"] = [];
   const byDate = new Map<string, Record<UsageChannel, number>>();
-  for (let i = 0; i < days; i++) {
-    const day = new Date(start);
-    day.setDate(start.getDate() + i);
-    const entry = { date: localDate(day.getTime()), counts: zeroCounts() };
+  for (const date of windowDates(start, days)) {
+    const entry = { date, counts: zeroCounts() };
     perDay.push(entry);
     byDate.set(entry.date, entry.counts);
   }
@@ -193,4 +211,31 @@ export function usageMetrics(events: UsageLine[], opts: MetricsOptions): UsageMe
     neverSurfacedShare: share(opts.observationCount - titles.size, opts.observationCount),
     filesWithoutMemory: emptyFiles,
   };
+}
+
+/** One `ActivityDay` per local day of the window starting at `start`, from the store's upkeep events. */
+export function activityDays(events: ActivityEvents, start: Date, days: number): ActivityDay[] {
+  const grid = windowDates(start, days).map((date): ActivityDay => ({
+    date,
+    digests: 0,
+    observations: 0,
+    costUsd: 0,
+    consolidations: 0,
+    accepted: 0,
+    rejected: 0,
+    staleFlags: 0,
+  }));
+  const byDate = new Map(grid.map((day) => [day.date, day]));
+  const count = (ms: number, key: Exclude<keyof ActivityDay, "date">, costUsd = 0) => {
+    const day = byDate.get(localDate(ms));
+    if (day === undefined) return;
+    day[key]++;
+    day.costUsd += costUsd;
+  };
+  for (const d of events.digests) count(d.atMs, "digests", d.costUsd);
+  for (const c of events.consolidations) count(c.atMs, "consolidations", c.costUsd);
+  for (const ms of events.observations) count(ms, "observations");
+  for (const ms of events.staleFlags) count(ms, "staleFlags");
+  for (const d of events.decisions) count(d.atMs, d.state);
+  return grid;
 }
