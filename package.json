@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p dashboard",
     "test": "bun test --parallel=4 --path-ignore-patterns='dashboard/**' --path-ignore-patterns='**/*.serial.test.ts'; p=$?; bun test .serial.test.ts; s=$?; [ $p -eq 0 ] && [ $s -eq 0 ]",
     "format": "oxfmt",
-    "format:check": "oxfmt --check"
+    "format:check": "oxfmt --check",
+    "release": "bun scripts/release.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "4.3.2",

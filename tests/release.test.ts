@@ -630,3 +630,145 @@ describe("self-uninstall", () => {
     expect(fs.existsSync(path.join(t.H, "current"))).toBe(true);
   }, 60_000);
 });
+
+describe("release script", () => {
+  const SCRIPT = path.join(REPO_ROOT, "scripts/release.ts");
+  const PKG =
+    '{\n  "name": "fixture",\n  "version": "1.0.0",\n  "scripts": {\n    "typecheck": "true",\n    "format:check": "true",\n    "test": "TEST"\n  }\n}\n';
+
+  /** A git env with a fixed identity and no user or system config, so no signing or hooks apply. */
+  function gitEnv(): Record<string, string> {
+    const config = path.join(tempDir("crank-gitcfg-"), "config");
+    fs.writeFileSync(config, "");
+    return {
+      GIT_CONFIG_GLOBAL: config,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.invalid",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.invalid",
+    };
+  }
+
+  /** A clone of a fresh bare `origin` holding one commit on main whose package.json is `pkg`. */
+  function repo(testScript = "true"): {
+    work: string;
+    remote: string;
+    env: Record<string, string>;
+    git(cwd: string, ...args: string[]): string;
+  } {
+    const env = gitEnv();
+    const git = (cwd: string, ...args: string[]) => {
+      const r = spawnSync("git", args, { cwd, env: childEnv(env), encoding: "utf-8" });
+      if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    const remote = tempDir("crank-origin-");
+    git(remote, "init", "--quiet", "--bare", "-b", "main");
+    const work = tempDir("crank-work-");
+    git(work, "init", "--quiet", "-b", "main");
+    fs.writeFileSync(path.join(work, "package.json"), PKG.replace("TEST", testScript));
+    git(work, "add", "package.json");
+    git(work, "commit", "--quiet", "-m", "init");
+    git(work, "remote", "add", "origin", remote);
+    git(work, "push", "--quiet", "origin", "main");
+    return { work, remote, env, git };
+  }
+
+  function release(work: string, env: Record<string, string>, ...args: string[]) {
+    return spawnSync("bun", [SCRIPT, ...args], {
+      cwd: work,
+      env: childEnv(env),
+      encoding: "utf-8",
+    });
+  }
+
+  test("patch --yes bumps, commits, tags and pushes main and the tag together", () => {
+    const r = repo();
+    const run = release(r.work, r.env, "patch", "--yes");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("pushed v1.0.1");
+    expect(r.git(r.remote, "rev-parse", "v1.0.1^{commit}")).toBe(
+      r.git(r.remote, "rev-parse", "main"),
+    );
+    expect(r.git(r.remote, "log", "-1", "--format=%s", "main")).toBe("chore(release): v1.0.1");
+    expect(r.git(r.remote, "show", "main:package.json") + "\n").toBe(
+      PKG.replace("TEST", "true").replace('"1.0.0"', '"1.0.1"'),
+    );
+    expect(release(r.work, r.env, "minor", "--yes").status).toBe(0);
+    expect(release(r.work, r.env, "v2.3.4", "--yes").status).toBe(0);
+    expect(r.git(r.remote, "tag", "--list").split("\n")).toEqual(["v1.0.1", "v1.1.0", "v2.3.4"]);
+  }, 30_000);
+
+  test("each refusal leaves the repo and origin as they were", () => {
+    const cases: Array<{
+      name: string;
+      args: string[];
+      testScript?: string;
+      prepare?(r: ReturnType<typeof repo>): void;
+      stderr: string;
+    }> = [
+      { name: "no --yes and no tty", args: ["patch"], stderr: "not confirmed" },
+      {
+        name: "a failing gate",
+        args: ["patch", "--yes"],
+        testScript: "exit 1",
+        stderr: "bun run test failed",
+      },
+      { name: "not newer", args: ["1.0.0", "--yes"], stderr: "is not newer than 1.0.0" },
+      { name: "not a version", args: ["next", "--yes"], stderr: "usage:" },
+      {
+        name: "a dirty tracked file",
+        args: ["patch", "--yes"],
+        prepare: (r) => fs.appendFileSync(path.join(r.work, "package.json"), " "),
+        stderr: "commit or stash",
+      },
+      {
+        name: "off main",
+        args: ["patch", "--yes"],
+        prepare: (r) => r.git(r.work, "checkout", "--quiet", "-b", "side"),
+        stderr: "check out main first",
+      },
+      {
+        name: "the tag already on origin",
+        args: ["patch", "--yes"],
+        prepare: (r) => {
+          r.git(r.work, "tag", "v1.0.1");
+          r.git(r.work, "push", "--quiet", "origin", "v1.0.1");
+          r.git(r.work, "tag", "-d", "v1.0.1");
+        },
+        stderr: "already exists on origin",
+      },
+      {
+        name: "main behind origin",
+        args: ["patch", "--yes"],
+        prepare: (r) => {
+          const other = tempDir("crank-other-");
+          r.git(other, "clone", "--quiet", r.remote, ".");
+          fs.writeFileSync(path.join(other, "x"), "x");
+          r.git(other, "add", "x");
+          r.git(other, "commit", "--quiet", "-m", "x");
+          r.git(other, "push", "--quiet", "origin", "main");
+        },
+        stderr: "behind origin/main",
+      },
+    ];
+    for (const c of cases) {
+      const r = repo(c.testScript);
+      c.prepare?.(r);
+      const head = r.git(r.work, "rev-parse", "HEAD");
+      const pkg = fs.readFileSync(path.join(r.work, "package.json"), "utf-8");
+      const remoteMain = r.git(r.remote, "rev-parse", "main");
+      const run = release(r.work, r.env, ...c.args);
+      expect({ name: c.name, status: run.status }).toEqual({ name: c.name, status: 1 });
+      expect(run.stderr).toContain(c.stderr);
+      expect(r.git(r.work, "rev-parse", "HEAD")).toBe(head);
+      expect(fs.readFileSync(path.join(r.work, "package.json"), "utf-8")).toBe(pkg);
+      expect(r.git(r.work, "tag", "--list", "v1.0.1")).toBe("");
+      expect(r.git(r.remote, "rev-parse", "main")).toBe(remoteMain);
+      expect(r.git(r.remote, "tag", "--list", "v1.0.1")).toBe(
+        c.name === "the tag already on origin" ? "v1.0.1" : "",
+      );
+    }
+  }, 60_000);
+});
