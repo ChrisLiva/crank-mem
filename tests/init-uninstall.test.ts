@@ -124,18 +124,6 @@ describe("init → uninstall round-trip", () => {
     expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).toBe(beforeCodexHome);
   });
 
-  test("ignore mode: .gitignore gains and loses our lines", () => {
-    const { root, codexHome } = makeProject({ ".gitignore": "dist/\n" });
-    cli(root, codexHome, "init", "--yes", "--git", "ignore", "--codex", "skip");
-    expect(fs.readFileSync(path.join(root, ".gitignore"), "utf-8")).toBe(
-      "dist/\n# crank-mem\n.crank/\n",
-    );
-    expect(fs.existsSync(path.join(root, ".codex"))).toBe(false);
-    cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
-    expect(fs.readFileSync(path.join(root, ".gitignore"), "utf-8")).toBe("dist/\n");
-    expect(fs.existsSync(path.join(root, ".crank/cerebrum.md"))).toBe(true); // kept
-  });
-
   test("commit mode: shared settings.json used, .crank/.gitignore admits only crank-mem's files", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
@@ -222,6 +210,8 @@ describe("init → uninstall round-trip", () => {
     const { root, codexHome } = makeProject({ ".gitignore": "dist/\n" });
     cli(root, codexHome, "init", "--yes", "--git", "ignore", "--codex", "skip");
     const gitignore = path.join(root, ".gitignore");
+    expect(fs.readFileSync(gitignore, "utf-8")).toBe("dist/\n# crank-mem\n.crank/\n");
+    expect(fs.existsSync(path.join(root, ".codex"))).toBe(false);
     fs.writeFileSync(gitignore, "dist/\n");
     expect(ignored(root, ".crank/cerebrum.md")).toBe(false);
     const up = cli(root, codexHome, "upgrade");
@@ -232,6 +222,7 @@ describe("init → uninstall round-trip", () => {
     expect(cli(root, codexHome, "upgrade").stdout).not.toContain("ignore block");
     cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
     expect(fs.readFileSync(gitignore, "utf-8")).toBe("dist/\n");
+    expect(fs.existsSync(path.join(root, ".crank/cerebrum.md"))).toBe(true);
   });
 
   test("exclude-mode upgrade adds back a missing ignore block and leaves .gitignore alone", () => {
@@ -277,9 +268,11 @@ describe("init → uninstall round-trip", () => {
     expect(up.status).toBe(0);
     expect(up.stdout).toContain("replaced the template preamble of .crank/cerebrum.md");
     fs.appendFileSync(cerebrum, "- **Kept**: added after upgrade (2026-11-05)\n");
+    const memorySnapshot = plantSnapshot(root);
     const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--keep-crank");
     expect(un.status).toBe(0);
     expect(fs.readFileSync(cerebrum, "utf-8")).toContain("**Kept**: added after upgrade");
+    expect(fs.readFileSync(memorySnapshot, "utf8")).toBe(SNAPSHOT_BYTES);
   });
 
   test("restore keeps the allowlist init wrote where no .crank/.gitignore was", () => {
@@ -377,25 +370,6 @@ describe("init → uninstall round-trip", () => {
     fs.writeFileSync(path.join(audit, "cerebrum.md"), "# Cerebrum\n");
     for (const name of STORE_FILES) fs.writeFileSync(path.join(root, ".crank", name), "x");
     plantSnapshot(root);
-    const un = cli(root, codexHome, "uninstall", "--yes", "--delete-crank");
-    expect(un.status).toBe(0);
-    expect(un.stdout).toContain("  deleted .crank/\n");
-    expect(fs.existsSync(path.join(root, ".crank"))).toBe(false);
-  });
-
-  for (const flags of [["--keep-crank"], ["--restore", "--keep-crank"]]) {
-    test(`uninstall ${flags.join(" ")} keeps the memory snapshots`, () => {
-      const { root, codexHome } = makeProject();
-      cli(root, codexHome, "init", "--yes", "--codex", "skip");
-      const snapshot = plantSnapshot(root);
-      expect(cli(root, codexHome, "uninstall", "--yes", ...flags).status).toBe(0);
-      expect(fs.readFileSync(snapshot, "utf8")).toBe(SNAPSHOT_BYTES);
-    });
-  }
-
-  test("uninstall deletes the local digest switch", () => {
-    const { root, codexHome } = makeProject();
-    cli(root, codexHome, "init", "--yes", "--codex", "skip");
     expect(cli(root, codexHome, "digest", "on").status).toBe(0);
     const un = cli(root, codexHome, "uninstall", "--yes", "--delete-crank");
     expect(un.status).toBe(0);
@@ -470,22 +444,13 @@ describe("init → uninstall round-trip", () => {
     expect(toml).not.toContain("SessionStart");
     expect(toml).toContain(codexOwn);
 
-    cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
-    expect(fs.readFileSync(codexConfig, "utf-8")).toBe('model = "gpt-5.6"\n' + codexOwn);
-  });
-
-  test("uninstall sweeps a PascalCase orphan an older release left behind", () => {
-    const { root, codexHome } = makeProject();
-    const codexConfig = path.join(codexHome, "config.toml");
-    cli(root, codexHome, "init", "--yes", "--codex", "merge", "--codex-trust", "write");
-    // As if this project had been init'd by a release that keyed on the raw event.
-    const hooksJson = path.join(fs.realpathSync(root), ".codex/hooks.json");
+    // As if a release that keyed on the raw event had left an orphan after this init.
     fs.appendFileSync(
       codexConfig,
       `[hooks.state."${hooksJson}:SessionStart:0:0"]\ntrusted_hash = "sha256:stale"\n`,
     );
     cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
-    expect(fs.readFileSync(codexConfig, "utf-8")).toBe('model = "gpt-5.6"\n');
+    expect(fs.readFileSync(codexConfig, "utf-8")).toBe('model = "gpt-5.6"\n' + codexOwn);
   });
 
   test("pre-existing user settings survive surgical uninstall byte-identical", () => {
@@ -514,18 +479,13 @@ describe("init → uninstall round-trip", () => {
   test("pre-existing literal {} settings file survives surgical uninstall", () => {
     const { root, codexHome } = makeProject({ ".claude/settings.local.json": "{}" });
     cli(root, codexHome, "init", "--yes", "--codex", "skip");
-    cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
+    const memorySnapshot = plantSnapshot(root);
+    expect(cli(root, codexHome, "uninstall", "--yes", "--keep-crank").status).toBe(0);
+    expect(fs.readFileSync(memorySnapshot, "utf8")).toBe(SNAPSHOT_BYTES);
     expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(true);
     expect(
       JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.local.json"), "utf-8")),
     ).toEqual({});
-  });
-
-  test("surgical uninstall deletes the settings file init created, allow rule and all", () => {
-    const { root, codexHome } = makeProject();
-    cli(root, codexHome, "init", "--yes", "--codex", "skip");
-    expect(cli(root, codexHome, "uninstall", "--yes", "--keep-crank").status).toBe(0);
-    expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
   });
 
   test("upgrade's newer backup does not disable the empty-settings cleanup", () => {
@@ -537,7 +497,7 @@ describe("init → uninstall round-trip", () => {
     cfg.vendored_version = "0.0.1";
     fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
     expect(cli(root, codexHome, "upgrade").status).toBe(0);
-    cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
+    expect(cli(root, codexHome, "uninstall", "--yes", "--keep-crank").status).toBe(0);
     // Init created settings.local.json, so uninstall must still delete the {} husk.
     expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
   });
