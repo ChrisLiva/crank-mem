@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { errorMessage } from "../hooks/lib/config.ts";
 import { daemonAlive, readDaemonState } from "../hooks/lib/spool.ts";
@@ -18,6 +19,8 @@ export const TARBALL = "crank-mem.tar.gz";
 export const TOOL_LOCK = "tool.lock";
 /** What a command prints when another process holds the tool lock. */
 export const TOOL_BUSY = "crank-mem: another install or update is running";
+/** Where `self-install` links the command and `self-uninstall` looks for it, unless `--bin-dir` says otherwise. */
+export const DEFAULT_BIN_DIR = path.join(os.homedir(), ".local/bin");
 /** A version usable as a dir name under `versions/`, the same test install.sh applies. */
 const VERSION_NAME = /^[0-9A-Za-z][0-9A-Za-z.+-]*$/;
 
@@ -117,6 +120,11 @@ export function makeCurrent(version: string, was?: string): boolean {
   return true;
 }
 
+/** The launcher reached through the `current` link, which the bin link points at. */
+export function currentLauncher(): string {
+  return path.join(crankHome(), CURRENT_LINK, "bin/crank-mem");
+}
+
 export type LinkResult =
   | { status: "linked" | "unchanged" }
   | { status: "replaced"; previous: string }
@@ -124,7 +132,7 @@ export type LinkResult =
 
 /** Links `<binDir>/crank-mem` to the `current` launcher; a file there that is not a symlink is left alone. */
 export function linkBin(binDir: string): LinkResult {
-  const target = path.join(crankHome(), CURRENT_LINK, "bin/crank-mem");
+  const target = currentLauncher();
   const link = path.join(binDir, "crank-mem");
   fs.mkdirSync(binDir, { recursive: true });
   let previous: string | null = null;

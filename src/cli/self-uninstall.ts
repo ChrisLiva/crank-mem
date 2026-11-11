@@ -13,7 +13,7 @@ import { COMMANDS } from "./commands.ts";
 import { TOKEN_FILE } from "./dashboard.ts";
 import { choose } from "./prompt.ts";
 import { removePathBlocks } from "./shell-rc.ts";
-import { locked, TOOL_LOCK } from "./tool-install.ts";
+import { currentLauncher, DEFAULT_BIN_DIR, locked, TOOL_LOCK } from "./tool-install.ts";
 import { UPDATE_FILE } from "./updates.ts";
 import { CURRENT_LINK, REPO_ROOT, versionsDir } from "./version.ts";
 
@@ -97,7 +97,7 @@ async function unwireProjects(yes: boolean): Promise<number> {
 /** Removes `<binDir>/crank-mem` when it is the link to `current`'s launcher. */
 function unlinkBin(binDir: string): void {
   const link = path.join(binDir, "crank-mem");
-  const target = path.join(crankHome(), CURRENT_LINK, "bin/crank-mem");
+  const target = currentLauncher();
   let isOurs: boolean;
   try {
     isOurs = fs.lstatSync(link).isSymbolicLink() && fs.readlinkSync(link) === target;
@@ -140,7 +140,7 @@ export async function run(args: string[]): Promise<number> {
   }
   return locked("remove crank-mem", () =>
     uninstall({
-      binDir: path.resolve(binDir ?? path.join(os.homedir(), ".local/bin")),
+      binDir: path.resolve(binDir ?? DEFAULT_BIN_DIR),
       yes: flags.yes === true,
       purge: flags.purge === true,
     }),

@@ -6,10 +6,10 @@ import { errorMessage } from "../hooks/lib/config.ts";
 import { memoryPath } from "../hooks/lib/memory.ts";
 import { userVersion } from "../hooks/lib/memory-schema.ts";
 import { registeredRoots } from "../hooks/lib/registry.ts";
-import { crankHome } from "../hooks/lib/user-state.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import {
+  currentLauncher,
   fetchRelease,
   locked,
   makeCurrent,
@@ -17,7 +17,7 @@ import {
   pruneVersions,
 } from "./tool-install.ts";
 import { checkNow, writeUpdateState } from "./updates.ts";
-import { cliVersion, CURRENT_LINK, newer, versionsDir } from "./version.ts";
+import { cliVersion, newer, versionsDir } from "./version.ts";
 
 // `crank-mem self-update`: downloads the latest release (or `--to <tag>`),
 // makes it `current`, prunes versions neither it nor this process nor a live
@@ -30,14 +30,10 @@ import { cliVersion, CURRENT_LINK, newer, versionsDir } from "./version.ts";
 
 /** Runs `upgrade --all` through the `current` link, so the repair runs the version just activated. */
 function repairFromCurrent(): number {
-  const result = spawnSync(
-    path.join(crankHome(), CURRENT_LINK, "bin", "crank-mem"),
-    ["upgrade", "--all"],
-    {
-      stdio: "inherit",
-      env: process.env,
-    },
-  );
+  const result = spawnSync(currentLauncher(), ["upgrade", "--all"], {
+    stdio: "inherit",
+    env: process.env,
+  });
   return result.status ?? 1;
 }
 

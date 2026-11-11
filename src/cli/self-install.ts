@@ -9,7 +9,7 @@ import { COMMANDS } from "./commands.ts";
 import { choose } from "./prompt.ts";
 import { addPathBlock, rcTarget } from "./shell-rc.ts";
 import { ensureModel } from "./setup.ts";
-import { linkBin, locked, makeCurrent, prepareVersion } from "./tool-install.ts";
+import { DEFAULT_BIN_DIR, linkBin, locked, makeCurrent, prepareVersion } from "./tool-install.ts";
 import { repairAll } from "./upgrade.ts";
 import { CURRENT_LINK, REPO_ROOT, versionAt } from "./version.ts";
 
@@ -19,8 +19,6 @@ import { CURRENT_LINK, REPO_ROOT, versionAt } from "./version.ts";
 // and repoints projects that still run from another crank-mem (a clone).
 
 type Options = { binDir: string; yes: boolean; host?: string; fetchTimeoutMs?: number };
-
-const DEFAULT_BIN_DIR = path.join(os.homedir(), ".local/bin");
 
 /** Offers to add `binDir` to PATH in the shell's startup file when PATH lacks it. */
 async function offerPath(binDir: string, yes: boolean): Promise<void> {
