@@ -33,21 +33,41 @@ describe("index store", () => {
     expect(loadIndex(dir).files).toEqual({});
   });
 
+  test("a version-1 index loads empty", () => {
+    const dir = tmpDir();
+    fs.writeFileSync(
+      path.join(dir, INDEX_FILE),
+      JSON.stringify({
+        version: 1,
+        meta: { lastScanned: "2026-07-16T00:00:00Z", fileCount: 1 },
+        files: {
+          "src/a.ts": {
+            description: "Alpha",
+            tokens: 100,
+            size: 350,
+            mtimeMs: 123,
+            updatedAt: "2026-07-16T00:00:00Z",
+            source: "scan",
+          },
+        },
+      }),
+    );
+    expect(loadIndex(dir).files).toEqual({});
+  });
+
   test("wrong-shape index loads empty", () => {
     const dir = tmpDir();
     fs.writeFileSync(path.join(dir, INDEX_FILE), JSON.stringify({ version: 999 }));
     expect(loadIndex(dir).files).toEqual({});
   });
 
-  // updatedAt/source were dropped from FileEntry without bumping INDEX_VERSION,
-  // so every already-installed project's index carries them. Extra keys must
-  // load, not reset the index to empty and force a full re-scan.
+  // Extra entry keys must load, not reset the index to empty and force a full re-scan.
   test("an index carrying retired entry fields still loads", () => {
     const dir = tmpDir();
     fs.writeFileSync(
       path.join(dir, INDEX_FILE),
       JSON.stringify({
-        version: 1,
+        version: 2,
         meta: { lastScanned: "2026-07-16T00:00:00Z", fileCount: 1 },
         files: {
           "src/a.ts": {
@@ -140,5 +160,21 @@ describe("index store", () => {
     expect(md.slice(md.indexOf("## All files"))).toContain(
       "- `hot.ts` — Hot (~600 tok)\n  - fn (fn, L1–L9, ~500 tok)",
     );
+  });
+
+  test("renderAnatomyMd never shows imports or namespaces", () => {
+    const idx = emptyIndex();
+    const sym = [{ name: "fn", kind: "fn" as const, startLine: 1, endLine: 9, tokens: 500 }];
+    idx.files["a.ts"] = { description: "", tokens: 5, size: 1, mtimeMs: 1 };
+    idx.files["hot.ts"] = { description: "Hot", tokens: 600, size: 1, mtimeMs: 1, symbols: sym };
+    idx.files["new.ts"] = { description: "", tokens: 7, size: 1, mtimeMs: 2, writeCount: 1 };
+    idx.meta.churn = { head: "abc", paths: ["hot.ts"] };
+    idx.meta.fileCount = 3;
+    const withLinks = structuredClone(idx);
+    for (const e of Object.values(withLinks.files)) {
+      e.imports = ["src/x.ts"];
+      e.namespaces = { declares: ["A.B"], uses: ["C.D"] };
+    }
+    expect(renderAnatomyMd(withLinks)).toBe(renderAnatomyMd(idx));
   });
 });

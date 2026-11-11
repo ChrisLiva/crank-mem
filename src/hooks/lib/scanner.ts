@@ -7,6 +7,7 @@ import { isExcluded, type CrankConfig } from "./config.ts";
 import { emptyIndex, type AnatomyIndex, type FileEntry } from "./store.ts";
 import { BINARY_SNIFF_BYTES, isIndexableName, TEST_PATH, toPosix } from "./indexable.ts";
 import { gitListing, keepPin, updateActivity } from "./activity.ts";
+import { fileLinks } from "./imports.ts";
 
 // Project walk + full scan + incremental refresh. Reads the filesystem and,
 // in a git repo, `git ls-files`; locking and persistence are the caller's job.
@@ -45,7 +46,7 @@ export function indexFile(rootDir: string, relPath: string, config: CrankConfig)
     mtimeMs: stat.mtimeMs,
   };
   if (symbols && symbols.length > 0) entry.symbols = symbols;
-  return entry;
+  return { ...entry, ...fileLinks(rootDir, relPath, content, config) };
 }
 
 // Ranked last, never excluded: vendored code and asset trees. Config excludes
