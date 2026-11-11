@@ -872,10 +872,15 @@ function channelCounts(counts: Record<string, number>): Record<string, number> {
 }
 
 describe("usage window: the usage endpoint aggregates the log", () => {
-  test("a bad days or manual gets 400, and a missing manual means 0", async () => {
+  test("a project with no usage log answers zero, a bad days or manual gets 400, and a missing manual means 0", async () => {
     const home = makeCrankHome();
     const { root } = windowProject(home);
+    const empty = registeredCopy(home);
+    expect(fs.existsSync(path.join(empty, ".crank/usage.jsonl"))).toBe(false);
     const dash = await startDashboard(home, ["--port", "0"]);
+    const none = await usageOf(dash, empty, "days=7");
+    expect(none.perDay).toHaveLength(7);
+    expect([none.searches, none.zeroResultShare, none.filesWithoutMemory]).toEqual([0, null, []]);
     const id = projectId(root);
     for (const query of [
       "manual=0",
