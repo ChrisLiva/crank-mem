@@ -9,12 +9,11 @@ import { crankHome } from "../hooks/lib/user-state.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import {
-  activate,
   fetchRelease,
+  locked,
+  makeCurrent,
   prepareVersion,
   pruneVersions,
-  TOOL_BUSY,
-  withToolLock,
 } from "./tool-install.ts";
 import { checkNow, writeUpdateState } from "./updates.ts";
 import { cliVersion, CURRENT_LINK, newer, versionsDir } from "./version.ts";
@@ -106,20 +105,6 @@ function previousVersion(): string | null {
   return best;
 }
 
-/** Points `current` at `version` and says so; false, after printing why, when it cannot. */
-function makeCurrent(version: string): boolean {
-  try {
-    activate(version);
-  } catch (err) {
-    console.error(
-      `crank-mem: could not make ${version} the current version (${errorMessage(err)})`,
-    );
-    return false;
-  }
-  console.log(`crank-mem: ${version} is the current version (was ${cliVersion()})`);
-  return true;
-}
-
 async function update(tag: string | null): Promise<number> {
   const fetched = await fetchRelease(tag);
   if (!fetched.ok) {
@@ -137,7 +122,7 @@ async function update(tag: string | null): Promise<number> {
     console.error(`crank-mem: could not install ${version} (${prepared.detail})`);
     return 1;
   }
-  if (!makeCurrent(version)) return 1;
+  if (!makeCurrent(version, cliVersion())) return 1;
   try {
     for (const removed of pruneVersions([version, cliVersion()])) {
       console.log(`crank-mem: removed ${removed}`);
@@ -155,7 +140,7 @@ async function rollback(): Promise<number> {
     return 1;
   }
   if (refuseOlder(version, path.join(versionsDir(), version))) return 1;
-  if (!makeCurrent(version)) return 1;
+  if (!makeCurrent(version, cliVersion())) return 1;
   return repairFromCurrent();
 }
 
@@ -197,22 +182,6 @@ function saveSettings(
     `crank-mem: auto update ${state.auto ? "on" : "off"}, daily check ${state.checkDaily ? "on" : "off"}`,
   );
   return 0;
-}
-
-/** Runs `fn` under the tool lock, reporting a held lock or a throw as `what` failing. */
-async function locked(what: string, fn: () => Promise<number>): Promise<number> {
-  let result: number | "locked";
-  try {
-    result = await withToolLock(fn);
-  } catch (err) {
-    console.error(`crank-mem: could not ${what} (${errorMessage(err)})`);
-    return 1;
-  }
-  if (result === "locked") {
-    console.error(TOOL_BUSY);
-    return 1;
-  }
-  return result;
 }
 
 export async function runRollback(_args: string[]): Promise<number> {

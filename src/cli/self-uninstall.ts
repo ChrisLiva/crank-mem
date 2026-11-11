@@ -13,7 +13,7 @@ import { COMMANDS } from "./commands.ts";
 import { TOKEN_FILE } from "./dashboard.ts";
 import { choose } from "./prompt.ts";
 import { removePathBlocks } from "./shell-rc.ts";
-import { TOOL_BUSY, TOOL_LOCK, withToolLock } from "./tool-install.ts";
+import { locked, TOOL_LOCK } from "./tool-install.ts";
 import { UPDATE_FILE } from "./updates.ts";
 import { CURRENT_LINK, REPO_ROOT, versionsDir } from "./version.ts";
 
@@ -138,22 +138,11 @@ export async function run(args: string[]): Promise<number> {
     console.error(`crank-mem: --bin-dir needs a directory\n${COMMANDS["self-uninstall"].usage}`);
     return 1;
   }
-  let result: number | "locked";
-  try {
-    result = await withToolLock(() =>
-      uninstall({
-        binDir: path.resolve(binDir ?? path.join(os.homedir(), ".local/bin")),
-        yes: flags.yes === true,
-        purge: flags.purge === true,
-      }),
-    );
-  } catch (err) {
-    console.error(`crank-mem: could not remove crank-mem (${errorMessage(err)})`);
-    return 1;
-  }
-  if (result === "locked") {
-    console.error(TOOL_BUSY);
-    return 1;
-  }
-  return result;
+  return locked("remove crank-mem", () =>
+    uninstall({
+      binDir: path.resolve(binDir ?? path.join(os.homedir(), ".local/bin")),
+      yes: flags.yes === true,
+      purge: flags.purge === true,
+    }),
+  );
 }

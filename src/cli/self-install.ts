@@ -9,7 +9,7 @@ import { COMMANDS } from "./commands.ts";
 import { choose } from "./prompt.ts";
 import { addPathBlock, rcTarget } from "./shell-rc.ts";
 import { ensureModel } from "./setup.ts";
-import { activate, linkBin, prepareVersion, TOOL_BUSY, withToolLock } from "./tool-install.ts";
+import { linkBin, locked, makeCurrent, prepareVersion } from "./tool-install.ts";
 import { repairAll } from "./upgrade.ts";
 import { CURRENT_LINK, REPO_ROOT, versionAt } from "./version.ts";
 
@@ -86,15 +86,7 @@ async function install(opts: Options): Promise<number> {
     console.error(`crank-mem: could not install ${version} (${prepared.detail})`);
     return 1;
   }
-  try {
-    activate(version);
-  } catch (err) {
-    console.error(
-      `crank-mem: could not make ${version} the current version (${errorMessage(err)})`,
-    );
-    return 1;
-  }
-  console.log(`crank-mem: ${version} is the current version`);
+  if (!makeCurrent(version)) return 1;
 
   let linked;
   try {
@@ -136,23 +128,12 @@ export async function run(args: string[]): Promise<number> {
     console.error(`crank-mem: --bin-dir needs a directory\n${COMMANDS["self-install"].usage}`);
     return 1;
   }
-  let result: number | "locked";
-  try {
-    result = await withToolLock(() =>
-      install({
-        binDir: path.resolve(binDir ?? DEFAULT_BIN_DIR),
-        yes: flags.yes === true,
-        host: stringFlag(flags["model-host"]) ?? undefined,
-        fetchTimeoutMs: positive(flags["fetch-timeout-ms"], 0) || undefined,
-      }),
-    );
-  } catch (err) {
-    console.error(`crank-mem: could not take the install lock (${errorMessage(err)})`);
-    return 1;
-  }
-  if (result === "locked") {
-    console.error(TOOL_BUSY);
-    return 1;
-  }
-  return result;
+  return locked("take the install lock", () =>
+    install({
+      binDir: path.resolve(binDir ?? DEFAULT_BIN_DIR),
+      yes: flags.yes === true,
+      host: stringFlag(flags["model-host"]) ?? undefined,
+      fetchTimeoutMs: positive(flags["fetch-timeout-ms"], 0) || undefined,
+    }),
+  );
 }

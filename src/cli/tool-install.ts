@@ -64,6 +64,22 @@ export async function withToolLock<T>(fn: () => Promise<T>): Promise<T | "locked
   }
 }
 
+/** Runs `fn` under the tool lock, reporting a held lock or a throw as `what` failing. */
+export async function locked(what: string, fn: () => Promise<number>): Promise<number> {
+  let result: number | "locked";
+  try {
+    result = await withToolLock(fn);
+  } catch (err) {
+    console.error(`crank-mem: could not ${what} (${errorMessage(err)})`);
+    return 1;
+  }
+  if (result === "locked") {
+    console.error(TOOL_BUSY);
+    return 1;
+  }
+  return result;
+}
+
 /** Installs the copy's production packages and checks it ships a dashboard build for its version. */
 export function prepareVersion(dir: string): { ok: true } | { ok: false; detail: string } {
   const installed = installPackages(dir, { production: true });
@@ -85,6 +101,20 @@ export function activate(version: string): void {
   fs.rmSync(tmp, { force: true });
   fs.symlinkSync(path.join(VERSIONS_DIR, version), tmp);
   fs.renameSync(tmp, link);
+}
+
+/** Points `current` at `version` and says so, naming the version it replaced when given; false, after printing why, when it cannot. */
+export function makeCurrent(version: string, was?: string): boolean {
+  try {
+    activate(version);
+  } catch (err) {
+    console.error(
+      `crank-mem: could not make ${version} the current version (${errorMessage(err)})`,
+    );
+    return false;
+  }
+  console.log(`crank-mem: ${version} is the current version${was ? ` (was ${was})` : ""}`);
+  return true;
 }
 
 export type LinkResult =
