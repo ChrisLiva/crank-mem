@@ -3,10 +3,11 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { crankHome, ensureCrankHome, writeJsonAtomic } from "../hooks/lib/user-state.ts";
-import { parseArgs, stringFlag } from "./args.ts";
+import { parseArgs, positive, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { serveDashboard } from "./dashboard-server.ts";
 import { dashboardCurrent, dashboardDir } from "./setup.ts";
+import { CHECK_EVERY_MS, printUpdateNotice } from "./updates.ts";
 import { cliVersion } from "./version.ts";
 
 // `crank-mem dashboard`: serve the built dashboard on 127.0.0.1 until a
@@ -81,7 +82,8 @@ export async function run(args: string[]): Promise<number> {
 
   let server: Awaited<ReturnType<typeof serveDashboard>>;
   try {
-    server = await serveDashboard({ port, distDir, token });
+    const checkEveryMs = positive(flags["check-every-ms"], CHECK_EVERY_MS);
+    server = await serveDashboard({ port, distDir, token, checkEveryMs });
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     console.error(
@@ -94,6 +96,7 @@ export async function run(args: string[]): Promise<number> {
 
   const url = `http://127.0.0.1:${server.port}/?token=${token}`;
   console.log(`crank-mem dashboard: ${url}`);
+  printUpdateNotice();
   if (flags["no-open"] !== true) openBrowser(url);
 
   return new Promise((resolve) => {

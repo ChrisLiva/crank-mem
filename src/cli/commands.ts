@@ -87,7 +87,7 @@ export const COMMANDS = {
   dashboard: {
     summary: "Serve the memory dashboard on localhost",
     usage: "Usage: crank-mem dashboard [--port <n>] [--no-open]",
-    value: ["port"],
+    value: ["port", "check-every-ms"],
     bool: ["no-open"],
   },
   upgrade: {

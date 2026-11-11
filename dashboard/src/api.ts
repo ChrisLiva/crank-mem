@@ -9,6 +9,7 @@ import type {
   ProposalRow,
   ProposalState,
   StaleRow,
+  UpdateStatus,
   UsageMetrics,
 } from "../../src/hooks/lib/wire";
 
@@ -29,6 +30,7 @@ export {
   type StaleRow,
   type Status,
   type Tone,
+  type UpdateStatus,
   type UsageChannel,
   type UsageMetrics,
 } from "../../src/hooks/lib/wire";
@@ -152,4 +154,8 @@ export function fetchUsage(
 ): Promise<UsageAnswer> {
   const params = new URLSearchParams({ days: String(days), manual: manual ? "1" : "0" });
   return getJson(projectPath(projectId, "/usage", params));
+}
+
+export function fetchUpdates(): Promise<UpdateStatus> {
+  return getJson("/api/updates");
 }

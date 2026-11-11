@@ -100,6 +100,23 @@ export type HealthSummary = {
   status: Status;
 };
 
+/**
+ * The release check as `/api/updates` answers it: the running version, the last check's
+ * latest release (with its notes link) and result, the update settings, and the registered
+ * projects whose vendored hooks lag the running version. `available` is false in a clone.
+ */
+export type UpdateStatus = {
+  installed: string;
+  installedCopy: boolean;
+  latest: { version: string; releasedAt: string; notesUrl: string } | null;
+  available: boolean;
+  checkedAtMs: number | null;
+  error: string | null;
+  auto: boolean;
+  checkDaily: boolean;
+  behind: Array<{ root: string; name: string; vendored: string }>;
+};
+
 const STORE_FIX = {
   missing: { text: "The first digest creates it." },
   older: { text: "memory.db predates this version.", command: "crank-mem upgrade" },

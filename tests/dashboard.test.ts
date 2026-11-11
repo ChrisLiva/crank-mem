@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { cliVersion } from "../src/cli/version.ts";
 import { loadConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import type { UpdateStatus } from "../src/hooks/lib/wire.ts";
 import {
   MEMORY_NEWER_NOTE,
   MEMORY_UNREADABLE_NOTE,
@@ -30,8 +31,10 @@ import {
   runCli,
   seedMemory,
   sharedDashboardDir,
+  makeInstalledCopy,
   spoolEntry,
   startDashboard,
+  startReleaseServer,
   stopDigests,
   tempDir,
   waitFor,
@@ -1104,5 +1107,143 @@ describe("activity", () => {
     const month = (await memoryJson(dash, root, "activity?days=30")) as { days: unknown[] };
     expect(month.days).toHaveLength(30);
     expect((await dash.get(`/api/projects/${projectId(root)}/activity?days=5`)).status).toBe(400);
+  }, 20_000);
+});
+
+/** A release dir whose `latest/download/release.json` names `version`. */
+function latestRelease(version: string): string {
+  const dir = tempDir("crank-dash-release-");
+  fs.mkdirSync(path.join(dir, "latest/download"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "latest/download/release.json"),
+    JSON.stringify({ version, tag: `v${version}`, releasedAt: "2026-11-09T00:00:00Z" }),
+  );
+  return dir;
+}
+
+/** The dashboard of an installed copy 1.0.0 in a fresh home, checking against `serverUrl`. */
+async function installedDashboard(
+  serverUrl: string,
+  args: string[] = [],
+  update?: object,
+): Promise<{ home: string; dash: Awaited<ReturnType<typeof startDashboard>> }> {
+  const home = tempDir("crank-dash-home-");
+  makeInstalledCopy(home, "1.0.0");
+  if (update) fs.writeFileSync(path.join(home, "update.json"), JSON.stringify(update));
+  const dash = await startDashboard(home, ["--port", "0", ...args], {
+    bin: path.join(home, "current/bin/crank-mem"),
+    dashboardDir: path.join(home, "current/dashboard"),
+    env: { CRANK_RELEASE_URL: serverUrl },
+  });
+  return { home, dash };
+}
+
+const RELEASE_JSON = "/latest/download/release.json";
+
+/** `checkedAtMs` in `home`'s update.json, or null while it is absent or unreadable. */
+function checkedAt(home: string): number | null {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(home, "update.json"), "utf-8")).checkedAtMs ?? null;
+  } catch {
+    return null;
+  }
+}
+
+describe("updates", () => {
+  test("GET /api/updates answers the recorded state and the lagging projects, behind every guard", async () => {
+    const home = makeCrankHome();
+    fs.writeFileSync(
+      path.join(home, "update.json"),
+      JSON.stringify({
+        latest: { version: "9.9.9", tag: "v9.9.9", releasedAt: "2026-11-09T00:00:00Z" },
+        checkedAtMs: 1_000,
+        auto: false,
+        checkDaily: true,
+        error: null,
+      }),
+    );
+    const root = registeredProject(home);
+    const crankDir = path.join(root, ".crank");
+    saveConfig(crankDir, { ...loadConfig(crankDir), vendored_version: "0.0.1" });
+    const dash = await startDashboard(home, ["--port", "0"], {
+      env: { CRANK_RELEASE_URL: "http://example.test/r" },
+    });
+    const res = await dash.get("/api/updates");
+    expect([res.status, res.headers.get("content-type")]).toEqual([
+      200,
+      "application/json; charset=utf-8",
+    ]);
+    expect(await res.json()).toEqual({
+      installed: cliVersion(),
+      installedCopy: false,
+      latest: {
+        version: "9.9.9",
+        releasedAt: "2026-11-09T00:00:00Z",
+        notesUrl: "http://example.test/r/tag/v9.9.9",
+      },
+      available: false,
+      checkedAtMs: 1000,
+      error: null,
+      auto: false,
+      checkDaily: true,
+      behind: [{ root, name: path.basename(root), vendored: "0.0.1" }],
+    });
+    expect((await dash.get("/api/updates", { headers: { Cookie: "" } })).status).toBe(401);
+  }, 20_000);
+
+  test("the server checks at start only when due and only in an installed copy", async () => {
+    const server = await startReleaseServer(latestRelease("9.9.9"));
+    try {
+      const clone = await startDashboard(makeCrankHome(), ["--port", "0"], {
+        env: { CRANK_RELEASE_URL: server.url },
+      });
+      expect((await clone.get("/api/updates")).status).toBe(200);
+      expect(server.requests()).toEqual([]);
+
+      const { home, dash } = await installedDashboard(server.url);
+      await waitFor(() => checkedAt(home) !== null, 5_000);
+      expect(server.requests()).toEqual([RELEASE_JSON]);
+      const status = (await (await dash.get("/api/updates")).json()) as UpdateStatus;
+      expect([status.latest?.version, status.available]).toEqual(["9.9.9", true]);
+    } finally {
+      server.stop();
+    }
+  }, 20_000);
+
+  test("the dashboard startup prints the update notice once", async () => {
+    const server = await startReleaseServer(latestRelease("9.9.9"));
+    try {
+      const { dash } = await installedDashboard(server.url, [], {
+        latest: { version: "1.1.0", tag: "v1.1.0", releasedAt: "2026-11-09T00:00:00Z" },
+        checkedAtMs: Date.now(),
+      });
+      const notices = () => dash.output().stderr.split("is available").length - 1;
+      await waitFor(() => notices() > 0, 5_000);
+      expect(dash.output().stderr).toContain("crank-mem 1.1.0 is available (installed 1.0.0)");
+      expect(notices()).toBe(1);
+      expect(server.requests()).toEqual([]);
+    } finally {
+      server.stop();
+    }
+  }, 20_000);
+
+  test("the server re-checks on its timer once the last check is over 24 h old", async () => {
+    const server = await startReleaseServer(latestRelease("9.9.9"));
+    try {
+      const { home, dash } = await installedDashboard(server.url, ["--check-every-ms", "200"]);
+      await waitFor(() => checkedAt(home) !== null, 5_000);
+      await Bun.sleep(1_000);
+      expect(server.requests()).toEqual([RELEASE_JSON]);
+      const file = path.join(home, "update.json");
+      fs.writeFileSync(
+        file,
+        JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf-8")), checkedAtMs: 1_000 }),
+      );
+      await waitFor(() => server.requests().length > 1, 5_000);
+      expect(server.requests()).toEqual([RELEASE_JSON, RELEASE_JSON]);
+      expect(await dash.stop()).toBe(0);
+    } finally {
+      server.stop();
+    }
   }, 20_000);
 });

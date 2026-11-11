@@ -838,7 +838,8 @@ export const ZONES = ["Pacific/Kiritimati", "Pacific/Pago_Pago"];
 const STARTUP_LINE = /^crank-mem dashboard: (http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]+))\n/;
 
 /**
- * Start `crank-mem dashboard` as a child on `home` and wait for its startup line. `get` sends a
+ * Start `crank-mem dashboard` as a child on `home` and wait for its startup line; with `bin`, the
+ * child is that launcher (an installed copy's), which needs its own `dashboardDir`. `get` sends a
  * request with the session cookie and the Host the URL names unless `init` overrides them.
  */
 export async function startDashboard(
@@ -850,6 +851,7 @@ export async function startDashboard(
     env?: Record<string, string>;
     dashboardDir?: string;
     keep?: true;
+    bin?: string;
   } = {},
 ): Promise<{
   url: string;
@@ -858,14 +860,10 @@ export async function startDashboard(
   stop(signal?: "SIGTERM" | "SIGINT"): Promise<number>;
   output(): { stdout: string; stderr: string };
 }> {
+  const dashArgs = ["dashboard", ...(opts.open ? [] : ["--no-open"]), ...args];
   const child = spawn(
-    process.execPath,
-    [
-      path.join(REPO_ROOT, "src/cli/main.ts"),
-      "dashboard",
-      ...(opts.open ? [] : ["--no-open"]),
-      ...args,
-    ],
+    opts.bin ?? process.execPath,
+    opts.bin ? dashArgs : [path.join(REPO_ROOT, "src/cli/main.ts"), ...dashArgs],
     {
       cwd: opts.cwd ?? tempDir("crank-dash-cwd-"),
       env: childEnv({
