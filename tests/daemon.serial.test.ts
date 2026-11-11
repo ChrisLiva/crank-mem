@@ -11,6 +11,7 @@ import {
   killDaemon,
   laterRecords,
   makeCrankHome,
+  makeInstalledCopy,
   readDaemon,
   runCli,
   runHook,
@@ -577,6 +578,32 @@ describe("daemon exits", () => {
     expect(e.fake.calls().length).toBe(1);
     expectOneRow(root, "EEXIST");
     expect(spoolFiles(e.home)).toEqual(["s2.json"]);
+  }, 20_000);
+
+  test("after its current job when current is flipped to another installed version, starting no other job", async () => {
+    const e = setup([{ ...OK, hold: true }, OK]);
+    const current = path.join(e.home, "current");
+    makeInstalledCopy(e.home, "1.0.0");
+    const root = digestProject({ clone_root: current }, temps);
+    const now = Date.now();
+    plantEntry(e.home, "s1", {
+      transcriptPath: transcriptCopy("s1"),
+      projectRoot: root,
+      ended: true,
+      updatedAt: now - 1_000,
+    });
+    plantEntry(e.home, "s2", {
+      transcriptPath: transcriptCopy("s2"),
+      projectRoot: root,
+      ended: true,
+      updatedAt: now,
+    });
+    const d = daemon(["--sweep-ms", "50"], e, current);
+    await waitFor(() => e.fake.calls().length === 1, 10_000);
+    makeInstalledCopy(e.home, "1.1.0");
+    e.fake.release();
+    expect(await d.exited).toBe(0);
+    expect(e.fake.calls().length).toBe(1);
   }, 20_000);
 });
 

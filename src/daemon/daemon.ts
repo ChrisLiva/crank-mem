@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs, positive } from "../cli/args.ts";
 import { COMMANDS } from "../cli/commands.ts";
-import { REPO_ROOT, cliVersion } from "../cli/version.ts";
+import { REPO_ROOT, cliVersion, toolRoot, versionAt } from "../cli/version.ts";
 import { CONFIG_FILE, CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
 import { trySteal } from "../hooks/lib/lock.ts";
 import {
@@ -164,8 +164,9 @@ class Daemon {
       console.error(`crank-mem daemon: heartbeat failed: ${errorMessage(err)}`);
     }
     try {
-      // The clone was upgraded under us: finish the current job, then let the next start load the new code.
-      if (cliVersion() !== this.startVersion) this.stopping = true;
+      // The clone was upgraded, or `current` moved to another installed version, under us:
+      // finish the current job, then let the next start load the new code.
+      if (versionAt(toolRoot()) !== this.startVersion) this.stopping = true;
       pruneSeen();
       pruneProjects();
       // Digests stopped (credential or login).

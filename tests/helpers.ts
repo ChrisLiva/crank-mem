@@ -173,6 +173,77 @@ export function runCli(cwd: string, args: string[], env?: Record<string, string>
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
+/**
+ * A dir holding an executable `bun` that appends `"$* @ $(pwd -P)"` to `log`, exits 0 for
+ * `install`, and otherwise runs the test's own runtime with its arguments.
+ */
+export function fakeBun(log: string): string {
+  const dir = tempDir("crank-fakebun-");
+  const script = path.join(dir, "bun");
+  fs.writeFileSync(
+    script,
+    [
+      "#!/bin/sh",
+      `echo "$* @ $(pwd -P)" >> '${log}'`,
+      '[ "$1" = install ] && exit 0',
+      `exec '${process.execPath}' "$@"`,
+      "",
+    ].join("\n"),
+  );
+  fs.chmodSync(script, 0o755);
+  return dir;
+}
+
+/**
+ * An installed copy of this repo at `<home>/versions/<version>`: `src/`, `bin/`, `bun.lock` and
+ * `package.json` (its version set to `version`), the repo's `node_modules` linked in, and a
+ * dashboard build stamped `version`. Points `<home>/current` at it and returns the version dir.
+ */
+export function makeInstalledCopy(home: string, version: string): string {
+  const dir = path.join(home, "versions", version);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const name of ["src", "bin", "bun.lock"])
+    fs.cpSync(path.join(REPO_ROOT, name), path.join(dir, name), { recursive: true });
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ ...pkg, version }, null, 2));
+  fs.symlinkSync(path.join(REPO_ROOT, "node_modules"), path.join(dir, "node_modules"));
+  fs.cpSync(path.join(dashboardFixture(version), "dist"), path.join(dir, "dashboard/dist"), {
+    recursive: true,
+  });
+  // A rename replaces an existing link in one step, so a reader never finds `current` missing.
+  const link = path.join(home, "current");
+  const tmp = `${link}.${process.pid}.tmp`;
+  fs.rmSync(tmp, { force: true });
+  fs.symlinkSync(path.join("versions", version), tmp);
+  fs.renameSync(tmp, link);
+  return dir;
+}
+
+/**
+ * Run `<home>/current/bin/crank-mem` in `cwd` with `home` as its crank home, a fresh CODEX_HOME,
+ * and `fakeBun` first on PATH so no real `bun install` writes through the copy's linked node_modules.
+ */
+export function runInstalled(
+  home: string,
+  cwd: string,
+  args: string[],
+  env?: Record<string, string>,
+): CliRun {
+  const log = path.join(tempDir("crank-bunlog-"), "bun.log");
+  const result = spawnSync(path.join(home, "current/bin/crank-mem"), args, {
+    cwd,
+    encoding: "utf-8",
+    timeout: 30_000,
+    env: childEnv({
+      CRANK_HOME: home,
+      CODEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "crank-codexhome-")),
+      PATH: `${fakeBun(log)}:${process.env.PATH}`,
+      ...env,
+    }),
+  });
+  return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+}
+
 const initedTemplates = new Map<string, string>();
 
 /**

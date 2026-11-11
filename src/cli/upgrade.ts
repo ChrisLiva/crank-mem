@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { cliVersion, REPO_ROOT } from "./version.ts";
+import { cliVersion, REPO_ROOT, toolRoot } from "./version.ts";
 import { dashboardCurrent, dashboardDir, installPackages, setUpDashboard } from "./setup.ts";
 import { openProject, reportMigration } from "./project.ts";
 import { newBackupDir } from "./backups.ts";
@@ -35,8 +35,9 @@ export async function run(_args: string[]): Promise<number> {
   // An install from before clone_root existed, or one whose clone has moved, is
   // at the current version but cannot report drift — so a same-version upgrade
   // repairs the field instead of waiting for the next release to arm the check.
-  if (config.clone_root !== REPO_ROOT) {
-    config.clone_root = REPO_ROOT;
+  const tool = toolRoot();
+  if (config.clone_root !== tool) {
+    config.clone_root = tool;
     saveConfig(crankDir, config);
   }
 
