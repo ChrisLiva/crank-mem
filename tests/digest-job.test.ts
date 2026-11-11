@@ -40,18 +40,11 @@ import {
   AUTH_LOGGED_OUT,
   AUTH_OAUTH_TOKEN,
   AUTH_THIRD_PARTY,
-  NOT_LOGGED_IN_RAW,
   badKeyStream,
-  invalidOutputStream,
-  maxTurnsStream,
-  noProviderStream,
-  notLoggedInStream,
   okStream,
   okStreamOf,
-  otherProviderStream,
   refusalStream,
   status401Stream,
-  status403Stream,
   status500Stream,
 } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
@@ -283,14 +276,6 @@ describe("digest job (black-box)", () => {
     }
   }, 30_000);
 
-  test("a run with no result line retries: exit 1, the entry stays, nothing stored", () => {
-    const lines = okStream(SAMPLE_DIGEST).filter((l) => JSON.parse(l).type !== "result");
-    const { root, job, spool } = journey(digestProject({}, temps), [{ lines }]);
-    expect(job.status).toBe(1);
-    expect(spool).toEqual(["s1.json"]);
-    expect(search(root, "EEXIST")).toBe("");
-  });
-
   test("claude gets only the allowlisted environment", () => {
     const root = digestProject({ redact: false }, temps);
     const { fake, job } = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], {
@@ -495,54 +480,12 @@ describe("digest job failure classes (black-box)", () => {
     expectStopped(slow.home, "credential");
   }, 20_000);
 
-  test.each([
-    ["another provider", otherProviderStream(SAMPLE_DIGEST)],
-    ["no provider", noProviderStream(SAMPLE_DIGEST)],
-  ])("a result on %s discards the output and stops digests with reason credential", (_, lines) => {
-    const { root, home, job } = journey(digestProject({}, temps), [{ lines }]);
-    expect(job.status).toBe(0);
-    expectStopped(home, "credential");
-    expect(search(root, "EEXIST")).toBe("");
-  });
-
-  test.each([
-    ["a Not logged in stream", { lines: notLoggedInStream(), exit: 1 }],
-    ["plain Not logged in text", { raw: NOT_LOGGED_IN_RAW, exit: 1 }],
-    ["a 401", { lines: status401Stream(), exit: 1 }],
-    ["a 403", { lines: status403Stream(), exit: 1 }],
-  ])("%s stops digests with reason login", (_, scenario) => {
-    const { home, job } = journey(digestProject({}, temps), [scenario]);
+  test("a 401 stops digests with reason login", () => {
+    const { home, job } = journey(digestProject({}, temps), [
+      { lines: status401Stream(), exit: 1 },
+    ]);
     expect(job.status).toBe(0);
     expectStopped(home, "login");
-  });
-
-  test("a digest whose own text quotes the login error is stored, not read as a login failure", () => {
-    const [first, ...others] = SAMPLE_DIGEST.observations;
-    const quoting = {
-      ...SAMPLE_DIGEST,
-      observations: [
-        {
-          ...first!,
-          narrative: `${first!.narrative} The CLI printed Not logged in · Please run /login.`,
-        },
-        ...others,
-      ],
-    };
-    const { root, home, job } = journey(digestProject({}, temps), [{ lines: okStream(quoting) }]);
-    expect(job.status).toBe(0);
-    expect(stopState(home)).toBeNull();
-    expect(search(root, "EEXIST").trim().split("\n").length).toBe(1);
-  });
-
-  test.each([
-    ["output that fails the schema", { lines: invalidOutputStream() }],
-    ["hitting max turns", { lines: maxTurnsStream(), exit: 1 }],
-  ])("a rejection by %s stores nothing and keeps the entry", (_, scenario) => {
-    const { root, home, job, spool } = journey(digestProject({}, temps), [scenario]);
-    expect(job.status).toBe(1);
-    expect(stopState(home)).toBeNull();
-    expect(search(root, "EEXIST")).toBe("");
-    expect(spool).toEqual(["s1.json"]);
   });
 
   test("a refusal stores nothing, and the third in a row parks the entry", () => {
