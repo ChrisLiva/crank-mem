@@ -739,6 +739,54 @@ export function startReleaseServer(
   ]);
 }
 
+export type Pack = { status: number; stderr: string; out: string };
+
+/** Run `scripts/pack-release.ts` from a temp cwd into a fresh out dir. */
+export function pack(dist: string, extra: string[] = []): Pack {
+  const out = tempDir("crank-release-out-");
+  const result = spawnSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/pack-release.ts"), "--out", out, "--dist", dist, ...extra],
+    { cwd: tempDir("crank-release-cwd-"), encoding: "utf-8", timeout: 60_000, env: childEnv() },
+  );
+  return { status: result.status ?? -1, stderr: result.stderr, out };
+}
+
+const RELEASE_FILES = ["crank-mem.tar.gz", "crank-mem.tar.gz.sha256", "release.json"];
+const packedReleases = new Map<string, string>();
+
+/** The release files of `version`, packed once per process outside `tempDir`, which `cleanup` empties. */
+function packedRelease(version: string): string {
+  let dir = packedReleases.get(version);
+  if (dir === undefined) {
+    const run = pack(path.join(dashboardFixture(version), "dist"), ["--version", version]);
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "crank-release-dir-"));
+    for (const file of RELEASE_FILES) {
+      fs.copyFileSync(path.join(run.out, file), path.join(dir, file));
+    }
+    packedReleases.set(version, dir);
+  }
+  return dir;
+}
+
+/**
+ * A fresh release dir laid out like the release host: `download/v<V>/` for each of `versions`
+ * and `latest/download/` holding `latest`. Each call returns its own copy, so a test may edit it.
+ */
+export function releaseDir(versions: string[] = ["1.0.0"], latest = versions[0]!): string {
+  const copy = tempDir("crank-release-r-");
+  const subs: Array<[string, string]> = [
+    ...versions.map((v): [string, string] => [`download/v${v}`, v]),
+    ["latest/download", latest],
+  ];
+  for (const [sub, version] of subs) {
+    fs.cpSync(packedRelease(version), path.join(copy, sub), { recursive: true });
+  }
+  return copy;
+}
+
 /**
  * A dashboard dir whose `dist/` copies tests/fixtures/dashboard-dist/, with `dist/.crank-version`
  * holding `stamp` unless `stamp` is null. `dir` is a fresh `tempDir` unless given.

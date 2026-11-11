@@ -9,7 +9,7 @@ import { COMMANDS } from "./commands.ts";
 import { choose } from "./prompt.ts";
 import { addPathBlock, rcTarget } from "./shell-rc.ts";
 import { ensureModel } from "./setup.ts";
-import { activate, linkBin, prepareVersion, withToolLock } from "./tool-install.ts";
+import { activate, linkBin, prepareVersion, TOOL_BUSY, withToolLock } from "./tool-install.ts";
 import { repairAll } from "./upgrade.ts";
 import { CURRENT_LINK, REPO_ROOT, versionAt } from "./version.ts";
 
@@ -152,7 +152,7 @@ export async function run(args: string[]): Promise<number> {
     return 1;
   }
   if (result === "locked") {
-    console.error("crank-mem: another install or update is running");
+    console.error(TOOL_BUSY);
     return 1;
   }
   return result;

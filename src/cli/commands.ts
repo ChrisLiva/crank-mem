@@ -116,6 +116,13 @@ export const COMMANDS = {
     bool: ["yes", "purge"],
     installedOnly: true,
   },
+  "self-update": {
+    summary: "Update the installed crank-mem and repair every project",
+    usage: "Usage: crank-mem self-update [--to vX.Y.Z]",
+    value: ["to"],
+    bool: [],
+    installedOnly: true,
+  },
   daemon: {
     usage: "Usage: crank-mem daemon (internal: Stop and SessionEnd start it)",
     value: ["sweep-ms", "idle-ms", "retry-ms", "retry-cap-ms", "run-timeout-ms", "mid-session-ms"],

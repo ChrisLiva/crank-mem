@@ -26,6 +26,10 @@ _Avoid_: Install, source, checkout
 A release unpacked under `<crank home>/versions/`, run through the `current` link.
 _Avoid_: Install dir, release dir
 
+**Self-update**:
+Replacing the installed copy with the latest release, or the one `--to` names, then repairing every registered project with the new version.
+_Avoid_: Upgrade, update (unqualified)
+
 ### Agents and sessions
 
 **Agent**:

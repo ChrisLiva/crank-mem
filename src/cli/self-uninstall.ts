@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { CONFIG_FILE, CRANK_DIR, errorMessage } from "../hooks/lib/config.ts";
 import { REGISTRY_FILE, registeredRoots } from "../hooks/lib/registry.ts";
-import { DAEMON_FILE, daemonAlive, type DaemonState, spoolDir } from "../hooks/lib/spool.ts";
+import { DAEMON_FILE, daemonAlive, readDaemonState, spoolDir } from "../hooks/lib/spool.ts";
 import { crankHome, SEEN_DIR, STOP_FILE } from "../hooks/lib/user-state.ts";
 import { modelsDir } from "../daemon/embedder.ts";
 import { RUN_DIR } from "../daemon/gateway.ts";
@@ -13,7 +13,7 @@ import { COMMANDS } from "./commands.ts";
 import { TOKEN_FILE } from "./dashboard.ts";
 import { choose } from "./prompt.ts";
 import { removePathBlocks } from "./shell-rc.ts";
-import { TOOL_LOCK, withToolLock } from "./tool-install.ts";
+import { TOOL_BUSY, TOOL_LOCK, withToolLock } from "./tool-install.ts";
 import { CURRENT_LINK, REPO_ROOT, versionsDir } from "./version.ts";
 
 // `crank-mem self-uninstall`: removes the installed copy (`versions/`, the
@@ -44,16 +44,7 @@ function ownedEntries(): string[] {
  */
 function stopDaemon(): void {
   if (!daemonAlive()) return;
-  let pid: unknown;
-  try {
-    pid = (
-      JSON.parse(
-        fs.readFileSync(path.join(crankHome(), DAEMON_FILE), "utf-8"),
-      ) as Partial<DaemonState>
-    ).pid;
-  } catch {
-    return;
-  }
+  const pid = readDaemonState()?.pid;
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return;
   try {
     process.kill(-pid, "SIGTERM");
@@ -160,7 +151,7 @@ export async function run(args: string[]): Promise<number> {
     return 1;
   }
   if (result === "locked") {
-    console.error("crank-mem: another install or update is running");
+    console.error(TOOL_BUSY);
     return 1;
   }
   return result;

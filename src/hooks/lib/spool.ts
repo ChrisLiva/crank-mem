@@ -97,6 +97,18 @@ export function signalDigest(
   }
 }
 
+/** The parsed daemon.json; null when it cannot be read or does not hold a JSON object. */
+export function readDaemonState(): Partial<DaemonState> | null {
+  try {
+    const state: unknown = JSON.parse(
+      fs.readFileSync(path.join(crankHome(), DAEMON_FILE), "utf-8"),
+    );
+    return typeof state === "object" && state !== null ? (state as Partial<DaemonState>) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * True while daemon.json holds a heartbeat younger than HEARTBEAT_MAX_MS. A file
  * that does not parse counts by its mtime instead, because a starter between

@@ -14,6 +14,8 @@ import {
   makeCrankHome,
   makeInstalledCopy,
   makeModelHome,
+  pack,
+  releaseDir,
   runCli,
   runInstalled,
   startModelServer,
@@ -26,19 +28,6 @@ afterEach(async () => {
   for (const server of servers.splice(0)) server.stop();
   await cleanup();
 });
-
-type Pack = { status: number; stderr: string; out: string };
-
-/** Run `scripts/pack-release.ts` from a temp cwd into a fresh out dir. */
-function pack(dist: string, extra: string[] = []): Pack {
-  const out = tempDir("crank-release-out-");
-  const result = spawnSync(
-    process.execPath,
-    [path.join(REPO_ROOT, "scripts/pack-release.ts"), "--out", out, "--dist", dist, ...extra],
-    { cwd: tempDir("crank-release-cwd-"), encoding: "utf-8", timeout: 60_000, env: childEnv() },
-  );
-  return { status: result.status ?? -1, stderr: result.stderr, out };
-}
 
 function entries(tarball: string): string[] {
   const listed = spawnSync("tar", ["-tzf", tarball], { encoding: "utf-8" });
@@ -133,28 +122,6 @@ describe("pack-release", () => {
 
 const V = "1.0.0";
 const TARBALL = "crank-mem.tar.gz";
-let packed: string | undefined;
-
-/** A release dir laid out like the release host: `latest/download/` and `download/v<V>/`, packed once per process. */
-function releaseDir(): string {
-  if (packed === undefined) {
-    // Outside tempDir, which cleanup empties after each test; the preload's root holds it.
-    packed = fs.mkdtempSync(path.join(os.tmpdir(), "crank-release-dir-"));
-    const run = pack(path.join(dashboardFixture(V), "dist"), ["--version", V]);
-    expect(run.stderr).toBe("");
-    expect(run.status).toBe(0);
-    for (const sub of ["latest/download", `download/v${V}`]) {
-      fs.mkdirSync(path.join(packed, sub), { recursive: true });
-      for (const file of [TARBALL, `${TARBALL}.sha256`, "release.json"]) {
-        fs.copyFileSync(path.join(run.out, file), path.join(packed, sub, file));
-      }
-    }
-  }
-  const copy = tempDir("crank-release-r-");
-  fs.cpSync(packed, copy, { recursive: true });
-  return copy;
-}
-
 type Installer = {
   R: string;
   H: string;

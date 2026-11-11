@@ -1,16 +1,25 @@
+import { spawnSync } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { errorMessage } from "../hooks/lib/config.ts";
+import { daemonAlive, readDaemonState } from "../hooks/lib/spool.ts";
 import { crankHome, ensureCrankHome } from "../hooks/lib/user-state.ts";
 import { dashboardCurrent, installPackages } from "./setup.ts";
-import { CURRENT_LINK, VERSIONS_DIR, versionAt } from "./version.ts";
+import { CURRENT_LINK, releaseBase, VERSIONS_DIR, versionAt, versionsDir } from "./version.ts";
 
 // The steps that put an installed copy in use: the per-user tool lock, the
-// copy's packages and dashboard check, the `current` link and the bin link.
+// release download, the copy's packages and dashboard check, the `current`
+// link, the bin link and the pruning of versions no longer needed.
 
 /** The release tarball's file name on the release host. */
 export const TARBALL = "crank-mem.tar.gz";
 /** `<crank home>/tool.lock` holds the pid of the install or update in progress. */
 export const TOOL_LOCK = "tool.lock";
+/** What a command prints when another process holds the tool lock. */
+export const TOOL_BUSY = "crank-mem: another install or update is running";
+/** A version usable as a dir name under `versions/`, the same test install.sh applies. */
+const VERSION_NAME = /^[0-9A-Za-z][0-9A-Za-z.+-]*$/;
 
 /** True unless signalling `pid` reports no such process; EPERM means it lives under another user. */
 function pidAlive(pid: number): boolean {
@@ -101,4 +110,89 @@ export function linkBin(binDir: string): LinkResult {
   fs.symlinkSync(target, tmp);
   fs.renameSync(tmp, link);
   return previous === null ? { status: "linked" } : { status: "replaced", previous };
+}
+
+async function download(url: string): Promise<Buffer> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`could not download ${url} (HTTP ${res.status})`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/** The `version` in `<dir>/package.json` when it is a usable dir name, else null. */
+function releaseVersion(dir: string): string | null {
+  try {
+    const { version } = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8"));
+    return typeof version === "string" && VERSION_NAME.test(version) ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Downloads the latest release, or the one `tag` names, checks it against its `.sha256`
+ * and unpacks it into `versions/<version>`, keeping a version dir already there.
+ * Install.sh's contract; a failure leaves `versions/` as it was.
+ */
+export async function fetchRelease(
+  tag: string | null,
+): Promise<{ ok: true; version: string; dir: string } | { ok: false; detail: string }> {
+  const url =
+    tag === null ? `${releaseBase()}/latest/download` : `${releaseBase()}/download/${tag}`;
+  let incoming: string | null = null;
+  try {
+    const tarball = await download(`${url}/${TARBALL}`);
+    const sums = (await download(`${url}/${TARBALL}.sha256`)).toString("utf-8");
+    const expected = sums.split("\n")[0]!.trim().split(/\s+/)[0] ?? "";
+    const actual = crypto.createHash("sha256").update(tarball).digest("hex");
+    if (expected !== actual) {
+      return {
+        ok: false,
+        detail: `checksum mismatch for ${url}/${TARBALL} (expected ${expected || "none"}, got ${actual}); nothing was installed`,
+      };
+    }
+    fs.mkdirSync(versionsDir(), { recursive: true });
+    incoming = fs.mkdtempSync(path.join(versionsDir(), ".incoming-"));
+    const file = path.join(incoming, TARBALL);
+    const release = path.join(incoming, "release");
+    fs.writeFileSync(file, tarball);
+    fs.mkdirSync(release);
+    const untar = spawnSync("tar", ["-xzf", file, "-C", release], { encoding: "utf-8" });
+    if (untar.status !== 0) {
+      return {
+        ok: false,
+        detail: `could not extract ${TARBALL} (${untar.stderr.trim() || "tar failed"})`,
+      };
+    }
+    const version = releaseVersion(release);
+    if (version === null)
+      return { ok: false, detail: "the release's package.json names no usable version" };
+    const dir = path.join(versionsDir(), version);
+    if (!fs.existsSync(dir)) fs.renameSync(release, dir);
+    return { ok: true, version, dir };
+  } catch (err) {
+    return { ok: false, detail: errorMessage(err) };
+  } finally {
+    if (incoming !== null) fs.rmSync(incoming, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Removes every `versions/<v>` not in `keep` and not the version a live daemon runs;
+ * returns the removed versions. Dot entries, such as install.sh's downloads in progress, stay.
+ */
+export function pruneVersions(keep: string[]): string[] {
+  const daemon = daemonAlive() ? readDaemonState()?.version : undefined;
+  const kept = new Set(typeof daemon === "string" ? [...keep, daemon] : keep);
+  let names: string[];
+  try {
+    names = fs.readdirSync(versionsDir());
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const removed = names.filter((name) => !name.startsWith(".") && !kept.has(name)).sort();
+  for (const name of removed) {
+    fs.rmSync(path.join(versionsDir(), name), { recursive: true, force: true });
+  }
+  return removed;
 }
