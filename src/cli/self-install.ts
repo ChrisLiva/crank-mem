@@ -1,17 +1,83 @@
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { errorMessage } from "../hooks/lib/config.ts";
+import { CONFIG_FILE, CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
+import { registeredRoots } from "../hooks/lib/registry.ts";
+import { crankHome } from "../hooks/lib/user-state.ts";
 import { parseArgs, positive, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
+import { choose } from "./prompt.ts";
+import { addPathBlock, rcTarget } from "./shell-rc.ts";
 import { ensureModel } from "./setup.ts";
 import { activate, linkBin, prepareVersion, withToolLock } from "./tool-install.ts";
-import { REPO_ROOT, versionAt } from "./version.ts";
+import { repairAll } from "./upgrade.ts";
+import { CURRENT_LINK, REPO_ROOT, versionAt } from "./version.ts";
 
 // `crank-mem self-install`: install.sh runs it from the version it just
 // unpacked. It installs that copy's packages, makes it `current`, links the
-// command into the bin dir and downloads the search model.
+// command into the bin dir, offers the PATH line, repoints projects that still
+// run from another crank-mem (a clone) and downloads the search model.
 
-type Options = { binDir: string; host?: string; fetchTimeoutMs?: number };
+type Options = { binDir: string; yes: boolean; host?: string; fetchTimeoutMs?: number };
+
+const DEFAULT_BIN_DIR = path.join(os.homedir(), ".local/bin");
+
+/** Offers to add `binDir` to PATH in the shell's startup file when PATH lacks it. */
+async function offerPath(binDir: string, yes: boolean): Promise<void> {
+  const onPath = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .some((entry) => entry !== "" && path.resolve(entry) === binDir);
+  if (onPath) return;
+  const { file, line } = rcTarget(process.env.SHELL ?? "", process.platform, os.homedir());
+  const text = line(binDir);
+  const answer = yes
+    ? "yes"
+    : await choose(`Add ${binDir} to PATH in ${file}?`, ["yes", "no"] as const, "no");
+  if (answer === "yes") {
+    try {
+      addPathBlock(file, text);
+      console.log(`crank-mem: added ${binDir} to PATH in ${file}; open a new shell to use it`);
+      return;
+    } catch (err) {
+      console.error(`crank-mem: could not write ${file} (${errorMessage(err)})`);
+    }
+  }
+  console.log(`crank-mem: ${binDir} is not on your PATH; add this line to ${file}:\n  ${text}`);
+}
+
+/** Registered projects whose config records a tool root other than the stable `current` link. */
+function projectsOffCurrent(): string[] {
+  const current = path.join(crankHome(), CURRENT_LINK);
+  return registeredRoots().filter((root) => {
+    const crankDir = path.join(root, CRANK_DIR);
+    return (
+      fs.existsSync(path.join(crankDir, CONFIG_FILE)) && loadConfig(crankDir).clone_root !== current
+    );
+  });
+}
+
+/** Offers to repoint projects at `current`; an accepted offer repairs every registered project. */
+async function offerRepoint(binDir: string, yes: boolean): Promise<number> {
+  const stale = projectsOffCurrent();
+  if (stale.length === 0) return 0;
+  const count = stale.length === 1 ? "1 project runs" : `${stale.length} projects run`;
+  const answer = yes
+    ? "yes"
+    : await choose(
+        `${count} hooks from another crank-mem; repoint every registered project to this install?`,
+        ["yes", "no"] as const,
+        "no",
+      );
+  if (answer === "yes") return repairAll();
+  const rerun =
+    binDir === DEFAULT_BIN_DIR
+      ? "crank-mem self-install --yes"
+      : `crank-mem self-install --yes --bin-dir ${binDir}`;
+  console.log(`crank-mem: ${count} hooks from another crank-mem:`);
+  for (const root of stale) console.log(`  ${root}`);
+  console.log(`crank-mem: to repoint them to this install, run \`${rerun}\``);
+  return 0;
+}
 
 async function install(opts: Options): Promise<number> {
   const version = versionAt(REPO_ROOT);
@@ -50,6 +116,9 @@ async function install(opts: Options): Promise<number> {
     console.log(`crank-mem: linked ${command}`);
   }
 
+  await offerPath(opts.binDir, opts.yes);
+  const repointed = await offerRepoint(opts.binDir, opts.yes);
+
   const model = await ensureModel({ host: opts.host, fetchTimeoutMs: opts.fetchTimeoutMs });
   if (!model.ok) {
     console.error(
@@ -58,7 +127,7 @@ async function install(opts: Options): Promise<number> {
   } else if (model.downloaded) {
     console.log("crank-mem: downloaded the search model");
   }
-  return 0;
+  return repointed;
 }
 
 export async function run(args: string[]): Promise<number> {
@@ -72,7 +141,8 @@ export async function run(args: string[]): Promise<number> {
   try {
     result = await withToolLock(() =>
       install({
-        binDir: path.resolve(binDir ?? path.join(os.homedir(), ".local/bin")),
+        binDir: path.resolve(binDir ?? DEFAULT_BIN_DIR),
+        yes: flags.yes === true,
         host: stringFlag(flags["model-host"]) ?? undefined,
         fetchTimeoutMs: positive(flags["fetch-timeout-ms"], 0) || undefined,
       }),

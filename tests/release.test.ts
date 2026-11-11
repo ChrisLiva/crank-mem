@@ -399,3 +399,120 @@ describe("self-install", () => {
     expect(fs.existsSync(path.join(HOME, "bin/crank-mem"))).toBe(true);
   }, 60_000);
 });
+
+describe("self-install PATH offer", () => {
+  const exportLine = (bin: string) => `export PATH="${bin}:$PATH"`;
+  const markers = (text: string) => text.split("# >>> crank-mem >>>").length - 1;
+
+  test("with --yes the zsh rc file gains one block, and a second install leaves one", async () => {
+    const t = await installer();
+    expect(installSh(["--yes", "--bin-dir", t.bin], t.env).status).toBe(0);
+    expect(installSh(["--yes", "--bin-dir", t.bin], t.env).status).toBe(0);
+    const rc = fs.readFileSync(path.join(t.HOME, ".zshrc"), "utf-8");
+    expect(markers(rc)).toBe(1);
+    expect(rc).toContain(`\n${exportLine(t.bin)}\n`);
+  }, 60_000);
+
+  test("an existing rc file keeps its own lines", async () => {
+    const t = await installer();
+    fs.writeFileSync(path.join(t.HOME, ".zshrc"), "alias x=y\n");
+    expect(installSh(["--yes", "--bin-dir", t.bin], t.env).status).toBe(0);
+    expect(fs.readFileSync(path.join(t.HOME, ".zshrc"), "utf-8")).toBe(
+      `alias x=y\n\n# >>> crank-mem >>>\n${exportLine(t.bin)}\n# <<< crank-mem <<<\n`,
+    );
+  }, 60_000);
+
+  test("fish gets fish_add_path", async () => {
+    const t = await installer();
+    const result = installSh(["--yes", "--bin-dir", t.bin], { ...t.env, SHELL: "/usr/bin/fish" });
+    expect(result.status).toBe(0);
+    const rc = fs.readFileSync(path.join(t.HOME, ".config/fish/config.fish"), "utf-8");
+    expect(rc).toContain(`# >>> crank-mem >>>\nfish_add_path ${t.bin}\n# <<< crank-mem <<<`);
+  }, 60_000);
+
+  test("bash picks the platform's file", async () => {
+    const t = await installer();
+    const result = installSh(["--yes", "--bin-dir", t.bin], { ...t.env, SHELL: "/bin/bash" });
+    expect(result.status).toBe(0);
+    const [used, unused] =
+      process.platform === "darwin" ? [".bash_profile", ".bashrc"] : [".bashrc", ".bash_profile"];
+    expect(fs.readFileSync(path.join(t.HOME, used), "utf-8")).toContain(exportLine(t.bin));
+    expect(fs.existsSync(path.join(t.HOME, unused))).toBe(false);
+  }, 60_000);
+
+  test("without a tty and without --yes, no rc file changes and the line is printed", async () => {
+    const t = await installer();
+    const result = installSh(["--bin-dir", t.bin], t.env);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(t.HOME, ".zshrc"))).toBe(false);
+    expect(result.stdout).toContain(exportLine(t.bin));
+  }, 60_000);
+
+  test("a bin dir already on PATH gets no offer", async () => {
+    const t = await installer();
+    const result = installSh(["--yes", "--bin-dir", t.bin], {
+      ...t.env,
+      PATH: `${t.bin}:${t.env.PATH}`,
+    });
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(t.HOME, ".zshrc"))).toBe(false);
+    expect(result.stdout).not.toContain("export PATH=");
+  }, 60_000);
+});
+
+describe("self-install from a clone install", () => {
+  /** Behavior 6's setup: a fake clone K linked into the bin dir, and a project P whose config points at K. */
+  async function cloneInstall() {
+    const t = await installer();
+    const K = tempDir("crank-fakeclone-");
+    fs.mkdirSync(path.join(K, ".git"));
+    fs.mkdirSync(path.join(K, "bin"));
+    fs.symlinkSync(path.join(REPO_ROOT, "bin/crank-mem"), path.join(K, "bin/crank-mem"));
+    fs.mkdirSync(t.bin, { recursive: true });
+    fs.symlinkSync(path.join(K, "bin/crank-mem"), path.join(t.bin, "crank-mem"));
+    const P = tempDir("crank-release-proj-");
+    fs.writeFileSync(path.join(P, "a.ts"), "export const a = 1;\n");
+    expect(spawnSync("git", ["init", "-q"], { cwd: P }).status).toBe(0);
+    expect(runCli(P, ["init", "--yes"], { CRANK_HOME: t.H, HOME: t.HOME }).status).toBe(0);
+    const configFile = path.join(P, ".crank/config.json");
+    const config = JSON.parse(fs.readFileSync(configFile, "utf-8"));
+    fs.writeFileSync(configFile, JSON.stringify({ ...config, clone_root: K }, null, 2));
+    const read = () => JSON.parse(fs.readFileSync(configFile, "utf-8"));
+    return { ...t, K, P, config: read };
+  }
+
+  test("with --yes the clone link is replaced and every registered project is repointed", async () => {
+    const t = await cloneInstall();
+    const result = installSh(["--yes", "--bin-dir", t.bin], t.env);
+    expect(result.status).toBe(0);
+    expect(fs.readlinkSync(path.join(t.bin, "crank-mem"))).toBe(
+      path.join(t.H, "current/bin/crank-mem"),
+    );
+    expect(result.stdout).toContain(path.join(t.K, "bin/crank-mem"));
+    expect(t.config().clone_root).toBe(path.join(t.H, "current"));
+    expect(t.config().vendored_version).toBe(V);
+  }, 60_000);
+
+  test("without --yes and a tty the link is replaced, projects stay, and the re-run is printed", async () => {
+    const t = await cloneInstall();
+    const result = installSh(["--bin-dir", t.bin], t.env);
+    expect(result.status).toBe(0);
+    expect(fs.readlinkSync(path.join(t.bin, "crank-mem"))).toBe(
+      path.join(t.H, "current/bin/crank-mem"),
+    );
+    expect(t.config().clone_root).toBe(t.K);
+    expect(result.stdout).toContain("crank-mem self-install --yes");
+  }, 60_000);
+
+  test("the printed re-run repoints the projects although the link is already in place", async () => {
+    const t = await cloneInstall();
+    expect(installSh(["--bin-dir", t.bin], t.env).status).toBe(0);
+    const rerun = run(
+      path.join(t.H, "versions", V, "bin/crank-mem"),
+      ["self-install", "--yes", "--bin-dir", t.bin],
+      t.env,
+    );
+    expect(rerun.status).toBe(0);
+    expect(t.config().clone_root).toBe(path.join(t.H, "current"));
+  }, 60_000);
+});
