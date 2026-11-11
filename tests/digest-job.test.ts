@@ -162,7 +162,9 @@ describe("digest job (black-box)", () => {
   });
 
   test("a rewritten transcript resumes from the saved timestamp when the saved uuid is gone", () => {
-    const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }]);
+    const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], {
+      hooks: true,
+    });
     expect(j.job.status).toBe(0);
     const later = laterRecords();
     fs.writeFileSync(
@@ -213,14 +215,17 @@ describe("digest job (black-box)", () => {
     const root = digestProject({}, temps);
     fs.mkdirSync(path.join(root, "pkg"));
     expect(
-      journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], { cwd: path.join(root, "pkg") }).job
-        .status,
+      journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], {
+        cwd: path.join(root, "pkg"),
+        hooks: true,
+      }).job.status,
     ).toBe(0);
     expect(getOne(root, "scanner")).toContain("files read: pkg/src/a.ts\n");
 
     // An entry written before entries carried cwd falls back to the project root.
     const old = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], {
       skipJob: true,
+      hooks: true,
     });
     const file = path.join(old.home, "spool", "s1.json");
     const { cwd: _, ...entry } = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -246,6 +251,7 @@ describe("digest job (black-box)", () => {
   test("a Stop during a job stores the digest and keeps the entry", async () => {
     const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST), hold: true }], {
       skipJob: true,
+      hooks: true,
     });
     const exited = spawnJob(j);
     await waitFor(() => j.fake.calls().length === 1);
@@ -517,7 +523,9 @@ describe("digest job failure classes (black-box)", () => {
 
   test("a Stop during the third refusal keeps the entry unparked", async () => {
     const refusal = { lines: refusalStream() };
-    const j = journey(digestProject({}, temps), [refusal, refusal, { ...refusal, hold: true }]);
+    const j = journey(digestProject({}, temps), [refusal, refusal, { ...refusal, hold: true }], {
+      hooks: true,
+    });
     rerun(j);
     const exited = spawnJob(j);
     await waitFor(() => j.fake.calls().length === 3);
@@ -529,7 +537,9 @@ describe("digest job failure classes (black-box)", () => {
 
   test("a stored digest resets the rejection count", () => {
     const refusal = { lines: refusalStream() };
-    const j = journey(digestProject({}, temps), [refusal, refusal, ok(), refusal]);
+    const j = journey(digestProject({}, temps), [refusal, refusal, ok(), refusal], {
+      hooks: true,
+    });
     expect(j.job.status).toBe(1);
     expect(rerun(j).status).toBe(1);
     expect(rerun(j).status).toBe(0);

@@ -516,7 +516,7 @@ db.close();
 
   test("after a restore, a session digests from the restored position once it writes a new spool entry", () => {
     const root = project();
-    const j = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]);
+    const j = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], { hooks: true });
     expect(j.job.status).toBe(0);
     expect(snapshots(root)).toHaveLength(1);
     const later = laterRecords();

@@ -12,7 +12,7 @@ import {
   type DigestInput,
   type NewObservation,
 } from "../src/hooks/lib/memory.ts";
-import { DAEMON_FILE, type DaemonState } from "../src/hooks/lib/spool.ts";
+import { DAEMON_FILE, type DaemonState, type SpoolEntry } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
 import { cliVersion } from "../src/cli/version.ts";
@@ -446,14 +446,16 @@ export function spoolEntry(
   projectRoot: string,
   updatedAt: number,
   parked = false,
+  opts: { transcriptPath?: string; cwd?: string; ended?: boolean } = {},
 ): void {
   const dir = parked ? path.join(home, "spool", "parked") : path.join(home, "spool");
   fs.mkdirSync(dir, { recursive: true });
-  const entry = {
-    transcriptPath: `/t/${stem}.jsonl`,
+  const entry: SpoolEntry = {
+    transcriptPath: opts.transcriptPath ?? `/t/${stem}.jsonl`,
     projectRoot,
+    cwd: opts.cwd ?? projectRoot,
     agent: "claude",
-    ended: true,
+    ended: opts.ended ?? true,
     updatedAt,
   };
   fs.writeFileSync(path.join(dir, `${stem}.json`), JSON.stringify(entry));
@@ -766,8 +768,9 @@ export type Journey = {
 };
 
 /**
- * Write the `stem` (default s1) spool entry through the Stop and SessionEnd hooks, then run `job <stem>`.
- * `transcript` replaces the fixture's text; `env` adds to the job's environment; `home` replaces the empty crank home.
+ * Plant the `stem` (default s1) spool entry, or with `hooks` write it through the Stop and SessionEnd hooks, then
+ * run `job <stem>`. `transcript` replaces the fixture's text; `env` adds to the job's environment; `home` replaces
+ * the empty crank home.
  */
 export function journey(
   root: string,
@@ -781,6 +784,7 @@ export function journey(
     stem?: string;
     cwd?: string;
     args?: string[];
+    hooks?: true;
   } = {},
 ): Journey {
   const home = opts.home ?? makeCrankHome();
@@ -792,24 +796,28 @@ export function journey(
   if (opts.transcript === undefined) fs.copyFileSync(FIXTURE, transcript);
   else fs.writeFileSync(transcript, opts.transcript);
   const fake = fakeClaude(path.join(tmp, "bin"), scenarios);
-  const hookEnv = { ...fake.env, CRANK_HOME: home };
   const cwd = opts.cwd ?? root;
-  expect(
-    runHook(
-      "src/hooks/stop.ts",
-      JSON.stringify({ ...claudeStop(cwd), transcript_path: transcript }),
-      root,
-      hookEnv,
-    ).status,
-  ).toBe(0);
-  expect(
-    runHook(
-      "src/hooks/session-end.ts",
-      JSON.stringify(claudeSessionEnd(cwd, transcript)),
-      root,
-      hookEnv,
-    ).status,
-  ).toBe(0);
+  if (opts.hooks) {
+    const hookEnv = { ...fake.env, CRANK_HOME: home };
+    expect(
+      runHook(
+        "src/hooks/stop.ts",
+        JSON.stringify({ ...claudeStop(cwd), transcript_path: transcript }),
+        root,
+        hookEnv,
+      ).status,
+    ).toBe(0);
+    expect(
+      runHook(
+        "src/hooks/session-end.ts",
+        JSON.stringify(claudeSessionEnd(cwd, transcript)),
+        root,
+        hookEnv,
+      ).status,
+    ).toBe(0);
+  } else {
+    spoolEntry(home, stem, root, Date.now(), false, { transcriptPath: transcript, cwd });
+  }
   expect(spoolFiles(home)).toEqual([`${stem}.json`]);
   const j = { root, home, stem, transcript, fake };
   const job = opts.skipJob
