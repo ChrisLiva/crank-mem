@@ -18,7 +18,7 @@ import {
 } from "../hooks/lib/wire.ts";
 import { EMBED_MODEL } from "../daemon/embedder.ts";
 import { queryVector } from "./recall.ts";
-import { registeredRoots } from "./registry.ts";
+import { registeredRoots } from "../hooks/lib/registry.ts";
 import { captureSummary } from "./stats.ts";
 import { activityDays, usageMetrics, windowStart } from "./usage-metrics.ts";
 

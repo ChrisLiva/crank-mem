@@ -16,7 +16,7 @@ import { DAEMON_FILE, type DaemonState, type SpoolEntry } from "../src/hooks/lib
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
 import { cliVersion } from "../src/cli/version.ts";
-import { registerProject } from "../src/cli/registry.ts";
+import { registerProject } from "../src/hooks/lib/registry.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");

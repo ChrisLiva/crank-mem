@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { crankHome, ensureCrankHome, writeJsonAtomic } from "../hooks/lib/user-state.ts";
+import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 
 // The per-user list of project roots that `init` and `upgrade` add and
 // `uninstall` removes, kept at <crank home>/projects.json for the dashboard.

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { hasCrankHooks } from "./settings.ts";
-import { registerProject, unregisterProject } from "./registry.ts";
+import { registerProject, unregisterProject } from "../hooks/lib/registry.ts";
 import { templatePath, vendorHooks, vendoredHooksCurrent } from "./vendor.ts";
 import { cliVersion } from "./version.ts";
 import type { OpenedProject } from "./project.ts";

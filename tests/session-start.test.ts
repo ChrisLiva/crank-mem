@@ -743,3 +743,27 @@ describe("no upkeep prompt in any digest state (black-box)", () => {
     });
   }
 });
+
+describe("project registry (black-box)", () => {
+  test("starts through a symlink and the real path list the project's realpath once", () => {
+    const home = makeCrankHome();
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crank-link-")), "proj");
+    fs.symlinkSync(root, link);
+    for (const cwd of [link, root, root]) {
+      const run = runHook(HOOK, JSON.stringify(claudeSessionStart(cwd)), cwd, { CRANK_HOME: home });
+      expect(run.status).toBe(0);
+    }
+    const registry = JSON.parse(fs.readFileSync(path.join(home, "projects.json"), "utf-8"));
+    expect(registry.projects.map((p: { root: string }) => p.root)).toEqual([fs.realpathSync(root)]);
+  });
+
+  test("an unwritable crank home leaves the injection whole", () => {
+    const home = path.join(makeCrankHome(), "not-a-dir");
+    fs.writeFileSync(home, "");
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)), root, { CRANK_HOME: home });
+    expect(run.status).toBe(0);
+    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("crank-mem");
+  });
+});
