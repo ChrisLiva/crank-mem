@@ -257,11 +257,11 @@ The entries in an agent's settings that make it run crank-mem's hooks.
 _Avoid_: Registration, hook config
 
 **Vendored hooks**:
-The copy of the clone's hooks that a project keeps, so that its hooks run without the clone.
+The copy of the running crank-mem's hooks, from a clone or an installed copy, that a project keeps, so that its hooks run without that crank-mem.
 _Avoid_: Installed hooks, bundled hooks
 
 **Drift**:
-The state of a project whose vendored hooks lag the clone's.
+The state of a project whose vendored hooks lag the crank-mem that installed them, a clone or an installed copy.
 _Avoid_: Stale hooks, version mismatch
 
 **Backup**:
