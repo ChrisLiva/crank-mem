@@ -246,6 +246,7 @@ describe("older stores", () => {
     );
     expect(sub.status).toBe(0);
     expect(sub.stdout).not.toContain(RECALL_BULLET);
+    expect(fs.existsSync(path.join(root, ".crank/backups"))).toBe(false);
   });
 });
 
