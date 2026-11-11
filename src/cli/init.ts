@@ -5,6 +5,7 @@ import { parseArgs } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { choose } from "./prompt.ts";
 import { cliVersion, toolRoot } from "./version.ts";
+import { printUpdateNotice } from "./updates.ts";
 import { newBackupDir } from "./backups.ts";
 import { applyInstall, printReport } from "./install.ts";
 import { installPaths } from "./install-support.ts";
@@ -31,6 +32,7 @@ function detectRuntime(): CrankConfig["runtime"] | null {
 }
 
 export async function run(args: string[]): Promise<number> {
+  printUpdateNotice();
   const { flags } = parseArgs(args, COMMANDS.init.value);
   const yes = flags.yes === true;
   const root = process.cwd();

@@ -100,3 +100,21 @@ export function laggingProjects(
     return newer(version, vendored) ? [{ root, name: path.basename(root), vendored }] : [];
   });
 }
+
+/** True when the running copy is installed and the last check found a newer release. */
+export function updateAvailable(state: UpdateState): boolean {
+  return installedCopy() && state.latest !== null && newer(state.latest.version, cliVersion());
+}
+
+/** The line a human-run command prints when an update is available, else null. */
+export function updateNotice(): string | null {
+  const state = readUpdateState();
+  if (!updateAvailable(state)) return null;
+  return `crank-mem ${state.latest!.version} is available (installed ${cliVersion()}) — run \`crank-mem self-update\`.`;
+}
+
+/** Writes `updateNotice()` to stderr when there is one. */
+export function printUpdateNotice(): void {
+  const notice = updateNotice();
+  if (notice !== null) process.stderr.write(notice + "\n");
+}

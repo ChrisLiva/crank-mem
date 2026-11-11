@@ -4,9 +4,11 @@ import { clearStopState } from "../hooks/lib/user-state.ts";
 import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";
 import { toolRoot } from "./version.ts";
+import { printUpdateNotice } from "./updates.ts";
 import { embedderReady } from "../daemon/embedder.ts";
 
 export async function run(args: string[]): Promise<number> {
+  printUpdateNotice();
   const sub = args[0];
   if (sub === "resume") {
     clearStopState();

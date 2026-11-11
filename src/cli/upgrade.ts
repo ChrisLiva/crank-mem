@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { parseArgs } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { cliVersion, installedCopy, REPO_ROOT, toolRoot } from "./version.ts";
+import { printUpdateNotice } from "./updates.ts";
 import { dashboardCurrent, dashboardDir, installPackages, setUpDashboard } from "./setup.ts";
 import { openProject, reportMigration } from "./project.ts";
 import { newBackupDir } from "./backups.ts";
@@ -28,6 +29,7 @@ import { registeredRoots } from "../hooks/lib/registry.ts";
 // Exits 1 when any repair failed, after every step has run.
 
 export async function run(args: string[]): Promise<number> {
+  printUpdateNotice();
   const { flags } = parseArgs(args, COMMANDS.upgrade.value);
   if (flags.all === true) {
     upgradeTool();

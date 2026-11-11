@@ -7,6 +7,7 @@ import { ensureCrankHome } from "../hooks/lib/user-state.ts";
 import { parseArgs, positive } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { cliVersion, installedCopy, REPO_ROOT } from "./version.ts";
+import { printUpdateNotice } from "./updates.ts";
 
 // `crank-mem setup`: install the tool's packages, build the dashboard (in a
 // clone only: an installed copy ships its build) and download the local search
@@ -124,6 +125,7 @@ export async function ensureModel(opts: {
 }
 
 export async function run(args: string[]): Promise<number> {
+  printUpdateNotice();
   const { flags } = parseArgs(args, COMMANDS.setup.value);
   const host = typeof flags["model-host"] === "string" ? flags["model-host"] : undefined;
   const fetchTimeoutMs = positive(flags["fetch-timeout-ms"], 0) || undefined;
