@@ -21,6 +21,10 @@ import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");
 
+// Every child that inherits process.env checks for a release against a closed local port, never
+// GitHub, unless its test passes a release server.
+process.env.CRANK_RELEASE_URL ??= "http://127.0.0.1:9";
+
 /** Create a temp project with .crank/ initialized and some source files. */
 export function makeCrankProject(files: Record<string, string> = {}): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-proj-"));

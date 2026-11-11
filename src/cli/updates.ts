@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { errorMessage } from "../hooks/lib/config.ts";
+import { CONFIG_FILE, CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
+import { registeredRoots } from "../hooks/lib/registry.ts";
 import { crankHome, writeJsonAtomic } from "../hooks/lib/user-state.ts";
-import { cliVersion, installedCopy, releaseBase } from "./version.ts";
+import { cliVersion, installedCopy, newer, releaseBase } from "./version.ts";
 
 // The release check's state in `<crank home>/update.json`: the user's settings
 // (`checkDaily`, `auto`) and the last check's result.
@@ -83,4 +84,19 @@ export function checkDue(state: UpdateState, nowMs: number): boolean {
     !process.env.CRANK_NO_UPDATE_CHECK &&
     (state.checkedAtMs === null || nowMs - state.checkedAtMs >= CHECK_EVERY_MS)
   );
+}
+
+/**
+ * The registered projects, in registry order, whose vendored hooks are older than `version`.
+ * A root without `.crank/config.json` is left out: `upgrade --all` skips it as missing.
+ */
+export function laggingProjects(
+  version: string,
+): Array<{ root: string; name: string; vendored: string }> {
+  return registeredRoots().flatMap((root) => {
+    const crankDir = path.join(root, CRANK_DIR);
+    if (!fs.existsSync(path.join(crankDir, CONFIG_FILE))) return [];
+    const vendored = loadConfig(crankDir).vendored_version;
+    return newer(version, vendored) ? [{ root, name: path.basename(root), vendored }] : [];
+  });
 }

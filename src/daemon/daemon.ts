@@ -3,7 +3,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs, positive } from "../cli/args.ts";
 import { COMMANDS } from "../cli/commands.ts";
-import { REPO_ROOT, cliVersion, toolRoot, versionAt } from "../cli/version.ts";
+import { checkDue, checkNow, laggingProjects, readUpdateState } from "../cli/updates.ts";
+import {
+  REPO_ROOT,
+  cliVersion,
+  installedCopy,
+  newer,
+  toolRoot,
+  versionAt,
+} from "../cli/version.ts";
 import { CONFIG_FILE, CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
 import { trySteal } from "../hooks/lib/lock.ts";
 import {
@@ -27,8 +35,11 @@ import { RUN_TIMEOUT_MS } from "./gateway.ts";
 
 // `crank-mem daemon`: one per user, owning <crank home>/daemon.json. Each sweep
 // heartbeats, prunes the spool and starts at most one `crank-mem job` child,
-// across every project. Hooks start it through ensureDaemon; it exits when
-// idle, stopped, upgraded, or replaced by another daemon.
+// across every project. The first sweep starts a release check when one is due;
+// in auto mode an installed copy runs `self-update` (or `upgrade --all` for
+// lagging projects) as that one child, between digest jobs. Hooks start it
+// through ensureDaemon; it exits when idle, stopped, upgraded, or replaced by
+// another daemon.
 
 const SWEEP_MS = 30_000;
 const IDLE_MS = 600_000;
@@ -76,6 +87,8 @@ export async function run(args: string[]): Promise<number> {
   }
   return 0;
 }
+
+type AutoKind = "self-update" | "upgrade --all";
 
 function state(version: string): DaemonState {
   return { pid: process.pid, version, heartbeatMs: Date.now() };
@@ -126,6 +139,11 @@ class Daemon {
   private stopping = false;
   private job: Promise<void> | null = null;
   private busySince = Date.now();
+  /** The first sweep fires at most one release check; the daemon does not exit while it is pending. */
+  private checkFired = false;
+  private check: Promise<void> | null = null;
+  /** Auto-update children started so far; each kind starts at most once per daemon start, whatever its exit. */
+  private readonly autoStarted = new Set<AutoKind>();
   /** Stems whose last job failed: no job starts before `untilMs`, and the next failure doubles `delayMs`. Memory only. */
   private readonly holds = new Map<string, { untilMs: number; delayMs: number }>();
   /** When each stem's mid-session window opened: the first sweep that saw it, then each exit 0. Memory only, never pruned. */
@@ -142,13 +160,14 @@ class Daemon {
       if (this.sweep() === "exit") return;
       if (this.opts.once) {
         await this.job;
+        await this.check;
         return;
       }
       // Sleep until the next sweep, waking early when a job ends so a stopping daemon exits after it.
       const next = Date.now() + this.opts.sweepMs;
       while (Date.now() < next) {
         await Promise.race([sleep(next - Date.now()), this.job ?? new Promise<void>(() => {})]);
-        if (this.stopping && this.job === null) return;
+        if (this.stopping && this.job === null && this.check === null) return;
       }
     }
   }
@@ -172,11 +191,15 @@ class Daemon {
       // Digests stopped (credential or login).
       if (readStopState() !== null) this.stopping = true;
       this.pruneSpool();
+      this.fireCheck();
+      // An update goes ahead of the next spool entry.
+      if (!this.stopping && this.job === null) this.startAuto();
       if (!this.stopping && this.job === null) this.startNext();
     } catch (err) {
       console.error(`crank-mem daemon: sweep failed: ${errorMessage(err)}`);
     }
-    if (this.job !== null) {
+    // `main` exits the process once the daemon returns, which would kill a pending check.
+    if (this.job !== null || this.check !== null) {
       this.busySince = Date.now();
       return "continue";
     }
@@ -184,6 +207,35 @@ class Daemon {
     if (readSpool().length > 0) this.busySince = Date.now();
     else if (Date.now() - this.busySince >= this.opts.idleMs) return "exit";
     return "continue";
+  }
+
+  /** On the first sweep, start the release check when one is due, without waiting for it. */
+  private fireCheck(): void {
+    if (this.checkFired) return;
+    this.checkFired = true;
+    if (!checkDue(readUpdateState(), Date.now())) return;
+    const clear = () => {
+      this.check = null;
+    };
+    this.check = checkNow().then(clear, clear);
+  }
+
+  /** In auto mode, once the check has landed, an installed copy updates to a newer release. */
+  private startAuto(): void {
+    if (this.check !== null || !installedCopy()) return;
+    const { auto, latest } = readUpdateState();
+    if (!auto) return;
+    if (latest !== null && newer(latest.version, this.startVersion)) {
+      this.startAutoChild("self-update", ["self-update"]);
+    } else if (laggingProjects(this.startVersion).length > 0) {
+      this.startAutoChild("upgrade --all", ["upgrade", "--all"]);
+    }
+  }
+
+  private startAutoChild(kind: AutoKind, argv: string[]): void {
+    if (this.autoStarted.has(kind)) return;
+    this.autoStarted.add(kind);
+    this.startChild(toolRoot(), argv, () => {});
   }
 
   /** Entries whose transcript is gone have nothing left to digest; the rest open their mid-session window on first sight. */
@@ -211,16 +263,18 @@ class Daemon {
     const argv = ["job", stem];
     if (this.opts.runTimeoutMs !== null)
       argv.push("--run-timeout-ms", String(this.opts.runTimeoutMs));
-    const child = spawn(path.join(REPO_ROOT, "bin", "crank-mem"), argv, {
-      cwd: REPO_ROOT,
-      stdio: "ignore",
-    });
+    this.startChild(REPO_ROOT, argv, (code) => this.settle(stem, code));
+  }
+
+  /** Runs `<root>/bin/crank-mem ...argv` as the daemon's one job; `onEnd` gets its exit code, null when it could not start. */
+  private startChild(root: string, argv: string[], onEnd: (code: number | null) => void): void {
+    const child = spawn(path.join(root, "bin", "crank-mem"), argv, { cwd: root, stdio: "ignore" });
     this.job = new Promise<void>((resolve) => {
       let ended = false;
       const done = (code: number | null) => {
         if (ended) return;
         ended = true;
-        this.settle(stem, code);
+        onEnd(code);
         this.job = null;
         resolve();
       };
