@@ -12,7 +12,7 @@ import {
   plantMemory,
   projectId,
   REPO_ROOT,
-  registeredProject,
+  registeredCopy,
   runCli,
   runHook,
   seedMemory,
@@ -837,7 +837,7 @@ const TITLES = ["Alpha one", "Bravo two", "Charlie three", "Delta four"];
 
 /** A registered project on `home` with four observations and the window journey's log. */
 function windowProject(home: string) {
-  const root = registeredProject(home);
+  const root = registeredCopy(home);
   fs.writeFileSync(path.join(root, "b.ts"), "export const b = 1;\n");
   const ids = seedMemory(
     root,
@@ -898,9 +898,9 @@ describe("usage window: the usage endpoint aggregates the log", () => {
   test("a store that does not open still answers the log's metrics, with no titles", async () => {
     const home = makeCrankHome();
     const { root } = windowProject(home);
-    const newer = registeredProject(home);
+    const newer = registeredCopy(home);
     plantMemory(newer, "newer");
-    const missing = registeredProject(home);
+    const missing = registeredCopy(home);
     for (const other of [newer, missing]) {
       fs.copyFileSync(
         path.join(root, ".crank/usage.jsonl"),
@@ -1134,7 +1134,7 @@ describe("usageMetrics (in-process)", () => {
 describe("usage capture: the journey's lines reach the usage endpoint", () => {
   test("every channel counts once, and a dashboard search records no line", async () => {
     const home = makeCrankHome();
-    const root = registeredProject(home);
+    const root = registeredCopy(home);
     fs.writeFileSync(path.join(root, "code.ts"), THREE);
     const hit = seedMemory(root, [{ title: "Epsilon finding", filesRead: ["a.ts"] }])[0]!;
     const hook = (file: string, payload: object) =>

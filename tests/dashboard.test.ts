@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -25,9 +25,11 @@ import {
   plantVector,
   projectId,
   REPO_ROOT,
+  registeredCopy,
   registeredProject,
   runCli,
   seedMemory,
+  sharedDashboardDir,
   spoolEntry,
   startDashboard,
   stopDigests,
@@ -128,18 +130,121 @@ describe("dashboard command", () => {
 });
 
 describe("dashboard server", () => {
-  test("--port 0 listens on 127.0.0.1 only and prints one startup line", async () => {
-    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
-    expect(dash.url).toMatch(STARTUP_URL);
-    const port = portOf(dash.url);
-    expect(port).toBeGreaterThan(0);
-    expect(dash.output().stdout).toBe(`crank-mem dashboard: ${dash.url}\n`);
-    const v6 = await fetch(`http://[::1]:${port}/`).then(
-      () => null,
-      (err: { code?: string }) => err.code,
-    );
-    expect(v6).toBe("ECONNREFUSED");
-  }, 20_000);
+  describe("one shared server", () => {
+    let dash: Awaited<ReturnType<typeof startDashboard>>;
+    // makeCrankHome and sharedDashboardDir sit outside tempDir, which cleanup empties after each test.
+    beforeAll(async () => {
+      dash = await startDashboard(makeCrankHome(), ["--port", "0"], {
+        keep: true,
+        dashboardDir: sharedDashboardDir(),
+      });
+    }, 20_000);
+    afterAll(async () => {
+      await dash.stop();
+    });
+
+    test("--port 0 listens on 127.0.0.1 only and prints one startup line", async () => {
+      expect(dash.url).toMatch(STARTUP_URL);
+      const port = portOf(dash.url);
+      expect(port).toBeGreaterThan(0);
+      expect(dash.output().stdout).toBe(`crank-mem dashboard: ${dash.url}\n`);
+      const v6 = await fetch(`http://[::1]:${port}/`).then(
+        () => null,
+        (err: { code?: string }) => err.code,
+      );
+      expect(v6).toBe("ECONNREFUSED");
+    }, 20_000);
+
+    test("the URL's token trades for an HttpOnly cookie, and a wrong token is refused", async () => {
+      const good = await dash.get(`/?token=${dash.token}`, { headers: { Cookie: "" } });
+      expect(good.status).toBe(303);
+      expect(good.headers.get("location")).toBe("/");
+      expect(good.headers.get("set-cookie")).toBe(
+        `crank_dashboard=${dash.token}; HttpOnly; SameSite=Strict; Path=/`,
+      );
+      const bad = await dash.get(`/?token=${"0".repeat(64)}`, { headers: { Cookie: "" } });
+      expect(bad.status).toBe(401);
+    }, 20_000);
+
+    test("a request without the cookie is refused, and the cookie serves index.html", async () => {
+      for (const p of ["/", "/api/projects", "/assets/app.js"]) {
+        for (const cookie of ["", "crank_dashboard=abc", `crank_dashboard=${"0".repeat(64)}`]) {
+          const res = await dash.get(p, { headers: { Cookie: cookie } });
+          expect([
+            p,
+            cookie,
+            res.status,
+            res.headers.get("content-type"),
+            await res.text(),
+          ]).toEqual([p, cookie, 401, "text/plain; charset=utf-8", UNAUTHORIZED_BODY]);
+        }
+      }
+      const index = fs.readFileSync(FIXTURE_INDEX);
+      for (const cookie of [
+        `crank_dashboard=${dash.token}`,
+        `other=1; crank_dashboard=${dash.token}`,
+      ]) {
+        const res = await dash.get("/", { headers: { Cookie: cookie } });
+        expect(res.status).toBe(200);
+        expect(Buffer.from(await res.arrayBuffer()).equals(index)).toBe(true);
+      }
+    }, 20_000);
+
+    test("a Host other than 127.0.0.1 or localhost on the port is refused before the cookie check", async () => {
+      const port = portOf(dash.url);
+      for (const host of ["evil.example:80", "127.0.0.1", "localhost:1"]) {
+        const res = await dash.get("/", { headers: { Host: host } });
+        expect([host, res.status, await res.text()]).toEqual([host, 403, FORBIDDEN_HOST_BODY]);
+      }
+      const local = await dash.get("/", { headers: { Host: `localhost:${port}` } });
+      expect(local.status).toBe(200);
+    }, 20_000);
+
+    test("a method other than GET or HEAD gets 405, checked after Host and before the cookie", async () => {
+      const post = await dash.get("/", { method: "POST", headers: { Cookie: "" } });
+      expect([post.status, post.headers.get("allow")]).toEqual([405, "GET, HEAD"]);
+      const health = await dash.get("/api/projects/zzzzzzzzzzzz/health", {
+        headers: { Cookie: "" },
+      });
+      expect(health.status).toBe(401);
+      const put = await dash.get("/", { method: "PUT", headers: { Host: "evil.example:80" } });
+      expect(put.status).toBe(403);
+    }, 20_000);
+
+    test("every response carries the security headers, and index.html and /api/ carry no-store", async () => {
+      const samples: Array<[number, string, RequestInit]> = [
+        [200, "/", {}],
+        [303, `/?token=${dash.token}`, { headers: { Cookie: "" } }],
+        [401, "/", { headers: { Cookie: "" } }],
+        [403, "/", { headers: { Host: "evil.example:80" } }],
+        [404, "/nope.js", {}],
+        [405, "/", { method: "POST" }],
+      ];
+      for (const [status, p, init] of samples) {
+        const res = await dash.get(p, init);
+        expect([
+          res.status,
+          res.headers.get("x-frame-options"),
+          res.headers.get("x-content-type-options"),
+          res.headers.get("content-security-policy"),
+        ]).toEqual([status, "DENY", "nosniff", "default-src 'self'; frame-ancestors 'none'"]);
+      }
+      for (const p of ["/", "/api/projects"]) {
+        expect([p, (await dash.get(p)).headers.get("cache-control")]).toEqual([p, "no-store"]);
+      }
+    }, 20_000);
+
+    test("HEAD answers GET's status and headers with an empty body", async () => {
+      const get = await dash.get("/assets/app.js");
+      const head = await dash.get("/assets/app.js", { method: "HEAD" });
+      expect([head.status, head.headers.get("content-type"), await head.text()]).toEqual([
+        get.status,
+        get.headers.get("content-type"),
+        "",
+      ]);
+      expect(get.status).toBe(200);
+    }, 20_000);
+  });
 
   test("with no --port it listens on 38700 plus the uid's last two digits", async () => {
     const expected = 38700 + (process.getuid!() % 100);
@@ -185,88 +290,6 @@ describe("dashboard server", () => {
     }
   }, 30_000);
 
-  test("the URL's token trades for an HttpOnly cookie, and a wrong token is refused", async () => {
-    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
-    const good = await dash.get(`/?token=${dash.token}`, { headers: { Cookie: "" } });
-    expect(good.status).toBe(303);
-    expect(good.headers.get("location")).toBe("/");
-    expect(good.headers.get("set-cookie")).toBe(
-      `crank_dashboard=${dash.token}; HttpOnly; SameSite=Strict; Path=/`,
-    );
-    const bad = await dash.get(`/?token=${"0".repeat(64)}`, { headers: { Cookie: "" } });
-    expect(bad.status).toBe(401);
-  }, 20_000);
-
-  test("a request without the cookie is refused, and the cookie serves index.html", async () => {
-    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
-    for (const p of ["/", "/api/projects", "/assets/app.js"]) {
-      for (const cookie of ["", "crank_dashboard=abc", `crank_dashboard=${"0".repeat(64)}`]) {
-        const res = await dash.get(p, { headers: { Cookie: cookie } });
-        expect([p, cookie, res.status, res.headers.get("content-type"), await res.text()]).toEqual([
-          p,
-          cookie,
-          401,
-          "text/plain; charset=utf-8",
-          UNAUTHORIZED_BODY,
-        ]);
-      }
-    }
-    const index = fs.readFileSync(FIXTURE_INDEX);
-    for (const cookie of [
-      `crank_dashboard=${dash.token}`,
-      `other=1; crank_dashboard=${dash.token}`,
-    ]) {
-      const res = await dash.get("/", { headers: { Cookie: cookie } });
-      expect(res.status).toBe(200);
-      expect(Buffer.from(await res.arrayBuffer()).equals(index)).toBe(true);
-    }
-  }, 20_000);
-
-  test("a Host other than 127.0.0.1 or localhost on the port is refused before the cookie check", async () => {
-    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
-    const port = portOf(dash.url);
-    for (const host of ["evil.example:80", "127.0.0.1", "localhost:1"]) {
-      const res = await dash.get("/", { headers: { Host: host } });
-      expect([host, res.status, await res.text()]).toEqual([host, 403, FORBIDDEN_HOST_BODY]);
-    }
-    const local = await dash.get("/", { headers: { Host: `localhost:${port}` } });
-    expect(local.status).toBe(200);
-  }, 20_000);
-
-  test("a method other than GET or HEAD gets 405, checked after Host and before the cookie", async () => {
-    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
-    const post = await dash.get("/", { method: "POST", headers: { Cookie: "" } });
-    expect([post.status, post.headers.get("allow")]).toEqual([405, "GET, HEAD"]);
-    const health = await dash.get("/api/projects/zzzzzzzzzzzz/health", { headers: { Cookie: "" } });
-    expect(health.status).toBe(401);
-    const put = await dash.get("/", { method: "PUT", headers: { Host: "evil.example:80" } });
-    expect(put.status).toBe(403);
-  }, 20_000);
-
-  test("every response carries the security headers, and index.html and /api/ carry no-store", async () => {
-    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
-    const samples: Array<[number, string, RequestInit]> = [
-      [200, "/", {}],
-      [303, `/?token=${dash.token}`, { headers: { Cookie: "" } }],
-      [401, "/", { headers: { Cookie: "" } }],
-      [403, "/", { headers: { Host: "evil.example:80" } }],
-      [404, "/nope.js", {}],
-      [405, "/", { method: "POST" }],
-    ];
-    for (const [status, p, init] of samples) {
-      const res = await dash.get(p, init);
-      expect([
-        res.status,
-        res.headers.get("x-frame-options"),
-        res.headers.get("x-content-type-options"),
-        res.headers.get("content-security-policy"),
-      ]).toEqual([status, "DENY", "nosniff", "default-src 'self'; frame-ancestors 'none'"]);
-    }
-    for (const p of ["/", "/api/projects"]) {
-      expect([p, (await dash.get(p)).headers.get("cache-control")]).toEqual([p, "no-store"]);
-    }
-  }, 20_000);
-
   test("the static handler serves files under dist only, typed by extension", async () => {
     const dashboardDir = dashboardFixture(cliVersion());
     fs.writeFileSync(path.join(dashboardDir, "package.json"), "{}");
@@ -296,24 +319,12 @@ describe("dashboard server", () => {
     }
   }, 20_000);
 
-  test("HEAD answers GET's status and headers with an empty body", async () => {
-    const dash = await startDashboard(makeCrankHome(), ["--port", "0"]);
-    const get = await dash.get("/assets/app.js");
-    const head = await dash.get("/assets/app.js", { method: "HEAD" });
-    expect([head.status, head.headers.get("content-type"), await head.text()]).toEqual([
-      get.status,
-      get.headers.get("content-type"),
-      "",
-    ]);
-    expect(get.status).toBe(200);
-  }, 20_000);
-
   test("SIGTERM and SIGINT each exit 0, free the port and leave the token file alone", async () => {
     const home = makeCrankHome();
-    await (await startDashboard(home, ["--port", "0"])).stop();
+    let before: Buffer | undefined;
     for (const signal of ["SIGTERM", "SIGINT"] as const) {
-      const before = fs.readFileSync(tokenFile(home));
       const dash = await startDashboard(home, ["--port", "0"]);
+      before ??= fs.readFileSync(tokenFile(home));
       expect((await dash.get("/")).status).toBe(200);
       expect([signal, await dash.stop(signal)]).toEqual([signal, 0]);
       await listenOn(portOf(dash.url));
@@ -498,7 +509,7 @@ describe("project registry", () => {
 
   test("a project-scoped route for an id no listed project has answers 404", async () => {
     const home = makeCrankHome();
-    registeredProject(home);
+    registeredCopy(home);
     const dash = await startDashboard(home, ["--port", "0"]);
     expect((await dash.get("/api/projects/000000000000/health")).status).toBe(404);
   }, 20_000);
@@ -524,7 +535,7 @@ async function memoryJson(
 describe("memory view", () => {
   test("observations page 50 lines newest first, and next pages strictly older lines", async () => {
     const home = makeCrankHome();
-    const root = registeredProject(home);
+    const root = registeredCopy(home);
     const ids = seedMemory(
       root,
       Array.from({ length: 60 }, (_, i) => ({ title: `Line ${i}` })),
@@ -564,7 +575,7 @@ describe("memory view", () => {
 
   test("type, file and stale narrow the list, and stale rows stay out without stale=1", async () => {
     const home = makeCrankHome();
-    const root = registeredProject(home);
+    const root = registeredCopy(home);
     const [bugfix, feature, flagged] = seedMemory(root, [
       { type: "bugfix", title: "Fix a", filesRead: ["src/a.ts"] },
       { type: "feature", title: "Add b" },
@@ -592,13 +603,13 @@ describe("memory view", () => {
 
   test("q searches with the filters, ignores a well-formed before, and names the mode", async () => {
     const home = makeModelHome();
-    const keyword = registeredProject(home);
+    const keyword = registeredCopy(home);
     const [, walrus] = seedMemory(keyword, [
       { type: "bugfix", title: "Lock retry on EEXIST" },
       { type: "bugfix", title: "Walrus cache warms" },
       { type: "feature", title: "Walrus import added" },
     ]);
-    const hybrid = registeredProject(makeCrankHome());
+    const hybrid = registeredCopy(makeCrankHome());
     expect(runCli(hybrid, ["upgrade"], { CRANK_HOME: home }).status).toBe(0);
     const [planted] = seedMemory(hybrid, [{ title: "Walrus vectors" }]);
     plantVector(hybrid, planted!);
@@ -619,7 +630,7 @@ describe("memory view", () => {
 
   test("an observation's route answers its whole record, 404 for an unknown id and 400 for a bad one", async () => {
     const home = makeCrankHome();
-    const root = registeredProject(home);
+    const root = registeredCopy(home);
     const given = {
       type: "decision" as const,
       title: "Keep retries at 5 s ✓",
@@ -652,7 +663,7 @@ describe("memory view", () => {
 
   test("a malformed before, an unknown type or a blank q answers 400, with or without q", async () => {
     const home = makeCrankHome();
-    const root = registeredProject(home);
+    const root = registeredCopy(home);
     seedMemory(root, [{ title: "Walrus cache warms" }]);
     const dash = await startDashboard(home, ["--port", "0"]);
     for (const query of [
@@ -672,12 +683,12 @@ describe("memory view", () => {
 
   test("a store that does not open answers both routes with its note, and another project still answers lines", async () => {
     const home = makeCrankHome();
-    const missing = registeredProject(home);
-    const newer = registeredProject(home);
+    const missing = registeredCopy(home);
+    const newer = registeredCopy(home);
     plantMemory(newer, "newer");
-    const unreadable = registeredProject(home);
+    const unreadable = registeredCopy(home);
     plantMemory(unreadable, "unreadable");
-    const seeded = registeredProject(home);
+    const seeded = registeredCopy(home);
     const [id] = seedMemory(seeded, [{ title: "Still here" }]);
     const dash = await startDashboard(home, ["--port", "0"]);
     for (const [root, note] of [
@@ -695,7 +706,7 @@ describe("memory view", () => {
 
   test("a route that throws after its store opens answers 500, and the server keeps serving", async () => {
     const home = makeCrankHome();
-    const root = registeredProject(home);
+    const root = registeredCopy(home);
     const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
     const db = new mod.DatabaseSync(path.join(root, ".crank/memory.db"));
     db.exec("PRAGMA user_version = 2");
@@ -752,7 +763,7 @@ function withWritable(root: string, fn: (memory: Memory) => void): void {
 describe("curation view", () => {
   test("proposals, stale flags and consolidation runs page 50 newest first, and a run's decisions show", async () => {
     const home = makeCrankHome();
-    const root = registeredProject(home);
+    const root = registeredCopy(home);
     const bullets = Array.from({ length: 55 }, (_, i) => `- **Rule ${i}**: keep é—日本 ${i}`);
     seedMemory(root, [], {
       proposals: bullets.map((bullet, i) => ({
@@ -943,10 +954,10 @@ describe("curation view", () => {
 
   test("a store that does not open answers every Curation route with the Memory view's note", async () => {
     const home = makeCrankHome();
-    const missing = registeredProject(home);
-    const newer = registeredProject(home);
+    const missing = registeredCopy(home);
+    const newer = registeredCopy(home);
     plantMemory(newer, "newer");
-    const unreadable = registeredProject(home);
+    const unreadable = registeredCopy(home);
     plantMemory(unreadable, "unreadable");
     const dash = await startDashboard(home, ["--port", "0"]);
     for (const [root, note] of [
@@ -969,8 +980,8 @@ function digestOn(root: string): void {
 describe("health view", () => {
   test("GET …/health answers the project's capture summary, and `stats` prints the same values", async () => {
     const home = makeCrankHome();
-    const root = registeredProject(home);
-    const other = registeredProject(home);
+    const root = registeredCopy(home);
+    const other = registeredCopy(home);
     digestOn(root);
     const [a] = seedMemory(root, [{ title: "Lock retry is two seconds" }, { title: "日本 ✓" }], {
       costUsd: 0.002,
@@ -1036,8 +1047,8 @@ describe("health view", () => {
 
   test("a missing or newer store answers its status with no memory figures", async () => {
     const home = makeCrankHome();
-    const missing = registeredProject(home);
-    const newer = registeredProject(home);
+    const missing = registeredCopy(home);
+    const newer = registeredCopy(home);
     plantMemory(newer, "newer");
     digestOn(missing);
     digestOn(newer);
@@ -1060,7 +1071,7 @@ describe("health view", () => {
 describe("activity", () => {
   test("GET …/activity counts each local day's digests, observations, cost and decisions", async () => {
     const home = makeCrankHome();
-    const root = registeredProject(home);
+    const root = registeredCopy(home);
     const [a] = seedMemory(root, [{ title: "a" }, { title: "b" }], {
       costUsd: 0.002,
       proposals: [
@@ -1121,7 +1132,7 @@ describe("activity", () => {
 
   test("a project without a store answers the store's note", async () => {
     const home = makeCrankHome();
-    const root = registeredProject(home);
+    const root = registeredCopy(home);
     const dash = await startDashboard(home, ["--port", "0"]);
     expect(await memoryJson(dash, root, "activity?days=7")).toEqual({ note: NO_MEMORY_NOTE });
   }, 20_000);

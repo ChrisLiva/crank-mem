@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   digestProject,
+  initedCopy,
   makeCrankHome,
   makeCrankProject,
   makeModelHome,
@@ -32,16 +33,19 @@ function cliWithCodexHome(codexHome: string, cwd: string, ...args: string[]): Cl
   return runCli(cwd, args, { CODEX_HOME: codexHome });
 }
 
+const ALPHA = { "a.ts": "/** Alpha. */\nexport const a = 1;\n" };
+
+/** A project inited on its own, for a test that reads the install time. */
 function initedProject(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-cli-"));
-  fs.writeFileSync(path.join(root, "a.ts"), "/** Alpha. */\nexport const a = 1;\n");
+  fs.writeFileSync(path.join(root, "a.ts"), ALPHA["a.ts"]);
   expect(cli(root, "init", "--yes", "--codex", "skip").status).toBe(0);
   return root;
 }
 
 describe("scan", () => {
   test("rebuilds the index and picks up new files", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     fs.writeFileSync(path.join(root, "b.ts"), "export const b = 2;\n");
     const run = cli(root, "scan");
     expect(run.status).toBe(0);
@@ -59,7 +63,7 @@ describe("scan", () => {
 
 describe("stats", () => {
   test("reports counts, coverage, runtime", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const run = cli(root, "stats");
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("files indexed:    1");
@@ -68,7 +72,7 @@ describe("stats", () => {
   });
 
   test("counts every indexable file past the cap, so coverage shows what the cap left out", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const configPath = path.join(root, ".crank/config.json");
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     fs.writeFileSync(configPath, JSON.stringify({ ...config, max_files: 1 }, null, 2));
@@ -101,8 +105,7 @@ describe("stats: memory health", () => {
     "- again `foo_bar_baz` with `--strict-mode` (2026-10-02)",
   ].join("\n");
 
-  function memoryProject(): string {
-    const root = initedProject();
+  function memoryProject(root = initedCopy(ALPHA)): string {
     const crankDir = path.join(root, ".crank");
     fs.mkdirSync(path.join(root, "docs"));
     fs.writeFileSync(path.join(root, "docs/kept.md"), "# kept\n");
@@ -201,7 +204,8 @@ describe("stats: memory health", () => {
   }, 20_000);
 
   test("dates the last audit by its manifest-less backup dir and says when the skill is missing", () => {
-    const root = memoryProject();
+    // The copy keeps the template's install time, which can pass the 60 s this line prints as seconds.
+    const root = memoryProject(initedProject());
     const fresh = cli(root, "stats").stdout;
     expect(fresh).toMatch(
       /last audit: {7}never \(installed \d+s ago\); audit skill not installed\n/,
@@ -229,7 +233,7 @@ describe("stats: capture health", () => {
   }
 
   test("reports digest state, daemon, user-wide spool, the store's counts and month cost, and the embedder", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     digestOn(root);
     seedMemory(root, [{ title: "first a" }, { title: "first b" }], { costUsd: 0.01 });
     seedMemory(root, [{ title: "second a" }], { costUsd: 0.02 });
@@ -278,7 +282,7 @@ describe("stats: capture health", () => {
   });
 
   test("counts pending proposals and stale rows after the month cost", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const [a] = seedMemory(root, [
       { title: "Lock retry is two seconds" },
       { title: "Lock files live in .crank" },
@@ -293,7 +297,7 @@ describe("stats: capture health", () => {
   });
 
   test("shows the last consolidation after the stale row, and counts its cost in the month", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     seedMemory(root, [{ title: "one digest" }], { costUsd: 0.002 });
     expect(cli(root, "stats").stdout).toContain("\n  consolidation:    never\n");
     const opened = openMemory(memoryPath(root), "write");
@@ -319,16 +323,16 @@ describe("stats: capture health", () => {
   });
 
   test("a month under a cent shows two significant digits, not $0.00", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     seedMemory(root, [{ title: "one small digest" }], { costUsd: 0.002152 });
     expect(cli(root, "stats").stdout).toContain("  month cost:       $0.0022 (list price)\n");
-    const empty = initedProject();
+    const empty = initedCopy(ALPHA);
     seedMemory(empty, [{ title: "a free digest" }], { costUsd: 0 });
     expect(cli(empty, "stats").stdout).toContain("  month cost:       $0.00 (list price)\n");
   });
 
   test("digest off by default, and one memory row stands in for a store that is missing, newer or unreadable", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const fresh = cli(root, "stats").stdout;
     expect(fresh).toMatch(CAPTURE_ROWS);
     expect(fresh).toContain("  digest:           off\n");
@@ -461,7 +465,7 @@ describe("stats: codex wiring", () => {
   });
 
   test("an install without Codex wiring says so and reads no rollouts", () => {
-    const run = cli(initedProject(), "stats");
+    const run = cli(initedCopy(ALPHA), "stats");
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("codex:            not wired");
     expect(run.stdout).toMatch(/\n {2}embedder: .*\n {2}codex: {12}not wired/);
@@ -471,14 +475,14 @@ describe("stats: codex wiring", () => {
 
 describe("upgrade", () => {
   test("same version is a no-op", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("nothing else to do");
   });
 
   test("stale stamp: re-vendors, updates stamp, preserves config/cerebrum/index", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const crankDir = path.join(root, ".crank");
     // Simulate an old vendored version + user data.
     const configPath = path.join(crankDir, "config.json");
@@ -552,7 +556,7 @@ describe("upgrade", () => {
   });
 
   test("upgrade swaps the legacy allow rule for the crank-mem rules, once, keeping the user's other rules", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const local = path.join(root, ".claude/settings.local.json");
     const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
     settings.permissions = { allow: ["Bash(ls:*)", "Bash(crank-mem *)"], deny: ["x"] };
@@ -609,7 +613,7 @@ describe("upgrade", () => {
   }, 20_000);
 
   test("adds SubagentStart to an install wired before it existed and keeps the user's edits", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const local = path.join(root, ".claude/settings.local.json");
     const settings = JSON.parse(fs.readFileSync(local, "utf-8"));
     delete settings.hooks.SubagentStart;
@@ -626,7 +630,7 @@ describe("upgrade", () => {
   });
 
   test("wires SessionEnd and file history into an install from before 0.8.0 and leaves memory.db untouched", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const crankDir = path.join(root, ".crank");
     const configPath = path.join(crankDir, "config.json");
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
@@ -662,7 +666,7 @@ describe("upgrade", () => {
   });
 
   test("leaves a hooks.json without crank entries alone", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     fs.mkdirSync(path.join(root, ".codex"));
     const own = JSON.stringify({
       hooks: { Stop: [{ hooks: [{ type: "command", command: "echo mine" }] }] },
@@ -673,7 +677,7 @@ describe("upgrade", () => {
   });
 
   test("seeds no journal.md and keeps an existing one byte for byte", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const journal = path.join(root, ".crank/journal.md");
     expect(fs.existsSync(journal)).toBe(false);
 
@@ -702,7 +706,7 @@ describe("upgrade", () => {
   }
 
   test("replaces an unedited template preamble once, after backing up the cerebrum", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const crankDir = path.join(root, ".crank");
     const cerebrum = path.join(crankDir, "cerebrum.md");
     const old = Buffer.concat([
@@ -757,7 +761,7 @@ describe("upgrade", () => {
   });
 
   test("keeps an edited preamble, and a cerebrum whose backup fails, byte for byte", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const crankDir = path.join(root, ".crank");
     const cerebrum = path.join(crankDir, "cerebrum.md");
     const edited = [
@@ -792,7 +796,7 @@ describe("upgrade", () => {
 
 describe("vendored hooks run standalone", () => {
   test("vendored session-start works from .crank/hooks/", () => {
-    const root = initedProject();
+    const root = initedCopy(ALPHA);
     const res = spawnSync("bun", [path.join(root, ".crank/hooks/session-start.ts")], {
       input: JSON.stringify({ hook_event_name: "SessionStart", cwd: root, source: "startup" }),
       encoding: "utf-8",

@@ -16,6 +16,7 @@ import { DAEMON_FILE, type DaemonState } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
 import { cliVersion } from "../src/cli/version.ts";
+import { registerProject } from "../src/cli/registry.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");
@@ -152,11 +153,44 @@ export function runCli(cwd: string, args: string[], env?: Record<string, string>
       ...process.env,
       CODEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "crank-codexhome-")),
       CRANK_HOME: makeCrankHome(),
-      CRANK_DASHBOARD_DIR: dashboardFixture(cliVersion()),
+      CRANK_DASHBOARD_DIR: sharedDashboardDir(),
       ...env,
     },
   });
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+}
+
+const initedTemplates = new Map<string, string>();
+
+/**
+ * A copy of a project inited once per process with `files`, timestamps kept. Only for tests that assert
+ * nothing about the registry or Codex trust and run no `uninstall` and no `--restore`: init's backup
+ * manifest names the template's path. The template lives outside `tempDir`, which `cleanup` empties.
+ */
+export function initedCopy(
+  files: Record<string, string> = { "a.ts": "export const a = 1;\n" },
+): string {
+  const key = JSON.stringify(files);
+  let template = initedTemplates.get(key);
+  if (template === undefined) {
+    template = fs.mkdtempSync(path.join(os.tmpdir(), "crank-template-"));
+    for (const [rel, content] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(template, rel)), { recursive: true });
+      fs.writeFileSync(path.join(template, rel), content);
+    }
+    expect(runCli(template, ["init", "--yes", "--codex", "skip"]).status).toBe(0);
+    initedTemplates.set(key, template);
+  }
+  const copy = tempDir("crank-copy-");
+  fs.cpSync(template, copy, { recursive: true, preserveTimestamps: true });
+  return copy;
+}
+
+/** An `initedCopy` listed in `home`'s registry, as a realpath, since the dashboard hashes the root as listed. */
+export function registeredCopy(home: string, files?: Record<string, string>): string {
+  const root = fs.realpathSync(initedCopy(files));
+  withEnv({ CRANK_HOME: home }, () => registerProject(root));
+  return root;
 }
 
 /** Set a file's atime and mtime to `ms` since the epoch. */
@@ -571,15 +605,25 @@ export async function startModelServer(
 
 /**
  * A dashboard dir whose `dist/` copies tests/fixtures/dashboard-dist/, with `dist/.crank-version`
- * holding `stamp` unless `stamp` is null.
+ * holding `stamp` unless `stamp` is null. `dir` is a fresh `tempDir` unless given.
  */
-export function dashboardFixture(stamp: string | null): string {
-  const dir = tempDir("crank-dashdir-");
+export function dashboardFixture(stamp: string | null, dir = tempDir("crank-dashdir-")): string {
   fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/dashboard-dist"), path.join(dir, "dist"), {
     recursive: true,
   });
   if (stamp !== null) fs.writeFileSync(path.join(dir, "dist/.crank-version"), stamp);
   return dir;
+}
+
+let sharedDashboard: string | undefined;
+
+/** One current dashboard fixture per process, outside `tempDir` so `cleanup` keeps it; the preload's root holds it. */
+export function sharedDashboardDir(): string {
+  sharedDashboard ??= dashboardFixture(
+    cliVersion(),
+    fs.mkdtempSync(path.join(os.tmpdir(), "crank-dashdir-")),
+  );
+  return sharedDashboard;
 }
 
 /** `root` (a fresh temp dir by default) inited with `home` as its crank home, as a realpath. */
@@ -612,7 +656,13 @@ const STARTUP_LINE = /^crank-mem dashboard: (http:\/\/127\.0\.0\.1:(\d+)\/\?toke
 export async function startDashboard(
   home: string,
   args: string[],
-  opts: { open?: boolean; cwd?: string; env?: Record<string, string>; dashboardDir?: string } = {},
+  opts: {
+    open?: boolean;
+    cwd?: string;
+    env?: Record<string, string>;
+    dashboardDir?: string;
+    keep?: true;
+  } = {},
 ): Promise<{
   url: string;
   token: string;
@@ -640,7 +690,7 @@ export async function startDashboard(
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
-  children.push(child);
+  if (!opts.keep) children.push(child);
   let stdout = "";
   let stderr = "";
   child.stdout!.on("data", (chunk: Buffer) => (stdout += chunk.toString()));

@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { git, gitCommit, makeCrankHome, runCli, runHook, spoolFiles } from "./helpers.ts";
+import {
+  git,
+  gitCommit,
+  initedCopy,
+  makeCrankHome,
+  runCli,
+  runHook,
+  spoolFiles,
+} from "./helpers.ts";
 import { claudeStop } from "./fixtures/payloads.ts";
 import { defaultConfig } from "../src/hooks/lib/config.ts";
 import {
@@ -40,20 +48,13 @@ describe("digest config", () => {
   });
 });
 
-function initedProject(): string {
-  const root = tempDir("crank-digest-");
-  fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
-  expect(runCli(root, ["init", "--yes", "--codex", "skip"]).status).toBe(0);
-  return root;
-}
-
 const ON = "crank-mem: digests on. They run on your Claude login through `claude -p`.\n";
 const OFF = "crank-mem: digests off. Stored memory stays readable.\n";
 const USAGE = "Usage: crank-mem digest on|off|resume\n";
 
 describe("digest on|off", () => {
   test("on and off flip the config from the project root and print the exact line", () => {
-    const root = initedProject();
+    const root = initedCopy();
     const shared = fs.readFileSync(path.join(root, ".crank/config.json"));
     const on = runCli(root, ["digest", "on"]);
     expect(on.status).toBe(0);
@@ -68,7 +69,7 @@ describe("digest on|off", () => {
   });
 
   test("works from a subdirectory, keeps other config keys and leaves the store untouched", () => {
-    const root = initedProject();
+    const root = initedCopy();
     const sub = path.join(root, "src/deep");
     fs.mkdirSync(sub, { recursive: true });
     const before = readConfig(root);
@@ -84,7 +85,7 @@ describe("digest on|off", () => {
   });
 
   test("any other subcommand, or none, prints usage and exits 1 without touching config", () => {
-    const root = initedProject();
+    const root = initedCopy();
     const before = fs.readFileSync(path.join(root, ".crank/config.json"), "utf-8");
     for (const args of [["digest"], ["digest", "maybe"], ["digest", "ON"]]) {
       const run = runCli(root, args);
