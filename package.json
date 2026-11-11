@@ -1,6 +1,6 @@
 {
   "name": "crank-mem",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "description": "Project memory for coding agents: anatomy index, cerebrum, session injection.",
   "type": "module",
