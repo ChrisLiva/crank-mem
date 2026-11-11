@@ -14,6 +14,7 @@ import { TOKEN_FILE } from "./dashboard.ts";
 import { choose } from "./prompt.ts";
 import { removePathBlocks } from "./shell-rc.ts";
 import { TOOL_BUSY, TOOL_LOCK, withToolLock } from "./tool-install.ts";
+import { UPDATE_FILE } from "./updates.ts";
 import { CURRENT_LINK, REPO_ROOT, versionsDir } from "./version.ts";
 
 // `crank-mem self-uninstall`: removes the installed copy (`versions/`, the
@@ -28,7 +29,7 @@ function ownedEntries(): string[] {
   const home = crankHome();
   return [
     versionsDir(),
-    ...[CURRENT_LINK, TOOL_LOCK, "update.json", REGISTRY_FILE, TOKEN_FILE, RUN_DIR].map((name) =>
+    ...[CURRENT_LINK, TOOL_LOCK, UPDATE_FILE, REGISTRY_FILE, TOKEN_FILE, RUN_DIR].map((name) =>
       path.join(home, name),
     ),
     spoolDir(),

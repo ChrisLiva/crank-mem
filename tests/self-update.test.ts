@@ -218,3 +218,110 @@ describe("rollback", () => {
     expect(result.stderr).toContain("rollback runs from an installed copy");
   }, 30_000);
 });
+
+function updateState(H: string): Record<string, unknown> & {
+  latest?: { version: string } | null;
+} {
+  return JSON.parse(fs.readFileSync(path.join(H, "update.json"), "utf-8"));
+}
+
+function releaseRequests(server: { requests(): string[] }): string[] {
+  return server.requests().filter((line) => line === "/latest/download/release.json");
+}
+
+/** A crank home running installed 1.0.0, and a release server whose latest is 1.1.0. */
+async function checkSetup() {
+  const H = makeModelHome();
+  makeInstalledCopy(H, "1.0.0");
+  const server = await startReleaseServer(releaseDir(["1.1.0"]));
+  servers.push(server);
+  // The trailing slash pins releaseBase's trim, which a failed check's message shows.
+  return { H, server, env: { CRANK_RELEASE_URL: `${server.url}/` } };
+}
+
+describe("self-update --check", () => {
+  test("always fetches, records, and reports", async () => {
+    const { H, server, env } = await checkSetup();
+    const result = runInstalled(H, tempDir("crank-cwd-"), ["self-update", "--check"], env);
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("installed 1.0.0, latest 1.1.0");
+    const state = updateState(H);
+    expect(state.latest?.version).toBe("1.1.0");
+    expect(Math.abs((state.checkedAtMs as number) - Date.now())).toBeLessThan(60_000);
+    expect(releaseRequests(server)).toHaveLength(1);
+    expect(runInstalled(H, tempDir("crank-cwd-"), ["self-update", "--check"], env).status).toBe(0);
+    expect(releaseRequests(server)).toHaveLength(2);
+  }, 30_000);
+
+  test("a failed check keeps the last known release and records the error", async () => {
+    const { H, server, env } = await checkSetup();
+    expect(runInstalled(H, tempDir("crank-cwd-"), ["self-update", "--check"], env).status).toBe(0);
+    server.stop();
+    const result = runInstalled(H, tempDir("crank-cwd-"), ["self-update", "--check"], env);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("could not check");
+    expect(result.stderr).toContain(`${server.url}/latest/download/release.json`);
+    const state = updateState(H);
+    expect(state.latest?.version).toBe("1.1.0");
+    expect(typeof state.error).toBe("string");
+    expect((state.error as string).length).toBeGreaterThan(0);
+  }, 30_000);
+
+  test("with CRANK_RELEASE_URL unset, checks the GitHub releases URL", () => {
+    const H = makeModelHome();
+    makeInstalledCopy(H, "1.0.0");
+    // A closed-port proxy keeps the check off the network.
+    const proxy = "http://127.0.0.1:9";
+    const result = runInstalled(H, tempDir("crank-cwd-"), ["self-update", "--check"], {
+      CRANK_RELEASE_URL: "",
+      HTTPS_PROXY: proxy,
+      https_proxy: proxy,
+      NO_PROXY: "",
+      no_proxy: "",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "https://github.com/ChrisLiva/crank-mem/releases/latest/download/release.json",
+    );
+  }, 30_000);
+
+  test("--auto and --check-daily write settings and change nothing else", async () => {
+    const { H, server, env } = await checkSetup();
+    const cwd = tempDir("crank-cwd-");
+    const usage =
+      "Usage: crank-mem self-update [--to vX.Y.Z] [--check] [--auto on|off] [--check-daily on|off]";
+    const on = runInstalled(H, cwd, ["self-update", "--auto", "on"], env);
+    expect(on.stderr).toBe("");
+    expect(on.status).toBe(0);
+    expect(updateState(H).auto).toBe(true);
+    expect(updateState(H).checkDaily).toBe(true);
+    expect(runInstalled(H, cwd, ["self-update", "--check-daily", "off"], env).status).toBe(0);
+    expect(updateState(H).checkDaily).toBe(false);
+    expect(updateState(H).auto).toBe(true);
+    const both = runInstalled(H, cwd, ["self-update", "--auto", "off", "--check-daily", "on"], env);
+    expect(both.status).toBe(0);
+    expect(updateState(H)).toMatchObject({ auto: false, checkDaily: true });
+
+    for (const args of [
+      ["--auto", "maybe"],
+      ["--check-daily"],
+      ["--check", "--to", "v1.1.0"],
+      ["--auto", "on", "--check"],
+      ["--to", "v1.1.0", "--check-daily", "off"],
+    ]) {
+      const result = runInstalled(H, cwd, ["self-update", ...args], env);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(usage);
+    }
+    expect(updateState(H)).toMatchObject({ auto: false, checkDaily: true });
+    expect(server.requests()).toEqual([]);
+    expect(current(H)).toBe("versions/1.0.0");
+  }, 30_000);
+
+  test("refuses from a clone", () => {
+    const result = runCli(tempDir("crank-selfupdate-"), ["self-update", "--check"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("self-update runs from an installed copy");
+  }, 30_000);
+});

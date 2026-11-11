@@ -44,8 +44,18 @@ which repairs every project in `~/.crank/projects.json`. The previous version
 stays installed, and `crank-mem rollback` returns to it and repairs every project
 with it. Going back to an older version, by `rollback` or `self-update --to`,
 refuses when a project's memory store has a schema newer than that version reads:
-it names those projects and points to `crank-mem restore-memory`. `crank-mem upgrade` in one
-project repairs that project. It re-vendors the hooks copied into `.crank/hooks/`, adds the
+it names those projects and points to `crank-mem restore-memory`.
+
+crank-mem checks for a newer release on its own: the daemon checks when it
+starts and the last check is over 24 h old, and the dashboard checks when it
+starts and every 24 h after. `crank-mem self-update --check` checks now and
+prints the installed and latest versions. `crank-mem self-update --check-daily off`
+or `CRANK_NO_UPDATE_CHECK=1` turns the automatic checks off. With
+`crank-mem self-update --auto on`, the daemon applies a newer release between
+digest jobs, so auto mode acts only while digests are on (`crank-mem digest on`).
+The last check and these settings live in `~/.crank/update.json`.
+
+`crank-mem upgrade` in one project repairs that project. It re-vendors the hooks copied into `.crank/hooks/`, adds the
 `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`,
 `Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the wired Claude settings file, adds hook wiring the install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
 wrote to the current form, and removes crank hooks from the Claude settings

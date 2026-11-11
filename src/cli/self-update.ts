@@ -16,11 +16,14 @@ import {
   TOOL_BUSY,
   withToolLock,
 } from "./tool-install.ts";
+import { checkNow, writeUpdateState } from "./updates.ts";
 import { cliVersion, CURRENT_LINK, newer, versionsDir } from "./version.ts";
 
 // `crank-mem self-update`: downloads the latest release (or `--to <tag>`),
 // makes it `current`, prunes versions neither it nor this process nor a live
 // daemon runs, then repairs every registered project from the new version.
+// `--check` checks for a release now; `--auto` and `--check-daily` only
+// record their settings in update.json.
 // `crank-mem rollback`: makes the previous installed version `current` and
 // repairs every project from it. Going back to an older version, by either
 // command, first checks that no registered store's schema is newer than it.
@@ -156,6 +159,46 @@ async function rollback(): Promise<number> {
   return repairFromCurrent();
 }
 
+/** `--check`: fetches the latest release now and reports it against the running version. */
+async function check(): Promise<number> {
+  const state = await checkNow();
+  if (state.error !== null || state.latest === null) {
+    console.error(`crank-mem: could not check for a release (${state.error})`);
+    return 1;
+  }
+  console.log(`crank-mem: installed ${cliVersion()}, latest ${state.latest.version}`);
+  return 0;
+}
+
+/** `on` → true, `off` → false, absent → undefined, anything else → null. */
+function onOff(value: string | boolean | undefined): boolean | undefined | null {
+  if (value === undefined) return undefined;
+  return value === "on" ? true : value === "off" ? false : null;
+}
+
+/** `--auto` / `--check-daily`: records the settings in update.json and nothing else. */
+function saveSettings(
+  autoFlag: string | boolean | undefined,
+  dailyFlag: string | boolean | undefined,
+): number {
+  const auto = onOff(autoFlag);
+  const checkDaily = onOff(dailyFlag);
+  if (auto === null || checkDaily === null) {
+    console.error(
+      `crank-mem: --auto and --check-daily take on or off\n${COMMANDS["self-update"].usage}`,
+    );
+    return 1;
+  }
+  const state = writeUpdateState({
+    ...(auto === undefined ? {} : { auto }),
+    ...(checkDaily === undefined ? {} : { checkDaily }),
+  });
+  console.log(
+    `crank-mem: auto update ${state.auto ? "on" : "off"}, daily check ${state.checkDaily ? "on" : "off"}`,
+  );
+  return 0;
+}
+
 /** Runs `fn` under the tool lock, reporting a held lock or a throw as `what` failing. */
 async function locked(what: string, fn: () => Promise<number>): Promise<number> {
   let result: number | "locked";
@@ -177,12 +220,19 @@ export async function runRollback(_args: string[]): Promise<number> {
 }
 
 export async function runSelfUpdate(args: string[]): Promise<number> {
-  const { flags } = parseArgs(args, COMMANDS["self-update"].value);
+  const { usage, value } = COMMANDS["self-update"];
+  const { flags } = parseArgs(args, value);
+  const settings = flags.auto !== undefined || flags["check-daily"] !== undefined;
+  const modes = [flags.to !== undefined, flags.check === true, settings].filter(Boolean).length;
+  if (modes > 1) {
+    console.error(`crank-mem: --to, --check and the settings flags run alone\n${usage}`);
+    return 1;
+  }
+  if (flags.check) return check();
+  if (settings) return saveSettings(flags.auto, flags["check-daily"]);
   const tag = stringFlag(flags.to);
   if (tag === null) {
-    console.error(
-      `crank-mem: --to needs a release tag, such as v1.2.3\n${COMMANDS["self-update"].usage}`,
-    );
+    console.error(`crank-mem: --to needs a release tag, such as v1.2.3\n${usage}`);
     return 1;
   }
   return locked("update", () => update(tag ?? null));

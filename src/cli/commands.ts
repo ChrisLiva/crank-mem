@@ -118,9 +118,10 @@ export const COMMANDS = {
   },
   "self-update": {
     summary: "Update the installed crank-mem and repair every project",
-    usage: "Usage: crank-mem self-update [--to vX.Y.Z]",
-    value: ["to"],
-    bool: [],
+    usage:
+      "Usage: crank-mem self-update [--to vX.Y.Z] [--check] [--auto on|off] [--check-daily on|off]",
+    value: ["to", "auto", "check-daily"],
+    bool: ["check"],
     installedOnly: true,
   },
   rollback: {
