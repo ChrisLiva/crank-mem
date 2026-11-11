@@ -50,7 +50,7 @@ Tests are black-box: hooks and CLI commands are executed as real child processes
 
 The `spawnSync` timeout in `tests/helpers.ts` → `runCli` kills only the CLI child; a grandchild that hangs, such as `fakeClaude` with `auth: "hang"`, keeps running at ppid 1. After a RED run that hit the timeout, find leftover fake `claude` processes with `ps` and kill them.
 
-Run the full suite as `caffeinate -i bun run test`; on battery a Mac sleeps mid-run. `Expected: 0, Received: -1` near 5 s is a per-test timeout, not a crash; `docs/testing-load.md` holds the baseline.
+Run the full suite as `caffeinate -i bun run test`; on battery a Mac sleeps mid-run. `Expected: 0, Received: -1` near 5 s is a per-test timeout, not a crash; `docs/testing-load.md` holds the baseline. Bun prints per-test durations only to a TTY, so a piped or `tee`d run shows none; add `--reporter=junit --reporter-outfile <file>` to get them.
 
 The preload (`tests/preload.ts`) gives each test process temp `CRANK_HOME`, `CODEX_HOME` and `TMPDIR` under one root it removes in `afterAll`: each file is its own process under `--parallel`, while plain `bun test` and the serial lane share one process, so their files share the root and any per-process memo (`initedCopy`, `sharedDashboardDir`).
 
