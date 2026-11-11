@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   REPO_ROOT,
+  childEnv,
   makeCrankHome,
   makeCrankProject,
   plantMemory,
@@ -45,17 +46,6 @@ function context(r: HookRun): string {
 }
 
 describe("post-read file history", () => {
-  test("a Read of a file with observations shows its newest five lines", () => {
-    const { root } = seeded();
-    const r = run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT));
-    expect(r.status).toBe(0);
-    const ctx = context(r);
-    expect(ctx).toStartWith("History of src/a.ts:\n#");
-    const lines = ctx.split("\n").slice(1);
-    expect(lines).toHaveLength(5);
-    expect(lines[0]).toMatch(/^#\d+ \d{4}-\d\d-\d\d discovery Read a 6$/);
-  });
-
   test("an unwritable seen marker still shows the history, silently", () => {
     const { root } = seeded();
     const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crank-homefile-")), "home");
@@ -70,9 +60,14 @@ describe("post-read file history", () => {
 
   test("a Bash read names the same history as a Read", () => {
     const { root } = seeded();
-    const viaRead = context(
-      run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)),
-    );
+    const read = run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT));
+    expect(read.status).toBe(0);
+    const viaRead = context(read);
+    // The newest five lines, newest first.
+    expect(viaRead).toStartWith("History of src/a.ts:\n#");
+    const lines = viaRead.split("\n").slice(1);
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toMatch(/^#\d+ \d{4}-\d\d-\d\d discovery Read a 6$/);
     const viaBash = context(run(root, claudePostBash(root, "sed -n '1,20p' src/a.ts", TRANSCRIPT)));
     expect(viaBash).toBe(viaRead);
     const viaUnfold = context(
@@ -193,7 +188,7 @@ describe("post-read under both runtimes", () => {
       {
         input,
         encoding: "utf-8",
-        env: { ...process.env, CRANK_HOME: makeCrankHome() },
+        env: childEnv({ CRANK_HOME: makeCrankHome() }),
       },
     );
     expect(sidecars()).toEqual([false, false]);

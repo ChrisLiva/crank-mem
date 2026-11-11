@@ -39,7 +39,10 @@ describe("subagent-start hook (black-box)", () => {
     writeCerebrum(
       root,
       ["- **Tabs**: user wants tabs, not spaces (2026-10-01)."],
-      ["- **Build**: `make -j8` OOMs on CI; use `-j4` (2026-10-02)."],
+      [
+        "- **Build**: `make -j8` OOMs on CI; use `-j4` (2026-10-02).",
+        "- **Loader**: `src/old/loader.ts` retries twice (2026-10-01).",
+      ],
     );
     const shape = (ctx: string): string[] => {
       const lines = ctx.split("\n");
@@ -62,6 +65,8 @@ describe("subagent-start hook (black-box)", () => {
     const off = context(root);
     expect(shape(off)[2]).toBe(CODE_BULLET);
     expect(off).not.toContain(RECALL_BULLET);
+    // A cited file that no longer exists is tagged.
+    expect(off).toContain("[cited file missing: src/old/loader.ts]");
     // Read-only: a subagent spawn does not refresh the index.
     expect(fs.existsSync(path.join(root, ".crank/anatomy-index.json"))).toBe(false);
 
@@ -100,12 +105,6 @@ describe("subagent-start hook (black-box)", () => {
       expect(running).not.toContain(dropped);
     const runningExcerpt = running.slice(running.indexOf("\n\n") + 2);
     expect(Buffer.byteLength(runningExcerpt, "utf-8")).toBeLessThanOrEqual(2048);
-  });
-
-  test("tags a cited file that no longer exists", () => {
-    const root = makeCrankProject();
-    writeCerebrum(root, [], ["- **Loader**: `src/old/loader.ts` retries twice (2026-10-01)."]);
-    expect(context(root)).toContain("[cited file missing: src/old/loader.ts]");
   });
 
   test("injects the code pointer wherever the project root is found, and stays silent outside one", () => {

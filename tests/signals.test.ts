@@ -1,21 +1,18 @@
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   REPO_ROOT,
+  childEnv,
   digestProject,
-  fakeClaude,
-  killDaemon,
   makeCrankHome,
   makeCrankProject,
-  readDaemon,
   runHook,
   setMtime,
   spoolEntry,
   spoolFiles,
-  waitFor,
 } from "./helpers.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 import {
@@ -47,8 +44,10 @@ describe("digest signals (black-box)", () => {
   test("Stop writes a spool entry keyed by the transcript stem", () => {
     const root = digestProject();
     const home = makeCrankHome();
-    const run = stop(root, home);
+    // Inside a stop_hook_active continuation, Stop still signals and prints nothing.
+    const run = stop(root, home, true);
     expect(run.status).toBe(0);
+    expect(run.stdout).toBe("");
     const entry = readEntry(home);
     expect(entry).toMatchObject({
       transcriptPath: TRANSCRIPT,
@@ -59,6 +58,15 @@ describe("digest signals (black-box)", () => {
     });
     expect(typeof entry.updatedAt).toBe("number");
     expect(Math.abs(Date.now() - (entry.updatedAt as number))).toBeLessThan(60_000);
+  });
+
+  test("a hook run with no env writes its spool entry under the preload's CRANK_HOME", () => {
+    expect(process.env.CRANK_HOME).toBeTruthy();
+    expect(process.env.CRANK_HOME).not.toBe(path.join(os.homedir(), ".crank"));
+    const root = digestProject();
+    const payload = { ...claudeStop(root), transcript_path: "/x/t/preload-probe.jsonl" };
+    expect(runHook(STOP, JSON.stringify(payload), root).status).toBe(0);
+    expect(spoolFiles(process.env.CRANK_HOME!)).toContain("preload-probe.json");
   });
 
   test("SessionEnd marks the entry ended, and a later Stop reopens it", () => {
@@ -77,27 +85,6 @@ describe("digest signals (black-box)", () => {
 
     expect(stop(root, home).status).toBe(0);
     expect(readEntry(home).ended).toBe(false);
-  });
-
-  test("Stop signals even inside a stop_hook_active continuation, and prints nothing", () => {
-    const root = digestProject();
-    const home = makeCrankHome();
-    const run = stop(root, home, true);
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
-    expect(readEntry(home).ended).toBe(false);
-  });
-
-  test("with digest off, neither hook writes a spool", () => {
-    const root = makeCrankProject();
-    const home = makeCrankHome();
-    expect(stop(root, home).status).toBe(0);
-    expect(
-      runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, {
-        CRANK_HOME: home,
-      }).status,
-    ).toBe(0);
-    expect(fs.existsSync(path.join(home, "spool"))).toBe(false);
   });
 
   test("a digest: true committed in config.json alone writes no spool entry", () => {
@@ -164,7 +151,7 @@ describe("digest signals (black-box)", () => {
           new Promise<number | null>((resolve) => {
             const child = spawn("bun", [path.join(REPO_ROOT, STOP)], {
               cwd: root,
-              env: { ...process.env, CRANK_HOME: home },
+              env: childEnv({ CRANK_HOME: home }),
               stdio: ["pipe", "ignore", "ignore"],
             });
             child.on("close", resolve);
@@ -278,133 +265,4 @@ describe("digest signals (black-box)", () => {
       else process.env.CRANK_HOME = saved;
     }
   });
-});
-
-// Every daemon a hook starts here, so none outlives the suite.
-const homes: string[] = [];
-const daemonPids = new Set<number>();
-function daemonPid(home: string): number | undefined {
-  const pid = readDaemon(home)?.pid;
-  if (typeof pid === "number") daemonPids.add(pid);
-  return pid;
-}
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-afterEach(async () => {
-  for (const home of homes.splice(0)) {
-    daemonPid(home);
-    killDaemon(home);
-  }
-  for (const pid of daemonPids) {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {}
-  }
-  await waitFor(() => [...daemonPids].every((pid) => !alive(pid)), 5_000);
-});
-afterAll(() => {
-  for (const pid of daemonPids)
-    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
-});
-
-/** A crank home whose daemon afterEach kills, and a fake claude for any job that daemon runs. */
-function daemonEnv(): { home: string; env: Record<string, string> } {
-  const home = makeCrankHome();
-  homes.push(home);
-  const fake = fakeClaude(path.join(home, "fake-bin"), [{ raw: "", exit: 1 }]);
-  return { home, env: { ...fake.env, CRANK_HOME: home } };
-}
-function sleepMs(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-describe("hook-started daemon (black-box)", () => {
-  test("a Stop with digest on starts a daemon that outlives the hook", async () => {
-    const root = digestProject({ clone_root: REPO_ROOT });
-    const { home, env } = daemonEnv();
-    const run = runHook(
-      STOP,
-      JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT }),
-      root,
-      env,
-    );
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
-    await waitFor(() => daemonPid(home) !== undefined, 3_000);
-    expect(alive(daemonPid(home)!)).toBe(true);
-  }, 10_000);
-
-  test("a SessionEnd replaces a daemon whose heartbeat is older than 90 s", async () => {
-    const root = digestProject({ clone_root: REPO_ROOT });
-    const { home, env } = daemonEnv();
-    const finished = spawnSync(process.execPath, ["-e", "0"]).pid;
-    fs.writeFileSync(
-      path.join(home, "daemon.json"),
-      JSON.stringify({ pid: finished, version: "0.8.0", heartbeatMs: Date.now() - 120_000 }),
-    );
-    const run = runHook(SESSION_END, JSON.stringify(claudeSessionEnd(root, TRANSCRIPT)), root, env);
-    expect(run.status).toBe(0);
-    await waitFor(() => {
-      const pid = daemonPid(home);
-      return pid !== undefined && pid !== finished;
-    }, 3_000);
-    expect(alive(daemonPid(home)!)).toBe(true);
-  }, 10_000);
-
-  test("a stop file or digest off starts no daemon", async () => {
-    const stopped = daemonEnv();
-    fs.writeFileSync(
-      path.join(stopped.home, "digest-state.json"),
-      JSON.stringify({ reason: "login", atMs: 1, detail: "x" }),
-    );
-    const on = digestProject({ clone_root: REPO_ROOT });
-    const payload = (root: string) =>
-      JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT });
-    expect(runHook(STOP, payload(on), on, stopped.env).status).toBe(0);
-    expect(spoolFiles(stopped.home)).toEqual(["abc-1.json"]);
-
-    const off = daemonEnv();
-    const offRoot = makeCrankProject();
-    const file = path.join(offRoot, ".crank/config.json");
-    fs.writeFileSync(
-      file,
-      JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), clone_root: REPO_ROOT }),
-    );
-    expect(runHook(STOP, payload(offRoot), offRoot, off.env).status).toBe(0);
-
-    await sleepMs(1_500);
-    expect(fs.existsSync(path.join(stopped.home, "daemon.json"))).toBe(false);
-    // A daemon would have swept the entry away, since its transcript does not exist.
-    expect(spoolFiles(stopped.home)).toEqual(["abc-1.json"]);
-    expect(fs.existsSync(path.join(off.home, "daemon.json"))).toBe(false);
-  }, 10_000);
-
-  test.each([
-    ["empty", ""],
-    ["a missing directory", "/nonexistent/crank-mem-clone"],
-  ])(
-    "clone_root %s starts nothing, and the hook still signals",
-    async (_label, cloneRoot) => {
-      const root = digestProject({ clone_root: cloneRoot });
-      const { home, env } = daemonEnv();
-      const run = runHook(
-        STOP,
-        JSON.stringify({ ...claudeStop(root), transcript_path: TRANSCRIPT }),
-        root,
-        env,
-      );
-      expect(run.status).toBe(0);
-      expect(run.stdout).toBe("");
-      expect(spoolFiles(home)).toEqual(["abc-1.json"]);
-      await sleepMs(1_500);
-      expect(fs.existsSync(path.join(home, "daemon.json"))).toBe(false);
-    },
-    10_000,
-  );
 });

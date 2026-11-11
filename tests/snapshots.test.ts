@@ -246,6 +246,7 @@ describe("older stores", () => {
     );
     expect(sub.status).toBe(0);
     expect(sub.stdout).not.toContain(RECALL_BULLET);
+    expect(fs.existsSync(path.join(root, ".crank/backups"))).toBe(false);
   });
 });
 
@@ -404,8 +405,11 @@ describe("restore-memory", () => {
     );
   });
 
-  /** A child that holds BEGIN IMMEDIATE on the store for `ms`, resolved once it prints `locked`; `exited` settles when it ends. */
-  async function holdStore(root: string, ms: number): Promise<{ exited: Promise<number | null> }> {
+  /** A child that holds BEGIN IMMEDIATE on the store for `ms`, or until killed when `ms` is omitted, resolved once it prints `locked`; `exited` settles when it ends. */
+  async function holdStore(
+    root: string,
+    ms?: number,
+  ): Promise<{ pid: number; exited: Promise<number | null> }> {
     const script = path.join(tempDir("crank-holder-"), "hold.ts");
     fs.writeFileSync(
       script,
@@ -414,7 +418,7 @@ const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
 const db = new DatabaseSync(${JSON.stringify(memoryPath(root))});
 db.exec("BEGIN IMMEDIATE");
 process.stdout.write("locked\\n");
-await new Promise((r) => setTimeout(r, ${ms}));
+await new Promise((r) => ${ms === undefined ? "setInterval(() => {}, 60_000)" : `setTimeout(r, ${ms})`});
 db.exec("COMMIT");
 db.close();
 `,
@@ -433,13 +437,13 @@ db.close();
       });
       child.once("exit", () => reject(new Error(`holder exited before locking: ${out}`)));
     });
-    return { exited };
+    return { pid: child.pid!, exited };
   }
 
   test("a writer holding the store delays the restore by up to 10 seconds", async () => {
     const short = restoreProject();
     const calls = short.j.fake.calls().length;
-    const brief = await holdStore(short.root, 2_000);
+    const brief = await holdStore(short.root, 500);
     const waited = runCli(short.root, ["restore-memory"]);
     expect(waited.status).toBe(0);
     await brief.exited;
@@ -447,11 +451,12 @@ db.close();
     expect(short.j.fake.calls().length).toBe(calls);
 
     const long = restoreProject();
-    const held = await holdStore(long.root, 12_000);
+    const held = await holdStore(long.root);
     const gaveUp = runCli(long.root, ["restore-memory"]);
+    process.kill(-held.pid, "SIGKILL");
+    await held.exited;
     expect(gaveUp.status).toBe(1);
     expect(gaveUp.stderr).toBe("crank-mem: cannot restore: memory.db stayed locked for 10 s.\n");
-    await held.exited;
     expect(search(long.root, "canary")).toContain("Restore canary yankee");
   }, 40_000);
 
@@ -512,7 +517,7 @@ db.close();
 
   test("after a restore, a session digests from the restored position once it writes a new spool entry", () => {
     const root = project();
-    const j = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]);
+    const j = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], { hooks: true });
     expect(j.job.status).toBe(0);
     expect(snapshots(root)).toHaveLength(1);
     const later = laterRecords();

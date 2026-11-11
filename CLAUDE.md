@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-- `bun test` — run all tests
+- `bun run test` — run the full suite in two lanes: 4 parallel workers over every file except `*.serial.test.ts`, then the `*.serial.test.ts` files serially; the full-suite gate uses this command
+- `bun test` — run every file serially
 - `bun test tests/scanner.test.ts` — run one test file
 - `bun test -t "pattern"` — run tests matching a name
 - `bun run typecheck` — `tsc --noEmit`, then `tsc --noEmit -p dashboard`
@@ -45,25 +46,12 @@ The shared core is `src/hooks/lib/`: `scanner.ts` (index refresh with time budge
 
 Tests are black-box: hooks and CLI commands are executed as real child processes with agent-like stdin payloads via `runHook` and `runCli` in `tests/helpers.ts`, with `fakeClaude` standing in for the `claude` binary and `startDaemon` running the real daemon under a temp `CRANK_HOME` (no test runs the real `claude`), against temp projects built by `makeCrankProject`. Agent payload fixtures live in `tests/fixtures/payloads.ts`. Prefer this style over importing hook internals — assertions should hold against exit status, stdout JSON, and on-disk `.crank/` state.
 
-`bun test` runs the test process in UTC with `TZ` unset, while `runCli` and `runHook` children run in the system zone, so an in-process local-date assertion passes against UTC getters too. Pin local dates through a CLI child with `TZ` in its env, in zones on both sides of UTC (`tests/helpers.ts` → `ZONES`).
+`bun test` runs the test process in UTC with `TZ` unset, while `runCli` and `runHook` children run in the system zone (a test that spawns its own child builds its env with `tests/helpers.ts` → `childEnv`, which drops the `TZ` a zone test left at `"UTC"`), so an in-process local-date assertion passes against UTC getters too. Pin local dates in zones on both sides of UTC (`tests/helpers.ts` → `ZONES`): an in-process test may set `process.env.TZ` per zone and must restore it to `"UTC"`, never `delete` it, which falls back to the machine zone; a CLI child with `TZ` in its env still works.
 
 The `spawnSync` timeout in `tests/helpers.ts` → `runCli` kills only the CLI child; a grandchild that hangs, such as `fakeClaude` with `auth: "hang"`, keeps running at ppid 1. After a RED run that hit the timeout, find leftover fake `claude` processes with `ps` and kill them.
 
+Run the full suite as `caffeinate -i bun run test`; on battery a Mac sleeps mid-run. `Expected: 0, Received: -1` near 5 s is a per-test timeout, not a crash; `docs/testing-load.md` holds the baseline. Bun prints per-test durations only to a TTY, so a piped or `tee`d run shows none; add `--reporter=junit --reporter-outfile <file>` to get them.
+
+The preload (`tests/preload.ts`) gives each test process temp `CRANK_HOME`, `CODEX_HOME` and `TMPDIR` under one root it removes in `afterAll`: each file is its own process under `--parallel`, while plain `bun test` and the serial lane share one process, so their files share the root and any per-process memo (`initedCopy`, `sharedDashboardDir`).
+
 To probe an fs failure path (such as `src/hooks/lib/spool.ts` → `settleEntry`'s non-`EEXIST` link fallback), run the probe under node: assigning `fs.linkSync` on the default `node:fs` import and calling `syncBuiltinESMExports()` reaches a module's `import * as fs` namespace under node 26 (the call threw the mock's `EPERM`) but not under bun 1.4 (it threw the real `ENOENT`).
-
-### Load-sensitive tests
-
-These fail under machine load, not from a code change. Run the full suite as `caffeinate -i bun test`; on battery a Mac sleeps mid-run and a different set of tests times out each time. `Expected: 0, Received: -1` on a test near 5 s is a timeout, not a crash: bun kills the children of a test that passes its 5,000 ms default, and `runCli` reports each as `-1`. A test's own timeout argument beats `--timeout`.
-
-| Test | Symptom | Check before calling it a regression |
-|---|---|---|
-| `tests/daemon.test.ts` → `daemon retry holds`: `a hold belongs to one stem, a refusal holds like a failure, and exit 0 clears it` (gap < 800 ms), `a failing stem waits --retry-ms, doubling each failure up to --retry-cap-ms` (first gap < 700 ms), `a run past --run-timeout-ms is killed and retried, never parked` | Gap over the limit from load average about 1.5 | Ignore unless `src/daemon/` changed. Then run the file at the parent commit in a throwaway worktree (`git worktree add --detach <dir> <sha>`, `node_modules` symlinked in) under the same load. A solo rerun does not tell the two apart. |
-| `tests/snapshots.test.ts` (5,000 ms default; `restore-memory` tests take about 4.75 s solo) | `Received: -1` | `bun test tests/snapshots.test.ts --timeout 20000` |
-| `tests/digest-job.test.ts` → `a session started in a subdirectory stores its relative paths under that subdirectory`, `early exits settle the entry without calling claude` | `[5008ms]` | `bun test tests/digest-job.test.ts --timeout 20000` |
-| `tests/digest-job.test.ts` → `an init line on an API key kills the run at once and stops digests with reason credential` (asserts < 2,000 ms) | Just over 2,000 ms | Solo rerun |
-| `tests/code-cli.test.ts` (own `30_000` timeouts, which `--timeout` does not lift): `outline and unfold match the committed expectation for cpp.cpp`, `unfold matches by name, qualified name and line` | Timeout at 30 s | Solo rerun |
-| `tests/debug.test.ts` post-write cases; `tests/session-start.test.ts` → `next steps come from the newest digest, only when short and not none` | 5,000 ms timeout in a full run | Solo rerun |
-| `tests/cli-commands.test.ts` → `flags` → `--help and -h print the command's usage and change nothing` (own `20_000` timeout, about 40 `runCli` spawns) | Timeout at 20 s, even solo, from load average about 3.6 | Ignore unless `src/cli/main.ts`, `src/cli/commands.ts` or `tests/helpers.ts` → `runCli` changed; then compare against the parent commit in a throwaway worktree under the same load |
-| `tests/recall-cli.test.ts` → `search flags` → `a malformed flag value or an empty query prints usage and exits 1` | 5,000 ms timeout in a full run | `bun test tests/recall-cli.test.ts --timeout 20000` |
-
-`docs/testing-load.md` holds the measurements behind this table (commits, load averages, gaps); record new ones there.

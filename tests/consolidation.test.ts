@@ -161,6 +161,7 @@ describe("digest feeds consolidation", () => {
         lines: okStreamOf(
           digestOf([
             { kind: "memory", bullet: "**Scan depth**: `src/scan.ts` → `walk` stops at 8 levels" },
+            { kind: "memory", bullet: "**Lock retry**: `src/lock.ts` → `withLock` retries EEXIST" },
           ]),
         ),
       },
@@ -168,7 +169,10 @@ describe("digest feeds consolidation", () => {
       {
         lines: okStreamOf({
           edits: [],
-          proposals: [{ id: 2, verdict: "rejected", reason: "already said" }],
+          proposals: [
+            { id: 2, verdict: "rejected", reason: "already said" },
+            { id: 3, verdict: "accepted", reason: "already covered" },
+          ],
           stale: [],
         }),
       },
@@ -299,9 +303,10 @@ describe("digest feeds consolidation", () => {
     stop(j);
     expect(rerun(j).status).toBe(0);
     expect(fake.calls().length).toBe(3);
-    expect(statsOf()).toContain("\n  proposals:        1\n");
+    expect(statsOf()).toContain("\n  proposals:        2\n");
 
-    // Step 3: a 1 ms window runs both calls, and a consolidation that applies no edit writes nothing.
+    // Step 3: a 1 ms window runs both calls, and a consolidation that applies no edit writes nothing:
+    // a rejected proposal and an accepted one with no edit are both decided.
     appendRecords(j.transcript, laterRecords("s3").records);
     stop(j);
     expect(rerun(j, 10_000, {}, ["--consolidate-every-ms", "1"]).status).toBe(0);
@@ -334,7 +339,7 @@ describe("digest feeds consolidation", () => {
       `[B3] RECHECK **Lock constant**: \`src/lock.ts\` → \`LOCK_RETRY_MS\` holds the retry window (${today})`,
     ]);
     expect(step4).toContain(
-      "\n\n[PROPOSALS]\n[P3] (memory) **Token rule**: never log [redacted]\n\n[STALE]\n",
+      "\n\n[PROPOSALS]\n[P4] (memory) **Token rule**: never log [redacted]\n\n[STALE]\n",
     );
     const staleLines = step4
       .slice(step4.indexOf("[STALE]\n"))
@@ -410,45 +415,6 @@ describe("bullets whose cited files changed", () => {
   }, 30_000);
 });
 
-describe("an accepted verdict with no edit", () => {
-  test("is recorded decided and leaves cerebrum.md untouched", () => {
-    const root = digestProject({}, temps);
-    const cerebrum = path.join(root, ".crank/cerebrum.md");
-    fs.writeFileSync(cerebrum, CEREBRUM);
-    const transcript =
-      userRecord("c-0", "2026-01-02T00:00:00.000Z", "change the lock retry window ".repeat(80)) +
-      "\n";
-    const scenarios = [
-      {
-        lines: okStreamOf(
-          digestOf([
-            { kind: "memory", bullet: "**Lock retry**: `src/lock.ts` → `withLock` retries EEXIST" },
-          ]),
-        ),
-      },
-      {
-        lines: okStreamOf({
-          edits: [],
-          proposals: [{ id: 1, verdict: "accepted", reason: "already covered" }],
-          stale: [],
-        }),
-      },
-    ];
-    const { home, fake, job } = journey(root, scenarios, { transcript });
-    expect(job.status).toBe(0);
-    expect(fake.calls().length).toBe(2);
-    expect(runCli(root, ["stats"], { CRANK_HOME: home }).stdout).toContain(
-      "\n  proposals:        0\n",
-    );
-    expect(fs.readFileSync(cerebrum, "utf8")).toBe(CEREBRUM);
-    expect(
-      fs.existsSync(path.join(root, ".crank/backups/cerebrum"))
-        ? fs.readdirSync(path.join(root, ".crank/backups/cerebrum"))
-        : [],
-    ).toEqual([]);
-  }, 30_000);
-});
-
 describe("consolidation edge outcomes", () => {
   const B1 = "- **Plain**: the bullet cites no file (2026-10-01)";
   const START = `# Cerebrum\n\n## User Preferences\n\n## Memory\n\n${B1}\n`;
@@ -476,26 +442,23 @@ describe("consolidation edge outcomes", () => {
     return { root, a: a!, file };
   }
 
-  /** The first job reads `src/p.ts`, flags A and proposes P; `rest` holds every later `-p` call's scenario in order. */
+  /** Seeds proposal P and A's stale flag, then the first job reads `src/p.ts`; `rest` holds every later `-p` call's scenario in order. */
   function run(
     root: string,
     a: number,
     rest: FakeScenario[],
     opts: { skipJob?: boolean; env?: Record<string, string>; args?: string[] } = {},
   ): Journey {
+    seedMemory(root, [], {
+      proposals: [{ kind: "memory", bullet: P }],
+      stale: [{ id: a, reason: "a moved" }],
+    });
     const transcript =
       fs.readFileSync(FIXTURE, "utf8") +
       "\n" +
       readRecord("p-read", "2026-01-02T03:04:31.000Z", path.join(root, "src/p.ts")) +
       "\n";
-    const first = {
-      lines: okStreamOf({
-        ...SAMPLE_DIGEST,
-        proposals: [{ kind: "memory", bullet: P }],
-        stale: [{ id: a, reason: "a moved" }],
-      }),
-    };
-    const j = journey(root, [first, ...rest], { transcript, ...opts });
+    const j = journey(root, [laterDigest(), ...rest], { transcript, ...opts });
     if (!opts.skipJob) expect(j.job.status).toBe(0);
     return j;
   }
@@ -549,7 +512,7 @@ describe("consolidation edge outcomes", () => {
       root,
       a,
       [
-        { lines: wouldChange, sleepMs: 1500 },
+        { lines: wouldChange, hold: true },
         laterDigest(),
         { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) },
       ],
@@ -559,6 +522,7 @@ describe("consolidation edge outcomes", () => {
     await waitFor(() => j.fake.calls().length === 2);
     const hand = "# Cerebrum\n\n## Memory\n\n- **Edited**: by hand (2026-11-04)\n";
     fs.writeFileSync(file, hand);
+    j.fake.release();
     expect(await exited).toBe(0);
 
     expect(fs.readFileSync(file, "utf8")).toBe(hand);
@@ -651,7 +615,7 @@ describe("consolidation edge outcomes", () => {
     expect(lines[0]!.startsWith("crank-mem: consolidation skipped (")).toBe(true);
     const stats = statsOf(j);
     expect(stats).toContain("\n  consolidation:    never\n");
-    expect(stats).toContain(`\n  observations:     ${SAMPLE_DIGEST.observations.length + 1}\n`);
+    expect(stats).toContain("\n  observations:     1\n");
   }, 30_000);
 
   test("the backup keeps the newest 5 copies", () => {

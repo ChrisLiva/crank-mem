@@ -12,10 +12,11 @@ import {
   type DigestInput,
   type NewObservation,
 } from "../src/hooks/lib/memory.ts";
-import { DAEMON_FILE, type DaemonState } from "../src/hooks/lib/spool.ts";
+import { DAEMON_FILE, type DaemonState, type SpoolEntry } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
 import { cliVersion } from "../src/cli/version.ts";
+import { registerProject } from "../src/cli/registry.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");
@@ -101,6 +102,20 @@ export interface HookRun {
   stderr: string;
 }
 
+/** `TZ` as the test process started, before an in-process zone test sets it to "UTC". */
+const STARTED_TZ = process.env.TZ;
+
+/**
+ * `process.env` plus `extra`, for a child process. When the test process started without `TZ`,
+ * the child gets none unless `extra` names one, so it runs in the system zone after an
+ * in-process zone test left `process.env.TZ` at "UTC".
+ */
+export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
+  if (STARTED_TZ === undefined && extra.TZ === undefined) delete env.TZ;
+  return env;
+}
+
 /** Run a hook script as a child process with the given stdin, like an agent would. */
 export function runHook(
   script: string,
@@ -113,7 +128,7 @@ export function runHook(
     encoding: "utf-8",
     cwd: cwd ?? os.tmpdir(),
     timeout: 15_000,
-    env: env ? { ...process.env, ...env } : process.env,
+    env: childEnv(env),
   });
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
@@ -125,6 +140,20 @@ export function makeCrankHome(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "crank-home-"));
 }
 
+/** Run `fn` with `vars` set in `process.env`, then put each back as it was, unset ones deleted. */
+export function withEnv<T>(vars: Record<string, string>, fn: () => T): T {
+  const saved = Object.keys(vars).map((key) => [key, process.env[key]] as const);
+  Object.assign(process.env, vars);
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 /**
  * Run the crank-mem CLI as a child process, with fresh temp CODEX_HOME and CRANK_HOME and a
  * current dashboard fixture as CRANK_DASHBOARD_DIR unless `env` overrides them.
@@ -134,15 +163,47 @@ export function runCli(cwd: string, args: string[], env?: Record<string, string>
     cwd,
     encoding: "utf-8",
     timeout: 30_000,
-    env: {
-      ...process.env,
+    env: childEnv({
       CODEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "crank-codexhome-")),
       CRANK_HOME: makeCrankHome(),
-      CRANK_DASHBOARD_DIR: dashboardFixture(cliVersion()),
+      CRANK_DASHBOARD_DIR: sharedDashboardDir(),
       ...env,
-    },
+    }),
   });
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+}
+
+const initedTemplates = new Map<string, string>();
+
+/**
+ * A copy of a project inited once per process with `files`, timestamps kept. Only for tests that assert
+ * nothing about the registry or Codex trust and run no `uninstall` and no `--restore`: init's backup
+ * manifest names the template's path. The template lives outside `tempDir`, which `cleanup` empties.
+ */
+export function initedCopy(
+  files: Record<string, string> = { "a.ts": "export const a = 1;\n" },
+): string {
+  const key = JSON.stringify(files);
+  let template = initedTemplates.get(key);
+  if (template === undefined) {
+    template = fs.mkdtempSync(path.join(os.tmpdir(), "crank-template-"));
+    for (const [rel, content] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(template, rel)), { recursive: true });
+      fs.writeFileSync(path.join(template, rel), content);
+    }
+    expect(runCli(template, ["init", "--yes", "--codex", "skip"]).status).toBe(0);
+    initedTemplates.set(key, template);
+  }
+  const copy = tempDir("crank-copy-");
+  fs.cpSync(template, copy, { recursive: true, preserveTimestamps: true });
+  return copy;
+}
+
+/** An `initedCopy` listed in `home`'s registry, as a realpath, since the dashboard hashes the root as listed. */
+export function registeredCopy(home: string, files?: Record<string, string>): string {
+  const root = fs.realpathSync(initedCopy(files));
+  withEnv({ CRANK_HOME: home }, () => registerProject(root));
+  return root;
 }
 
 /** Set a file's atime and mtime to `ms` since the epoch. */
@@ -258,6 +319,7 @@ export type FakeScenario = {
   raw?: string; // printed instead of lines
   exit?: number; // default 0
   sleepMs?: number; // wait before printing
+  hold?: true; // wait before printing until the test calls the fake's release()
   pauseAfterFirstMs?: number; // wait after printing the first line, before the rest
 };
 export type FakeCall = {
@@ -299,6 +361,11 @@ if (argv[0] === "auth" && argv[1] === "status") {
 const startMs = Date.now();
 const stdin = await new Response(Bun.stdin.stream()).text();
 fs.appendFileSync(callsFile, JSON.stringify({ argv, env: process.env, stdin, cwd: process.cwd(), startMs }) + "\\n");
+// An orphaned held fake (its job killed without its group) exits instead of polling forever.
+if (s.hold) while (!fs.existsSync(path.join(dir, "release"))) {
+  if (process.ppid === 1) process.exit(1);
+  await sleep(20);
+}
 if (s.sleepMs) await sleep(s.sleepMs);
 if (s.raw !== undefined) process.stdout.write(s.raw);
 else for (const [i, line] of (s.lines ?? []).entries()) {
@@ -321,11 +388,14 @@ function readJsonl(file: string): any[] {
   }
 }
 
-/** A fake `claude` on PATH: the n-th `-p` call plays `scenarios[n]` (the last repeats) and records its argv, env, stdin and cwd. */
+/**
+ * A fake `claude` on PATH: the n-th `-p` call plays `scenarios[n]` (the last repeats) and records its argv, env, stdin and cwd.
+ * `release()` lets every `hold` scenario, running or later, print.
+ */
 export function fakeClaude(
   dir: string,
   scenarios: FakeScenario[],
-): { env: Record<string, string>; calls(): FakeCall[] } {
+): { env: Record<string, string>; calls(): FakeCall[]; release(): void } {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "claude"), FAKE_CLAUDE, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, "scenarios.json"), JSON.stringify(scenarios));
@@ -339,6 +409,9 @@ export function fakeClaude(
         ...c,
         endMs: ends.get(n) ?? null,
       }));
+    },
+    release() {
+      fs.writeFileSync(path.join(dir, "release"), "");
     },
   };
 }
@@ -386,14 +459,16 @@ export function spoolEntry(
   projectRoot: string,
   updatedAt: number,
   parked = false,
+  opts: { transcriptPath?: string; cwd?: string; ended?: boolean } = {},
 ): void {
   const dir = parked ? path.join(home, "spool", "parked") : path.join(home, "spool");
   fs.mkdirSync(dir, { recursive: true });
-  const entry = {
-    transcriptPath: `/t/${stem}.jsonl`,
+  const entry: SpoolEntry = {
+    transcriptPath: opts.transcriptPath ?? `/t/${stem}.jsonl`,
     projectRoot,
+    cwd: opts.cwd ?? projectRoot,
     agent: "claude",
-    ended: true,
+    ended: opts.ended ?? true,
     updatedAt,
   };
   fs.writeFileSync(path.join(dir, `${stem}.json`), JSON.stringify(entry));
@@ -451,7 +526,7 @@ export function startDaemon(
   const root = cloneRoot ?? REPO_ROOT;
   const proc = spawn(path.join(root, "bin/crank-mem"), ["daemon", ...args], {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: childEnv(env),
     detached: true,
     stdio: "ignore",
   });
@@ -545,15 +620,25 @@ export async function startModelServer(
 
 /**
  * A dashboard dir whose `dist/` copies tests/fixtures/dashboard-dist/, with `dist/.crank-version`
- * holding `stamp` unless `stamp` is null.
+ * holding `stamp` unless `stamp` is null. `dir` is a fresh `tempDir` unless given.
  */
-export function dashboardFixture(stamp: string | null): string {
-  const dir = tempDir("crank-dashdir-");
+export function dashboardFixture(stamp: string | null, dir = tempDir("crank-dashdir-")): string {
   fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/dashboard-dist"), path.join(dir, "dist"), {
     recursive: true,
   });
   if (stamp !== null) fs.writeFileSync(path.join(dir, "dist/.crank-version"), stamp);
   return dir;
+}
+
+let sharedDashboard: string | undefined;
+
+/** One current dashboard fixture per process, outside `tempDir` so `cleanup` keeps it; the preload's root holds it. */
+export function sharedDashboardDir(): string {
+  sharedDashboard ??= dashboardFixture(
+    cliVersion(),
+    fs.mkdtempSync(path.join(os.tmpdir(), "crank-dashdir-")),
+  );
+  return sharedDashboard;
 }
 
 /** `root` (a fresh temp dir by default) inited with `home` as its crank home, as a realpath. */
@@ -586,7 +671,13 @@ const STARTUP_LINE = /^crank-mem dashboard: (http:\/\/127\.0\.0\.1:(\d+)\/\?toke
 export async function startDashboard(
   home: string,
   args: string[],
-  opts: { open?: boolean; cwd?: string; env?: Record<string, string>; dashboardDir?: string } = {},
+  opts: {
+    open?: boolean;
+    cwd?: string;
+    env?: Record<string, string>;
+    dashboardDir?: string;
+    keep?: true;
+  } = {},
 ): Promise<{
   url: string;
   token: string;
@@ -604,17 +695,16 @@ export async function startDashboard(
     ],
     {
       cwd: opts.cwd ?? tempDir("crank-dash-cwd-"),
-      env: {
-        ...process.env,
+      env: childEnv({
         CRANK_HOME: home,
         CRANK_DASHBOARD_DIR: opts.dashboardDir ?? dashboardFixture(cliVersion()),
         ...opts.env,
-      },
+      }),
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
-  children.push(child);
+  if (!opts.keep) children.push(child);
   let stdout = "";
   let stderr = "";
   child.stdout!.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
@@ -690,8 +780,9 @@ export type Journey = {
 };
 
 /**
- * Write the `stem` (default s1) spool entry through the Stop and SessionEnd hooks, then run `job <stem>`.
- * `transcript` replaces the fixture's text; `env` adds to the job's environment; `home` replaces the empty crank home.
+ * Plant the `stem` (default s1) spool entry, or with `hooks` write it through the Stop and SessionEnd hooks, then
+ * run `job <stem>`. `transcript` replaces the fixture's text; `env` adds to the job's environment; `home` replaces
+ * the empty crank home.
  */
 export function journey(
   root: string,
@@ -705,6 +796,7 @@ export function journey(
     stem?: string;
     cwd?: string;
     args?: string[];
+    hooks?: true;
   } = {},
 ): Journey {
   const home = opts.home ?? makeCrankHome();
@@ -716,24 +808,28 @@ export function journey(
   if (opts.transcript === undefined) fs.copyFileSync(FIXTURE, transcript);
   else fs.writeFileSync(transcript, opts.transcript);
   const fake = fakeClaude(path.join(tmp, "bin"), scenarios);
-  const hookEnv = { ...fake.env, CRANK_HOME: home };
   const cwd = opts.cwd ?? root;
-  expect(
-    runHook(
-      "src/hooks/stop.ts",
-      JSON.stringify({ ...claudeStop(cwd), transcript_path: transcript }),
-      root,
-      hookEnv,
-    ).status,
-  ).toBe(0);
-  expect(
-    runHook(
-      "src/hooks/session-end.ts",
-      JSON.stringify(claudeSessionEnd(cwd, transcript)),
-      root,
-      hookEnv,
-    ).status,
-  ).toBe(0);
+  if (opts.hooks) {
+    const hookEnv = { ...fake.env, CRANK_HOME: home };
+    expect(
+      runHook(
+        "src/hooks/stop.ts",
+        JSON.stringify({ ...claudeStop(cwd), transcript_path: transcript }),
+        root,
+        hookEnv,
+      ).status,
+    ).toBe(0);
+    expect(
+      runHook(
+        "src/hooks/session-end.ts",
+        JSON.stringify(claudeSessionEnd(cwd, transcript)),
+        root,
+        hookEnv,
+      ).status,
+    ).toBe(0);
+  } else {
+    spoolEntry(home, stem, root, Date.now(), false, { transcriptPath: transcript, cwd });
+  }
   expect(spoolFiles(home)).toEqual([`${stem}.json`]);
   const j = { root, home, stem, transcript, fake };
   const job = opts.skipJob
@@ -790,16 +886,13 @@ export function stop(j: Pick<Journey, "root" | "home" | "fake" | "transcript">):
 }
 
 /** Start `job s1` in its own process group, so a kill takes its claude child with it. */
-export function spawnJob(
-  j: Pick<Journey, "root" | "home" | "fake">,
-  args: string[] = [],
-): Promise<number | null> {
+export function spawnJob(j: Pick<Journey, "root" | "home" | "fake">): Promise<number | null> {
   const child = spawn(
     process.execPath,
-    [path.join(REPO_ROOT, "src/cli/main.ts"), "job", "s1", "--run-timeout-ms", "10000", ...args],
+    [path.join(REPO_ROOT, "src/cli/main.ts"), "job", "s1", "--run-timeout-ms", "10000"],
     {
       cwd: j.root,
-      env: { ...process.env, ...j.fake.env, CRANK_HOME: j.home },
+      env: childEnv({ ...j.fake.env, CRANK_HOME: j.home }),
       detached: true,
       stdio: "ignore",
     },

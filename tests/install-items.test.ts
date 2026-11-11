@@ -1,8 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { REPO_ROOT, makeCrankHome, makeProject, runCli, snapshot, type CliRun } from "./helpers.ts";
-import { cliVersion } from "../src/cli/version.ts";
+import {
+  REPO_ROOT,
+  makeCrankHome,
+  makeProject,
+  runCli,
+  snapshot,
+  withEnv,
+  type CliRun,
+} from "./helpers.ts";
+import { cliVersion, REPO_ROOT as CLONE_ROOT } from "../src/cli/version.ts";
+import { newBackupDir } from "../src/cli/backups.ts";
+import { applyInstall, removeInstall, repairInstall, resolveCodex } from "../src/cli/install.ts";
+import type { Report } from "../src/cli/install-support.ts";
+import { defaultConfig, loadConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CRANK_ALLOW_RULES, crankHooks } from "../src/cli/settings.ts";
 import { V1_DDL } from "./fixtures/schema-v1.ts";
 
@@ -12,6 +24,63 @@ function cli(cwd: string, codexHome: string, crankHome: string, ...args: string[
 
 type GitMode = "commit" | "ignore" | "exclude";
 type Choice = "skip" | "review" | "trust";
+
+/** A temp project at its real path, as `process.cwd()` gives it to the spawned commands. */
+type Project = { root: string; crankDir: string; codexHome: string; home: string };
+
+function project(extra: Record<string, string> = {}): Project {
+  const made = makeProject(extra);
+  const root = fs.realpathSync(made.root);
+  return {
+    root,
+    crankDir: path.join(root, ".crank"),
+    codexHome: made.codexHome,
+    home: makeCrankHome(),
+  };
+}
+
+function inHomes<T>(p: Project, fn: () => T): T {
+  return withEnv({ CRANK_HOME: p.home, CODEX_HOME: p.codexHome }, fn);
+}
+
+/** `init`'s steps after its choices, without the first scan; the `Report` it would print. */
+function initIn(p: Project, git: GitMode = "exclude", codex: Choice = "review"): Report {
+  return inHomes(p, () => {
+    fs.mkdirSync(p.crankDir, { recursive: true });
+    const dir = newBackupDir(p.crankDir);
+    const config = {
+      ...defaultConfig(),
+      git,
+      runtime: "bun" as const,
+      vendored_version: cliVersion(),
+      clone_root: CLONE_ROOT,
+      codex,
+    };
+    saveConfig(p.crankDir, config);
+    return applyInstall({ root: p.root, crankDir: p.crankDir, config, backupDir: () => dir });
+  });
+}
+
+/** `upgrade`'s repair walk, with its backup dir created on first use. */
+function upgradeIn(p: Project): Report {
+  return inHomes(p, () => {
+    const loaded = loadConfig(p.crankDir);
+    let dir: string | null = null;
+    return repairInstall({
+      root: p.root,
+      crankDir: p.crankDir,
+      config: { ...loaded, codex: resolveCodex(p.root, loaded) },
+      backupDir: () => (dir ??= newBackupDir(p.crankDir)),
+    });
+  });
+}
+
+/** `uninstall`'s surgical removal pass. */
+function uninstallIn(p: Project): Report {
+  return inHomes(p, () =>
+    removeInstall({ root: p.root, crankDir: p.crankDir, config: loadConfig(p.crankDir) }),
+  );
+}
 
 const CODEX_FLAGS: Record<Choice, string[]> = {
   skip: ["--codex", "skip"],
@@ -49,33 +118,65 @@ const initCases: { git: GitMode; choice: Choice }[] = (
   ["commit", "ignore", "exclude"] as const
 ).flatMap((git) => (["skip", "review", "trust"] as const).map((choice) => ({ git, choice })));
 
+function initItemLines(git: GitMode, choice: Choice, codexHome: string): string[] {
+  const settings = git === "commit" ? ".claude/settings.json" : ".claude/settings.local.json";
+  return [`  Claude Code: hooks wired into ${settings}`, ...codexLines(choice, codexHome)];
+}
+
+function expectInitRecorded(root: string, choice: Choice): void {
+  const parsed = readConfig(root);
+  expect(parsed.codex).toBe(choice);
+  expect("codex_trust_written" in parsed).toBe(false);
+  expectCerebrumSeeded(root);
+}
+
+function expectCerebrumSeeded(root: string): void {
+  expect(
+    fs
+      .readFileSync(path.join(root, ".crank/cerebrum.md"))
+      .equals(fs.readFileSync(path.join(REPO_ROOT, "src/templates/cerebrum.md"))),
+  ).toBe(true);
+}
+
 describe("init records the Codex choice", () => {
+  test("init records the Codex choice and prints today's lines: exclude / trust", () => {
+    const { root, codexHome } = makeProject();
+    const home = makeCrankHome();
+    const run = cli(
+      root,
+      codexHome,
+      home,
+      "init",
+      "--yes",
+      "--git",
+      "exclude",
+      ...CODEX_FLAGS.trust,
+    );
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.stdout).toBe(
+      [
+        `crank-mem ${cliVersion()} initialized (runtime: bun, git: exclude)`,
+        "  indexed 2 files → .crank/anatomy.md",
+        ...initItemLines("exclude", "trust", codexHome),
+        "Next: start a Claude Code session here — project memory injects at session start.",
+        "Optional: install the audit skill — npx skills add ChrisLiva/crank-mem",
+      ].join("\n") + "\n",
+    );
+    expectInitRecorded(root, "trust");
+  });
+
   for (const { git, choice } of initCases) {
-    test(`init records the Codex choice and prints today's lines: ${git} / ${choice}`, () => {
-      const { root, codexHome } = makeProject();
-      const home = makeCrankHome();
-      const run = cli(root, codexHome, home, "init", "--yes", "--git", git, ...CODEX_FLAGS[choice]);
-      expect(run.status).toBe(0);
-      expect(run.stderr).toBe("");
-      const settings = git === "commit" ? ".claude/settings.json" : ".claude/settings.local.json";
-      expect(run.stdout).toBe(
-        [
-          `crank-mem ${cliVersion()} initialized (runtime: bun, git: ${git})`,
-          "  indexed 2 files → .crank/anatomy.md",
-          `  Claude Code: hooks wired into ${settings}`,
-          ...codexLines(choice, codexHome),
-          "Next: start a Claude Code session here — project memory injects at session start.",
-          "Optional: install the audit skill — npx skills add ChrisLiva/crank-mem",
-        ].join("\n") + "\n",
-      );
-      const parsed = readConfig(root);
-      expect(parsed.codex).toBe(choice);
-      expect("codex_trust_written" in parsed).toBe(false);
-      expect(
-        fs
-          .readFileSync(path.join(root, ".crank/cerebrum.md"))
-          .equals(fs.readFileSync(path.join(REPO_ROOT, "src/templates/cerebrum.md"))),
-      ).toBe(true);
+    if (git === "exclude" && choice === "trust") continue;
+    // initIn writes the config itself, so only the spawned cells above and below prove init records the choice.
+    test(`init's install items print today's lines and seed the cerebrum: ${git} / ${choice}`, () => {
+      const p = project();
+      expect(initIn(p, git, choice)).toEqual({
+        lines: initItemLines(git, choice, p.codexHome),
+        warnings: [],
+        failed: false,
+      });
+      expectCerebrumSeeded(p.root);
     });
   }
 });
@@ -110,56 +211,50 @@ for (const c of legacyCases) {
 }
 
 test("uninstall reads a legacy codex_trust_written config as trust", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  expect(cli(root, codexHome, home, "init", "--yes", ...CODEX_FLAGS.trust).status).toBe(0);
-  const { codex: _codex, ...rest } = readConfig(root);
-  writeConfig(root, { ...rest, codex_trust_written: true });
-  const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
-  expect(un.status).toBe(0);
-  expect(un.stdout).toContain(`  removed trusted_hash entries from ${codexHome}/config.toml`);
-  expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).toBe('model = "gpt-5.6"\n');
-}, 20_000);
+  const p = project();
+  initIn(p, "exclude", "trust");
+  const { codex: _codex, ...rest } = readConfig(p.root);
+  writeConfig(p.root, { ...rest, codex_trust_written: true });
+  const un = uninstallIn(p);
+  expect(un.failed).toBe(false);
+  expect(un.lines).toContain(`  removed trusted_hash entries from ${p.codexHome}/config.toml`);
+  expect(fs.readFileSync(path.join(p.codexHome, "config.toml"), "utf-8")).toBe(
+    'model = "gpt-5.6"\n',
+  );
+});
 
 test("uninstall leaves trust entries when the config records review", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  expect(cli(root, codexHome, home, "init", "--yes", ...CODEX_FLAGS.trust).status).toBe(0);
-  const trusted = fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8");
-  writeConfig(root, { ...readConfig(root), codex: "review" });
-  const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
-  expect(un.status).toBe(0);
-  expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).toBe(trusted);
-  expect(un.stdout).not.toContain("removed trusted_hash entries");
-}, 20_000);
+  const p = project();
+  initIn(p, "exclude", "trust");
+  const trusted = fs.readFileSync(path.join(p.codexHome, "config.toml"), "utf-8");
+  writeConfig(p.root, { ...readConfig(p.root), codex: "review" });
+  const un = uninstallIn(p);
+  expect(un.failed).toBe(false);
+  expect(fs.readFileSync(path.join(p.codexHome, "config.toml"), "utf-8")).toBe(trusted);
+  expect(un.lines.join("\n")).not.toContain("removed trusted_hash entries");
+});
 
 test("upgrade writes no trust entries when the config records review", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  const init = cli(
-    root,
-    codexHome,
-    home,
-    "init",
-    "--yes",
-    "--git",
-    "exclude",
-    ...CODEX_FLAGS.trust,
-  );
-  expect(init.status).toBe(0);
-  const toml = path.join(codexHome, "config.toml");
+  const p = project();
+  initIn(p, "exclude", "trust");
+  const toml = path.join(p.codexHome, "config.toml");
   fs.writeFileSync(toml, 'model = "gpt-5.6"\n');
-  writeConfig(root, { ...readConfig(root), vendored_version: "0.0.1", codex: "review" });
-  const up = cli(root, codexHome, home, "upgrade");
-  expect(up.status).toBe(0);
-  expect(up.stdout).not.toContain("recomputed");
+  writeConfig(p.root, { ...readConfig(p.root), vendored_version: "0.0.1", codex: "review" });
+  const up = upgradeIn(p);
+  expect(up.failed).toBe(false);
+  expect(up.lines.join("\n")).not.toContain("recomputed");
   expect(fs.readFileSync(toml, "utf-8")).toBe('model = "gpt-5.6"\n');
-}, 20_000);
+});
+
+function registry(home: string): {
+  version: number;
+  projects: { root: string; addedAtMs: number }[];
+} {
+  return JSON.parse(fs.readFileSync(path.join(home, "projects.json"), "utf-8"));
+}
 
 function registeredRoots(home: string): string[] {
-  return JSON.parse(fs.readFileSync(path.join(home, "projects.json"), "utf-8")).projects.map(
-    (p: { root: string }) => p.root,
-  );
+  return registry(home).projects.map((p) => p.root);
 }
 
 for (const git of ["commit", "ignore", "exclude"] as const) {
@@ -179,6 +274,10 @@ for (const git of ["commit", "ignore", "exclude"] as const) {
     expect(up.status).toBe(0);
     expect(up.stdout.split("\n").filter((l) => l.startsWith("  "))).toEqual([]);
     expect(fs.readdirSync(backups)).toEqual(backupsBefore);
+    const registered = registry(home);
+    expect(registered.version).toBe(1);
+    expect(registered.projects.map((p) => p.root)).toEqual([real]);
+    expect(typeof registered.projects[0]!.addedAtMs).toBe("number");
     const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
     expect(un.status).toBe(0);
     expect(snapshot(root)).toEqual(before);
@@ -190,11 +289,9 @@ for (const git of ["commit", "ignore", "exclude"] as const) {
 
 for (const c of ["skip", "missing key"] as const) {
   test(`uninstall strips crank entries whatever codex records: ${c}`, () => {
-    const { root, codexHome } = makeProject();
-    const home = makeCrankHome();
-    expect(
-      cli(root, codexHome, home, "init", "--yes", "--git", "exclude", "--codex", "skip").status,
-    ).toBe(0);
+    const p = project();
+    const { root } = p;
+    initIn(p, "exclude", "skip");
     const plant = (rel: string, text: string): void => {
       fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
       fs.writeFileSync(path.join(root, rel), text);
@@ -213,8 +310,7 @@ for (const c of ["skip", "missing key"] as const) {
       const { codex: _codex, ...rest } = readConfig(root);
       writeConfig(root, rest);
     }
-    const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
-    expect(un.status).toBe(0);
+    expect(uninstallIn(p).failed).toBe(false);
     const read = (rel: string): string => fs.readFileSync(path.join(root, rel), "utf-8");
     expect(JSON.parse(read(".codex/hooks.json"))).toEqual({});
     expect(read(".codex/config.toml")).toBe("");
@@ -222,7 +318,7 @@ for (const c of ["skip", "missing key"] as const) {
     expect(read(".gitignore")).toBe("");
     expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
     expect(read(".git/info/exclude")).not.toContain("# crank-mem");
-  }, 20_000);
+  });
 }
 
 test("a restore uninstall prints the trust line once", () => {
@@ -268,71 +364,78 @@ function initExclude(root: string, codexHome: string, home: string): void {
   expect(init.status).toBe(0);
 }
 
-for (const c of unparseableCases) {
+const unparseableWarning = (file: string): string =>
+  `crank-mem: could not remove crank-mem's entries from ${file} (not valid JSON)`;
+
+const [spawnedUnparseable, ...inProcessUnparseable] = unparseableCases;
+
+test(`uninstall reports an unparseable file that holds crank entries: ${spawnedUnparseable!.file}`, () => {
+  const c = spawnedUnparseable!;
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  initExclude(root, codexHome, home);
+  fs.mkdirSync(path.dirname(path.join(root, c.file)), { recursive: true });
+  fs.writeFileSync(path.join(root, c.file), c.text);
+  const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
+  expect(un.status).toBe(1);
+  expect(un.stderr).toBe(unparseableWarning(c.file) + "\n");
+  expect(fs.readFileSync(path.join(root, c.file), "utf-8")).toBe(c.text);
+  expect(un.stdout.endsWith("crank-mem: uninstalled.\n")).toBe(true);
+  expect(fs.readFileSync(path.join(root, ".git/info/exclude"), "utf-8")).not.toContain(
+    "# crank-mem",
+  );
+  expect(fs.existsSync(path.join(root, c.gone))).toBe(false);
+}, 20_000);
+
+for (const c of inProcessUnparseable) {
   test(`uninstall reports an unparseable file that holds crank entries: ${c.file}`, () => {
-    const { root, codexHome } = makeProject();
-    const home = makeCrankHome();
-    initExclude(root, codexHome, home);
+    const p = project();
+    const { root } = p;
+    initIn(p);
     fs.mkdirSync(path.dirname(path.join(root, c.file)), { recursive: true });
     fs.writeFileSync(path.join(root, c.file), c.text);
-    const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
-    expect(un.status).toBe(1);
-    expect(un.stderr).toBe(
-      `crank-mem: could not remove crank-mem's entries from ${c.file} (not valid JSON)\n`,
-    );
+    const un = uninstallIn(p);
+    expect(un.failed).toBe(true);
+    expect(un.warnings).toEqual([unparseableWarning(c.file)]);
     expect(fs.readFileSync(path.join(root, c.file), "utf-8")).toBe(c.text);
-    expect(un.stdout.endsWith("crank-mem: uninstalled.\n")).toBe(true);
     expect(fs.readFileSync(path.join(root, ".git/info/exclude"), "utf-8")).not.toContain(
       "# crank-mem",
     );
     expect(fs.existsSync(path.join(root, c.gone))).toBe(false);
-  }, 20_000);
+  });
 }
 
 test("uninstall leaves an unparseable file without crank strings alone", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  initExclude(root, codexHome, home);
-  const file = path.join(root, ".claude/settings.json");
+  const p = project();
+  initIn(p);
+  const file = path.join(p.root, ".claude/settings.json");
   fs.writeFileSync(file, "{ broken");
-  const un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
-  expect(un.status).toBe(0);
-  expect(un.stderr).toBe("");
+  const un = uninstallIn(p);
+  expect(un.failed).toBe(false);
+  expect(un.warnings).toEqual([]);
   expect(fs.readFileSync(file, "utf-8")).toBe("{ broken");
-}, 20_000);
+});
 
 const GITIGNORE_EACCES = "crank-mem: could not remove crank-mem's entries from .gitignore (EACCES";
 
 test("uninstall reports an unwritable .gitignore once and carries on", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  const init = cli(
-    root,
-    codexHome,
-    home,
-    "init",
-    "--yes",
-    "--git",
-    "ignore",
-    ...CODEX_FLAGS.review,
-  );
-  expect(init.status).toBe(0);
+  const p = project();
+  const { root } = p;
+  initIn(p, "ignore", "review");
   const gitignore = path.join(root, ".gitignore");
-  let un: CliRun;
+  let un: Report;
   try {
     fs.chmodSync(gitignore, 0o000);
-    un = cli(root, codexHome, home, "uninstall", "--yes", "--delete-crank");
+    un = uninstallIn(p);
   } finally {
     fs.chmodSync(gitignore, 0o644);
   }
-  expect(un.status).toBe(1);
-  const lines = un.stderr.split("\n").filter((l) => l !== "");
-  expect(lines.length).toBe(1);
-  expect(lines[0]!.startsWith(GITIGNORE_EACCES)).toBe(true);
-  expect(un.stdout.endsWith("crank-mem: uninstalled.\n")).toBe(true);
+  expect(un.failed).toBe(true);
+  expect(un.warnings.length).toBe(1);
+  expect(un.warnings[0]!.startsWith(GITIGNORE_EACCES)).toBe(true);
   expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
   expect(fs.existsSync(path.join(root, ".codex/hooks.json"))).toBe(false);
-}, 20_000);
+});
 
 test("a legacy-only uninstall reports an unreadable .gitignore and still sweeps crank/", () => {
   const { root, codexHome } = makeProject();
@@ -374,7 +477,7 @@ const repairCases: {
   damage(root: string, codexHome: string, home: string): void;
   files(root: string, codexHome: string, home: string): string[];
   line: string | null;
-  extra?(root: string, codexHome: string, home: string, run: CliRun): void;
+  extra?(root: string, home: string, lines: string[]): void;
 }[] = [
   {
     name: "Claude wiring",
@@ -389,12 +492,6 @@ const repairCases: {
     line: "  wrote the allowlist .crank/.gitignore",
   },
   {
-    name: "git ignore block",
-    damage: (root) => stripIgnoreBlock(path.join(root, ".git/info/exclude")),
-    files: (root) => [path.join(root, ".git/info/exclude")],
-    line: "  added the crank-mem .crank/ ignore block to .git/info/exclude",
-  },
-  {
     name: "cerebrum",
     damage: (root) => fs.rmSync(path.join(root, ".crank/cerebrum.md")),
     files: (root) => [path.join(root, ".crank/cerebrum.md")],
@@ -406,25 +503,18 @@ const repairCases: {
       fs.writeFileSync(path.join(home, "projects.json"), '{"version":1,"projects":[]}'),
     files: () => [],
     line: null,
-    extra: (root, _codexHome, home, run) => {
-      const real = fs.realpathSync(root);
-      expect(registeredRoots(home).filter((r) => r === real).length).toBe(1);
-      expect(run.stdout.split("\n").filter((l) => l.startsWith("  "))).toEqual([]);
+    extra: (root, home, lines) => {
+      expect(registeredRoots(home).filter((r) => r === root).length).toBe(1);
+      expect(lines).toEqual([]);
     },
-  },
-  {
-    name: "vendored hooks",
-    damage: (root) => fs.rmSync(path.join(root, ".crank/hooks/post-read.ts")),
-    files: (root) => [path.join(root, ".crank/hooks/post-read.ts")],
-    line: "  re-vendored .crank/hooks/, which differed from the clone",
   },
   {
     name: "Codex hooks",
     damage: (root) => fs.rmSync(path.join(root, ".codex/hooks.json")),
     files: (root) => [path.join(root, ".codex/hooks.json")],
     line: "  re-wired Codex hooks in .codex/hooks.json",
-    extra: (_root, _codexHome, _home, run) =>
-      expect(run.stdout).not.toContain("Codex trust: open codex once"),
+    extra: (_root, _home, lines) =>
+      expect(lines.join("\n")).not.toContain("Codex trust: open codex once"),
   },
   {
     name: "Codex [features]",
@@ -441,31 +531,44 @@ const repairCases: {
   },
 ];
 
+test("upgrade repairs git ignore block", () => {
+  const { root, codexHome } = makeProject();
+  const home = makeCrankHome();
+  const init = cli(
+    root,
+    codexHome,
+    home,
+    "init",
+    "--yes",
+    "--git",
+    "exclude",
+    ...CODEX_FLAGS.trust,
+  );
+  expect(init.status).toBe(0);
+  const exclude = path.join(root, ".git/info/exclude");
+  const recorded = fs.readFileSync(exclude);
+  stripIgnoreBlock(exclude);
+  const up = cli(root, codexHome, home, "upgrade");
+  expect(up.status).toBe(0);
+  expect(up.stdout).toContain("  added the crank-mem .crank/ ignore block to .git/info/exclude\n");
+  expect(fs.readFileSync(exclude).equals(recorded)).toBe(true);
+  expect(lastLine(up.stdout)).toBe(ALREADY_AT);
+}, 20_000);
+
 for (const c of repairCases) {
   test(`upgrade repairs ${c.name}`, () => {
-    const { root, codexHome } = makeProject();
-    const home = makeCrankHome();
-    const init = cli(
-      root,
-      codexHome,
-      home,
-      "init",
-      "--yes",
-      "--git",
-      "exclude",
-      ...CODEX_FLAGS.trust,
-    );
-    expect(init.status).toBe(0);
+    const p = project();
+    const { root, codexHome, home } = p;
+    initIn(p, "exclude", "trust");
     const files = c.files(root, codexHome, home);
     const recorded = files.map((f) => fs.readFileSync(f));
     c.damage(root, codexHome, home);
-    const up = cli(root, codexHome, home, "upgrade");
-    expect(up.status).toBe(0);
-    if (c.line !== null) expect(up.stdout).toContain(c.line + "\n");
+    const up = upgradeIn(p);
+    expect(up.failed).toBe(false);
+    if (c.line !== null) expect(up.lines).toContain(c.line);
     files.forEach((f, i) => expect(fs.readFileSync(f).equals(recorded[i]!)).toBe(true));
-    expect(lastLine(up.stdout)).toBe(ALREADY_AT);
-    c.extra?.(root, codexHome, home, up);
-  }, 20_000);
+    c.extra?.(root, home, up.lines);
+  });
 }
 
 const legacyStampCases: { choice: Choice; set: Record<string, unknown> }[] = [
@@ -535,96 +638,78 @@ test("a corrupt Claude settings file costs only the Claude item", () => {
 }, 20_000);
 
 test("a corrupt hooks.json costs only the Codex item", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  initExcludeNoTrust(root, codexHome, home);
-  const codexHooks = path.join(root, ".codex/hooks.json");
+  const p = project();
+  initIn(p);
+  const codexHooks = path.join(p.root, ".codex/hooks.json");
   fs.writeFileSync(codexHooks, "{ broken");
-  fs.rmSync(path.join(root, ".crank/.gitignore"));
-  const up = cli(root, codexHome, home, "upgrade");
-  expect(up.status).toBe(1);
-  expect(up.stderr).toContain("crank-mem: could not re-wire Codex hooks (");
+  fs.rmSync(path.join(p.crankDir, ".gitignore"));
+  const up = upgradeIn(p);
+  expect(up.failed).toBe(true);
+  expect(up.warnings.join("\n")).toContain("crank-mem: could not re-wire Codex hooks (");
   expect(fs.readFileSync(codexHooks, "utf-8")).toBe("{ broken");
-  expect(up.stdout).toContain("  wrote the allowlist .crank/.gitignore\n");
-}, 20_000);
+  expect(up.lines).toContain("  wrote the allowlist .crank/.gitignore");
+});
 
 test("upgrade on a skip install creates nothing under .codex/", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  const init = cli(root, codexHome, home, "init", "--yes", "--git", "exclude", ...CODEX_FLAGS.skip);
-  expect(init.status).toBe(0);
-  const up = cli(root, codexHome, home, "upgrade");
-  expect(up.status).toBe(0);
-  expect(fs.existsSync(path.join(root, ".codex"))).toBe(false);
-}, 20_000);
+  const p = project();
+  initIn(p, "exclude", "skip");
+  expect(upgradeIn(p).failed).toBe(false);
+  expect(fs.existsSync(path.join(p.root, ".codex"))).toBe(false);
+});
 
 test("upgrade leaves current trust entries alone and sweeps an orphan", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  const init = cli(
-    root,
-    codexHome,
-    home,
-    "init",
-    "--yes",
-    "--git",
-    "exclude",
-    ...CODEX_FLAGS.trust,
-  );
-  expect(init.status).toBe(0);
-  const toml = path.join(codexHome, "config.toml");
+  const p = project();
+  initIn(p, "exclude", "trust");
+  const toml = path.join(p.codexHome, "config.toml");
   const bytes = fs.readFileSync(toml);
   const mtimeMs = fs.statSync(toml).mtimeMs;
-  const up = cli(root, codexHome, home, "upgrade");
-  expect(up.status).toBe(0);
+  const up = upgradeIn(p);
+  expect(up.failed).toBe(false);
   expect(fs.readFileSync(toml).equals(bytes)).toBe(true);
   expect(fs.statSync(toml).mtimeMs).toBe(mtimeMs);
-  expect(up.stdout).not.toContain("recomputed");
+  expect(up.lines.join("\n")).not.toContain("recomputed");
   fs.appendFileSync(
     toml,
-    `[hooks.state."${fs.realpathSync(root)}/.codex/hooks.json:SessionStart:0:0"]\ntrusted_hash = "sha256:00"\n`,
+    `[hooks.state."${p.root}/.codex/hooks.json:SessionStart:0:0"]\ntrusted_hash = "sha256:00"\n`,
   );
-  const again = cli(root, codexHome, home, "upgrade");
-  expect(again.status).toBe(0);
-  expect(again.stdout).toContain("  recomputed Codex trusted_hash entries");
+  const again = upgradeIn(p);
+  expect(again.failed).toBe(false);
+  expect(again.lines).toContain("  recomputed Codex trusted_hash entries");
   expect(fs.readFileSync(toml, "utf-8")).not.toContain(':SessionStart:0:0"]');
-}, 20_000);
+});
 
 test("upgrade after uninstall --keep-crank reinstalls every item", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  initExcludeNoTrust(root, codexHome, home);
+  const p = project();
+  initIn(p);
   const files = [
     ".claude/settings.local.json",
     ".codex/hooks.json",
     ".codex/config.toml",
     ".git/info/exclude",
-  ].map((rel) => path.join(root, rel));
+  ].map((rel) => path.join(p.root, rel));
   const recorded = files.map((f) => fs.readFileSync(f));
-  expect(cli(root, codexHome, home, "uninstall", "--yes", "--keep-crank").status).toBe(0);
-  const up = cli(root, codexHome, home, "upgrade");
-  expect(up.status).toBe(0);
+  expect(uninstallIn(p).failed).toBe(false);
+  expect(upgradeIn(p).failed).toBe(false);
   files.forEach((f, i) => expect(fs.readFileSync(f).equals(recorded[i]!)).toBe(true));
-  expect(registeredRoots(home)).toContain(fs.realpathSync(root));
-}, 20_000);
+  expect(registeredRoots(p.home)).toContain(p.root);
+});
 
 test("a failed cerebrum seed fails the upgrade after every step", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  initExcludeNoTrust(root, codexHome, home);
-  const crankDir = path.join(root, ".crank");
-  fs.rmSync(path.join(crankDir, "cerebrum.md"));
-  let up: CliRun;
+  const p = project();
+  initIn(p);
+  fs.rmSync(path.join(p.crankDir, "cerebrum.md"));
+  let up: Report;
   try {
-    fs.chmodSync(crankDir, 0o555);
-    up = cli(root, codexHome, home, "upgrade");
+    fs.chmodSync(p.crankDir, 0o555);
+    up = upgradeIn(p);
   } finally {
-    fs.chmodSync(crankDir, 0o755);
+    fs.chmodSync(p.crankDir, 0o755);
   }
-  expect(up.status).toBe(1);
-  expect(up.stderr).toContain("crank-mem: could not seed .crank/cerebrum.md from the template (");
-  expect(lastLine(up.stdout)).toBe(ALREADY_AT);
-}, 20_000);
+  expect(up.failed).toBe(true);
+  expect(up.warnings.join("\n")).toContain(
+    "crank-mem: could not seed .crank/cerebrum.md from the template (",
+  );
+});
 
 const failedWriteCases: { name: string; damage(root: string): () => void; line: string }[] = [
   {
@@ -651,21 +736,19 @@ const failedWriteCases: { name: string; damage(root: string): () => void; line: 
 
 for (const c of failedWriteCases) {
   test(`a failed item write fails the upgrade: ${c.name}`, () => {
-    const { root, codexHome } = makeProject();
-    const home = makeCrankHome();
-    initExcludeNoTrust(root, codexHome, home);
-    let up: CliRun;
+    const p = project();
+    initIn(p);
+    let up: Report;
     let restore = () => {};
     try {
-      restore = c.damage(root);
-      up = cli(root, codexHome, home, "upgrade");
+      restore = c.damage(p.root);
+      up = upgradeIn(p);
     } finally {
       restore();
     }
-    expect(up.status).toBe(1);
-    expect(up.stderr).toContain(c.line);
-    expect(lastLine(up.stdout)).toBe(ALREADY_AT);
-  }, 20_000);
+    expect(up.failed).toBe(true);
+    expect(up.warnings.join("\n")).toContain(c.line);
+  });
 }
 
 const REVENDORED = "  re-vendored .crank/hooks/, which differed from the clone";
@@ -690,13 +773,13 @@ const sameBytes = (a: string, b: string): boolean => fs.readFileSync(a).equals(f
 const treeCases: {
   name: string;
   damage(hooks: string): void;
-  check(root: string, hooks: string, before: string[], run: CliRun): void;
+  check(root: string, hooks: string, before: string[], lines: string[]): void;
 }[] = [
   {
     name: "extra file",
     damage: (hooks) => fs.writeFileSync(path.join(hooks, "extra.ts"), "// extra\n"),
-    check: (root, hooks, before, run) => {
-      expect(run.stdout).toContain(REVENDORED + "\n");
+    check: (root, hooks, before, lines) => {
+      expect(lines).toContain(REVENDORED);
       expect(fs.existsSync(path.join(hooks, "extra.ts"))).toBe(false);
       const backup = newBackup(root, before);
       expect(fs.readFileSync(path.join(backup, "hooks/extra.ts"), "utf-8")).toBe("// extra\n");
@@ -705,8 +788,8 @@ const treeCases: {
   {
     name: "changed bytes",
     damage: (hooks) => fs.writeFileSync(path.join(hooks, "stop.ts"), "// edited\n"),
-    check: (root, hooks, before, run) => {
-      expect(run.stdout).toContain(REVENDORED + "\n");
+    check: (root, hooks, before, lines) => {
+      expect(lines).toContain(REVENDORED);
       expect(
         sameBytes(path.join(hooks, "stop.ts"), path.join(REPO_ROOT, "src/hooks/stop.ts")),
       ).toBe(true);
@@ -717,24 +800,24 @@ const treeCases: {
   {
     name: "dot-file only",
     damage: (hooks) => fs.writeFileSync(path.join(hooks, ".DS_Store"), "x"),
-    check: (_root, hooks, _before, run) => {
-      expect(run.stdout).not.toContain("re-vendored");
+    check: (_root, hooks, _before, lines) => {
+      expect(lines.join("\n")).not.toContain("re-vendored");
       expect(fs.existsSync(path.join(hooks, ".DS_Store"))).toBe(true);
     },
   },
   {
     name: "match",
     damage: (hooks) => fs.utimesSync(path.join(hooks, "stop.ts"), OLD_MTIME, OLD_MTIME),
-    check: (_root, hooks, _before, run) => {
-      expect(run.stdout).not.toContain("re-vendored");
+    check: (_root, hooks, _before, lines) => {
+      expect(lines.join("\n")).not.toContain("re-vendored");
       expect(fs.statSync(path.join(hooks, "stop.ts")).mtimeMs).toBe(OLD_MTIME.getTime());
     },
   },
   {
     name: "missing dir",
     damage: (hooks) => fs.rmSync(hooks, { recursive: true }),
-    check: (_root, hooks, _before, run) => {
-      expect(run.stdout).toContain(REVENDORED + "\n");
+    check: (_root, hooks, _before, lines) => {
+      expect(lines).toContain(REVENDORED);
       expect(
         sameBytes(path.join(hooks, "post-read.ts"), path.join(REPO_ROOT, "src/hooks/post-read.ts")),
       ).toBe(true);
@@ -744,34 +827,16 @@ const treeCases: {
 
 for (const c of treeCases) {
   test(`same-version upgrade re-vendors exactly when the tree differs: ${c.name}`, () => {
-    const { root, codexHome } = makeProject();
-    const home = makeCrankHome();
-    initExcludeNoTrust(root, codexHome, home);
-    const hooks = path.join(root, ".crank/hooks");
+    const p = project();
+    initIn(p);
+    const hooks = path.join(p.crankDir, "hooks");
     c.damage(hooks);
-    const before = backupsListing(root);
-    const up = cli(root, codexHome, home, "upgrade");
-    expect(up.status).toBe(0);
-    c.check(root, hooks, before, up);
-  }, 20_000);
+    const before = backupsListing(p.root);
+    const up = upgradeIn(p);
+    expect(up.failed).toBe(false);
+    c.check(p.root, hooks, before, up.lines);
+  });
 }
-
-test("a version-changing upgrade re-vendors and ends on the upgraded line", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  initExcludeNoTrust(root, codexHome, home);
-  writeConfig(root, { ...readConfig(root), vendored_version: "0.0.1" });
-  const stop = path.join(root, ".crank/hooks/stop.ts");
-  fs.utimesSync(stop, OLD_MTIME, OLD_MTIME);
-  const before = backupsListing(root);
-  const up = cli(root, codexHome, home, "upgrade");
-  expect(up.status).toBe(0);
-  expect(lastLine(up.stdout)).toBe(`crank-mem: upgraded vendored hooks 0.0.1 → ${cliVersion()}`);
-  expect(up.stdout).not.toContain("re-vendored");
-  expect(readConfig(root).vendored_version).toBe(cliVersion());
-  expect(fs.statSync(stop).mtimeMs).not.toBe(OLD_MTIME.getTime());
-  expect(fs.existsSync(path.join(newBackup(root, before), "hooks/stop.ts"))).toBe(true);
-}, 20_000);
 
 test("a failed re-vendor prints no summary line and exits 1", () => {
   const { root, codexHome } = makeProject();
@@ -794,12 +859,11 @@ test("a failed re-vendor prints no summary line and exits 1", () => {
 }, 20_000);
 
 test("init leaves an existing cerebrum alone", () => {
-  const { root, codexHome } = makeProject();
-  const cerebrumPath = path.join(root, ".crank/cerebrum.md");
-  fs.mkdirSync(path.dirname(cerebrumPath), { recursive: true });
+  const p = project();
+  const cerebrumPath = path.join(p.crankDir, "cerebrum.md");
+  fs.mkdirSync(p.crankDir, { recursive: true });
   fs.writeFileSync(cerebrumPath, "# Mine\n");
-  const run = cli(root, codexHome, makeCrankHome(), "init", "--yes", ...CODEX_FLAGS.review);
-  expect(run.status).toBe(0);
+  expect(initIn(p).failed).toBe(false);
   expect(fs.readFileSync(cerebrumPath, "utf-8")).toBe("# Mine\n");
 });
 

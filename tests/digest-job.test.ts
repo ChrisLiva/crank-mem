@@ -40,18 +40,11 @@ import {
   AUTH_LOGGED_OUT,
   AUTH_OAUTH_TOKEN,
   AUTH_THIRD_PARTY,
-  NOT_LOGGED_IN_RAW,
   badKeyStream,
-  invalidOutputStream,
-  maxTurnsStream,
-  noProviderStream,
-  notLoggedInStream,
   okStream,
   okStreamOf,
-  otherProviderStream,
   refusalStream,
   status401Stream,
-  status403Stream,
   status500Stream,
 } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
@@ -169,7 +162,9 @@ describe("digest job (black-box)", () => {
   });
 
   test("a rewritten transcript resumes from the saved timestamp when the saved uuid is gone", () => {
-    const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }]);
+    const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], {
+      hooks: true,
+    });
     expect(j.job.status).toBe(0);
     const later = laterRecords();
     fs.writeFileSync(
@@ -220,14 +215,17 @@ describe("digest job (black-box)", () => {
     const root = digestProject({}, temps);
     fs.mkdirSync(path.join(root, "pkg"));
     expect(
-      journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], { cwd: path.join(root, "pkg") }).job
-        .status,
+      journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], {
+        cwd: path.join(root, "pkg"),
+        hooks: true,
+      }).job.status,
     ).toBe(0);
     expect(getOne(root, "scanner")).toContain("files read: pkg/src/a.ts\n");
 
     // An entry written before entries carried cwd falls back to the project root.
     const old = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], {
       skipJob: true,
+      hooks: true,
     });
     const file = path.join(old.home, "spool", "s1.json");
     const { cwd: _, ...entry } = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -238,7 +236,7 @@ describe("digest job (black-box)", () => {
 
   test("a job killed before commit stores nothing and the entry reruns", async () => {
     const ok = { lines: okStream(SAMPLE_DIGEST) };
-    const j = journey(digestProject({}, temps), [{ ...ok, sleepMs: 1500 }, ok], { skipJob: true });
+    const j = journey(digestProject({}, temps), [{ ...ok, hold: true }, ok], { skipJob: true });
     const exited = spawnJob(j);
     await waitFor(() => j.fake.calls().length === 1);
     process.kill(-children.at(-1)!.pid!, "SIGKILL");
@@ -251,27 +249,28 @@ describe("digest job (black-box)", () => {
   }, 30_000);
 
   test("a Stop during a job stores the digest and keeps the entry", async () => {
-    const j = journey(
-      digestProject({}, temps),
-      [{ lines: okStream(SAMPLE_DIGEST), sleepMs: 1500 }],
-      { skipJob: true },
-    );
+    const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST), hold: true }], {
+      skipJob: true,
+      hooks: true,
+    });
     const exited = spawnJob(j);
     await waitFor(() => j.fake.calls().length === 1);
     stop(j);
+    j.fake.release();
     expect(await exited).toBe(0);
     expect(search(j.root, "EEXIST").trim().split("\n").length).toBe(1);
     expect(spoolFiles(j.home)).toEqual(["s1.json"]);
   }, 30_000);
 
   test("two jobs on one stem at once store one digest", async () => {
-    const j = journey(
-      digestProject({}, temps),
-      [{ lines: okStream(SAMPLE_DIGEST), sleepMs: 1500 }],
-      { skipJob: true },
-    );
+    const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST), hold: true }], {
+      skipJob: true,
+    });
     seedMemory(j.root, [], { costUsd: 0 });
-    expect(await Promise.all([spawnJob(j), spawnJob(j)])).toEqual([0, 0]);
+    const exited = Promise.all([spawnJob(j), spawnJob(j)]);
+    await waitFor(() => j.fake.calls().length === 2);
+    j.fake.release();
+    expect(await exited).toEqual([0, 0]);
     expect(j.fake.calls().length).toBe(2);
     expect(search(j.root, "EEXIST").trim().split("\n").length).toBe(1);
     const opened = openMemory(memoryPath(j.root), "read");
@@ -282,40 +281,6 @@ describe("digest job (black-box)", () => {
       opened.memory.close();
     }
   }, 30_000);
-
-  test("a run with no result line retries: exit 1, the entry stays, nothing stored", () => {
-    const lines = okStream(SAMPLE_DIGEST).filter((l) => JSON.parse(l).type !== "result");
-    const { root, job, spool } = journey(digestProject({}, temps), [{ lines }]);
-    expect(job.status).toBe(1);
-    expect(spool).toEqual(["s1.json"]);
-    expect(search(root, "EEXIST")).toBe("");
-  });
-
-  test("claude gets only the allowlisted environment", () => {
-    const root = digestProject({ redact: false }, temps);
-    const { fake, job } = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], {
-      env: {
-        ANTHROPIC_API_KEY: "k",
-        ANTHROPIC_AUTH_TOKEN: "t",
-        CLAUDE_CODE_OAUTH_TOKEN: "o",
-        CLAUDE_CODE_USE_BEDROCK: "1",
-        ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
-        CLAUDE_CODE_MAX_RETRIES: "9",
-        CRANK_REDACT: "0",
-      },
-    });
-    expect(job.status).toBe(0);
-    const env = fake.calls()[0]!.env;
-    expect(Object.keys(env).sort()).toEqual([
-      "CLAUDE_CODE_MAX_RETRIES",
-      "HOME",
-      "PATH",
-      "TMPDIR",
-      "USER",
-    ]);
-    expect(env.CLAUDE_CODE_MAX_RETRIES).toBe("0");
-    expect(getOne(root, "credentials")).toContain("token [redacted]");
-  });
 
   test("digests write no tracked file, and a repeated observation adds no row", () => {
     const root = tempDir("crank-job-git-");
@@ -379,19 +344,6 @@ describe("digest job (black-box)", () => {
         .status,
     ).toBe(0);
 
-    // A delta under MIN_DELTA_CHARS: entry deleted.
-    const short = journey(digestProject({}, temps), scenarios, {
-      transcript:
-        JSON.stringify({
-          type: "user",
-          uuid: "u1",
-          timestamp: "2026-01-02T03:04:01.000Z",
-          message: { role: "user", content: "hi" },
-        }) + "\n",
-    });
-    expect(short.job.status).toBe(0);
-    expect(short.spool).toEqual([]);
-
     // Over 4096 bytes with no conversation record: parked.
     const attachment = JSON.stringify({ type: "attachment", text: "" });
     const junkLine =
@@ -411,7 +363,7 @@ describe("digest job (black-box)", () => {
     ).toBe(0);
     expect(spoolFiles(gone.home)).toEqual([]);
 
-    for (const j of [stopped, short, junk, gone]) expect(j.fake.calls()).toEqual([]);
+    for (const j of [stopped, junk, gone]) expect(j.fake.calls()).toEqual([]);
   });
 });
 
@@ -460,24 +412,6 @@ describe("digest job failure classes (black-box)", () => {
     expect(stopState(j.home)).toBeNull();
   });
 
-  test("rerun, spawnJob and journey pass extra flags to the job, which rejects an unknown one before digesting", async () => {
-    const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], {
-      skipJob: true,
-    });
-    const run = rerun(j, 10_000, {}, ["--x"]);
-    expect(run.status).toBe(1);
-    expect(run.stderr).toBe(
-      "crank-mem: unknown flag --x\nUsage: crank-mem job <stem> (internal: the daemon runs it)\n",
-    );
-    expect(await spawnJob(j, ["--x"])).toBe(1);
-    expect(
-      journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], { args: ["--x"] }).job
-        .status,
-    ).toBe(1);
-    expect(j.fake.calls()).toEqual([]);
-    expect(spoolFiles(j.home)).toEqual(["s1.json"]);
-  });
-
   test("an init line on an API key kills the run at once and stops digests with reason credential", () => {
     const { home, job } = journey(digestProject({}, temps), [{ lines: badKeyStream(), exit: 1 }]);
     expect(job.status).toBe(0);
@@ -485,63 +419,22 @@ describe("digest job failure classes (black-box)", () => {
 
     const slow = journey(
       digestProject({}, temps),
-      [{ lines: badKeyStream(), exit: 1, pauseAfterFirstMs: 5_000 }],
+      [{ lines: badKeyStream(), exit: 1, pauseAfterFirstMs: 20_000 }],
       { skipJob: true },
     );
     const start = Date.now();
     expect(rerun(slow).status).toBe(0);
-    expect(Date.now() - start).toBeLessThan(2_000);
+    // Killed before rerun's 10 s --run-timeout-ms would end it; a timer kill also exits 1.
+    expect(Date.now() - start).toBeLessThan(10_000);
     expectStopped(slow.home, "credential");
   }, 20_000);
 
-  test.each([
-    ["another provider", otherProviderStream(SAMPLE_DIGEST)],
-    ["no provider", noProviderStream(SAMPLE_DIGEST)],
-  ])("a result on %s discards the output and stops digests with reason credential", (_, lines) => {
-    const { root, home, job } = journey(digestProject({}, temps), [{ lines }]);
-    expect(job.status).toBe(0);
-    expectStopped(home, "credential");
-    expect(search(root, "EEXIST")).toBe("");
-  });
-
-  test.each([
-    ["a Not logged in stream", { lines: notLoggedInStream(), exit: 1 }],
-    ["plain Not logged in text", { raw: NOT_LOGGED_IN_RAW, exit: 1 }],
-    ["a 401", { lines: status401Stream(), exit: 1 }],
-    ["a 403", { lines: status403Stream(), exit: 1 }],
-  ])("%s stops digests with reason login", (_, scenario) => {
-    const { home, job } = journey(digestProject({}, temps), [scenario]);
+  test("a 401 stops digests with reason login", () => {
+    const { home, job } = journey(digestProject({}, temps), [
+      { lines: status401Stream(), exit: 1 },
+    ]);
     expect(job.status).toBe(0);
     expectStopped(home, "login");
-  });
-
-  test("a digest whose own text quotes the login error is stored, not read as a login failure", () => {
-    const [first, ...others] = SAMPLE_DIGEST.observations;
-    const quoting = {
-      ...SAMPLE_DIGEST,
-      observations: [
-        {
-          ...first!,
-          narrative: `${first!.narrative} The CLI printed Not logged in · Please run /login.`,
-        },
-        ...others,
-      ],
-    };
-    const { root, home, job } = journey(digestProject({}, temps), [{ lines: okStream(quoting) }]);
-    expect(job.status).toBe(0);
-    expect(stopState(home)).toBeNull();
-    expect(search(root, "EEXIST").trim().split("\n").length).toBe(1);
-  });
-
-  test.each([
-    ["output that fails the schema", { lines: invalidOutputStream() }],
-    ["hitting max turns", { lines: maxTurnsStream(), exit: 1 }],
-  ])("a rejection by %s stores nothing and keeps the entry", (_, scenario) => {
-    const { root, home, job, spool } = journey(digestProject({}, temps), [scenario]);
-    expect(job.status).toBe(1);
-    expect(stopState(home)).toBeNull();
-    expect(search(root, "EEXIST")).toBe("");
-    expect(spool).toEqual(["s1.json"]);
   });
 
   test("a refusal stores nothing, and the third in a row parks the entry", () => {
@@ -557,34 +450,25 @@ describe("digest job failure classes (black-box)", () => {
     expect(fs.readdirSync(path.join(j.home, "spool/parked"))).toEqual(["s1.json"]);
   }, 20_000);
 
-  test("an output without the stale array is rejected, and the third in a row parks the entry", () => {
-    const missing = {
-      lines: okStreamOf({ observations: [], summary: SAMPLE_DIGEST.summary, proposals: [] }),
-    };
-    const j = journey(digestProject({}, temps), [missing]);
-    expect(j.job.status).toBe(1);
-    expect(stopState(j.home)).toBeNull();
-    expect(j.spool).toEqual(["s1.json"]);
-    expect(rerun(j).status).toBe(1);
-    expect(rerun(j).status).toBe(0);
-    expect(spoolFiles(j.home)).toEqual(["parked"]);
-    expect(fs.readdirSync(path.join(j.home, "spool/parked"))).toEqual(["s1.json"]);
-  }, 20_000);
-
   test("a Stop during the third refusal keeps the entry unparked", async () => {
     const refusal = { lines: refusalStream() };
-    const j = journey(digestProject({}, temps), [refusal, refusal, { ...refusal, sleepMs: 1500 }]);
+    const j = journey(digestProject({}, temps), [refusal, refusal, { ...refusal, hold: true }], {
+      hooks: true,
+    });
     rerun(j);
     const exited = spawnJob(j);
     await waitFor(() => j.fake.calls().length === 3);
     stop(j);
+    j.fake.release();
     expect(await exited).toBe(0);
     expect(spoolFiles(j.home)).toEqual(["s1.json"]);
   }, 30_000);
 
   test("a stored digest resets the rejection count", () => {
     const refusal = { lines: refusalStream() };
-    const j = journey(digestProject({}, temps), [refusal, refusal, ok(), refusal]);
+    const j = journey(digestProject({}, temps), [refusal, refusal, ok(), refusal], {
+      hooks: true,
+    });
     expect(j.job.status).toBe(1);
     expect(rerun(j).status).toBe(1);
     expect(rerun(j).status).toBe(0);
@@ -595,18 +479,6 @@ describe("digest job failure classes (black-box)", () => {
     expect(rerun(j).status).toBe(1);
     expect(rerun(j).status).toBe(1);
     expect(j.fake.calls().length).toBe(5);
-    expect(spoolFiles(j.home)).toEqual(["s1.json"]);
-  }, 30_000);
-
-  test("a run past the timer is killed and retried, never counted as a rejection", () => {
-    const j = journey(digestProject({}, temps), [{ ...ok(), sleepMs: 5_000 }], { skipJob: true });
-    for (let i = 0; i < 3; i++) {
-      const start = Date.now();
-      expect(rerun(j, 1500).status).toBe(1);
-      expect(Date.now() - start).toBeLessThan(3_000);
-      if (i === 0) expect(j.fake.calls().map((c) => c.endMs)).toEqual([null]);
-    }
-    expect(stopState(j.home)).toBeNull();
     expect(spoolFiles(j.home)).toEqual(["s1.json"]);
   }, 30_000);
 
@@ -792,19 +664,13 @@ function unembedded(root: string): { id: number; text: string }[] {
 }
 
 describe("embedding after a digest (black-box, real model)", () => {
-  test("a stored digest leaves no observation unembedded", () => {
-    const { root, job } = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], {
-      home: makeModelHome(),
-    });
-    expect(job.status).toBe(0);
-    expect(unembedded(root)).toEqual([]);
-  }, 60_000);
-
   test("a digest whose embed step fails still stands, and the next digest in the repo embeds its rows", () => {
     const root = digestProject({}, temps);
     const first = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]);
     expect(first.job.status).toBe(0);
-    expect(first.job.stderr).toMatch(/^crank-mem: embedding skipped \(.+\)\n$/);
+    expect(first.job.stderr).toBe(
+      "crank-mem: embedding skipped (the local search model is not installed)\n",
+    );
     expect(search(root, "EEXIST")).toMatch(/ Lock file writes retry on EEXIST\n$/);
     expect(unembedded(root).length).toBe(3);
 

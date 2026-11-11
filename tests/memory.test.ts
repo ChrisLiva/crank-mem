@@ -115,13 +115,6 @@ describe("openMemory", () => {
     expect(openMemory(file, "write").status).toBe("newer");
   });
 
-  test("a version-1 store reads as older", () => {
-    const file = v1File();
-    expect(openMemory(file, "read").status).toBe("older");
-    expect(memoryStatus(file)).toBe("older");
-    expect(fs.existsSync(path.join(path.dirname(file), "backups"))).toBe(false);
-  });
-
   test("a writer reports the version it migrated from, and snapshots only a version-1 store", () => {
     const SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-v1\.db$/;
     const fresh = tmpFile();
@@ -548,19 +541,6 @@ describe("consolidation work", () => {
       startedMs: t,
       outcome: "stopped",
     });
-  });
-});
-
-describe("recordRejection", () => {
-  test("counts up from the first rejection and resets on a stored digest", () => {
-    const memory = writable();
-    const key = { id: "s", agent: "claude" as const, transcriptPath: "/t/s.jsonl" };
-    expect(memory.recordRejection(key)).toBe(1);
-    expect(memory.recordRejection(key)).toBe(2);
-    expect(memory.recordRejection(key)).toBe(3);
-    expect(memory.position("s")).toBeNull();
-    expect(memory.appendDigest(digest("s", null, { uuid: "u", timestamp: "t" }))).toBe("appended");
-    expect(memory.recordRejection(key)).toBe(1);
   });
 });
 

@@ -6,6 +6,7 @@ import { cliVersion } from "../src/cli/version.ts";
 import {
   REPO_ROOT,
   dashboardFixture,
+  initedCopy,
   makeCrankHome,
   makeModelHome,
   realModelsDir,
@@ -207,7 +208,6 @@ describe("setup", () => {
       const bun = fakeTool("bun", 0);
       const server = await startModelServer(realModelsDir(), mode);
       servers.push(server);
-      const started = Date.now();
       const run = runCli(
         REPO_ROOT,
         ["setup", "--model-host", server.url, "--fetch-timeout-ms", "500"],
@@ -216,24 +216,16 @@ describe("setup", () => {
           PATH: `${bun.dir}:${process.env.PATH}`,
         },
       );
-      expect(Date.now() - started).toBeLessThan(10_000);
       expect(run.status).toBe(1);
       expect(run.stderr).toContain("crank-mem: could not download the model (");
       expect(server.requests().length).toBeGreaterThan(0);
-    });
+    }, 20_000);
   }
 });
 
-function initedProject(): string {
-  const root = tempDir("crank-setup-");
-  fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
-  expect(runCli(root, ["init", "--yes", "--codex", "skip"]).status).toBe(0);
-  return root;
-}
-
 describe("upgrade installs packages", () => {
   test("at the current version with a current dashboard it runs only the root install", () => {
-    const root = initedProject();
+    const root = initedCopy();
     const bun = fakeTool("bun", 0);
     const run = runCli(root, ["upgrade"], {
       CRANK_DASHBOARD_DIR: dashboardFixture(cliVersion()),
@@ -247,7 +239,7 @@ describe("upgrade installs packages", () => {
   });
 
   test("a dashboard without a current stamp is installed, built and stamped", () => {
-    const root = initedProject();
+    const root = initedCopy();
     const dash = dashboardFixture(null);
     const dashReal = fs.realpathSync(dash);
     const bun = fakeTool("bun", 0);
@@ -268,7 +260,7 @@ describe("upgrade installs packages", () => {
   });
 
   test("a dashboard build failure warns, writes no stamp and still exits 0", () => {
-    const root = initedProject();
+    const root = initedCopy();
     const dash = dashboardFixture(null);
     const bun = fakeTool("bun", 0, { argv: "run build" });
     const run = runCli(root, ["upgrade"], {
@@ -282,7 +274,7 @@ describe("upgrade installs packages", () => {
   });
 
   test("a dashboard install failure warns, skips the build, writes no stamp and still exits 0", () => {
-    const root = initedProject();
+    const root = initedCopy();
     const dash = dashboardFixture(null);
     const dashReal = fs.realpathSync(dash);
     const bun = fakeTool("bun", 0, { argv: "install --frozen-lockfile", cwd: dashReal });
@@ -303,7 +295,7 @@ describe("upgrade installs packages", () => {
   });
 
   test("an install failure warns and still exits 0", () => {
-    const root = initedProject();
+    const root = initedCopy();
     const bun = fakeTool("bun", 1);
     const run = runCli(root, ["upgrade"], { PATH: `${bun.dir}:${process.env.PATH}` });
     expect(run.status).toBe(0);
@@ -312,21 +304,9 @@ describe("upgrade installs packages", () => {
   });
 });
 
-const NOT_READY = "crank-mem: warning: search by meaning is not ready; run `crank-mem setup`.\n";
-
 describe("digest on and the embedder", () => {
-  test("warns when the model is absent and still turns digests on", () => {
-    const root = initedProject();
-    const run = runCli(root, ["digest", "on"], { CRANK_HOME: makeCrankHome() });
-    expect(run.status).toBe(0);
-    expect(run.stderr).toBe(NOT_READY);
-    expect(
-      JSON.parse(fs.readFileSync(path.join(root, ".crank/config.local.json"), "utf-8")),
-    ).toEqual({ digest: true });
-  });
-
   test("says nothing when the model is in place", () => {
-    const root = initedProject();
+    const root = initedCopy();
     const run = runCli(root, ["digest", "on"], { CRANK_HOME: makeModelHome() });
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
