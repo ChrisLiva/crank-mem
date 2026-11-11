@@ -61,6 +61,15 @@ describe("digest signals (black-box)", () => {
     expect(Math.abs(Date.now() - (entry.updatedAt as number))).toBeLessThan(60_000);
   });
 
+  test("a hook run with no env writes its spool entry under the preload's CRANK_HOME", () => {
+    expect(process.env.CRANK_HOME).toBeTruthy();
+    expect(process.env.CRANK_HOME).not.toBe(path.join(os.homedir(), ".crank"));
+    const root = digestProject();
+    const payload = { ...claudeStop(root), transcript_path: "/x/t/preload-probe.jsonl" };
+    expect(runHook(STOP, JSON.stringify(payload), root).status).toBe(0);
+    expect(spoolFiles(process.env.CRANK_HOME!)).toContain("preload-probe.json");
+  });
+
   test("SessionEnd marks the entry ended, and a later Stop reopens it", () => {
     const root = digestProject();
     const home = makeCrankHome();
