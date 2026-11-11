@@ -127,6 +127,10 @@ function expectInitRecorded(root: string, choice: Choice): void {
   const parsed = readConfig(root);
   expect(parsed.codex).toBe(choice);
   expect("codex_trust_written" in parsed).toBe(false);
+  expectCerebrumSeeded(root);
+}
+
+function expectCerebrumSeeded(root: string): void {
   expect(
     fs
       .readFileSync(path.join(root, ".crank/cerebrum.md"))
@@ -164,14 +168,15 @@ describe("init records the Codex choice", () => {
 
   for (const { git, choice } of initCases) {
     if (git === "exclude" && choice === "trust") continue;
-    test(`init records the Codex choice and prints today's lines: ${git} / ${choice}`, () => {
+    // initIn writes the config itself, so only the spawned cells above and below prove init records the choice.
+    test(`init's install items print today's lines and seed the cerebrum: ${git} / ${choice}`, () => {
       const p = project();
       expect(initIn(p, git, choice)).toEqual({
         lines: initItemLines(git, choice, p.codexHome),
         warnings: [],
         failed: false,
       });
-      expectInitRecorded(p.root, choice);
+      expectCerebrumSeeded(p.root);
     });
   }
 });
