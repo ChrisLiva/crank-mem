@@ -137,9 +137,10 @@ export function daemonAlive(): boolean {
 }
 
 /**
- * Start the clone's daemon unless one is alive. Detached with stdio ignored, so
- * the hook returns at once and nothing reaches its stdout; cwd is the clone so
- * bun never loads a project's .env. Never throws.
+ * Start the daemon of the recorded tool root (`clone_root`: a clone or an
+ * installed copy's `current`) unless one is alive. Detached with stdio
+ * ignored, so the hook returns at once and nothing reaches its stdout; cwd is
+ * that root so bun never loads a project's .env. Never throws.
  */
 export function ensureDaemon(config: Pick<CrankConfig, "clone_root">): void {
   try {

@@ -41,8 +41,9 @@ const vendoredHooks: InstallItem = {
     return report();
   },
   // A version change re-vendors whether or not the trees differ; at the same
-  // version, a pull or a hand edit that leaves .crank/hooks/ unlike the running crank-mem's
-  // re-vendors too. The stamp moves only once the copy is in place.
+  // version, a pull or a hand edit that leaves .crank/hooks/ unlike the
+  // running crank-mem's re-vendors too. The stamp moves only once the copy is
+  // in place.
   repair(ctx) {
     const { crankDir, config } = ctx;
     const r = report();
