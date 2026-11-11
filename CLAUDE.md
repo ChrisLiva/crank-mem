@@ -50,6 +50,8 @@ Tests are black-box: hooks and CLI commands are executed as real child processes
 
 `bun test` runs the test process in UTC with `TZ` unset, while `runCli` and `runHook` children run in the system zone (a test that spawns its own child builds its env with `tests/helpers.ts` → `childEnv`, which drops the `TZ` a zone test left at `"UTC"`), so an in-process local-date assertion passes against UTC getters too. Pin local dates in zones on both sides of UTC (`tests/helpers.ts` → `ZONES`): an in-process test may set `process.env.TZ` per zone and must restore it to `"UTC"`, never `delete` it, which falls back to the machine zone; a CLI child with `TZ` in its env still works.
 
+An installed-copy test puts `tests/helpers.ts` → `fakeTool("bun", "runtime")` on `PATH`; it records every `bun` call the launcher makes (it runs non-`install` calls through the real runtime), so an oracle meaning "no package install ran" filters `calls()` for `install`.
+
 The `spawnSync` timeout in `tests/helpers.ts` → `runCli` kills only the CLI child; a grandchild that hangs, such as `fakeClaude` with `auth: "hang"`, keeps running at ppid 1. After a RED run that hit the timeout, find leftover fake `claude` processes with `ps` and kill them.
 
 Run the full suite as `caffeinate -i bun run test`; on battery a Mac sleeps mid-run. `Expected: 0, Received: -1` near 5 s is a per-test timeout, not a crash; `docs/testing-load.md` holds the baseline. Bun prints per-test durations only to a TTY, so a piped or `tee`d run shows none; add `--reporter=junit --reporter-outfile <file>` to get them.
