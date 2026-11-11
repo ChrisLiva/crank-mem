@@ -177,36 +177,17 @@ export function runCli(cwd: string, args: string[], env?: Record<string, string>
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
-/**
- * A dir holding an executable `bun` that appends `"$* @ $(pwd -P)"` to `log`, exits 0 for
- * `install`, and otherwise runs the test's own runtime with its arguments.
- */
-export function fakeBun(log: string): string {
-  const dir = tempDir("crank-fakebun-");
-  const script = path.join(dir, "bun");
-  fs.writeFileSync(
-    script,
-    [
-      "#!/bin/sh",
-      `echo "$* @ $(pwd -P)" >> '${log}'`,
-      '[ "$1" = install ] && exit 0',
-      `exec '${process.execPath}' "$@"`,
-      "",
-    ].join("\n"),
-  );
-  fs.chmodSync(script, 0o755);
-  return dir;
-}
-
 export type Call = { argv: string; cwd: string };
 
 /**
  * A fake package manager named `name` that appends each call's argv and cwd,
- * then exits `exit`, or 1 on the call `failOn` names.
+ * then exits `exit`, or 1 on the call `failOn` names. With `exit` "runtime" it
+ * exits 0 for `install` and otherwise runs the test's own runtime with its
+ * arguments, so the launcher's `exec bun` still runs the CLI.
  */
 export function fakeTool(
   name: "bun" | "npm",
-  exit: number,
+  exit: number | "runtime",
   failOn?: { argv: string; cwd?: string },
 ): { dir: string; calls(): Call[] } {
   const dir = tempDir(`crank-fake${name}-`);
@@ -214,11 +195,12 @@ export function fakeTool(
   const match = failOn
     ? `[ "$*" = "${failOn.argv}" ]${failOn.cwd ? ` && [ "$(pwd -P)" = "${failOn.cwd}" ]` : ""}`
     : "false";
-  fs.writeFileSync(
-    path.join(dir, name),
-    `#!/bin/sh\nprintf '%s\\t%s\\n' "$*" "$(pwd -P)" >> "${log}"\necho "${name} failed on purpose" >&2\nif ${match}; then exit 1; fi\nexit ${exit}\n`,
-    { mode: 0o755 },
-  );
+  const record = `printf '%s\\t%s\\n' "$*" "$(pwd -P)" >> "${log}"`;
+  const body =
+    exit === "runtime"
+      ? `[ "$1" = install ] && exit 0\nexec '${process.execPath}' "$@"`
+      : `echo "${name} failed on purpose" >&2\nif ${match}; then exit 1; fi\nexit ${exit}`;
+  fs.writeFileSync(path.join(dir, name), `#!/bin/sh\n${record}\n${body}\n`, { mode: 0o755 });
   const calls = () =>
     fs.existsSync(log)
       ? fs
@@ -260,7 +242,7 @@ export function makeInstalledCopy(home: string, version: string): string {
 
 /**
  * Run `<home>/current/bin/crank-mem` in `cwd` with `home` as its crank home, a fresh CODEX_HOME,
- * and `fakeBun` first on PATH so no real `bun install` writes through the copy's linked node_modules.
+ * and a runtime `fakeTool` bun first on PATH so no real `bun install` writes through the copy's linked node_modules.
  */
 export function runInstalled(
   home: string,
@@ -268,7 +250,6 @@ export function runInstalled(
   args: string[],
   env?: Record<string, string>,
 ): CliRun {
-  const log = path.join(tempDir("crank-bunlog-"), "bun.log");
   const result = spawnSync(path.join(home, "current/bin/crank-mem"), args, {
     cwd,
     encoding: "utf-8",
@@ -276,7 +257,7 @@ export function runInstalled(
     env: childEnv({
       CRANK_HOME: home,
       CODEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "crank-codexhome-")),
-      PATH: `${fakeBun(log)}:${process.env.PATH}`,
+      PATH: `${fakeTool("bun", "runtime").dir}:${process.env.PATH}`,
       ...env,
     }),
   });

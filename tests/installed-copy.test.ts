@@ -4,10 +4,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
+  type Call,
   REPO_ROOT,
   childEnv,
   cleanup,
-  fakeBun,
   fakeTool,
   git,
   makeCrankHome,
@@ -83,42 +83,38 @@ describe("an installed copy's tool step", () => {
     return fs.realpathSync(dir);
   }
 
-  /** The log lines whose first word is `install`. */
-  function installLines(log: string, from = 0): string[] {
-    return fs
-      .readFileSync(log, "utf8")
-      .split("\n")
-      .slice(from)
-      .filter((l) => l.split(" ")[0] === "install");
+  /** The calls from `from` on whose first word is `install`. */
+  function installLines(calls: Call[], from = 0): Call[] {
+    return calls.slice(from).filter((c) => c.argv.split(" ")[0] === "install");
   }
 
   test("upgrade and setup install production packages and never build the dashboard", () => {
     const home = makeCrankHome();
     temps.push(home);
     const copy = staleStampCopy(home);
-    const log = path.join(tempDir("crank-installed-log-"), "bun.log");
-    const PATH = `${fakeBun(log)}:${process.env.PATH}`;
+    const bun = fakeTool("bun", "runtime");
+    const PATH = `${bun.dir}:${process.env.PATH}`;
     const root = gitProject();
     expect(runInstalled(home, root, ["init", "--yes"]).status).toBe(0);
     expect(runInstalled(home, root, ["upgrade"], { PATH }).status).toBe(0);
-    const upgradeInstalls = installLines(log);
+    const upgradeInstalls = installLines(bun.calls());
     expect(upgradeInstalls.length).toBeGreaterThanOrEqual(1);
     for (const line of upgradeInstalls)
-      expect(line).toBe(`install --production --frozen-lockfile @ ${copy}`);
+      expect(line).toEqual({ argv: "install --production --frozen-lockfile", cwd: copy });
 
     const modelHome = makeModelHome();
     temps.push(modelHome);
     const modelCopy = staleStampCopy(modelHome);
-    const seen = fs.readFileSync(log, "utf8").split("\n").length - 1;
+    const seen = bun.calls().length;
     expect(
       runInstalled(modelHome, tempDir("crank-installed-setup-"), ["setup"], { PATH }).status,
     ).toBe(0);
-    const setupInstalls = installLines(log, seen);
+    const setupInstalls = installLines(bun.calls(), seen);
     expect(setupInstalls.length).toBeGreaterThanOrEqual(1);
     for (const line of setupInstalls)
-      expect(line).toBe(`install --production --frozen-lockfile @ ${modelCopy}`);
+      expect(line).toEqual({ argv: "install --production --frozen-lockfile", cwd: modelCopy });
 
-    expect(fs.readFileSync(log, "utf8")).not.toContain("run build");
+    expect(bun.calls().filter((c) => c.argv.includes("run build"))).toEqual([]);
   }, 30_000);
 
   test("setup without bun installs production packages with npm", () => {

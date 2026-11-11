@@ -6,10 +6,10 @@ import { cliVersion } from "../src/cli/version.ts";
 import * as os from "node:os";
 import {
   REPO_ROOT,
+  type Call,
   childEnv,
   cleanup,
   dashboardFixture,
-  fakeBun,
   fakeTool,
   makeCrankHome,
   makeInstalledCopy,
@@ -127,27 +127,27 @@ type Installer = {
   H: string;
   HOME: string;
   bin: string;
-  bunLog: string;
+  bun: { calls(): Call[] };
   server: { url: string; requests(): string[] };
   env: Record<string, string>;
 };
 
-/** A release dir served locally, a crank home with the model linked in, a temp HOME, and `fakeBun` on a bare PATH. */
+/** A release dir served locally, a crank home with the model linked in, a temp HOME, and a runtime `fakeTool` bun on a bare PATH. */
 async function installer(): Promise<Installer> {
   const R = releaseDir();
   const server = await startReleaseServer(R);
   servers.push(server);
   const H = makeModelHome();
   const HOME = tempDir("crank-home-dir-");
-  const bunLog = path.join(tempDir("crank-bunlog-"), "bun.log");
+  const bun = fakeTool("bun", "runtime");
   const env = {
     CRANK_RELEASE_URL: server.url,
     CRANK_HOME: H,
     HOME,
-    PATH: `${fakeBun(bunLog)}:/usr/bin:/bin`,
+    PATH: `${bun.dir}:/usr/bin:/bin`,
     SHELL: "/bin/zsh",
   };
-  return { R, H, HOME, bin: path.join(HOME, "bin"), bunLog, server, env };
+  return { R, H, HOME, bin: path.join(HOME, "bin"), bun, server, env };
 }
 
 function run(
@@ -186,9 +186,10 @@ describe("install.sh", () => {
     expect(fs.readlinkSync(path.join(t.bin, "crank-mem"))).toBe(
       path.join(t.H, "current/bin/crank-mem"),
     );
-    expect(fs.readFileSync(t.bunLog, "utf-8")).toContain(
-      `install --production --frozen-lockfile @ ${fs.realpathSync(path.join(t.H, "versions", V))}`,
-    );
+    expect(t.bun.calls()).toContainEqual({
+      argv: "install --production --frozen-lockfile",
+      cwd: fs.realpathSync(path.join(t.H, "versions", V)),
+    });
     expect(t.server.requests()).toContain(`/latest/download/${TARBALL}`);
     expect(t.server.requests()).toContain(`/latest/download/${TARBALL}.sha256`);
     expect(incoming(t.H)).toEqual([]);
@@ -345,7 +346,6 @@ describe("self-install", () => {
     const M = await startModelServer(tempDir("crank-nomodels-"), "stall");
     servers.push(M);
     const HOME = tempDir("crank-home-dir-");
-    const bunLog = path.join(tempDir("crank-bunlog-"), "bun.log");
     // `2>&1` puts the model warning (stderr) and the PATH offer (stdout) in one ordered stream.
     const result = run(
       "sh",
@@ -365,7 +365,7 @@ describe("self-install", () => {
       {
         CRANK_HOME: H3,
         HOME,
-        PATH: `${fakeBun(bunLog)}:${process.env.PATH}`,
+        PATH: `${fakeTool("bun", "runtime").dir}:${process.env.PATH}`,
         SHELL: "/bin/zsh",
       },
     );

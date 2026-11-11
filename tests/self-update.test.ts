@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  type Call,
   cleanup,
-  fakeBun,
+  fakeTool,
   makeInstalledCopy,
   makeModelHome,
   plantMemory,
@@ -26,7 +27,7 @@ type Setup = {
   H: string;
   P: string;
   R: string;
-  log: string;
+  bun: { calls(): Call[] };
   env: Record<string, string>;
 };
 
@@ -40,12 +41,12 @@ async function setup(): Promise<Setup> {
   const R = releaseDir(["1.0.0", "1.1.0", "1.2.0"], "1.1.0");
   const server = await startReleaseServer(R);
   servers.push(server);
-  const log = path.join(tempDir("crank-bunlog-"), "bun.log");
+  const bun = fakeTool("bun", "runtime");
   const env = {
     CRANK_RELEASE_URL: server.url,
-    PATH: `${fakeBun(log)}:${process.env.PATH}`,
+    PATH: `${bun.dir}:${process.env.PATH}`,
   };
-  return { H, P, R, log, env };
+  return { H, P, R, bun, env };
 }
 
 function versions(H: string): string[] {
@@ -104,16 +105,16 @@ describe("self-update", () => {
   }, 30_000);
 
   test("already at the latest is a no-op", async () => {
-    const { H, R, log, env } = await setup();
+    const { H, R, bun, env } = await setup();
     fs.cpSync(path.join(R, "download/v1.0.0"), path.join(R, "latest/download"), {
       recursive: true,
     });
     const result = runInstalled(H, tempDir("crank-cwd-"), ["self-update"], env);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("already at 1.0.0");
-    const lines = fs.readFileSync(log, "utf-8").split("\n").filter(Boolean);
-    expect(lines.length).toBeGreaterThan(0);
-    expect(lines.filter((line) => line.startsWith("install"))).toEqual([]);
+    const calls = bun.calls();
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter((c) => c.argv.startsWith("install"))).toEqual([]);
     expect(current(H)).toBe("versions/1.0.0");
   }, 30_000);
 

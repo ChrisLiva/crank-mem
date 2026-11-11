@@ -4,10 +4,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  type Call,
   REPO_ROOT,
   appendRecords,
   digestProject,
-  fakeBun,
+  fakeTool,
   fakeClaude,
   killDaemon,
   laterRecords,
@@ -635,14 +636,14 @@ function readUpdate(home: string): Record<string, any> {
 
 type Auto = Env & {
   P: string;
-  log: string;
+  bun: { calls(): Call[] };
   release: { R: string; url: string; requests(): string[] };
 };
 
 /**
  * `setup(scenarios)` plus installed 1.0.0 with `update` in update.json, a project inited and
- * digests on through it, releases `versions` served (the first is latest), and a fake bun
- * logging to `log` first on the daemon's PATH.
+ * digests on through it, releases `versions` served (the first is latest), and a runtime
+ * `fakeTool` bun first on the daemon's PATH.
  */
 async function autoSetup(
   scenarios: FakeScenario[],
@@ -657,19 +658,18 @@ async function autoSetup(
   expect(runInstalled(e.home, P, ["init", "--yes"]).status).toBe(0);
   expect(runInstalled(e.home, P, ["digest", "on"]).status).toBe(0);
   const release = await releaseServer(versions);
-  const log = path.join(tempDir("crank-bunlog-"), "bun.log");
+  const bun = fakeTool("bun", "runtime");
   const env = {
     ...e.env,
     CRANK_RELEASE_URL: release.url,
-    PATH: `${fakeBun(log)}:${e.fake.env.PATH}`,
+    PATH: `${bun.dir}:${e.fake.env.PATH}`,
   };
-  return { ...e, env, P, log, release };
+  return { ...e, env, P, bun, release };
 }
 
-/** The `bun install` lines a `fakeBun` log holds: each `upgrade` installs the tool's packages. */
-function installs(log: string): string[] {
-  const lines = fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n") : [];
-  return lines.filter((line) => line.startsWith("install"));
+/** The fake bun's `install` calls: each `upgrade` installs the tool's packages. */
+function installs(bun: { calls(): Call[] }): Call[] {
+  return bun.calls().filter((c) => c.argv.startsWith("install"));
 }
 
 function vendored(root: string): string {
@@ -799,7 +799,7 @@ describe("daemon auto-update", () => {
     withEnv({ CRANK_HOME: a.home }, () => registerProject(C));
     const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], a, path.join(a.home, "current"));
     expect(await within(d.exited, 20_000)).toBe(0);
-    expect(installs(a.log)).toEqual([]);
+    expect(installs(a.bun)).toEqual([]);
   }, 30_000);
 
   test("a stopping daemon starts no update", async () => {
@@ -812,7 +812,7 @@ describe("daemon auto-update", () => {
     stopDigests(a.home);
     const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], a, path.join(a.home, "current"));
     expect(await within(d.exited, 20_000)).toBe(0);
-    expect(installs(a.log)).toEqual([]);
+    expect(installs(a.bun)).toEqual([]);
     expect(vendored(a.P)).toBe("0.9.0");
   }, 30_000);
 
@@ -842,11 +842,11 @@ describe("daemon auto-update", () => {
     });
     const root = digestProject({ clone_root: clone, vendored_version: "0.0.1" }, temps);
     withEnv({ CRANK_HOME: e.home }, () => registerProject(root));
-    const log = path.join(tempDir("crank-bunlog-"), "bun.log");
-    const env = { ...e.env, PATH: `${fakeBun(log)}:${e.fake.env.PATH}` };
+    const bun = fakeTool("bun", "runtime");
+    const env = { ...e.env, PATH: `${bun.dir}:${e.fake.env.PATH}` };
     const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], { ...e, env }, clone);
     expect(await within(d.exited, 20_000)).toBe(0);
-    expect(installs(log)).toEqual([]);
+    expect(installs(bun)).toEqual([]);
     expect(vendored(root)).toBe("0.0.1");
   }, 30_000);
 });
