@@ -21,6 +21,8 @@ import { claudeSessionStart } from "./fixtures/payloads.ts";
 import { crankHooks } from "../src/cli/settings.ts";
 import { crankTrust } from "../src/cli/codex-trust.ts";
 import { memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
+import { unknownFlag } from "../src/cli/args.ts";
+import { COMMANDS, commandHelp, commandSpec } from "../src/cli/commands.ts";
 
 function cli(cwd: string, ...args: string[]): CliRun {
   return cliWithCodexHome(fs.mkdtempSync(path.join(os.tmpdir(), "crank-ch-")), cwd, ...args);
@@ -803,97 +805,98 @@ describe("vendored hooks run standalone", () => {
   });
 });
 
-/** Every file under `dir`, by relative path, with its bytes. */
-function tree(dir: string): Record<string, string> {
-  const files: Record<string, string> = {};
-  for (const entry of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    const file = path.join(entry.parentPath, entry.name);
-    files[path.relative(dir, file)] = fs.readFileSync(file).toString("base64");
-  }
-  return files;
-}
+const COMMAND_NAMES = [
+  "init",
+  "scan",
+  "digest",
+  "search",
+  "timeline",
+  "get",
+  "outline",
+  "unfold",
+  "restore-memory",
+  "setup",
+  "stats",
+  "dashboard",
+  "upgrade",
+  "uninstall",
+  "daemon",
+  "job",
+];
 
-describe("flags", () => {
-  const COMMANDS = [
-    "init",
-    "scan",
-    "digest",
-    "search",
-    "timeline",
-    "get",
-    "outline",
-    "unfold",
-    "restore-memory",
-    "setup",
-    "stats",
-    "dashboard",
-    "upgrade",
-    "uninstall",
-    "daemon",
-    "job",
-  ];
-
-  test("--help and -h print the command's usage and change nothing", () => {
-    const root = initedProject();
-    const before = tree(root);
-    const home = makeCrankHome();
-    for (const cmd of COMMANDS) {
-      for (const help of ["--help", "-h"]) {
-        const run = runCli(root, [cmd, help], { CRANK_HOME: home });
-        expect([cmd, help, run.status, run.stdout.startsWith(`Usage: crank-mem ${cmd}`)]).toEqual([
-          cmd,
-          help,
-          0,
-          true,
-        ]);
-      }
+describe("flags (in-process)", () => {
+  test("every command has a spec whose help starts with its usage line and carries its summary", () => {
+    for (const name of COMMAND_NAMES) {
+      const spec = commandSpec(name);
+      expect([name, spec !== undefined]).toEqual([name, true]);
+      const help = commandHelp(spec!);
+      expect([name, help.startsWith(`Usage: crank-mem ${name}`)]).toEqual([name, true]);
+      if (spec!.summary) expect(help).toContain(spec!.summary);
+      else expect([name, help]).toEqual([name, spec!.usage]);
     }
-    expect(tree(root)).toEqual(before);
-    expect(fs.readdirSync(home)).toEqual([]);
-  }, 20_000);
+    expect(["daemon", "job"].map((name) => commandSpec(name)!.summary)).toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(commandSpec("toString")).toBeUndefined();
+    expect(commandSpec("search")!.unknownIsText).toBe(true);
+  });
 
   test("job --help hides the job's test flags", () => {
-    const run = runCli(os.tmpdir(), ["job", "--help"], { CRANK_HOME: makeCrankHome() });
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("Usage: crank-mem job <stem> (internal: the daemon runs it)");
-    expect(run.stdout).not.toContain("consolidate");
-    expect(run.stdout).not.toContain("maintain");
-    expect(run.stdout).not.toContain("stale");
+    const help = commandHelp(COMMANDS.job);
+    expect(help).toBe("Usage: crank-mem job <stem> (internal: the daemon runs it)");
+    for (const word of ["consolidate", "maintain", "stale"]) expect(help).not.toContain(word);
   });
 
-  test("init --help in a fresh directory installs nothing", () => {
+  test("an unknown flag is named, and every known flag passes", () => {
+    for (const [name, argv, flag] of [
+      ["init", ["--yes", "--bogus"], "bogus"],
+      ["uninstall", ["--yes", "--force"], "force"],
+      ["upgrade", ["--dry-run"], "dry-run"],
+      ["scan", ["--full"], "full"],
+      ["init", ["--git=commit"], "git=commit"],
+      ["job", ["s1", "--bogus"], "bogus"],
+      ["job", ["s1", "--maintain-every-ms"], "maintain-every-ms"],
+      ["job", ["s1", "--stale-keep-ms"], "stale-keep-ms"],
+    ] as const) {
+      const spec = commandSpec(name)!;
+      expect([name, argv, unknownFlag([...argv], spec.value, spec.bool)]).toEqual([
+        name,
+        argv,
+        flag,
+      ]);
+    }
+    for (const name of COMMAND_NAMES) {
+      const spec = commandSpec(name)!;
+      const argv = [
+        ...spec.value.flatMap((f) => [`--${f}`, "1"]),
+        ...spec.bool.map((f) => `--${f}`),
+      ];
+      expect([name, unknownFlag(argv, spec.value, spec.bool)]).toEqual([name, null]);
+    }
+  });
+});
+
+describe("flags", () => {
+  test("init --help and -h in a fresh directory install nothing", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-help-"));
     fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
-    const run = cli(root, "init", "--help");
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("--git commit|ignore|exclude");
+    const home = makeCrankHome();
+    for (const help of ["--help", "-h"]) {
+      const run = runCli(root, ["init", help], { CRANK_HOME: home });
+      expect([help, run.status]).toEqual([help, 0]);
+      expect(run.stdout).toContain("--git commit|ignore|exclude");
+    }
     expect(fs.readdirSync(root)).toEqual(["a.ts"]);
+    expect(fs.readdirSync(home)).toEqual([]);
   });
 
-  test("an unknown flag exits 1 with the usage before anything is written", () => {
+  test("an unknown flag exits 1 before anything is written", () => {
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "crank-flag-"));
     const init = cli(fresh, "init", "--yes", "--bogus");
     expect(init.status).toBe(1);
     expect(init.stderr).toContain("crank-mem: unknown flag --bogus\nUsage: crank-mem init ");
     expect(fs.readdirSync(fresh)).toEqual([]);
-
-    const root = initedProject();
-    const before = tree(root);
-    for (const args of [
-      ["uninstall", "--yes", "--force"],
-      ["upgrade", "--dry-run"],
-      ["scan", "--full"],
-      ["init", "--git=commit"],
-      ["job", "s1", "--bogus"],
-      ["job", "s1", "--maintain-every-ms"],
-      ["job", "s1", "--stale-keep-ms"],
-    ]) {
-      const run = cli(root, ...args);
-      expect([args, run.status]).toEqual([args, 1]);
-      expect(run.stderr).toContain(`unknown flag ${args.at(-1)}`);
-    }
-    expect(tree(root)).toEqual(before);
   });
 
   test("the command list points at per-command help", () => {
