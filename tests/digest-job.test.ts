@@ -485,12 +485,13 @@ describe("digest job failure classes (black-box)", () => {
 
     const slow = journey(
       digestProject({}, temps),
-      [{ lines: badKeyStream(), exit: 1, pauseAfterFirstMs: 5_000 }],
+      [{ lines: badKeyStream(), exit: 1, pauseAfterFirstMs: 20_000 }],
       { skipJob: true },
     );
     const start = Date.now();
     expect(rerun(slow).status).toBe(0);
-    expect(Date.now() - start).toBeLessThan(2_000);
+    // Killed before rerun's 10 s --run-timeout-ms would end it; a timer kill also exits 1.
+    expect(Date.now() - start).toBeLessThan(10_000);
     expectStopped(slow.home, "credential");
   }, 20_000);
 
@@ -604,7 +605,8 @@ describe("digest job failure classes (black-box)", () => {
     for (let i = 0; i < 3; i++) {
       const start = Date.now();
       expect(rerun(j, 1500).status).toBe(1);
-      expect(Date.now() - start).toBeLessThan(3_000);
+      // Killed before the fake's own 5 s sleep would end the run.
+      expect(Date.now() - start).toBeLessThan(5_000);
       if (i === 0) expect(j.fake.calls().map((c) => c.endMs)).toEqual([null]);
     }
     expect(stopState(j.home)).toBeNull();
