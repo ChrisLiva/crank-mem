@@ -40,6 +40,7 @@ export async function embed(
   texts: string[],
   opts: { remote: boolean; host?: string; fetchTimeoutMs?: number },
 ): Promise<Float32Array[]> {
+  if (!opts.remote && !modelPresent()) throw new Error("the local search model is not installed");
   const { env, pipeline } = await import("@huggingface/transformers");
   env.cacheDir = modelsDir();
   env.allowRemoteModels = opts.remote;

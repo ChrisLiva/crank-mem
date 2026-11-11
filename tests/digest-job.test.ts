@@ -807,7 +807,9 @@ describe("embedding after a digest (black-box, real model)", () => {
     const root = digestProject({}, temps);
     const first = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]);
     expect(first.job.status).toBe(0);
-    expect(first.job.stderr).toMatch(/^crank-mem: embedding skipped \(.+\)\n$/);
+    expect(first.job.stderr).toBe(
+      "crank-mem: embedding skipped (the local search model is not installed)\n",
+    );
     expect(search(root, "EEXIST")).toMatch(/ Lock file writes retry on EEXIST\n$/);
     expect(unembedded(root).length).toBe(3);
 
