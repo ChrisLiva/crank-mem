@@ -4,6 +4,7 @@ import type * as sqlite from "node:sqlite";
 import * as path from "node:path";
 import { errorMessage } from "../hooks/lib/config.ts";
 import { memoryPath } from "../hooks/lib/memory.ts";
+import { userVersion } from "../hooks/lib/memory-schema.ts";
 import { registeredRoots } from "../hooks/lib/registry.ts";
 import { crankHome } from "../hooks/lib/user-state.ts";
 import { parseArgs, stringFlag } from "./args.ts";
@@ -59,8 +60,7 @@ function schemaBlockers(targetDir: string): Blockers {
     let db: sqlite.DatabaseSync | undefined;
     try {
       db = new mod.DatabaseSync(memoryPath(root), { readOnly: true });
-      const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
-      return Number(row.user_version) > target;
+      return userVersion(db) > target;
     } catch {
       // A missing store, or one that is not a database, the older version reports itself.
       return false;
