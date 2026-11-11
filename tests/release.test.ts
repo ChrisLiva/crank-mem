@@ -346,9 +346,13 @@ describe("self-install", () => {
     servers.push(M);
     const HOME = tempDir("crank-home-dir-");
     const bunLog = path.join(tempDir("crank-bunlog-"), "bun.log");
+    // `2>&1` puts the model warning (stderr) and the PATH offer (stdout) in one ordered stream.
     const result = run(
-      path.join(copy, "bin/crank-mem"),
+      "sh",
       [
+        "-c",
+        'exec "$0" "$@" 2>&1',
+        path.join(copy, "bin/crank-mem"),
         "self-install",
         "--yes",
         "--bin-dir",
@@ -358,11 +362,19 @@ describe("self-install", () => {
         "--fetch-timeout-ms",
         "200",
       ],
-      { CRANK_HOME: H3, HOME, PATH: `${fakeBun(bunLog)}:${process.env.PATH}` },
+      {
+        CRANK_HOME: H3,
+        HOME,
+        PATH: `${fakeBun(bunLog)}:${process.env.PATH}`,
+        SHELL: "/bin/zsh",
+      },
     );
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain("could not download the search model");
-    expect(result.stderr).toContain("crank-mem setup");
+    const warning = result.stdout.indexOf("could not download the search model");
+    expect(warning).toBeGreaterThanOrEqual(0);
+    expect(result.stdout).toContain("crank-mem setup");
+    const offer = result.stdout.indexOf(`to PATH in ${path.join(HOME, ".zshrc")}`);
+    expect(offer).toBeGreaterThan(warning);
     expect(fs.readlinkSync(path.join(H3, "current"))).toBe(`versions/${V}`);
     expect(fs.existsSync(path.join(HOME, "bin/crank-mem"))).toBe(true);
   }, 60_000);

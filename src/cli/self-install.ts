@@ -15,8 +15,8 @@ import { CURRENT_LINK, REPO_ROOT, versionAt } from "./version.ts";
 
 // `crank-mem self-install`: install.sh runs it from the version it just
 // unpacked. It installs that copy's packages, makes it `current`, links the
-// command into the bin dir, offers the PATH line, repoints projects that still
-// run from another crank-mem (a clone) and downloads the search model.
+// command into the bin dir, downloads the search model, offers the PATH line
+// and repoints projects that still run from another crank-mem (a clone).
 
 type Options = { binDir: string; yes: boolean; host?: string; fetchTimeoutMs?: number };
 
@@ -116,9 +116,6 @@ async function install(opts: Options): Promise<number> {
     console.log(`crank-mem: linked ${command}`);
   }
 
-  await offerPath(opts.binDir, opts.yes);
-  const repointed = await offerRepoint(opts.binDir, opts.yes);
-
   const model = await ensureModel({ host: opts.host, fetchTimeoutMs: opts.fetchTimeoutMs });
   if (!model.ok) {
     console.error(
@@ -127,7 +124,9 @@ async function install(opts: Options): Promise<number> {
   } else if (model.downloaded) {
     console.log("crank-mem: downloaded the search model");
   }
-  return repointed;
+
+  await offerPath(opts.binDir, opts.yes);
+  return offerRepoint(opts.binDir, opts.yes);
 }
 
 export async function run(args: string[]): Promise<number> {
