@@ -123,6 +123,13 @@ export const COMMANDS = {
     bool: [],
     installedOnly: true,
   },
+  rollback: {
+    summary: "Go back to the previously installed version",
+    usage: "Usage: crank-mem rollback",
+    value: [],
+    bool: [],
+    installedOnly: true,
+  },
   daemon: {
     usage: "Usage: crank-mem daemon (internal: Stop and SessionEnd start it)",
     value: ["sweep-ms", "idle-ms", "retry-ms", "retry-cap-ms", "run-timeout-ms", "mid-session-ms"],

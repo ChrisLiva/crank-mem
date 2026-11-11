@@ -41,7 +41,10 @@ To update, run `crank-mem self-update`, or `crank-mem self-update --to vX.Y.Z`
 for a tagged release. It installs the release next to the running one, points
 `~/.crank/current` at it, then runs the new version's `crank-mem upgrade --all`,
 which repairs every project in `~/.crank/projects.json`. The previous version
-stays installed. `crank-mem upgrade` in one
+stays installed, and `crank-mem rollback` returns to it and repairs every project
+with it. Going back to an older version, by `rollback` or `self-update --to`,
+refuses when a project's memory store has a schema newer than that version reads:
+it names those projects and points to `crank-mem restore-memory`. `crank-mem upgrade` in one
 project repairs that project. It re-vendors the hooks copied into `.crank/hooks/`, adds the
 `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`,
 `Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the wired Claude settings file, adds hook wiring the install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
@@ -88,6 +91,7 @@ Requires bun, or node >= 23.6 (runs TypeScript directly).
 - `crank-mem dashboard` — serve a read-only memory dashboard on `127.0.0.1` until Ctrl-C: a Health board of every registered project (capture status, the command that fixes a stalled one, cost and 30-day digests), then each project's Health, Curation, Usage and Memory views, with per-day charts in Health and Usage. It prints `crank-mem dashboard: http://127.0.0.1:<port>/?token=<token>` and opens that URL in the browser; the token, kept in `~/.crank/dashboard.json`, trades for a session cookie. `--port <n>` picks the port (default `38700` plus your uid mod 100), and `--no-open` skips the browser. It refuses until `setup` has built the dashboard
 - `crank-mem upgrade [--all]` — re-vendor hooks and repair their wiring after an update, and add the project to `~/.crank/projects.json`, the list the dashboard shows; `--all` installs crank-mem's packages once, then repairs every project in that list, skipping a missing root and a project whose anatomy lock is held
 - `crank-mem self-update [--to vX.Y.Z]` — install the latest release, or the tagged one, make it the current version and repair every registered project with it; the previous version stays installed and older ones are removed, except one a running daemon uses. It refuses in a clone, which updates with `git pull`
+- `crank-mem rollback` — make the previous installed version the current one and repair every registered project with it. It refuses when a project's memory store has a schema newer than that version reads, naming the projects and `crank-mem restore-memory`, and refuses in a clone
 - `crank-mem self-uninstall` — remove the installed crank-mem: stop the daemon, offer to run `crank-mem uninstall` in every registered project (`--yes` accepts), then remove `~/.crank/versions/`, the `current` link, the `crank-mem` link in the bin dir (`--bin-dir <dir>`, default `~/.local/bin`) and the PATH block in your shell rc file. `--purge` also removes the state crank-mem keeps in `~/.crank` (the spool, models, registry, dashboard token and daemon files) and nothing another tool keeps there
 - `crank-mem uninstall` — remove all wiring, offer backup restore: `--restore` puts each project file crank-mem changed back as it was before crank-mem first changed it and deletes the files crank-mem created, while files outside the project, such as `~/.codex/config.toml`, only lose crank-mem's entries; `--delete-crank` deletes only the files crank-mem writes in `.crank/`, `memory.db` and its `-wal` and `-shm` files included, and removes the directory only when nothing else is left in it; it exits 1, naming the file, when it cannot remove crank-mem's entries from a file (one that is not valid JSON, or one it cannot read or write)
 

@@ -24,6 +24,7 @@ const RUNNERS: Record<string, Runner> = {
   "self-install": async (args) => (await import("./self-install.ts")).run(args),
   "self-uninstall": async (args) => (await import("./self-uninstall.ts")).run(args),
   "self-update": async (args) => (await import("./self-update.ts")).runSelfUpdate(args),
+  rollback: async (args) => (await import("./self-update.ts")).runRollback(args),
 } satisfies Record<keyof typeof COMMANDS, Runner>;
 
 /** Runs a command that has a runner; `null` when `cmd` names none. */

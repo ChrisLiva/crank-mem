@@ -50,3 +50,15 @@ export function releaseBase(): string {
     process.env.CRANK_RELEASE_URL || "https://github.com/ChrisLiva/crank-mem/releases"
   ).replace(/\/+$/, "");
 }
+
+/** True when version `a` is above `b`, compared as numeric `x.y.z`; a missing or non-numeric part reads as 0. */
+export function newer(a: string, b: string): boolean {
+  const parts = (v: string) => v.split(".").map((p) => (/^\d+$/.test(p) ? Number(p) : 0));
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length, 3); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
+}

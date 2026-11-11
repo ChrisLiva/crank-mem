@@ -6,6 +6,7 @@ import {
   fakeBun,
   makeInstalledCopy,
   makeModelHome,
+  plantMemory,
   releaseDir,
   runCli,
   runInstalled,
@@ -130,5 +131,90 @@ describe("self-update", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("crank-mem: another install or update is running");
     expect(current(H)).toBe("versions/1.0.0");
+  }, 30_000);
+});
+
+/** Task 9's setup, then `self-update` to 1.1.0, so `H/versions` holds 1.0.0 and 1.1.0. */
+async function updated(): Promise<Setup> {
+  const s = await setup();
+  expect(runInstalled(s.H, tempDir("crank-cwd-"), ["self-update"], s.env).status).toBe(0);
+  expect(current(s.H)).toBe("versions/1.1.0");
+  return s;
+}
+
+describe("rollback", () => {
+  test("flips back and repairs projects with the previous version", async () => {
+    const { H, P, env } = await updated();
+    const result = runInstalled(H, tempDir("crank-cwd-"), ["rollback"], env);
+    expect(result.stderr).not.toContain("could not");
+    expect(result.status).toBe(0);
+    expect(current(H)).toBe("versions/1.0.0");
+    const config = JSON.parse(fs.readFileSync(path.join(P, ".crank/config.json"), "utf-8"));
+    expect(config.vendored_version).toBe("1.0.0");
+
+    const again = runInstalled(H, tempDir("crank-cwd-"), ["rollback"], env);
+    expect(again.status).toBe(1);
+    expect(again.stderr).toContain("no previous version");
+    expect(current(H)).toBe("versions/1.0.0");
+  }, 60_000);
+
+  test("a store newer than the previous version's schema refuses and names the project", async () => {
+    const { H, P, env } = await updated();
+    plantMemory(P, "newer");
+    const result = runInstalled(H, tempDir("crank-cwd-"), ["rollback"], env);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(fs.realpathSync(P));
+    expect(result.stderr).toContain("newer");
+    expect(result.stderr).toContain("crank-mem restore-memory");
+    expect(current(H)).toBe("versions/1.1.0");
+  }, 60_000);
+
+  test("a store that does not open does not block", async () => {
+    const { H, P, env } = await updated();
+    plantMemory(P, "unreadable");
+    const result = runInstalled(H, tempDir("crank-cwd-"), ["rollback"], env);
+    expect(result.status).toBe(0);
+    expect(current(H)).toBe("versions/1.0.0");
+  }, 60_000);
+
+  test("an unreadable schema line refuses", async () => {
+    const { H, env } = await updated();
+    const schema = path.join(H, "versions/1.0.0/src/hooks/lib/memory-schema.ts");
+    fs.writeFileSync(
+      schema,
+      fs
+        .readFileSync(schema, "utf-8")
+        .split("\n")
+        .filter((line) => !line.startsWith("export const SCHEMA_VERSION"))
+        .join("\n"),
+    );
+    const result = runInstalled(H, tempDir("crank-cwd-"), ["rollback"], env);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("cannot read the schema version");
+    expect(current(H)).toBe("versions/1.1.0");
+  }, 60_000);
+
+  test("no previous version refuses", () => {
+    const H2 = makeModelHome();
+    makeInstalledCopy(H2, "1.0.0");
+    const result = runInstalled(H2, tempDir("crank-cwd-"), ["rollback"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("no previous version");
+    expect(current(H2)).toBe("versions/1.0.0");
+  }, 30_000);
+
+  test("self-update --to an older tag goes through the same guard", async () => {
+    const { H, P, env } = await updated();
+    plantMemory(P, "newer");
+    const result = runInstalled(H, tempDir("crank-cwd-"), ["self-update", "--to", "v1.0.0"], env);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("crank-mem restore-memory");
+    expect(current(H)).toBe("versions/1.1.0");
+  }, 60_000);
+
+  test("refuses from a clone", () => {
+    const result = runCli(tempDir("crank-rollback-"), ["rollback"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("rollback runs from an installed copy");
   }, 30_000);
 });
