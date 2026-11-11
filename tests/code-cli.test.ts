@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { codeSymbols, grammarFor } from "../src/cli/code-symbols.ts";
 import { outlinePage, preorder } from "../src/cli/code.ts";
-import { makeCrankProject, REPO_ROOT, runCli, tempDir, type CliRun } from "./helpers.ts";
+import { childEnv, makeCrankProject, REPO_ROOT, runCli, tempDir, type CliRun } from "./helpers.ts";
 
 const FIXTURES = path.join(REPO_ROOT, "tests/fixtures/code");
 const A_TS = [
@@ -565,11 +565,10 @@ describe("without the code reader", () => {
         cwd: root,
         encoding: "utf-8",
         timeout: 30_000,
-        env: {
-          ...process.env,
+        env: childEnv({
           CRANK_HOME: tempDir("crank-home-"),
           CODEX_HOME: tempDir("crank-codexhome-"),
-        },
+        }),
       });
       return { status: result.status, stdout: result.stdout, stderr: result.stderr };
     };

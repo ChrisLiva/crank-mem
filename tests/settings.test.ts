@@ -16,7 +16,7 @@ import {
   removeAllowRule,
 } from "../src/cli/settings.ts";
 import { vendorHooks } from "../src/cli/vendor.ts";
-import { makeCrankProject } from "./helpers.ts";
+import { childEnv, makeCrankProject } from "./helpers.ts";
 import { claudeSessionStart } from "./fixtures/payloads.ts";
 
 function tmpFile(name = "settings.json"): string {
@@ -178,7 +178,7 @@ function runWired(command: string, root: string, stdin = "{}") {
     input: stdin,
     encoding: "utf-8",
     timeout: 15_000,
-    env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+    env: childEnv({ CLAUDE_PROJECT_DIR: root }),
   });
   return { status: res.status ?? -1, stdout: res.stdout };
 }

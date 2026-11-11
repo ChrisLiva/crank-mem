@@ -102,6 +102,20 @@ export interface HookRun {
   stderr: string;
 }
 
+/** `TZ` as the test process started, before an in-process zone test sets it to "UTC". */
+const STARTED_TZ = process.env.TZ;
+
+/**
+ * `process.env` plus `extra`, for a child process. When the test process started without `TZ`,
+ * the child gets none unless `extra` names one, so it runs in the system zone after an
+ * in-process zone test left `process.env.TZ` at "UTC".
+ */
+export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
+  if (STARTED_TZ === undefined && extra.TZ === undefined) delete env.TZ;
+  return env;
+}
+
 /** Run a hook script as a child process with the given stdin, like an agent would. */
 export function runHook(
   script: string,
@@ -114,7 +128,7 @@ export function runHook(
     encoding: "utf-8",
     cwd: cwd ?? os.tmpdir(),
     timeout: 15_000,
-    env: env ? { ...process.env, ...env } : process.env,
+    env: childEnv(env),
   });
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
@@ -149,13 +163,12 @@ export function runCli(cwd: string, args: string[], env?: Record<string, string>
     cwd,
     encoding: "utf-8",
     timeout: 30_000,
-    env: {
-      ...process.env,
+    env: childEnv({
       CODEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "crank-codexhome-")),
       CRANK_HOME: makeCrankHome(),
       CRANK_DASHBOARD_DIR: sharedDashboardDir(),
       ...env,
-    },
+    }),
   });
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
@@ -513,7 +526,7 @@ export function startDaemon(
   const root = cloneRoot ?? REPO_ROOT;
   const proc = spawn(path.join(root, "bin/crank-mem"), ["daemon", ...args], {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: childEnv(env),
     detached: true,
     stdio: "ignore",
   });
@@ -682,12 +695,11 @@ export async function startDashboard(
     ],
     {
       cwd: opts.cwd ?? tempDir("crank-dash-cwd-"),
-      env: {
-        ...process.env,
+      env: childEnv({
         CRANK_HOME: home,
         CRANK_DASHBOARD_DIR: opts.dashboardDir ?? dashboardFixture(cliVersion()),
         ...opts.env,
-      },
+      }),
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -880,7 +892,7 @@ export function spawnJob(j: Pick<Journey, "root" | "home" | "fake">): Promise<nu
     [path.join(REPO_ROOT, "src/cli/main.ts"), "job", "s1", "--run-timeout-ms", "10000"],
     {
       cwd: j.root,
-      env: { ...process.env, ...j.fake.env, CRANK_HOME: j.home },
+      env: childEnv({ ...j.fake.env, CRANK_HOME: j.home }),
       detached: true,
       stdio: "ignore",
     },

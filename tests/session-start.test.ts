@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   REPO_ROOT,
+  childEnv,
   enableDebugConfig,
   git,
   gitCommit,
@@ -141,6 +142,7 @@ describe("session-start hook (black-box)", () => {
     const scan = spawnSync("bun", [path.join(REPO_ROOT, "src/cli/main.ts"), "scan"], {
       cwd: root,
       encoding: "utf-8",
+      env: childEnv(),
     });
     expect(scan.status).toBe(0);
     expect(indexed()).toContain("z/hot.ts");

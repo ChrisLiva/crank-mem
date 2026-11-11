@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   cleanup,
+  childEnv,
   git,
   gitCommit,
   makeCrankHome,
@@ -726,7 +727,7 @@ describe("usage capture: the outline and unfold lines", () => {
         cwd: root,
         encoding: "utf-8",
         timeout: 30_000,
-        env: { ...process.env, ...CLAUDE_SHELL, CRANK_HOME: makeCrankHome() },
+        env: childEnv({ ...CLAUDE_SHELL, CRANK_HOME: makeCrankHome() }),
       },
     );
     expect(result.status).toBe(1);
@@ -1133,6 +1134,18 @@ describe("usageMetrics (in-process)", () => {
     expect(again.runs.map((r) => r.ts)).toEqual(
       Array.from({ length: 10 }, (_, i) => T + 18_000_010 - i),
     );
+  });
+
+  test("a child started after a zone test runs in the system zone, or the zone it is given", () => {
+    inZone("Asia/Tokyo", () => undefined);
+    const zoneOf = (env: NodeJS.ProcessEnv) =>
+      spawnSync(
+        process.execPath,
+        ["-e", "process.stdout.write(Intl.DateTimeFormat().resolvedOptions().timeZone)"],
+        { encoding: "utf-8", env },
+      ).stdout;
+    expect(zoneOf(childEnv())).toBe(zoneOf({ PATH: process.env.PATH! }));
+    expect(zoneOf(childEnv({ TZ: "Asia/Tokyo" }))).toBe("Asia/Tokyo");
   });
 });
 

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   REPO_ROOT,
+  childEnv,
   makeCrankHome,
   makeCrankProject,
   plantMemory,
@@ -187,7 +188,7 @@ describe("post-read under both runtimes", () => {
       {
         input,
         encoding: "utf-8",
-        env: { ...process.env, CRANK_HOME: makeCrankHome() },
+        env: childEnv({ CRANK_HOME: makeCrankHome() }),
       },
     );
     expect(sidecars()).toEqual([false, false]);

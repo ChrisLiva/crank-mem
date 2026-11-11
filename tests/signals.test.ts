@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import {
   REPO_ROOT,
+  childEnv,
   digestProject,
   makeCrankHome,
   makeCrankProject,
@@ -150,7 +151,7 @@ describe("digest signals (black-box)", () => {
           new Promise<number | null>((resolve) => {
             const child = spawn("bun", [path.join(REPO_ROOT, STOP)], {
               cwd: root,
-              env: { ...process.env, CRANK_HOME: home },
+              env: childEnv({ CRANK_HOME: home }),
               stdio: ["pipe", "ignore", "ignore"],
             });
             child.on("close", resolve);
