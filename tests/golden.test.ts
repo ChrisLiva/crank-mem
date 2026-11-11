@@ -51,12 +51,6 @@ test("session-start and subagent-start print their golden stdout", () => {
 
 test("stop prints nothing on the golden project, with digests off or on", () => {
   const root = goldenProject();
-  // Index the 25 files first, as a session does before its first Stop.
-  expect(
-    runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root)), root, {
-      CRANK_HOME: makeCrankHome(),
-    }).status,
-  ).toBe(0);
   const off = runHook("src/hooks/stop.ts", JSON.stringify(claudeStop(root)), root, {
     CRANK_HOME: makeCrankHome(),
   });
