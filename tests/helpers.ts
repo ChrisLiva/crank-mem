@@ -125,6 +125,20 @@ export function makeCrankHome(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "crank-home-"));
 }
 
+/** Run `fn` with `vars` set in `process.env`, then put each back as it was, unset ones deleted. */
+export function withEnv<T>(vars: Record<string, string>, fn: () => T): T {
+  const saved = Object.keys(vars).map((key) => [key, process.env[key]] as const);
+  Object.assign(process.env, vars);
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 /**
  * Run the crank-mem CLI as a child process, with fresh temp CODEX_HOME and CRANK_HOME and a
  * current dashboard fixture as CRANK_DASHBOARD_DIR unless `env` overrides them.
