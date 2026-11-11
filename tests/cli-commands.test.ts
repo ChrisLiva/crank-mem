@@ -615,7 +615,7 @@ describe("upgrade", () => {
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("upgraded vendored hooks 0.7.0 → 0.11.0");
+    expect(run.stdout).toContain(`upgraded vendored hooks 0.7.0 → ${cliVersion()}`);
     expect(run.stdout).toContain("re-wired Claude Code hooks in .claude/settings.local.json");
     const after = JSON.parse(fs.readFileSync(local, "utf-8")).hooks;
     const wired = crankHooks("bun", "claude");
