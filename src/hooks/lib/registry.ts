@@ -2,8 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 
-// The per-user list of project roots that `init` and `upgrade` add and
-// `uninstall` removes, kept at <crank home>/projects.json for the dashboard.
+// The per-user list of project roots, kept at <crank home>/projects.json.
+// `init`, `upgrade` and the session-start hook add a root and `uninstall`
+// removes it; the dashboard, `upgrade --all`, `self-install`,
+// `self-uninstall`, `self-update`, the update notice and the daemon read it.
 // A registry that cannot be read or written never changes a command's outcome.
 
 export const REGISTRY_FILE = "projects.json";
@@ -34,7 +36,7 @@ export function registerProject(root: string): void {
     if (entries.some((e) => e.root === root)) return;
     writeEntries([...entries, { root, addedAtMs: Date.now() }]);
   } catch {
-    // An unwritable crank home loses the entry; the next init or upgrade adds it.
+    // An unwritable crank home loses the entry; the next session, init or upgrade adds it.
   }
 }
 
