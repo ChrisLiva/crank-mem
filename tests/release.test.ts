@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { cliVersion } from "../src/cli/version.ts";
 import * as os from "node:os";
 import {
@@ -15,6 +15,7 @@ import {
   makeInstalledCopy,
   makeModelHome,
   runCli,
+  runInstalled,
   startModelServer,
   startReleaseServer,
   tempDir,
@@ -514,5 +515,139 @@ describe("self-install from a clone install", () => {
     );
     expect(rerun.status).toBe(0);
     expect(t.config().clone_root).toBe(path.join(t.H, "current"));
+  }, 60_000);
+});
+
+describe("self-uninstall", () => {
+  const rcWithBlock = (bin: string) =>
+    `alias x=y\n\n# >>> crank-mem >>>\nexport PATH="${bin}:$PATH"\n# <<< crank-mem <<<\n`;
+
+  /** An installed copy in H linked into HOME/bin, a zsh rc carrying the PATH block, and a project P inited through it. */
+  function installedSetup() {
+    const H = makeCrankHome();
+    makeInstalledCopy(H, V);
+    fs.mkdirSync(path.join(H, "models"));
+    const HOME = tempDir("crank-home-dir-");
+    const bin = path.join(HOME, "bin");
+    fs.mkdirSync(bin);
+    fs.symlinkSync(path.join(H, "current/bin/crank-mem"), path.join(bin, "crank-mem"));
+    fs.writeFileSync(path.join(HOME, ".zshrc"), rcWithBlock(bin));
+    const P = tempDir("crank-release-proj-");
+    fs.writeFileSync(path.join(P, "a.ts"), "export const a = 1;\n");
+    expect(spawnSync("git", ["init", "-q"], { cwd: P }).status).toBe(0);
+    expect(runInstalled(H, P, ["init", "--yes"], { HOME }).status).toBe(0);
+    const uninstall = (extra: string[] = []) =>
+      runInstalled(
+        H,
+        tempDir("crank-selfuninstall-"),
+        ["self-uninstall", ...extra, "--bin-dir", bin],
+        {
+          HOME,
+        },
+      );
+    // Uninstall deletes the settings file once it holds nothing else; absent reads as empty.
+    const settings = () => {
+      const file = path.join(P, ".claude/settings.local.json");
+      return fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
+    };
+    return { H, HOME, bin, P, uninstall, settings };
+  }
+
+  test("with --yes every registered project is uninstalled, then the tool's files go", () => {
+    const t = installedSetup();
+    expect(t.settings()).toContain(".crank/hooks");
+    const result = t.uninstall(["--yes"]);
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(t.settings()).not.toContain(".crank/hooks");
+    expect(fs.existsSync(path.join(t.P, ".crank/config.json"))).toBe(true);
+    for (const gone of [path.join(t.H, "versions"), path.join(t.H, "current")]) {
+      expect(fs.existsSync(gone)).toBe(false);
+    }
+    expect(() => fs.lstatSync(path.join(t.bin, "crank-mem"))).toThrow();
+    expect(fs.readFileSync(path.join(t.HOME, ".zshrc"), "utf-8")).toBe("alias x=y\n");
+    expect(fs.existsSync(path.join(t.H, "models"))).toBe(true);
+  }, 60_000);
+
+  test("without --yes and without a tty, projects stay wired and are listed", () => {
+    const t = installedSetup();
+    const result = t.uninstall();
+    expect(result.status).toBe(0);
+    expect(t.settings()).toContain(".crank/hooks");
+    expect(result.stdout).toContain(fs.realpathSync(t.P));
+    expect(fs.existsSync(path.join(t.H, "versions"))).toBe(false);
+    expect(fs.existsSync(path.join(t.H, "current"))).toBe(false);
+    expect(() => fs.lstatSync(path.join(t.bin, "crank-mem"))).toThrow();
+  }, 60_000);
+
+  test("--purge removes crank-mem's entries and nothing else", () => {
+    const t = installedSetup();
+    fs.writeFileSync(path.join(t.H, "config.toml"), "x");
+    fs.mkdirSync(path.join(t.H, "bin"));
+    fs.writeFileSync(path.join(t.H, "bin/askpass"), "");
+    fs.writeFileSync(path.join(t.H, "crank.db"), "");
+    for (const dir of ["spool", "seen"]) fs.mkdirSync(path.join(t.H, dir), { recursive: true });
+    for (const file of ["projects.json", "dashboard.json", "update.json"]) {
+      if (!fs.existsSync(path.join(t.H, file))) fs.writeFileSync(path.join(t.H, file), "{}");
+    }
+    const result = t.uninstall(["--yes", "--purge"]);
+    expect(result.status).toBe(0);
+    expect(fs.readdirSync(t.H).sort()).toEqual(["bin", "config.toml", "crank.db"]);
+    expect(fs.readFileSync(path.join(t.H, "config.toml"), "utf-8")).toBe("x");
+  }, 60_000);
+
+  test("a PATH link that points somewhere other than <crank home>/current is left alone", () => {
+    const t = installedSetup();
+    const link = path.join(t.bin, "crank-mem");
+    fs.rmSync(link);
+    fs.symlinkSync("/elsewhere/crank-mem", link);
+    const result = t.uninstall(["--yes"]);
+    expect(result.status).toBe(0);
+    expect(fs.readlinkSync(link)).toBe("/elsewhere/crank-mem");
+    expect(result.stdout).toContain(link);
+  }, 60_000);
+
+  test("a live daemon is stopped", async () => {
+    const t = installedSetup();
+    const daemon = spawn("sleep", ["60"], { detached: true, stdio: "ignore" });
+    const pid = daemon.pid!;
+    try {
+      fs.writeFileSync(
+        path.join(t.H, "daemon.json"),
+        JSON.stringify({ pid, version: V, heartbeatMs: Date.now() }),
+      );
+      expect(t.uninstall(["--yes"]).status).toBe(0);
+      const deadline = Date.now() + 2_000;
+      let alive = true;
+      while (alive && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        try {
+          process.kill(pid, 0);
+        } catch {
+          alive = false;
+        }
+      }
+      expect(alive).toBe(false);
+    } finally {
+      daemon.kill("SIGKILL");
+    }
+  }, 60_000);
+
+  test("refuses to run from a clone", () => {
+    const result = runCli(tempDir("crank-selfuninstall-"), ["self-uninstall", "--yes"], {
+      HOME: tempDir("crank-home-dir-"),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("self-uninstall runs from an installed copy");
+  });
+
+  test("a live tool lock refuses self-uninstall and leaves the install", () => {
+    const t = installedSetup();
+    fs.writeFileSync(path.join(t.H, "tool.lock"), String(process.pid));
+    const result = t.uninstall(["--yes"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("crank-mem: another install or update is running");
+    expect(fs.existsSync(path.join(t.H, "versions", V))).toBe(true);
+    expect(fs.existsSync(path.join(t.H, "current"))).toBe(true);
   }, 60_000);
 });

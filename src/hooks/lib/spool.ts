@@ -38,7 +38,7 @@ export type DaemonState = { pid: number; version: string; heartbeatMs: number };
 const PARKED = "parked";
 const EXT = ".json";
 
-function spoolDir(): string {
+export function spoolDir(): string {
   return path.join(crankHome(), "spool");
 }
 

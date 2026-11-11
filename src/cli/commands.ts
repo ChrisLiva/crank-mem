@@ -109,6 +109,13 @@ export const COMMANDS = {
     bool: ["yes"],
     installedOnly: true,
   },
+  "self-uninstall": {
+    summary: "Remove the installed crank-mem, optionally from every project too",
+    usage: "Usage: crank-mem self-uninstall [--yes] [--purge] [--bin-dir <dir>]",
+    value: ["bin-dir"],
+    bool: ["yes", "purge"],
+    installedOnly: true,
+  },
   daemon: {
     usage: "Usage: crank-mem daemon (internal: Stop and SessionEnd start it)",
     value: ["sweep-ms", "idle-ms", "retry-ms", "retry-cap-ms", "run-timeout-ms", "mid-session-ms"],

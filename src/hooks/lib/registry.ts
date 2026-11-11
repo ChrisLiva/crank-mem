@@ -6,7 +6,7 @@ import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 // `uninstall` removes, kept at <crank home>/projects.json for the dashboard.
 // A registry that cannot be read or written never changes a command's outcome.
 
-const REGISTRY_FILE = "projects.json";
+export const REGISTRY_FILE = "projects.json";
 
 type Entry = { root: string; addedAtMs: number };
 

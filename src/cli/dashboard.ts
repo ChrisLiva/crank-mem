@@ -12,7 +12,7 @@ import { cliVersion } from "./version.ts";
 // `crank-mem dashboard`: serve the built dashboard on 127.0.0.1 until a
 // signal. Its only write is <crank home>/dashboard.json, the session token.
 
-const TOKEN_FILE = "dashboard.json";
+export const TOKEN_FILE = "dashboard.json";
 const TOKEN = /^[0-9a-f]{64}$/;
 
 /** The --port value, the per-user default when absent, or null when it is not a port. */
