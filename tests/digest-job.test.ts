@@ -238,7 +238,7 @@ describe("digest job (black-box)", () => {
 
   test("a job killed before commit stores nothing and the entry reruns", async () => {
     const ok = { lines: okStream(SAMPLE_DIGEST) };
-    const j = journey(digestProject({}, temps), [{ ...ok, sleepMs: 1500 }, ok], { skipJob: true });
+    const j = journey(digestProject({}, temps), [{ ...ok, hold: true }, ok], { skipJob: true });
     const exited = spawnJob(j);
     await waitFor(() => j.fake.calls().length === 1);
     process.kill(-children.at(-1)!.pid!, "SIGKILL");
@@ -251,27 +251,27 @@ describe("digest job (black-box)", () => {
   }, 30_000);
 
   test("a Stop during a job stores the digest and keeps the entry", async () => {
-    const j = journey(
-      digestProject({}, temps),
-      [{ lines: okStream(SAMPLE_DIGEST), sleepMs: 1500 }],
-      { skipJob: true },
-    );
+    const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST), hold: true }], {
+      skipJob: true,
+    });
     const exited = spawnJob(j);
     await waitFor(() => j.fake.calls().length === 1);
     stop(j);
+    j.fake.release();
     expect(await exited).toBe(0);
     expect(search(j.root, "EEXIST").trim().split("\n").length).toBe(1);
     expect(spoolFiles(j.home)).toEqual(["s1.json"]);
   }, 30_000);
 
   test("two jobs on one stem at once store one digest", async () => {
-    const j = journey(
-      digestProject({}, temps),
-      [{ lines: okStream(SAMPLE_DIGEST), sleepMs: 1500 }],
-      { skipJob: true },
-    );
+    const j = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST), hold: true }], {
+      skipJob: true,
+    });
     seedMemory(j.root, [], { costUsd: 0 });
-    expect(await Promise.all([spawnJob(j), spawnJob(j)])).toEqual([0, 0]);
+    const exited = Promise.all([spawnJob(j), spawnJob(j)]);
+    await waitFor(() => j.fake.calls().length === 2);
+    j.fake.release();
+    expect(await exited).toEqual([0, 0]);
     expect(j.fake.calls().length).toBe(2);
     expect(search(j.root, "EEXIST").trim().split("\n").length).toBe(1);
     const opened = openMemory(memoryPath(j.root), "read");
@@ -573,11 +573,12 @@ describe("digest job failure classes (black-box)", () => {
 
   test("a Stop during the third refusal keeps the entry unparked", async () => {
     const refusal = { lines: refusalStream() };
-    const j = journey(digestProject({}, temps), [refusal, refusal, { ...refusal, sleepMs: 1500 }]);
+    const j = journey(digestProject({}, temps), [refusal, refusal, { ...refusal, hold: true }]);
     rerun(j);
     const exited = spawnJob(j);
     await waitFor(() => j.fake.calls().length === 3);
     stop(j);
+    j.fake.release();
     expect(await exited).toBe(0);
     expect(spoolFiles(j.home)).toEqual(["s1.json"]);
   }, 30_000);

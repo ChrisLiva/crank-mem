@@ -525,7 +525,7 @@ describe("daemon exits", () => {
   }, 10_000);
 
   test("a stop file written while a job runs: the job finishes and the daemon exits", async () => {
-    const e = setup([{ ...OK, sleepMs: 1_500 }]);
+    const e = setup([{ ...OK, hold: true }]);
     const root = digestProject({}, temps);
     plantEntry(e.home, "s1", {
       transcriptPath: transcriptCopy("s1"),
@@ -535,6 +535,7 @@ describe("daemon exits", () => {
     const d = daemon(["--sweep-ms", "50"], e);
     await waitFor(() => e.fake.calls().length === 1, 10_000);
     stopDigests(e.home);
+    e.fake.release();
     expect(await within(d.exited, 5_000)).toBe(0);
     expect(e.fake.calls()[0]!.endMs).not.toBe(null);
     expectOneRow(root, "EEXIST");
@@ -544,7 +545,7 @@ describe("daemon exits", () => {
     const clone = tempDir("crank-clone-");
     for (const name of ["src", "bin", "package.json"])
       fs.cpSync(path.join(REPO_ROOT, name), path.join(clone, name), { recursive: true });
-    const e = setup([{ ...OK, sleepMs: 1_500 }, OK]);
+    const e = setup([{ ...OK, hold: true }, OK]);
     const root = digestProject({ clone_root: clone }, temps);
     const now = Date.now();
     plantEntry(e.home, "s1", {
@@ -566,6 +567,7 @@ describe("daemon exits", () => {
       pkg,
       JSON.stringify({ ...JSON.parse(fs.readFileSync(pkg, "utf8")), version: "9.9.9" }),
     );
+    e.fake.release();
     expect(await within(d.exited, 5_000)).toBe(0);
     expect(e.fake.calls().length).toBe(1);
     expectOneRow(root, "EEXIST");

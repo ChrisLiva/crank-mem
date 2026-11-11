@@ -549,7 +549,7 @@ describe("consolidation edge outcomes", () => {
       root,
       a,
       [
-        { lines: wouldChange, sleepMs: 1500 },
+        { lines: wouldChange, hold: true },
         laterDigest(),
         { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) },
       ],
@@ -559,6 +559,7 @@ describe("consolidation edge outcomes", () => {
     await waitFor(() => j.fake.calls().length === 2);
     const hand = "# Cerebrum\n\n## Memory\n\n- **Edited**: by hand (2026-11-04)\n";
     fs.writeFileSync(file, hand);
+    j.fake.release();
     expect(await exited).toBe(0);
 
     expect(fs.readFileSync(file, "utf8")).toBe(hand);

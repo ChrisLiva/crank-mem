@@ -258,6 +258,7 @@ export type FakeScenario = {
   raw?: string; // printed instead of lines
   exit?: number; // default 0
   sleepMs?: number; // wait before printing
+  hold?: true; // wait before printing until the test calls the fake's release()
   pauseAfterFirstMs?: number; // wait after printing the first line, before the rest
 };
 export type FakeCall = {
@@ -299,6 +300,11 @@ if (argv[0] === "auth" && argv[1] === "status") {
 const startMs = Date.now();
 const stdin = await new Response(Bun.stdin.stream()).text();
 fs.appendFileSync(callsFile, JSON.stringify({ argv, env: process.env, stdin, cwd: process.cwd(), startMs }) + "\\n");
+// An orphaned held fake (its job killed without its group) exits instead of polling forever.
+if (s.hold) while (!fs.existsSync(path.join(dir, "release"))) {
+  if (process.ppid === 1) process.exit(1);
+  await sleep(20);
+}
 if (s.sleepMs) await sleep(s.sleepMs);
 if (s.raw !== undefined) process.stdout.write(s.raw);
 else for (const [i, line] of (s.lines ?? []).entries()) {
@@ -321,11 +327,14 @@ function readJsonl(file: string): any[] {
   }
 }
 
-/** A fake `claude` on PATH: the n-th `-p` call plays `scenarios[n]` (the last repeats) and records its argv, env, stdin and cwd. */
+/**
+ * A fake `claude` on PATH: the n-th `-p` call plays `scenarios[n]` (the last repeats) and records its argv, env, stdin and cwd.
+ * `release()` lets every `hold` scenario, running or later, print.
+ */
 export function fakeClaude(
   dir: string,
   scenarios: FakeScenario[],
-): { env: Record<string, string>; calls(): FakeCall[] } {
+): { env: Record<string, string>; calls(): FakeCall[]; release(): void } {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "claude"), FAKE_CLAUDE, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, "scenarios.json"), JSON.stringify(scenarios));
@@ -339,6 +348,9 @@ export function fakeClaude(
         ...c,
         endMs: ends.get(n) ?? null,
       }));
+    },
+    release() {
+      fs.writeFileSync(path.join(dir, "release"), "");
     },
   };
 }
