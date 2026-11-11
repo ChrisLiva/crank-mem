@@ -136,6 +136,14 @@ test("the Updates section shows both versions and the self-update command, and a
   expect(section?.textContent).toContain("9.9.9");
   expect(section?.textContent).toContain("crank-mem self-update");
   expect(section?.querySelector("a")?.getAttribute("href")).toBe(UPDATES.latest.notesUrl);
+  expect(section?.textContent).toContain("Checked once a day against the latest release");
+  await unmount();
+
+  serve({ ...routes, "/api/updates": { ...UPDATES, checkDaily: false } });
+  ({ page, unmount } = await openPage());
+  const unchecked = page.querySelector("[aria-labelledby=updates-heading]")?.textContent;
+  expect(unchecked).toContain("Daily checks are off");
+  expect(unchecked).not.toContain("Checked once a day");
   await unmount();
 
   serve(routes);

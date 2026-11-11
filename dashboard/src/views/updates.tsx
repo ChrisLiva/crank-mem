@@ -95,7 +95,11 @@ export function UpdatesSection() {
             Updates
           </h2>
           <p className="text-xs text-muted-foreground">
-            {status.installedCopy ? "Checked once a day against the latest release" : CLONE_NOTE}
+            {!status.installedCopy
+              ? CLONE_NOTE
+              : status.checkDaily
+                ? "Checked once a day against the latest release"
+                : "Daily checks are off"}
           </p>
         </div>
         <Pill tone={state.tone}>{state.label}</Pill>
