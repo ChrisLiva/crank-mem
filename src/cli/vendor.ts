@@ -4,7 +4,7 @@ import { REPO_ROOT } from "./version.ts";
 
 // Vendoring: recursive copy of src/hooks/ (the single implementation,
 // lib/ included) into <project>/.crank/hooks/. The CLI imports the same lib
-// from the clone — no duplicated core.
+// from the running crank-mem — no duplicated core.
 
 export function vendorHooks(crankDir: string): void {
   const src = path.join(REPO_ROOT, "src", "hooks");
@@ -19,7 +19,7 @@ export function vendorHooks(crankDir: string): void {
 }
 
 /**
- * Whether `<crankDir>/hooks/` holds exactly the clone's hook files, byte for
+ * Whether `<crankDir>/hooks/` holds exactly the running crank-mem's hook files, byte for
  * byte. Regular files only; a path with a dot-named segment is skipped on
  * either side, as vendorHooks skips it. False on any read error.
  */

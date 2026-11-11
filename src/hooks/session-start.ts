@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   readStdin,
@@ -14,6 +15,7 @@ import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { sessionStartInjection } from "./lib/injection.ts";
 import { enableDebug, debugEvent } from "./lib/debug.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
+import { registerProject } from "./lib/registry.ts";
 
 // SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
 // included. Refreshes the index under lock, then emits the injection via
@@ -29,6 +31,12 @@ async function main(): Promise<void> {
 
   const root = findProjectRoot(typeof payload.cwd === "string" ? payload.cwd : process.cwd());
   if (!root) return;
+  try {
+    // findProjectRoot keeps a symlinked cwd; the CLI registers the realpath.
+    registerProject(fs.realpathSync(root));
+  } catch {
+    // A root that cannot be resolved stays unregistered until init or upgrade.
+  }
 
   const crankDir = path.join(root, CRANK_DIR);
   const config = loadConfig(crankDir);

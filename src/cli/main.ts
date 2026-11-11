@@ -1,4 +1,4 @@
-import { cliVersion } from "./version.ts";
+import { cliVersion, installedCopy } from "./version.ts";
 import { unknownFlag } from "./args.ts";
 import { COMMANDS, commandHelp, commandSpec, usage } from "./commands.ts";
 
@@ -21,6 +21,10 @@ const RUNNERS: Record<string, Runner> = {
   dashboard: async (args) => (await import("./dashboard.ts")).run(args),
   upgrade: async (args) => (await import("./upgrade.ts")).run(args),
   uninstall: async (args) => (await import("./uninstall.ts")).run(args),
+  "self-install": async (args) => (await import("./self-install.ts")).run(args),
+  "self-uninstall": async (args) => (await import("./self-uninstall.ts")).run(args),
+  "self-update": async (args) => (await import("./self-update.ts")).runSelfUpdate(args),
+  rollback: async (args) => (await import("./self-update.ts")).runRollback(args),
 } satisfies Record<keyof typeof COMMANDS, Runner>;
 
 /** Runs a command that has a runner; `null` when `cmd` names none. */
@@ -34,6 +38,12 @@ async function runCommand(cmd: string | undefined, rest: string[]): Promise<numb
   const unknown = spec.unknownIsText ? null : unknownFlag(rest, spec.value, spec.bool);
   if (unknown !== null) {
     console.error(`crank-mem: unknown flag --${unknown}\n${spec.usage}`);
+    return 1;
+  }
+  if (spec.installedOnly && !installedCopy()) {
+    console.error(
+      `crank-mem: ${cmd} runs from an installed copy; in a clone, update with git pull, then crank-mem upgrade --all`,
+    );
     return 1;
   }
   const runner = cmd !== undefined && Object.hasOwn(RUNNERS, cmd) ? RUNNERS[cmd] : undefined;

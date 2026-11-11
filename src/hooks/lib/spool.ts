@@ -38,7 +38,7 @@ export type DaemonState = { pid: number; version: string; heartbeatMs: number };
 const PARKED = "parked";
 const EXT = ".json";
 
-function spoolDir(): string {
+export function spoolDir(): string {
   return path.join(crankHome(), "spool");
 }
 
@@ -97,6 +97,18 @@ export function signalDigest(
   }
 }
 
+/** The parsed daemon.json; null when it cannot be read or does not hold a JSON object. */
+export function readDaemonState(): Partial<DaemonState> | null {
+  try {
+    const state: unknown = JSON.parse(
+      fs.readFileSync(path.join(crankHome(), DAEMON_FILE), "utf-8"),
+    );
+    return typeof state === "object" && state !== null ? (state as Partial<DaemonState>) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * True while daemon.json holds a heartbeat younger than HEARTBEAT_MAX_MS. A file
  * that does not parse counts by its mtime instead, because a starter between
@@ -125,9 +137,10 @@ export function daemonAlive(): boolean {
 }
 
 /**
- * Start the clone's daemon unless one is alive. Detached with stdio ignored, so
- * the hook returns at once and nothing reaches its stdout; cwd is the clone so
- * bun never loads a project's .env. Never throws.
+ * Start the daemon of the recorded tool root (`clone_root`: a clone or an
+ * installed copy's `current`) unless one is alive. Detached with stdio
+ * ignored, so the hook returns at once and nothing reaches its stdout; cwd is
+ * that root so bun never loads a project's .env. Never throws.
  */
 export function ensureDaemon(config: Pick<CrankConfig, "clone_root">): void {
   try {

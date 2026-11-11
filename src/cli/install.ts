@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { hasCrankHooks } from "./settings.ts";
-import { registerProject, unregisterProject } from "./registry.ts";
+import { registerProject, unregisterProject } from "../hooks/lib/registry.ts";
 import { templatePath, vendorHooks, vendoredHooksCurrent } from "./vendor.ts";
 import { cliVersion } from "./version.ts";
 import type { OpenedProject } from "./project.ts";
@@ -41,8 +41,9 @@ const vendoredHooks: InstallItem = {
     return report();
   },
   // A version change re-vendors whether or not the trees differ; at the same
-  // version, a pull or a hand edit that leaves .crank/hooks/ unlike the clone
-  // re-vendors too. The stamp moves only once the copy is in place.
+  // version, a pull or a hand edit that leaves .crank/hooks/ unlike the
+  // running crank-mem's re-vendors too. The stamp moves only once the copy is
+  // in place.
   repair(ctx) {
     const { crankDir, config } = ctx;
     const r = report();
@@ -56,7 +57,7 @@ const vendoredHooks: InstallItem = {
       config.vendored_version = cliVersion();
       saveConfig(crankDir, config);
       if (versionCurrent)
-        r.lines.push("  re-vendored .crank/hooks/, which differed from the clone");
+        r.lines.push("  re-vendored .crank/hooks/, which differed from the running crank-mem");
     });
     return r;
   },

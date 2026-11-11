@@ -3,14 +3,16 @@ import { ensureDaemon } from "../hooks/lib/spool.ts";
 import { clearStopState } from "../hooks/lib/user-state.ts";
 import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";
-import { REPO_ROOT } from "./version.ts";
+import { toolRoot } from "./version.ts";
+import { printUpdateNotice } from "./updates.ts";
 import { embedderReady } from "../daemon/embedder.ts";
 
 export async function run(args: string[]): Promise<number> {
+  printUpdateNotice();
   const sub = args[0];
   if (sub === "resume") {
     clearStopState();
-    ensureDaemon({ clone_root: REPO_ROOT });
+    ensureDaemon({ clone_root: toolRoot() });
     console.log("crank-mem: digests resumed.");
     return 0;
   }

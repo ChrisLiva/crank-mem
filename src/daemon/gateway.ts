@@ -150,6 +150,9 @@ function callArgs(system: string, schema: object, project: string | null): strin
   ];
 }
 
+/** `<crank home>/run` is the empty cwd of a run that names no project. */
+export const RUN_DIR = "run";
+
 /**
  * One structured-output run on the user's Claude login, gated on `claude auth status`. Without `project`
  * both spawns run in an empty `<crank home>/run`; with it, both run in the project, since a deny rule
@@ -161,7 +164,7 @@ export async function askClaude<T>(
 ): Promise<ModelResult<T>> {
   const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_MS;
   const project = opts.project ?? null;
-  const cwd = project ?? path.join(crankHome(), "run");
+  const cwd = project ?? path.join(crankHome(), RUN_DIR);
   if (project === null) fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
 
   const auth = await runClaude(["auth", "status"], null, cwd, timeoutMs);

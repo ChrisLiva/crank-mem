@@ -15,12 +15,21 @@ import {
   type ObservationLine,
   type ProposalRow,
   type StaleRow,
+  type UpdateStatus,
 } from "../hooks/lib/wire.ts";
 import { EMBED_MODEL } from "../daemon/embedder.ts";
 import { queryVector } from "./recall.ts";
-import { registeredRoots } from "./registry.ts";
+import { registeredRoots } from "../hooks/lib/registry.ts";
 import { captureSummary } from "./stats.ts";
+import {
+  checkDue,
+  checkNow,
+  laggingProjects,
+  readUpdateState,
+  updateAvailable,
+} from "./updates.ts";
 import { activityDays, usageMetrics, windowStart } from "./usage-metrics.ts";
+import { cliVersion, installedCopy, releaseBase } from "./version.ts";
 
 // The dashboard's HTTP server: loopback only, and every request carries the
 // session cookie, which the URL's `?token=` trades for once. The checks run
@@ -343,6 +352,32 @@ function serveProjects(res: http.ServerResponse, url: URL): boolean {
   return true;
 }
 
+function updateStatus(): UpdateStatus {
+  const state = readUpdateState();
+  const latest = state.latest && {
+    version: state.latest.version,
+    releasedAt: state.latest.releasedAt,
+    notesUrl: `${releaseBase()}/tag/${state.latest.tag}`,
+  };
+  return {
+    installed: cliVersion(),
+    installedCopy: installedCopy(),
+    latest,
+    available: updateAvailable(state),
+    checkedAtMs: state.checkedAtMs,
+    error: state.error,
+    auto: state.auto,
+    checkDaily: state.checkDaily,
+    behind: laggingProjects(cliVersion()),
+  };
+}
+
+function serveUpdates(res: http.ServerResponse, url: URL): boolean {
+  if (url.pathname !== "/api/updates") return false;
+  sendAnswer(res, { status: 200, body: updateStatus() });
+  return true;
+}
+
 function serveProjectRoute(res: http.ServerResponse, url: URL): boolean {
   const scoped = /^\/api\/projects\/([^/]+)(\/.*)$/.exec(url.pathname);
   if (!scoped) return false;
@@ -377,6 +412,7 @@ export async function serveDashboard(opts: {
   port: number;
   distDir: string;
   token: string;
+  checkEveryMs: number;
 }): Promise<{ port: number; close(): Promise<void> }> {
   const server = http.createServer((req, res) => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
@@ -388,6 +424,7 @@ export async function serveDashboard(opts: {
     if (tradeToken(res, url, opts.token)) return;
     if (refuseCookie(req, res, opts.token)) return;
     if (serveProjects(res, url)) return;
+    if (serveUpdates(res, url)) return;
     if (serveProjectRoute(res, url)) return;
     serveStatic(res, url, opts.distDir);
   });
@@ -398,10 +435,23 @@ export async function serveDashboard(opts: {
       resolve();
     });
   });
+  // A tick while this server's own check is pending skips, so each due check fetches once.
+  let checking = false;
+  const checkIfDue = () => {
+    if (checking || !checkDue(readUpdateState(), Date.now())) return;
+    checking = true;
+    // checkNow records its own failures; a throw here means update.json could not be written.
+    void checkNow()
+      .catch(() => {})
+      .finally(() => (checking = false));
+  };
+  checkIfDue();
+  const timer = setInterval(checkIfDue, opts.checkEveryMs);
   return {
     port: (server.address() as AddressInfo).port,
     close: () =>
       new Promise((resolve) => {
+        clearInterval(timer);
         server.close(() => resolve());
         server.closeAllConnections();
       }),

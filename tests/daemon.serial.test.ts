@@ -4,27 +4,35 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  type Call,
   REPO_ROOT,
   appendRecords,
   digestProject,
+  fakeTool,
   fakeClaude,
   killDaemon,
   laterRecords,
   makeCrankHome,
+  makeInstalledCopy,
   readDaemon,
+  releaseDir,
   runCli,
   runHook,
+  runInstalled,
   setMtime,
   spoolFiles,
   startDaemon,
+  startReleaseServer,
   stopDigests,
   stopState,
   userRecord,
   waitFor,
+  withEnv,
   type FakeCall,
   type FakeScenario,
 } from "./helpers.ts";
 import { digestRequest } from "../src/daemon/digest-prompt.ts";
+import { registerProject } from "../src/hooks/lib/registry.ts";
 import { okStream, refusalStream, status500Stream } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
@@ -43,6 +51,7 @@ const temps: string[] = [];
 const homes: string[] = [];
 const handles: { proc: ChildProcess; exited: Promise<number> }[] = [];
 const others: ChildProcess[] = [];
+const servers: { stop(): void }[] = [];
 const daemonPids = new Set<number>();
 
 function alive(pid: number): boolean {
@@ -109,6 +118,7 @@ afterEach(async () => {
   killDaemonGroups();
   await killHandles();
   await killOthers();
+  for (const server of servers.splice(0)) server.stop();
   await waitFor(() => [...daemonPids].every((pid) => !alive(pid)), 5_000);
   for (const dir of temps.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -578,6 +588,267 @@ describe("daemon exits", () => {
     expectOneRow(root, "EEXIST");
     expect(spoolFiles(e.home)).toEqual(["s2.json"]);
   }, 20_000);
+
+  test("after its current job when current is flipped to another installed version, starting no other job", async () => {
+    const e = setup([{ ...OK, hold: true }, OK]);
+    const current = path.join(e.home, "current");
+    makeInstalledCopy(e.home, "1.0.0");
+    const root = digestProject({ clone_root: current }, temps);
+    const now = Date.now();
+    plantEntry(e.home, "s1", {
+      transcriptPath: transcriptCopy("s1"),
+      projectRoot: root,
+      ended: true,
+      updatedAt: now - 1_000,
+    });
+    plantEntry(e.home, "s2", {
+      transcriptPath: transcriptCopy("s2"),
+      projectRoot: root,
+      ended: true,
+      updatedAt: now,
+    });
+    const d = daemon(["--sweep-ms", "50"], e, current);
+    await waitFor(() => e.fake.calls().length === 1, 10_000);
+    makeInstalledCopy(e.home, "1.1.0");
+    e.fake.release();
+    expect(await d.exited).toBe(0);
+    expect(e.fake.calls().length).toBe(1);
+  }, 20_000);
+});
+
+/** A release server over `releaseDir(versions)` that afterEach stops. */
+async function releaseServer(
+  versions: string[],
+): Promise<{ R: string; url: string; requests(): string[] }> {
+  const R = releaseDir(versions);
+  const server = await startReleaseServer(R);
+  servers.push(server);
+  return { R, url: server.url, requests: server.requests };
+}
+
+function writeUpdate(home: string, state: Record<string, unknown>): void {
+  fs.writeFileSync(path.join(home, "update.json"), JSON.stringify(state));
+}
+
+function readUpdate(home: string): Record<string, any> {
+  return JSON.parse(fs.readFileSync(path.join(home, "update.json"), "utf8"));
+}
+
+type Auto = Env & {
+  P: string;
+  bun: { calls(): Call[] };
+  release: { R: string; url: string; requests(): string[] };
+};
+
+/**
+ * `setup(scenarios)` plus installed 1.0.0 with `update` in update.json, a project inited and
+ * digests on through it, releases `versions` served (the first is latest), and a runtime
+ * `fakeTool` bun first on the daemon's PATH.
+ */
+async function autoSetup(
+  scenarios: FakeScenario[],
+  update: Record<string, unknown>,
+  versions: string[],
+): Promise<Auto> {
+  const e = setup(scenarios);
+  makeInstalledCopy(e.home, "1.0.0");
+  writeUpdate(e.home, update);
+  const P = tempDir("crank-auto-proj-");
+  fs.writeFileSync(path.join(P, "a.ts"), "export const a = 1;\n");
+  expect(runInstalled(e.home, P, ["init", "--yes"]).status).toBe(0);
+  expect(runInstalled(e.home, P, ["digest", "on"]).status).toBe(0);
+  const release = await releaseServer(versions);
+  const bun = fakeTool("bun", "runtime");
+  const env = {
+    ...e.env,
+    CRANK_RELEASE_URL: release.url,
+    PATH: `${bun.dir}:${e.fake.env.PATH}`,
+  };
+  return { ...e, env, P, bun, release };
+}
+
+/** The fake bun's `install` calls: each `upgrade` installs the tool's packages. */
+function installs(bun: { calls(): Call[] }): Call[] {
+  return bun.calls().filter((c) => c.argv.startsWith("install"));
+}
+
+function vendored(root: string): string {
+  return JSON.parse(fs.readFileSync(path.join(root, ".crank/config.json"), "utf8"))
+    .vendored_version;
+}
+
+describe("daemon release checks", () => {
+  test("a due check runs once at daemon start", async () => {
+    const e = setup();
+    makeInstalledCopy(e.home, "1.0.0");
+    const server = await releaseServer(["1.1.0"]);
+    const d = daemon(
+      ["--sweep-ms", "50", "--idle-ms", "500"],
+      { ...e, env: { ...e.env, CRANK_RELEASE_URL: server.url } },
+      path.join(e.home, "current"),
+    );
+    expect(await within(d.exited, 20_000)).toBe(0);
+    expect(readUpdate(e.home).latest?.version).toBe("1.1.0");
+    expect(server.requests().filter((r) => r === "/latest/download/release.json")).toEqual([
+      "/latest/download/release.json",
+    ]);
+  }, 30_000);
+
+  test("a recent check, checkDaily: false, or CRANK_NO_UPDATE_CHECK=1 each prevent the fetch", async () => {
+    const server = await releaseServer(["1.1.0"]);
+    const cases: Array<{ update?: Record<string, unknown>; env?: Record<string, string> }> = [
+      { update: { checkedAtMs: Date.now() } },
+      { update: { checkDaily: false } },
+      { env: { CRANK_NO_UPDATE_CHECK: "1" } },
+    ];
+    for (const c of cases) {
+      const e = setup();
+      makeInstalledCopy(e.home, "1.0.0");
+      if (c.update) writeUpdate(e.home, c.update);
+      const d = daemon(
+        ["--sweep-ms", "50", "--idle-ms", "500"],
+        { ...e, env: { ...e.env, CRANK_RELEASE_URL: server.url, ...c.env } },
+        path.join(e.home, "current"),
+      );
+      expect(await within(d.exited, 20_000)).toBe(0);
+      expect(server.requests()).toEqual([]);
+    }
+  }, 30_000);
+
+  test("a daemon that would exit at its first sweep waits for the check to land", async () => {
+    const e = setup();
+    makeInstalledCopy(e.home, "1.0.0");
+    stopDigests(e.home);
+    const server = await releaseServer(["1.1.0"]);
+    const d = daemon(
+      ["--sweep-ms", "50"],
+      { ...e, env: { ...e.env, CRANK_RELEASE_URL: server.url } },
+      path.join(e.home, "current"),
+    );
+    expect(await within(d.exited, 20_000)).toBe(0);
+    expect(readUpdate(e.home).latest?.version).toBe("1.1.0");
+  }, 30_000);
+
+  test("a daemon run from a clone never checks", async () => {
+    const e = setup();
+    const server = await releaseServer(["1.1.0"]);
+    const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], {
+      ...e,
+      env: { ...e.env, CRANK_RELEASE_URL: server.url },
+    });
+    expect(await within(d.exited, 20_000)).toBe(0);
+    expect(server.requests()).toEqual([]);
+  }, 30_000);
+});
+
+/** Auto on, with a check just now that found the installed 1.0.0 latest. */
+const AT_LATEST = {
+  auto: true,
+  latest: { version: "1.0.0", tag: "v1.0.0", releasedAt: "2026-11-09T00:00:00Z" },
+  checkedAtMs: Date.now(),
+};
+
+describe("daemon auto-update", () => {
+  test("lets the running digest job finish, then updates ahead of the next entry, repairs and exits", async () => {
+    const a = await autoSetup([{ ...OK, hold: true }, OK], { auto: true }, ["1.1.0"]);
+    const now = Date.now();
+    for (const [stem, updatedAt] of [
+      ["s1", now - 1_000],
+      ["s2", now],
+    ] as const)
+      plantEntry(a.home, stem, {
+        transcriptPath: transcriptCopy(stem),
+        projectRoot: a.P,
+        ended: true,
+        updatedAt,
+      });
+    const d = daemon(["--sweep-ms", "50"], a, path.join(a.home, "current"));
+    await waitFor(() => {
+      if (a.fake.calls().length !== 1) return false;
+      try {
+        return readUpdate(a.home).latest?.version === "1.1.0";
+      } catch {
+        return false;
+      }
+    }, 10_000);
+    a.fake.release();
+    expect(await within(d.exited, 20_000)).toBe(0);
+    const current = path.join(a.home, "current");
+    expect(fs.readlinkSync(current)).toBe("versions/1.1.0");
+    expect(vendored(a.P)).toBe("1.1.0");
+    const calls = a.fake.calls();
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.endMs!).toBeLessThan(fs.lstatSync(current).mtimeMs);
+  }, 30_000);
+
+  test("with no newer release, a lagging project is repaired", async () => {
+    const a = await autoSetup([OK], AT_LATEST, ["1.0.0"]);
+    const file = path.join(a.P, ".crank/config.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), vendored_version: "0.9.0" }),
+    );
+    const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], a, path.join(a.home, "current"));
+    expect(await within(d.exited, 20_000)).toBe(0);
+    expect(vendored(a.P)).toBe("1.0.0");
+  }, 30_000);
+
+  test("a registered root without .crank/config.json never counts as lagging", async () => {
+    const a = await autoSetup([OK], AT_LATEST, ["1.0.0"]);
+    const C = tempDir("crank-auto-bare-");
+    withEnv({ CRANK_HOME: a.home }, () => registerProject(C));
+    const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], a, path.join(a.home, "current"));
+    expect(await within(d.exited, 20_000)).toBe(0);
+    expect(installs(a.bun)).toEqual([]);
+  }, 30_000);
+
+  test("a stopping daemon starts no update", async () => {
+    const a = await autoSetup([OK], AT_LATEST, ["1.0.0"]);
+    const file = path.join(a.P, ".crank/config.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), vendored_version: "0.9.0" }),
+    );
+    stopDigests(a.home);
+    const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], a, path.join(a.home, "current"));
+    expect(await within(d.exited, 20_000)).toBe(0);
+    expect(installs(a.bun)).toEqual([]);
+    expect(vendored(a.P)).toBe("0.9.0");
+  }, 30_000);
+
+  test("a failing auto-update runs once per daemon start", async () => {
+    const a = await autoSetup([OK], { auto: true }, ["1.1.0"]);
+    fs.writeFileSync(
+      path.join(a.release.R, "latest/download/crank-mem.tar.gz.sha256"),
+      "0".repeat(64) + "\n",
+    );
+    const d = daemon(["--sweep-ms", "50", "--idle-ms", "1000"], a, path.join(a.home, "current"));
+    expect(await within(d.exited, 20_000)).toBe(0);
+    expect(fs.readlinkSync(path.join(a.home, "current"))).toBe("versions/1.0.0");
+    expect(a.release.requests().filter((r) => r === "/latest/download/crank-mem.tar.gz")).toEqual([
+      "/latest/download/crank-mem.tar.gz",
+    ]);
+  }, 30_000);
+
+  test("a daemon run from a clone starts no update, even with a lagging project", async () => {
+    const clone = tempDir("crank-clone-");
+    for (const name of ["src", "bin", "package.json"])
+      fs.cpSync(path.join(REPO_ROOT, name), path.join(clone, name), { recursive: true });
+    const e = setup();
+    const version = JSON.parse(fs.readFileSync(path.join(clone, "package.json"), "utf8")).version;
+    writeUpdate(e.home, {
+      ...AT_LATEST,
+      latest: { version, tag: `v${version}`, releasedAt: "2026-11-09T00:00:00Z" },
+    });
+    const root = digestProject({ clone_root: clone, vendored_version: "0.0.1" }, temps);
+    withEnv({ CRANK_HOME: e.home }, () => registerProject(root));
+    const bun = fakeTool("bun", "runtime");
+    const env = { ...e.env, PATH: `${bun.dir}:${e.fake.env.PATH}` };
+    const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], { ...e, env }, clone);
+    expect(await within(d.exited, 20_000)).toBe(0);
+    expect(installs(bun)).toEqual([]);
+    expect(vendored(root)).toBe("0.0.1");
+  }, 30_000);
 });
 
 describe("daemon recovery", () => {

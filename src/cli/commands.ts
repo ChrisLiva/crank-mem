@@ -15,6 +15,8 @@ export interface CommandSpec {
   bool: string[];
   /** search reads an unknown flag as query text, so `search --max-turns` finds that option. */
   unknownIsText?: true;
+  /** Runs only from an installed copy; main.ts refuses it in a clone. */
+  installedOnly?: true;
 }
 
 export const COMMANDS = {
@@ -85,20 +87,49 @@ export const COMMANDS = {
   dashboard: {
     summary: "Serve the memory dashboard on localhost",
     usage: "Usage: crank-mem dashboard [--port <n>] [--no-open]",
-    value: ["port"],
+    value: ["port", "check-every-ms"],
     bool: ["no-open"],
   },
   upgrade: {
-    summary: "Re-vendor hooks and repair their wiring after a git pull",
-    usage: "Usage: crank-mem upgrade",
+    summary: "Repair this project's install, or every registered project with --all",
+    usage: "Usage: crank-mem upgrade [--all]",
     value: [],
-    bool: [],
+    bool: ["all"],
   },
   uninstall: {
     summary: "Remove all wiring, offer backup restore",
     usage: "Usage: crank-mem uninstall [--restore] [--delete-crank|--keep-crank] [--yes]",
     value: [],
     bool: ["restore", "yes", "delete-crank", "keep-crank"],
+  },
+  "self-install": {
+    summary: "Finish installing a downloaded release (install.sh runs it)",
+    usage: "Usage: crank-mem self-install [--yes] [--bin-dir <dir>]",
+    value: ["bin-dir", "model-host", "fetch-timeout-ms"],
+    bool: ["yes"],
+    installedOnly: true,
+  },
+  "self-uninstall": {
+    summary: "Remove the installed crank-mem, optionally from every project too",
+    usage: "Usage: crank-mem self-uninstall [--yes] [--purge] [--bin-dir <dir>]",
+    value: ["bin-dir"],
+    bool: ["yes", "purge"],
+    installedOnly: true,
+  },
+  "self-update": {
+    summary: "Update the installed crank-mem and repair every project",
+    usage:
+      "Usage: crank-mem self-update [--to vX.Y.Z] [--check] [--auto on|off] [--check-daily on|off]",
+    value: ["to", "auto", "check-daily"],
+    bool: ["check"],
+    installedOnly: true,
+  },
+  rollback: {
+    summary: "Go back to the previously installed version",
+    usage: "Usage: crank-mem rollback",
+    value: [],
+    bool: [],
+    installedOnly: true,
   },
   daemon: {
     usage: "Usage: crank-mem daemon (internal: Stop and SessionEnd start it)",

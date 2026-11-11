@@ -107,3 +107,57 @@ test("the focused project's tiles name its digest state and whether its observat
     await unmount();
   }
 });
+
+const UPDATES = {
+  installed: "1.0.0",
+  installedCopy: true,
+  latest: {
+    version: "9.9.9",
+    releasedAt: "2026-11-09T00:00:00Z",
+    notesUrl: "http://example.test/r/tag/v9.9.9",
+  },
+  available: true,
+  checkedAtMs: Date.now() - 3_600_000,
+  error: null,
+  auto: false,
+  checkDaily: true,
+  behind: [{ root: "/p", name: "proj", vendored: "0.9.0" }],
+};
+
+test("the Updates section shows both versions and the self-update command, and a failed fetch leaves the page whole", async () => {
+  const routes = {
+    "/api/projects": { projects: [PROJECT] },
+    "/api/projects/p/health": HEALTHY,
+  };
+  serve({ ...routes, "/api/updates": UPDATES });
+  let { page, unmount } = await openPage();
+  const section = page.querySelector("[aria-labelledby=updates-heading]");
+  expect(section?.textContent).toContain("1.0.0");
+  expect(section?.textContent).toContain("9.9.9");
+  expect(section?.textContent).toContain("crank-mem self-update");
+  expect(section?.querySelector("a")?.getAttribute("href")).toBe(UPDATES.latest.notesUrl);
+  expect(section?.textContent).toContain("Checked once a day against the latest release");
+  await unmount();
+
+  serve({ ...routes, "/api/updates": { ...UPDATES, checkDaily: false } });
+  ({ page, unmount } = await openPage());
+  const unchecked = page.querySelector("[aria-labelledby=updates-heading]")?.textContent;
+  expect(unchecked).toContain("Daily checks are off");
+  expect(unchecked).not.toContain("Checked once a day");
+  await unmount();
+
+  serve(routes);
+  ({ page, unmount } = await openPage());
+  expect(tile(page, "Digest")).toStartWith("On");
+  expect(page.querySelector("[aria-labelledby=updates-heading]")).toBeNull();
+  expect(page.textContent).not.toContain("/api/updates");
+  await unmount();
+
+  serve({ ...routes, "/api/updates": { ...UPDATES, installedCopy: false, available: false } });
+  ({ page, unmount } = await openPage());
+  expect(page.textContent).toContain(
+    "Running from a clone — update with git pull, then crank-mem upgrade --all",
+  );
+  expect(page.textContent).not.toContain("crank-mem self-update");
+  await unmount();
+});

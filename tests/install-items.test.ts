@@ -751,7 +751,7 @@ for (const c of failedWriteCases) {
   });
 }
 
-const REVENDORED = "  re-vendored .crank/hooks/, which differed from the clone";
+const REVENDORED = "  re-vendored .crank/hooks/, which differed from the running crank-mem";
 const OLD_MTIME = new Date("2001-01-01");
 
 /** The one entry of `.crank/backups` that `before` lacks. */

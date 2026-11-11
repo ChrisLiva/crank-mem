@@ -23,9 +23,11 @@ import {
 import { readStopState } from "../hooks/lib/user-state.ts";
 import { daemonAlive, readParked, readSpool, type SpoolItem } from "../hooks/lib/spool.ts";
 import { formatUsd, projectStatus, type HealthSummary } from "../hooks/lib/wire.ts";
-import { memoryPath, openMemory } from "../hooks/lib/memory.ts";
+import { localDate, memoryPath, openMemory } from "../hooks/lib/memory.ts";
 import { latestSnapshot } from "../hooks/lib/store-upkeep.ts";
 import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
+import { readUpdateState, updateAvailable } from "./updates.ts";
+import { installedCopy } from "./version.ts";
 
 function age(iso: string | null): string {
   if (!iso) return "never";
@@ -117,6 +119,16 @@ function memoryLines(
     ),
   );
   return lines;
+}
+
+/** The `update:` row's value: an available release, the last check's date, or no check yet. */
+function updateValue(): string {
+  const state = readUpdateState();
+  if (updateAvailable(state))
+    return `${state.latest.version} available — run \`crank-mem self-update\``;
+  if (state.latest !== null && state.checkedAtMs !== null)
+    return `up to date (checked ${localDate(state.checkedAtMs)})`;
+  return "not checked yet";
 }
 
 const MEMORY_STATE = {
@@ -236,6 +248,7 @@ export async function run(_args: string[]): Promise<number> {
   console.log(`  index size:       ${(indexSize / 1024).toFixed(1)} KB`);
   console.log(`  runtime:          ${config.runtime} (vendored ${config.vendored_version})`);
   console.log(`  injection budget: ${config.injection_budget_bytes} bytes`);
+  if (installedCopy()) console.log(row("update", updateValue()));
   for (const line of memoryLines(root, crankDir, config, index)) console.log(line);
   for (const [label, value] of await captureRows(root, config)) console.log(row(label, value));
 

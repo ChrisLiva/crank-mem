@@ -29,6 +29,7 @@ import {
   TONE_TEXT,
   WINDOWS,
 } from "./shared";
+import { UpdatesSection } from "./updates";
 
 const TREND_DAYS = 30;
 const fetchTrend = (id: string) => fetchActivity(id, TREND_DAYS);
@@ -92,6 +93,7 @@ export function HealthView({
           <ProjectCards lines={lines} />
           <ProjectsTable lines={lines} />
         </section>
+        <UpdatesSection />
         <ProjectDetail
           key={focused.id}
           project={focused}
