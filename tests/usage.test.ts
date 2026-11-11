@@ -22,6 +22,8 @@ import {
 } from "./helpers.ts";
 import { MEMORY_NEWER_NOTE, NO_MEMORY_NOTE } from "../src/hooks/lib/memory.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
+import type { UsageLine } from "../src/hooks/lib/usage.ts";
+import { usageMetrics } from "../src/cli/usage-metrics.ts";
 import {
   claudePostBash,
   claudePostRead,
@@ -870,125 +872,6 @@ function channelCounts(counts: Record<string, number>): Record<string, number> {
 }
 
 describe("usage window: the usage endpoint aggregates the log", () => {
-  for (const zone of ZONES) {
-    test(`days 7, 30 and 90, agent runs only and with manual runs, in ${zone}`, async () => {
-      const home = makeCrankHome();
-      const { root, ids, lines } = windowProject(home);
-      const [A, B, C] = ids as [number, number, number];
-      const { L1, L2, L3, L4 } = lines;
-      const title = (id: number) => TITLES[ids.indexOf(id)]!;
-      const dash = await startDashboard(home, ["--port", "0"], { env: { TZ: zone } });
-      const local = new Intl.DateTimeFormat("en-CA", { timeZone: zone });
-
-      const week = await usageOf(dash, root, "days=7&manual=0");
-      expect(week.perDay).toHaveLength(7);
-      const dates: string[] = week.perDay.map((d: { date: string }) => d.date);
-      expect(dates.at(-1)).toBe(local.format(Date.now()));
-      expect([...new Set(dates)].sort()).toEqual(dates);
-      for (const day of week.perDay) expect(Object.keys(day.counts).sort()).toEqual(CHANNELS);
-      const on = (ts: number) =>
-        week.perDay.find((d: { date: string }) => d.date === local.format(ts));
-      expect(on(L1.ts).counts.search).toBe(1);
-      expect(on(L2.ts).counts.get).toBe(1);
-      expect(totals(week)).toEqual(channelCounts({ search: 1, get: 1 }));
-      expect(week).toMatchObject({
-        searches: 1,
-        zeroResultShare: 0,
-        keywordShare: 0,
-        followThrough: 1,
-        topQueries: [
-          {
-            query: "foo bar",
-            count: 1,
-            lastMs: L1.ts,
-            meanResults: 2,
-            runs: [{ ts: L1.ts, ids: [A, B] }],
-          },
-        ],
-        neverSurfacedShare: 0.5,
-      });
-      expect(week.surfaced).toEqual([
-        { id: B, count: 2, title: title(B) },
-        { id: A, count: 1, title: title(A) },
-      ]);
-
-      const manual = await usageOf(dash, root, "days=7&manual=1");
-      expect(manual).toMatchObject({ searches: 2, keywordShare: 0.5, followThrough: 1 });
-      expect(manual.topQueries).toEqual([
-        {
-          query: "manual q",
-          count: 1,
-          lastMs: L3.ts,
-          meanResults: 1,
-          runs: [{ ts: L3.ts, ids: [A] }],
-        },
-        week.topQueries[0],
-      ]);
-      expect(manual.surfaced).toEqual([
-        { id: B, count: 2, title: title(B) },
-        { id: A, count: 2, title: title(A) },
-      ]);
-
-      const month = await usageOf(dash, root, "days=30&manual=0");
-      expect(month.perDay).toHaveLength(30);
-      expect(month).toMatchObject({
-        searches: 2,
-        zeroResultShare: 0.5,
-        keywordShare: 0.5,
-        followThrough: 1,
-        neverSurfacedShare: 0.25,
-      });
-      expect(month.topQueries).toEqual([
-        {
-          query: "foo bar",
-          count: 2,
-          lastMs: L1.ts,
-          meanResults: 1,
-          runs: [
-            { ts: L1.ts, ids: [A, B] },
-            { ts: L4.ts, ids: [] },
-          ],
-        },
-      ]);
-      expect(month.surfaced).toEqual([
-        { id: B, count: 2, title: title(B) },
-        { id: A, count: 2, title: title(A) },
-        { id: X, count: 1, title: "(deleted)" },
-        { id: C, count: 1, title: title(C) },
-      ]);
-
-      const quarter = await usageOf(dash, root, "days=90&manual=0");
-      expect(quarter.perDay).toHaveLength(90);
-      expect(quarter.searches).toBe(3);
-      expect(quarter.zeroResultShare).toBeCloseTo(1 / 3);
-      expect(quarter.keywordShare).toBeCloseTo(2 / 3);
-      expect(quarter.followThrough).toBe(0.5);
-      expect(
-        quarter.topQueries.map((q: { query: string; count: number }) => [q.query, q.count]),
-      ).toEqual([
-        ["foo bar", 2],
-        ["baz", 1],
-      ]);
-      expect(quarter.surfaced.map((s: { id: number; count: number }) => [s.id, s.count])).toEqual([
-        [A, 3],
-        [C, 2],
-        [B, 2],
-        [X, 1],
-      ]);
-      expect(quarter.neverSurfacedShare).toBe(0.25);
-      expect(quarter.filesWithoutMemory).toEqual([{ path: "b.ts", count: 1 }]);
-      expect(totals(quarter)).toEqual(
-        channelCounts({ search: 3, get: 1, "session-start": 1, "file-history": 1 }),
-      );
-
-      fs.writeFileSync(path.join(root, "gone.ts"), "export const gone = 1;\n");
-      expect((await usageOf(dash, root, "days=90&manual=0")).filesWithoutMemory).toEqual([
-        { path: "b.ts", count: 1 },
-        { path: "gone.ts", count: 1 },
-      ]);
-    }, 30_000);
-  }
-
   test("a bad days or manual gets 400, and a missing manual means 0", async () => {
     const home = makeCrankHome();
     const { root } = windowProject(home);
@@ -1010,30 +893,6 @@ describe("usage window: the usage endpoint aggregates the log", () => {
     expect(await usageOf(dash, root, "days=7")).toEqual(
       await usageOf(dash, root, "days=7&manual=0"),
     );
-  }, 20_000);
-
-  test("a missing usage log answers zero counts and null shares", async () => {
-    const home = makeCrankHome();
-    const root = registeredProject(home);
-    seedMemory(
-      root,
-      TITLES.map((title) => ({ title })),
-    );
-    const dash = await startDashboard(home, ["--port", "0"]);
-    const body = await usageOf(dash, root, "days=7");
-    expect(body.perDay).toHaveLength(7);
-    for (const day of body.perDay) expect(day.counts).toEqual(channelCounts({}));
-    expect(body).toEqual({
-      perDay: body.perDay,
-      searches: 0,
-      zeroResultShare: null,
-      keywordShare: null,
-      followThrough: null,
-      topQueries: [],
-      surfaced: [],
-      neverSurfacedShare: 1,
-      filesWithoutMemory: [],
-    });
   }, 20_000);
 
   test("a store that does not open still answers the log's metrics, with no titles", async () => {
@@ -1084,33 +943,192 @@ describe("usage window: the usage endpoint aggregates the log", () => {
       JSON.stringify(searchLine(Date.now() - 1000, "claude", "s5", "later", [])) + "\n",
     );
     expect((await usageOf(dash, root, "days=30&manual=0")).searches).toBe(3);
-  }, 20_000);
-
-  test("follow-through needs the same session within 30 minutes, and a query keeps its last 10 runs", async () => {
-    const home = makeCrankHome();
-    const root = registeredProject(home);
-    const T = Date.now() - D;
-    const actor = (session: string) => ({ v: 1, agent: "claude", session });
-    writeLog(root, [
-      searchLine(T, "claude", "s1", "one", [1]),
-      { ...actor("s2"), ts: T + 60_000, channel: "get", requested: [1], found: [1] },
-      searchLine(T + 7_200_000, "claude", "s1", "two", [2]),
-      { ...actor("s1"), ts: T + 9_060_000, channel: "get", requested: [2], found: [2] },
-      searchLine(T + 14_400_000, "claude", "s1", "three", [3]),
-      { ...actor("s1"), ts: T + 16_140_000, channel: "timeline", anchor: 3, depth: 5, ids: [3] },
-      ...Array.from({ length: 11 }, (_, i) =>
-        searchLine(T + 18_000_000 + i, "claude", null, "again", []),
-      ),
+    const empty = async () => (await usageOf(dash, root, "days=90&manual=0")).filesWithoutMemory;
+    expect(await empty()).toEqual([{ path: "b.ts", count: 1 }]);
+    fs.writeFileSync(path.join(root, "gone.ts"), "export const gone = 1;\n");
+    expect(await empty()).toEqual([
+      { path: "b.ts", count: 1 },
+      { path: "gone.ts", count: 1 },
     ]);
-    const dash = await startDashboard(home, ["--port", "0"]);
-    const body = await usageOf(dash, root, "days=7&manual=0");
+  }, 20_000);
+});
+
+const NOW = Date.UTC(2026, 10, 10, 12);
+const IDS = [1, 2, 3, 4];
+
+/** Runs `fn` in `zone`, then restores the UTC `bun test` starts in; `delete` would fall back to the machine zone. */
+function inZone<T>(zone: string, fn: () => T): T {
+  process.env.TZ = zone;
+  try {
+    return fn();
+  } finally {
+    process.env.TZ = "UTC";
+  }
+}
+
+/** `usageMetrics` at NOW over `events`, with IDS titled as TITLES and every other id absent. */
+function metricsOf(events: object[], days: 7 | 30 | 90, manual = false) {
+  return usageMetrics(events as UsageLine[], {
+    nowMs: NOW,
+    days,
+    manual,
+    titles: (ids) =>
+      new Map(ids.filter((id) => IDS.includes(id)).map((id) => [id, TITLES[IDS.indexOf(id)]!])),
+    observationCount: IDS.length,
+  });
+}
+
+describe("usageMetrics (in-process)", () => {
+  for (const zone of ZONES) {
+    test(`days 7, 30 and 90, agent runs only and with manual runs, in ${zone}`, () => {
+      inZone(zone, () => {
+        const [A, B, C] = IDS as [number, number, number];
+        const { L1, L2, L3, L4, L5, L6, L7, L8 } = windowLines(NOW, IDS);
+        const events = [L1, L2, L3, L4, L5, L6, L7, L8];
+        const title = (id: number) => TITLES[IDS.indexOf(id)]!;
+        const local = new Intl.DateTimeFormat("en-CA", { timeZone: zone });
+
+        const week = metricsOf(events, 7);
+        expect(week.perDay).toHaveLength(7);
+        const dates = week.perDay.map((d) => d.date);
+        expect(dates.at(-1)).toBe(local.format(NOW));
+        expect([...new Set(dates)].sort()).toEqual(dates);
+        for (const day of week.perDay) expect(Object.keys(day.counts).sort()).toEqual(CHANNELS);
+        const on = (ts: number) => week.perDay.find((d) => d.date === local.format(ts))!;
+        expect(on(L1.ts).counts.search).toBe(1);
+        expect(on(L2.ts).counts.get).toBe(1);
+        expect(totals(week)).toEqual(channelCounts({ search: 1, get: 1 }));
+        expect(week).toMatchObject({
+          searches: 1,
+          zeroResultShare: 0,
+          keywordShare: 0,
+          followThrough: 1,
+          topQueries: [
+            {
+              query: "foo bar",
+              count: 1,
+              lastMs: L1.ts,
+              meanResults: 2,
+              runs: [{ ts: L1.ts, ids: [A, B] }],
+            },
+          ],
+          neverSurfacedShare: 0.5,
+        });
+        expect(week.surfaced).toEqual([
+          { id: B, count: 2, title: title(B) },
+          { id: A, count: 1, title: title(A) },
+        ]);
+
+        const manual = metricsOf(events, 7, true);
+        expect(manual).toMatchObject({ searches: 2, keywordShare: 0.5, followThrough: 1 });
+        expect(manual.topQueries).toEqual([
+          {
+            query: "manual q",
+            count: 1,
+            lastMs: L3.ts,
+            meanResults: 1,
+            runs: [{ ts: L3.ts, ids: [A] }],
+          },
+          week.topQueries[0]!,
+        ]);
+        expect(manual.surfaced).toEqual([
+          { id: B, count: 2, title: title(B) },
+          { id: A, count: 2, title: title(A) },
+        ]);
+
+        const month = metricsOf(events, 30);
+        expect(month.perDay).toHaveLength(30);
+        expect(month).toMatchObject({
+          searches: 2,
+          zeroResultShare: 0.5,
+          keywordShare: 0.5,
+          followThrough: 1,
+          neverSurfacedShare: 0.25,
+        });
+        expect(month.topQueries).toEqual([
+          {
+            query: "foo bar",
+            count: 2,
+            lastMs: L1.ts,
+            meanResults: 1,
+            runs: [
+              { ts: L1.ts, ids: [A, B] },
+              { ts: L4.ts, ids: [] },
+            ],
+          },
+        ]);
+        expect(month.surfaced).toEqual([
+          { id: B, count: 2, title: title(B) },
+          { id: A, count: 2, title: title(A) },
+          { id: X, count: 1, title: "(deleted)" },
+          { id: C, count: 1, title: title(C) },
+        ]);
+
+        const quarter = metricsOf(events, 90);
+        expect(quarter.perDay).toHaveLength(90);
+        expect(quarter.searches).toBe(3);
+        expect(quarter.zeroResultShare).toBeCloseTo(1 / 3);
+        expect(quarter.keywordShare).toBeCloseTo(2 / 3);
+        expect(quarter.followThrough).toBe(0.5);
+        expect(quarter.topQueries.map((q) => [q.query, q.count])).toEqual([
+          ["foo bar", 2],
+          ["baz", 1],
+        ]);
+        expect(quarter.surfaced.map((s) => [s.id, s.count])).toEqual([
+          [A, 3],
+          [C, 2],
+          [B, 2],
+          [X, 1],
+        ]);
+        expect(quarter.neverSurfacedShare).toBe(0.25);
+        expect(totals(quarter)).toEqual(
+          channelCounts({ search: 3, get: 1, "session-start": 1, "file-history": 1 }),
+        );
+      });
+    });
+  }
+
+  test("a missing usage log answers zero counts and null shares", () => {
+    const body = metricsOf([], 7);
+    expect(body.perDay).toHaveLength(7);
+    for (const day of body.perDay) expect(day.counts).toEqual(channelCounts({}));
+    expect(body).toEqual({
+      perDay: body.perDay,
+      searches: 0,
+      zeroResultShare: null,
+      keywordShare: null,
+      followThrough: null,
+      topQueries: [],
+      surfaced: [],
+      neverSurfacedShare: 1,
+      filesWithoutMemory: [],
+    });
+  });
+
+  test("follow-through needs the same session within 30 minutes, and a query keeps its last 10 runs", () => {
+    const T = NOW - D;
+    const actor = (session: string) => ({ v: 1, agent: "claude", session });
+    const body = metricsOf(
+      [
+        searchLine(T, "claude", "s1", "one", [1]),
+        { ...actor("s2"), ts: T + 60_000, channel: "get", requested: [1], found: [1] },
+        searchLine(T + 7_200_000, "claude", "s1", "two", [2]),
+        { ...actor("s1"), ts: T + 9_060_000, channel: "get", requested: [2], found: [2] },
+        searchLine(T + 14_400_000, "claude", "s1", "three", [3]),
+        { ...actor("s1"), ts: T + 16_140_000, channel: "timeline", anchor: 3, depth: 5, ids: [3] },
+        ...Array.from({ length: 11 }, (_, i) =>
+          searchLine(T + 18_000_000 + i, "claude", null, "again", []),
+        ),
+      ],
+      7,
+    );
     expect(body.followThrough).toBeCloseTo(1 / 3);
-    const again = body.topQueries.find((q: { query: string }) => q.query === "again");
+    const again = body.topQueries.find((q) => q.query === "again")!;
     expect(again.count).toBe(11);
-    expect(again.runs.map((r: { ts: number }) => r.ts)).toEqual(
+    expect(again.runs.map((r) => r.ts)).toEqual(
       Array.from({ length: 10 }, (_, i) => T + 18_000_010 - i),
     );
-  }, 20_000);
+  });
 });
 
 describe("usage capture: the journey's lines reach the usage endpoint", () => {
