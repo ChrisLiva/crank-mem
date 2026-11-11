@@ -125,7 +125,7 @@ function memoryLines(
 function updateValue(): string {
   const state = readUpdateState();
   if (updateAvailable(state))
-    return `${state.latest!.version} available — run \`crank-mem self-update\``;
+    return `${state.latest.version} available — run \`crank-mem self-update\``;
   if (state.latest !== null && state.checkedAtMs !== null)
     return `up to date (checked ${localDate(state.checkedAtMs)})`;
   return "not checked yet";

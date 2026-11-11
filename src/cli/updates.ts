@@ -102,7 +102,9 @@ export function laggingProjects(
 }
 
 /** True when the running copy is installed and the last check found a newer release. */
-export function updateAvailable(state: UpdateState): boolean {
+export function updateAvailable(
+  state: UpdateState,
+): state is UpdateState & { latest: NonNullable<UpdateState["latest"]> } {
   return installedCopy() && state.latest !== null && newer(state.latest.version, cliVersion());
 }
 
@@ -110,7 +112,7 @@ export function updateAvailable(state: UpdateState): boolean {
 export function updateNotice(): string | null {
   const state = readUpdateState();
   if (!updateAvailable(state)) return null;
-  return `crank-mem ${state.latest!.version} is available (installed ${cliVersion()}) — run \`crank-mem self-update\`.`;
+  return `crank-mem ${state.latest.version} is available (installed ${cliVersion()}) — run \`crank-mem self-update\`.`;
 }
 
 /** Writes `updateNotice()` to stderr when there is one. */
