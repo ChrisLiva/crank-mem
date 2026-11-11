@@ -382,7 +382,7 @@ describe("vendored-hook drift (black-box)", () => {
   test("a lagging install gets exactly one line naming both versions and the fix", () => {
     const ctx = injectWith({ vendored_version: "0.3.2", clone_root: fakeClone("0.5.0") });
     expect(ctx).toContain(
-      "_Note: crank-mem hooks are at 0.3.2, clone is at 0.5.0 — run `crank-mem upgrade`._",
+      "_Note: crank-mem hooks are at 0.3.2, crank-mem is at 0.5.0 — run `crank-mem upgrade`._",
     );
     expect((ctx.match(/run `crank-mem upgrade`/g) ?? []).length).toBe(1);
   });
