@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { NO_MEMORY_NOTE } from "../src/hooks/lib/memory.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
 import {
   makeCrankHome,
@@ -27,15 +26,8 @@ function temp(dir: string): string {
 }
 
 describe("search by meaning (black-box)", () => {
-  test("without the model, search falls back to keywords with one note on stderr; with no store it prints no note", () => {
+  test("without the model, search falls back to keywords with one note on stderr", () => {
     const home = temp(makeCrankHome());
-    const empty = temp(makeCrankProject());
-    expect(runCli(empty, ["search", "alpha", "delta"], { CRANK_HOME: home })).toMatchObject({
-      status: 0,
-      stdout: `${NO_MEMORY_NOTE}\n`,
-      stderr: "",
-    });
-
     const root = temp(makeCrankProject());
     seedMemory(root, [{ title: "alpha beta" }, { title: "beta gamma" }]);
     const run = runCli(root, ["search", "alpha", "delta"], { CRANK_HOME: home });

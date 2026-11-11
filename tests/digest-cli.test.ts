@@ -38,16 +38,6 @@ function localConfigPath(root: string): string {
   return path.join(root, ".crank/config.local.json");
 }
 
-describe("digest config", () => {
-  test("init writes no digest key and no local config", () => {
-    const root = tempDir("crank-digest-");
-    fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
-    expect(runCli(root, ["init", "--yes"]).status).toBe(0);
-    expect("digest" in readConfig(root)).toBe(false);
-    expect(fs.existsSync(localConfigPath(root))).toBe(false);
-  });
-});
-
 const ON = "crank-mem: digests on. They run on your Claude login through `claude -p`.\n";
 const OFF = "crank-mem: digests off. Stored memory stays readable.\n";
 const USAGE = "Usage: crank-mem digest on|off|resume\n";
@@ -56,6 +46,8 @@ describe("digest on|off", () => {
   test("on and off flip the config from the project root and print the exact line", () => {
     const root = initedCopy();
     const shared = fs.readFileSync(path.join(root, ".crank/config.json"));
+    expect("digest" in readConfig(root)).toBe(false);
+    expect(fs.existsSync(localConfigPath(root))).toBe(false);
     const on = runCli(root, ["digest", "on"]);
     expect(on.status).toBe(0);
     expect(on.stdout).toBe(ON);
@@ -114,18 +106,6 @@ describe("digest in git projects", () => {
       runHook("src/hooks/stop.ts", JSON.stringify(payload), worktree, { CRANK_HOME: home }).status,
     ).toBe(0);
     expect(spoolFiles(home)).toEqual([]);
-  });
-});
-
-describe("digest outside a project", () => {
-  test("on and off print the init hint and exit 1", () => {
-    const bare = tempDir("crank-digest-bare-");
-    for (const sub of ["on", "off"]) {
-      const run = runCli(bare, ["digest", sub]);
-      expect(run.status).toBe(1);
-      expect(run.stderr).toContain("not initialized here");
-      expect(fs.existsSync(path.join(bare, ".crank"))).toBe(false);
-    }
   });
 });
 
@@ -205,13 +185,5 @@ describe("user state under the crank home", () => {
     expect(writeTextAtomic(missing, "x", "a")).toBe(false);
     expect(fs.existsSync(missing)).toBe(false);
     expect(fs.readdirSync(dir).sort()).toEqual(["cerebrum.md"]);
-  });
-});
-
-describe("help", () => {
-  test("usage lists the digest command", () => {
-    expect(runCli(tempDir("crank-digest-help-"), ["--help"]).stdout).toContain(
-      "digest          Turn background digests on or off, or resume them\n",
-    );
   });
 });

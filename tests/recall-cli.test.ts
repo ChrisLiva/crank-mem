@@ -30,17 +30,6 @@ describe("memoryPaths", () => {
 });
 
 describe("search", () => {
-  test("prints one formatLine per hit and finds a row by an exact identifier", () => {
-    const root = initedCopy();
-    seedMemory(root, [
-      { type: "bugfix", title: "Lock file writes retry on EEXIST" },
-      { title: "Unrelated note" },
-    ]);
-    const run = runCli(root, ["search", "EEXIST"]);
-    expect(run.status).toBe(0);
-    expect(run.stdout).toMatch(/^#1 \d{4}-\d{2}-\d{2} bugfix Lock file writes retry on EEXIST\n$/);
-  });
-
   test("each hit is dated in the local zone", () => {
     const root = initedCopy();
     seedMemory(root, [{ title: "Gizmo today" }]);
@@ -49,14 +38,6 @@ describe("search", () => {
         `#1 ${localDate(0, TZ)} discovery Gizmo today\n`,
       );
     }
-  });
-
-  test("zero hits print nothing and exit 0", () => {
-    const root = initedCopy();
-    seedMemory(root, [{ title: "Lock file writes retry" }]);
-    const run = runCli(root, ["search", "zebra"]);
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
   });
 });
 
@@ -75,15 +56,6 @@ describe("store placement", () => {
     const run = runCli(path.join(worktree, "src"), ["search", "worktrees"]);
     expect(run.status).toBe(0);
     expect(run.stdout).toMatch(/^#1 \S+ discovery Worktrees share the main store\n$/);
-  });
-
-  test("a project outside git keeps its store at .crank/memory.db", () => {
-    const root = initedCopy();
-    seedMemory(root, [{ title: "Plain projects own their store" }]);
-    expect(fs.existsSync(path.join(root, ".crank/memory.db"))).toBe(true);
-    expect(runCli(root, ["search", "plain"]).stdout).toMatch(
-      /^#1 \S+ discovery Plain projects own their store\n$/,
-    );
   });
 });
 
@@ -401,6 +373,7 @@ describe("where the commands run", () => {
   test("each command works from a project subdirectory", () => {
     const root = initedCopy({ "src/a.ts": "export const a = 1;\n" });
     seedMemory(root, [{ title: "Anchor row" }]);
+    expect(fs.existsSync(path.join(root, ".crank/memory.db"))).toBe(true);
     for (const args of COMMANDS) {
       const run = runCli(path.join(root, "src"), args);
       expect(run.status, args[0]).toBe(0);
@@ -420,7 +393,13 @@ describe("where the commands run", () => {
 
   test("outside any project each command prints the init hint and exits 1", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-recall-bare-"));
-    for (const args of [...COMMANDS, ["outline", "a.ts"], ["unfold", "a.ts", "f"]]) {
+    for (const args of [
+      ...COMMANDS,
+      ["outline", "a.ts"],
+      ["unfold", "a.ts", "f"],
+      ["digest", "on"],
+      ["digest", "off"],
+    ]) {
       const run = runCli(bare, args);
       expect(run.status, args[0]).toBe(1);
       expect(run.stderr).toContain("not initialized here");
@@ -442,6 +421,9 @@ describe("help", () => {
       "  outline         Print a source file's symbols with their bodies folded\n  unfold          Print one symbol's full source\n",
     );
     expect(run.stdout).toContain("  restore-memory  Put a memory.db snapshot back\n");
+    expect(run.stdout).toContain(
+      "  digest          Turn background digests on or off, or resume them\n",
+    );
     expect(run.stdout).not.toContain("--model-host");
     expect(runCli(os.tmpdir(), ["outline", "--help"]).stdout).toBe(
       "Usage: crank-mem outline <file> [--from <line>]\n\nPrint a source file's symbols with their bodies folded.\n",

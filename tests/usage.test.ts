@@ -509,7 +509,7 @@ describe("usage capture: the search, timeline and get lines", () => {
       file: null,
       stale: false,
     });
-    expect(claudeCli(root, ["search", "zzz-none"]).stdout).toBe("");
+    expect(claudeCli(root, ["search", "zzz-none"])).toMatchObject({ status: 0, stdout: "" });
     expect(usageLines(root)[2]!.ids).toEqual([]);
     const key = "AKIA" + "IOSFODNN7EXAMPL" + "E";
     expect(claudeCli(root, ["search", `key ${key}`]).status).toBe(0);
