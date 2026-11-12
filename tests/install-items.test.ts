@@ -424,9 +424,12 @@ test("uninstall reports an unwritable .gitignore once and carries on", () => {
   initIn(p, "ignore", "review");
   const gitignore = path.join(root, ".gitignore");
   let un: Report;
+  let again: CliRun;
   try {
     fs.chmodSync(gitignore, 0o000);
     un = uninstallIn(p);
+    // The CLI's removal pass and its legacy sweep both reach .gitignore.
+    again = cli(root, p.codexHome, p.home, "uninstall", "--yes");
   } finally {
     fs.chmodSync(gitignore, 0o644);
   }
@@ -435,6 +438,10 @@ test("uninstall reports an unwritable .gitignore once and carries on", () => {
   expect(un.warnings[0]!.startsWith(GITIGNORE_EACCES)).toBe(true);
   expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
   expect(fs.existsSync(path.join(root, ".codex/hooks.json"))).toBe(false);
+  expect(again.status).toBe(1);
+  const lines = again.stderr.split("\n").filter((l) => l !== "");
+  expect(lines.length).toBe(1);
+  expect(lines[0]!.startsWith(GITIGNORE_EACCES)).toBe(true);
 });
 
 test("a legacy-only uninstall reports an unreadable .gitignore and still sweeps crank/", () => {
