@@ -332,6 +332,7 @@ export function seedMemory(
     nextSteps?: string;
     proposals?: DigestInput["proposals"];
     stale?: DigestInput["stale"];
+    request?: string;
   } = {},
 ): number[] {
   const n = ++seedCount;
@@ -347,7 +348,7 @@ export function seedMemory(
       model: "seed",
       costUsd: opts.costUsd ?? 0,
       summary: {
-        request: "s",
+        request: opts.request ?? "s",
         investigated: "s",
         learned: "s",
         completed: "s",

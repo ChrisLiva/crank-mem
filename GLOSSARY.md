@@ -79,7 +79,7 @@ _Avoid_: Spike, manual test
 ### Anatomy
 
 **Anatomy**:
-The per-file record of a project: each indexed file's description, token size and symbols with their line ranges.
+The per-file record of a project: each indexed file's description, token size, symbols with their line ranges and the repo files it imports.
 _Avoid_: The index, anatomy index, file map
 
 **Indexable file**:
