@@ -39,6 +39,11 @@ const C_EXTENSIONS = [".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"];
 // A quoted `#include "<path>"`; angle includes name system headers and do not match.
 const C_INCLUDE = /^[ \t]*#[ \t]*include[ \t]*"(?<path>[^"\n]+)"/gm;
 
+// `namespace <name>` (block or file-scoped), or a `using <name>;` directive
+// (optionally `global`); `using static` and `using <alias> = …` do not match.
+const CS_NAMESPACE =
+  /^[ \t]*namespace[ \t]+(?<declares>[\w.]+)|^[ \t]*(?:global[ \t]+)?using[ \t]+(?!static\b)(?<uses>[\w.]+)[ \t]*;/gm;
+
 const MAX_LINKS = 50;
 
 function firstUnique(values: string[]): string[] {
@@ -240,6 +245,19 @@ function cImports(rootDir: string, importer: string, content: string): string[] 
   return found;
 }
 
+function csNamespaces(content: string): NonNullable<FileEntry["namespaces"]> {
+  const declares: string[] = [];
+  const uses: string[] = [];
+  for (const m of content.matchAll(CS_NAMESPACE)) {
+    if (m.groups!.declares !== undefined) declares.push(m.groups!.declares);
+    else uses.push(m.groups!.uses!);
+  }
+  const namespaces: NonNullable<FileEntry["namespaces"]> = {};
+  if (declares.length > 0) namespaces.declares = firstUnique(declares);
+  if (uses.length > 0) namespaces.uses = firstUnique(uses);
+  return namespaces;
+}
+
 function tsJsImports(rootDir: string, importer: string, content: string): string[] {
   const found: string[] = [];
   for (const m of content.matchAll(TS_JS_SPECIFIER)) {
@@ -251,8 +269,9 @@ function tsJsImports(rootDir: string, importer: string, content: string): string
 }
 
 /**
- * The files `relPath` imports, as repo-relative paths in source order. `{}`
- * when nothing resolves; never throws, since indexFile must not.
+ * The files `relPath` imports, as repo-relative paths in source order, or for
+ * C# the namespaces it declares and uses. `{}` when nothing resolves; never
+ * throws, since indexFile must not.
  */
 export function fileLinks(
   rootDir: string,
@@ -264,6 +283,10 @@ export function fileLinks(
     const importer = toPosix(relPath);
     if (content.length > SYMBOL_MAX_BYTES) return {};
     const ext = path.posix.extname(importer).toLowerCase();
+    if (ext === ".cs") {
+      const namespaces = csNamespaces(content);
+      return Object.keys(namespaces).length > 0 ? { namespaces } : {};
+    }
     const targets = TS_JS_EXTENSIONS.includes(ext)
       ? tsJsImports(rootDir, importer, content)
       : ext === ".py"

@@ -263,3 +263,41 @@ test("C/C++ quoted includes resolve beside the file, else from the project root"
   expect(index.files["src/main.c"].imports).toEqual(["src/util.h", "include/api.h"]);
   expect(index.files["src/x.cpp"].imports).toEqual(["src/x.hpp"]);
 });
+
+test("C# files record declared and used namespaces, never imports", () => {
+  const numbers = Array.from({ length: 51 }, (_, i) => String(i + 1).padStart(2, "0"));
+  const files: Record<string, string> = {
+    "src/Core/A.cs": "namespace App.Core {\n  class A {}\n}\n",
+    "src/Data/B.cs": [
+      "using App.Core;",
+      "using static System.Math;",
+      "using Alias = App.Core.A;",
+      "global using App.Util;",
+      "global using G = App.Other;",
+      "using App.Core;",
+      "namespace App.Data;",
+      "class B {}",
+      "",
+    ].join("\n"),
+    "src/C.cs": "using System;\nclass C {}\n",
+    "src/D.cs": "class D {}\n",
+    "src/Many.cs": numbers.map((n) => `using N${n};\n`).join(""),
+    "src/Big.cs": "using App.Core;\n" + "// pad\n".repeat(37450),
+  };
+  const { index } = scanIndex(files);
+  expect(files["src/Big.cs"]!.length).toBe(262_166);
+  expect(index.files["src/Core/A.cs"].namespaces).toEqual({ declares: ["App.Core"] });
+  expect(index.files["src/Data/B.cs"].namespaces).toEqual({
+    declares: ["App.Data"],
+    uses: ["App.Core", "App.Util"],
+  });
+  expect(index.files["src/C.cs"].namespaces).toEqual({ uses: ["System"] });
+  expect(index.files["src/D.cs"]).toBeDefined();
+  expect("namespaces" in index.files["src/D.cs"]).toBe(false);
+  const many = index.files["src/Many.cs"].namespaces.uses;
+  expect(many).toHaveLength(50);
+  expect(many[49]).toBe("N50");
+  expect(index.files["src/Big.cs"]).toBeDefined();
+  expect("namespaces" in index.files["src/Big.cs"]).toBe(false);
+  for (const rel of Object.keys(files)) expect("imports" in index.files[rel]).toBe(false);
+});
