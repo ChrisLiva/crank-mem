@@ -25,8 +25,8 @@ import type { ObservationLine } from "./wire.ts";
 // file map, the code pointer, and the recall pointer when recallApplies) → staleness/drift/
 // capture notes → the recall sections from memory.db (next steps, only while
 // digests run, then recent memory) → cerebrum excerpt → ADR filenames. No
-// digest state asks the agent to keep memory: the instructions carry no upkeep
-// protocol and the excerpt labels its sections by name alone.
+// digest state asks the agent to keep memory: the excerpt labels its sections
+// by name alone.
 //
 // The map is not injected, only a one-line pointer to it. Inlining the map
 // cost 74% of the injection; ADR 0005 records the measurement.
@@ -56,7 +56,7 @@ export const CODE_BULLET =
   "- Code: `crank-mem outline <file>` lists a source file's symbols with line ranges, and `crank-mem unfold <file> <symbol|line>` prints one in full.";
 
 /**
- * Cerebrum sections read as semantic memory, lowercased. `## Memory` is the
+ * Cerebrum sections read as memory bullets, lowercased. `## Memory` is the
  * canonical heading; the other two are read for the installs that predate it.
  * Legacy headings are read as-is: consolidation edits bullets, never headings.
  */
@@ -193,16 +193,12 @@ export interface Excerpt {
  * The injected slice of cerebrum.md: User Preferences, then the most recent
  * memory bullets, whole.
  *
- * The file is walked once, top to bottom, and every bullet lands in one of two
- * buckets by the `## ` heading above it — so an unmigrated file's Key Learnings
- * and Do-Not-Repeat sections read as one merged memory section, in DOCUMENT
- * order. Document order matters: an agent that appends a fresh `## Memory` to
- * the bottom of an unmigrated file would, under a fixed section sequence, have
- * its newest bullets sorted to the front and trimmed away first.
+ * Every bullet lands in one of two buckets by the `## ` heading above it, in
+ * document order, so an unmigrated file's Key Learnings and Do-Not-Repeat
+ * sections read as one merged memory section.
  *
- * Bullets arrive whole — wrapped prose, sub-bullets and all (see lib/bullets.ts)
- * — because the first physical line of an agent-written bullet is usually a
- * fragment, and half a learning is worse than none. The file's own headings
+ * Bullets arrive whole, wrapped prose and sub-bullets included (see
+ * lib/bullets.ts): half a learning is worse than none. The file's own headings
  * never appear inside a bucket; each bucket is labelled by its name alone.
  *
  * Every bullet left out, older memory or preferences over PREFS_TOKEN_CAP, is
@@ -214,9 +210,8 @@ export interface Excerpt {
  * goes first while the memory index is over MEMORY_INDEX_ALLOWANCE_BYTES, then
  * the oldest recent memory bullet, which joins the index, then the rest of the
  * memory index, then the preference index entries, then the oldest preference:
- * what an agent just recorded is what the next session most needs, and a
- * user-stated preference outranks anything the agent inferred. Nothing is ever
- * cut mid-bullet.
+ * the newest bullets consolidation added are what the next session most needs,
+ * and a user-stated preference outranks anything the agent inferred.
  *
  * `balanced` drops both index lists first, then the oldest bullet of whichever
  * kind takes more bytes, so a 2,048-byte budget still carries a memory bullet
@@ -528,7 +523,6 @@ export function composeInjection(
   return { text: parts.join(SEP), excerpt, shown };
 }
 
-/** Add each non-empty note through `fit`; returns how many fit. */
 function noteSections(notes: string[], fit: (section: string) => boolean): number {
   let count = 0;
   for (const note of notes) if (note && fit(`_Note: ${note}_`)) count++;

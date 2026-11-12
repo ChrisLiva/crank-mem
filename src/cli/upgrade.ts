@@ -23,21 +23,12 @@ import { fullScan } from "../hooks/lib/scanner.ts";
 import { commitIndex, INDEX_FILE, INDEX_VERSION } from "../hooks/lib/store.ts";
 import { scanCompleteLine } from "./scan.ts";
 
-// Non-interactive: after a `git pull` in the clone or a new installed copy,
-// repair every install item (src/cli/install.ts) to the recorded install: the
-// vendored hooks (on a version change, or whenever they differ from the tool),
-// the hook wiring, the .crank/.gitignore allowlist, the git mode's ignore
-// state, a missing cerebrum and the project registry. First, once per run, it
-// installs the tool's packages and, in a clone, rebuilds the dashboard when its
-// build is not for this version. `--all` repairs every registered project
-// instead of the current directory, each under its anatomy lock.
-// Of config.json it updates only vendored_version, clone_root and a missing codex.
-// Of cerebrum it seeds a missing one from the template and replaces only an
-// unedited 0.8.1 template preamble, after backing the file up; it scans an index
-// that is missing or not at INDEX_VERSION. Recomputes Codex trusted hashes only
-// when the config records trust and an entry is missing, stale or a PascalCase
-// orphan.
-// Exits 1 when any repair failed, after every step has run.
+// Non-interactive. Once per run it installs the tool's packages and, in a
+// clone, rebuilds a dashboard not built for this version. `--all` repairs every
+// registered project, each under its anatomy lock. Of config.json it updates
+// only vendored_version, clone_root and a missing codex; it scans an index that
+// is missing or not at INDEX_VERSION. Exits 1 when any repair failed, after
+// every step has run. src/cli/install.ts → ITEMS holds the per-item repair rules.
 
 export async function run(args: string[]): Promise<number> {
   printUpdateNotice();

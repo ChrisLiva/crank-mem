@@ -103,7 +103,7 @@ export const claudeWiring: InstallItem = {
   },
 };
 
-// Trust is rewritten only when an entry is missing or stale or an older
+// Trust is rewritten only when an entry is missing or outdated or an older
 // release's PascalCase orphan is present, so an install already trusted keeps
 // its config.toml untouched. Callers skip this for a skip install.
 function ensureCodexWiring(ctx: InstallContext): {

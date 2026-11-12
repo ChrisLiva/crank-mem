@@ -137,7 +137,6 @@ function pageOf<T>(
   return { rows: kept, next: rows.length > limit ? cursor(kept[kept.length - 1]!) : null };
 }
 
-/** A decimal row id, or null for anything else. */
 function parseId(s: string): number | null {
   return /^\d+$/.test(s) ? Number(s) : null;
 }

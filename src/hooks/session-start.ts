@@ -18,7 +18,7 @@ import { registerProject } from "./lib/registry.ts";
 // SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
 // included. Refreshes the index under lock, then emits the injection via
 // hookSpecificOutput.additionalContext. sessionStartInjection applies the digest
-// gate (ADR 0010); no state carries an upkeep prompt, and journal.md is never read.
+// gate (ADR 0010).
 // Advisory-only: every path exits 0.
 
 const REFRESH_BUDGET_MS = 2_000;

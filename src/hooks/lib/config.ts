@@ -27,8 +27,7 @@ export const CONFIG_FILE = "config.json";
 export const LOCAL_CONFIG_FILE = "config.local.json";
 const MAX_FILE_SIZE_BYTES = 1024 * 1024;
 
-// Hidden paths (.git, .claude, .codex, .crank itself, …) are excluded by the
-// always-on dot rule in isExcluded, so only non-hidden names belong here.
+// Hidden names are excluded by isExcluded's dot rule.
 export const DEFAULT_EXCLUDES = [
   "node_modules",
   "dist",
@@ -61,8 +60,9 @@ export interface CrankConfig {
   runtime: "bun" | "node";
   vendored_version: string;
   /**
-   * Absolute path to the crank-mem clone these hooks were vendored from, so a
-   * session start can compare versions and report drift (lib/drift.ts). Empty
+   * Absolute path to the crank-mem these hooks were vendored from: a clone or
+   * an installed copy's `current` link, so a session start can compare versions
+   * and report drift (lib/drift.ts). Empty
    * on installs predating the field; `upgrade` stamps it.
    */
   clone_root: string;
@@ -176,8 +176,6 @@ export function saveConfig(crankDir: string, config: CrankConfig): void {
   if (digest) fs.writeFileSync(local, JSON.stringify({ digest: true }, null, 2) + "\n");
   else fs.rmSync(local, { force: true });
 }
-
-// ── Sensitive filter (always on, regardless of config) ──────────────────────
 
 const SENSITIVE_EXTENSIONS = new Set([
   ".pem",

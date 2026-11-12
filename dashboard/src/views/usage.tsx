@@ -22,7 +22,6 @@ import {
   WINDOWS,
 } from "./shared";
 
-/** A share as a whole percent, or `—` when there was nothing to divide. */
 function percent(share: number | null): string {
   return share === null ? "—" : `${Math.round(share * 100)}%`;
 }

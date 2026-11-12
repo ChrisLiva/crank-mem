@@ -72,7 +72,7 @@ export function installPackages(dir: string, opts: { production?: boolean } = {}
       );
 }
 
-/** Builds the dashboard into `dist/` and stamps it with this clone's version. */
+/** Builds the dashboard into `dist/` and stamps it with the running crank-mem's version. */
 function buildDashboard(): InstallResult {
   const built = runTool(dashboardDir(), ["run", "build"], ["run", "build"]);
   if (!built.ok) return built;

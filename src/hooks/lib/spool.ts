@@ -76,7 +76,7 @@ function writeSignal(
   writeJsonAtomic(path.join(spoolDir(), stem + EXT), entry);
 }
 
-/** The hooks' entry point: signal when the project turned digests on. Never throws. */
+/** The hooks' entry point: write the session's spool entry when the project turned digests on. Never throws. */
 export function signalDigest(
   payload: HookPayload,
   projectRoot: string,

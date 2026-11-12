@@ -94,7 +94,6 @@ function Meta({ children }: { children: ReactNode }) {
   );
 }
 
-/** A cerebrum bullet's text, without its leading `- `. */
 const bulletText = (bullet: string) => bullet.replace(/^- /, "");
 
 const STATE_TONE: Record<ProposalState, Tone> = {

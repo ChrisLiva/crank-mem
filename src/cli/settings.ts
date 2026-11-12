@@ -55,7 +55,7 @@ export function hookCommand(runtime: CrankConfig["runtime"], script: string, age
 }
 
 /** Every command form crank-mem has emitted for a script: the unguarded form
- * older releases wrote and the current guarded one, for both runtimes and both agents. */
+ * older releases wrote and the guarded form, for both runtimes and both agents. */
 function commandForms(script: string): Set<string> {
   const forms = new Set<string>();
   for (const runtime of ["bun", "node"] as const) {
@@ -208,8 +208,6 @@ export function removeCrankHooksFromFile(
   return true;
 }
 
-// ── The permissions.allow rules that let agents run the recall and code-reading commands ─────
-
 export const CRANK_ALLOW_RULES = [
   "Bash(crank-mem search *)",
   "Bash(crank-mem timeline *)",
@@ -272,8 +270,6 @@ export function removeAllowRule(file: string): boolean {
   return true;
 }
 
-// ── Line-based files (.gitignore, .git/info/exclude, codex config.toml) ─────
-
 const IGNORE_LINE = ".crank/";
 const IGNORE_COMMENT = "# crank-mem";
 const IGNORE_BLOCK = `${IGNORE_COMMENT}\n${IGNORE_LINE}\n`;
@@ -307,7 +303,8 @@ export function removeIgnoreLines(file: string, block: string = IGNORE_BLOCK): v
 }
 
 // An allowlist: in commit mode only crank-mem's tracked files enter git, never
-// backups, the lockfile, the debug log, the nudge state, or another tool's files.
+// backups, memory.db, usage.jsonl, the lockfile, the debug log, or another
+// tool's files.
 const CRANK_GITIGNORE =
   "/*\n!/.gitignore\n!/config.json\n!/cerebrum.md\n!/cerebrum-archive.md\n!/journal.md\n!/anatomy.md\n!/anatomy-index.json\n!/hooks/\n";
 

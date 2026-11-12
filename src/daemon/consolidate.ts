@@ -99,7 +99,6 @@ type Consolidation = {
   stale: { id: number; verdict: (typeof STALE_VERDICTS)[number] }[];
 };
 
-/** A titled input block, or "" when it has no lines. */
 const block = (title: string, lines: string[]) =>
   lines.length === 0 ? "" : `[${title}]\n${lines.join("\n")}\n`;
 

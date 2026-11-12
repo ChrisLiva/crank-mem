@@ -3,7 +3,7 @@ import { PRUNE_LINE_LIMIT, PRUNE_TOKEN_LIMIT } from "../hooks/lib/cerebrum-files
 import { estimateProseTokens } from "../hooks/lib/tokens.ts";
 import { redact } from "./redact.ts";
 
-// Pure cerebrum editing for the digest: number the bullets so the model can
+// Pure cerebrum editing for consolidation: number the bullets so the model can
 // name them, then apply its edits. No I/O; the caller reads and writes files.
 
 export type CerebrumEdit =

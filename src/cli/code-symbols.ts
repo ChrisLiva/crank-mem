@@ -116,7 +116,7 @@ export async function codeSymbols(text: string, grammar: Grammar): Promise<CodeS
   return walk(tree.rootNode.namedChildren, null, RULES[grammar], text);
 }
 
-/** One family's Symbol table row; the walk, range, head and fold below read only these. */
+/** One family's Symbol table row; walk, resolveHooks, buildSymbol, docStart and headEnd read only these. */
 export interface FamilyRules {
   /** The symbol's kind, or null for a node that is not a symbol; `parent` is the enclosing container's kind. */
   kind(node: Node, parent: SymbolKind | null): SymbolKind | null;
@@ -195,7 +195,7 @@ function headEnd(body: Node, rules: FamilyRules): number {
   return sib ? sib.endIndex : body.startIndex;
 }
 
-/** Criterion 21's head: whitespace collapsed, no space inside brackets, trimmed, one trailing `{` dropped. */
+/** A symbol's head: whitespace collapsed, no space inside brackets, trimmed, one trailing `{` dropped. */
 function headText(raw: string): string {
   const text = oneLine(raw)
     .replace(/([([]) /g, "$1")

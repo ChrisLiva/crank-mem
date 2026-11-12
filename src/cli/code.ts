@@ -327,7 +327,7 @@ export function preorder(
   ]);
 }
 
-/** A symbol's outline line, split at the gutter: indent, head cut to 160 characters, fold marker. */
+/** A symbol's outline line, split at the gutter: indent, head cut to HEAD_CAP, fold marker. */
 function outlineRow(s: CodeSymbol): { gutter: string; rest: string } {
   const head = s.head.length <= HEAD_CAP ? s.head : s.head.slice(0, HEAD_CAP - 1) + "…";
   const marker =

@@ -60,7 +60,7 @@ function holds(file: string, text: string): boolean {
   }
 }
 
-/** Write JSON through a unique temp file and a rename, so a reader never sees a partial file. */
+/** `value` as JSON through writeTextAtomic. */
 export function writeJsonAtomic(file: string, value: unknown, opts: { mode?: number } = {}): void {
   writeTextAtomic(file, JSON.stringify(value), null, opts);
 }

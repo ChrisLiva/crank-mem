@@ -87,7 +87,7 @@ const cerebrum: InstallItem = {
     });
     if (seeded || r.failed) return r;
     // 0.8.1 and earlier seeded the cerebrum with a protocol preamble telling
-    // agents how to keep it; consolidation keeps it now, so an unedited copy of
+    // agents how to keep it; consolidation keeps cerebrum, so an unedited copy of
     // that preamble gives way to the current template's. An edited one is the
     // user's and stays. latin1 maps each byte to one char, so the body's bytes
     // survive the rewrite even when they are not valid UTF-8.

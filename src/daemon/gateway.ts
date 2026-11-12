@@ -243,7 +243,7 @@ async function askOnce<T>(
 
 /** A `-p` run that failed on the login: "Not logged in" in failure text, or HTTP 401/403. */
 function loginStop(run: Pick<Run, "stdout">, result: Obj | null): ModelResult<never> | null {
-  // Only failure text counts: a non-JSON line (exp/d.out) or an error result's `result` (plan/bare.jsonl).
+  // Only failure text counts: a non-JSON line or an error result's `result` (ADR 0008).
   // JSON lines also carry the digest's own text, which may quote the error.
   const plainText = run.stdout.split("\n").filter((line) => parseJson(line) === undefined);
   const errorText =
@@ -261,7 +261,7 @@ function loginStop(run: Pick<Run, "stdout">, result: Obj | null): ModelResult<ne
   return null;
 }
 
-/** Settle a finished `-p` run. Credential failures also read `subtype: "success"` (exp/c1), so `subtype` alone decides nothing. */
+/** Settle a finished `-p` run. Credential failures also read `subtype: "success"` (ADR 0008), so `subtype` alone decides nothing. */
 export function classify<T>(run: Pick<Run, "code" | "stdout">, schema: Schema): ModelResult<T> {
   const result = lastResult(run.stdout);
   const modelUsage = isObj(result?.modelUsage) ? result.modelUsage : {};

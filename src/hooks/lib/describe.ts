@@ -14,7 +14,6 @@ export const MAX_DESC_CHARS = 150;
 const C_FAMILY = new Set([".c", ".h", ".cc", ".cpp", ".hpp", ".hh", ".cxx", ".m", ".mm"]);
 // Data files have no prose header: only a JSON "description" field describes them.
 const DATA_EXTENSIONS = new Set([".json", ".jsonl", ".ndjson", ".csv", ".tsv"]);
-// Copyright and license text.
 const BOILERPLATE =
   /copyright|\(c\)|©|licen[cs]e|spdx|this file is part of|all rights reserved|free software/i;
 // Tool directives that live in comments but describe nothing.

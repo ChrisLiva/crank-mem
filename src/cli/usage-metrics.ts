@@ -20,7 +20,6 @@ const DELETED_TITLE = "(deleted)";
 
 type Line<C extends UsageChannel> = Extract<UsageLine, { channel: C }>;
 
-/** `part / whole`, or null when `whole` is 0. */
 function share(part: number, whole: number): number | null {
   return whole === 0 ? null : part / whole;
 }
@@ -83,7 +82,6 @@ type MetricsOptions = {
   observationCount: number;
 };
 
-/** The lines of one channel, in order. */
 function ofChannel<C extends UsageChannel>(lines: UsageLine[], channel: C): Line<C>[] {
   return lines.filter((l): l is Line<C> => l.channel === channel);
 }
@@ -161,14 +159,12 @@ function recallReach(lines: UsageLine[]): number | null {
   return share(recalled.size, started.size);
 }
 
-/** Add `id` to `session`'s set in `map`. */
 function addId(map: Map<string, Set<number>>, session: string, id: number): void {
   const ids = map.get(session);
   if (ids) ids.add(id);
   else map.set(session, new Set([id]));
 }
 
-/** The number of (session, id) pairs in `map`. */
 function pairCount(map: Map<string, Set<number>>): number {
   return [...map.values()].reduce((n, ids) => n + ids.size, 0);
 }

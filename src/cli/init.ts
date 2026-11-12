@@ -162,7 +162,6 @@ export async function run(args: string[]): Promise<number> {
   if (!result) return 1;
   const { scanned, installed } = result;
 
-  // ── Summary ──────────────────────────────────────────────────────────────
   console.log(`crank-mem ${cliVersion()} initialized (runtime: ${runtime}, git: ${gitMode})`);
   console.log(`  indexed ${scanned?.meta.fileCount ?? "?"} files → .crank/anatomy.md`);
   printReport(installed);

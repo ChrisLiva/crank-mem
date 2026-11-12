@@ -66,8 +66,8 @@ stale: each [EXISTING OBSERVATIONS] id this transcript shows to be wrong or repl
 
 const SUMMARY_KEYS = ["request", "investigated", "learned", "completed", "next_steps"] as const;
 
-// The ADR 0008 digest probe's schema.json (digest-probe/) plus the proposals and stale arrays its
-// 2026-11-04 amendment ran live; re-probe per ADR 0008 before changing it.
+// The ADR 0008 digest probe's schema.json plus the proposals and stale arrays
+// its 2026-11-04 amendment ran live; re-probe per ADR 0008 before changing it.
 const SCHEMA = {
   type: "object",
   additionalProperties: false,

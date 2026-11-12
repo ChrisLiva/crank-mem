@@ -45,7 +45,6 @@ export function readUpdateState(): UpdateState {
   };
 }
 
-/** Merges `patch` into the recorded state and returns the result. */
 export function writeUpdateState(patch: Partial<UpdateState>): UpdateState {
   const next = { ...readUpdateState(), ...patch };
   writeJsonAtomic(updateFile(), next);
@@ -106,7 +105,6 @@ function updateNotice(): string | null {
   return `crank-mem ${state.latest.version} is available (installed ${cliVersion()}) — run \`crank-mem self-update\`.`;
 }
 
-/** Writes `updateNotice()` to stderr when there is one. */
 export function printUpdateNotice(): void {
   const notice = updateNotice();
   if (notice !== null) process.stderr.write(notice + "\n");

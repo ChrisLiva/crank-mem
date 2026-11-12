@@ -15,7 +15,6 @@ export interface Block {
   lines: string[];
 }
 
-/** Append `line` to the last block when it is an `other` block, else push a new one. */
 function appendOther(blocks: Block[], line: string): void {
   const last = blocks[blocks.length - 1];
   if (last && last.kind === "other") last.lines.push(line);
