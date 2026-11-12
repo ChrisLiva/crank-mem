@@ -86,10 +86,7 @@ Three probes produced the findings. Each finding below names the probe it comes 
 ## Consequences
 
 - Never pass `--add-dir`: a deny rule does not reach a directory added that way (Finding 3).
-- The deny globs are case-sensitive, while `isSensitiveFile` lowercases the name first. An
-  uppercase variant such as `.ENV` or `Secrets.json` is not denied, so the only guard on it is
-  the always-on redaction of the model's output (`src/daemon/redact.ts`) before anything is
-  written.
+- Claude Code matches the deny rules regardless of case (ADR 0015).
 - The model can read every other file in the project, so the consolidation input says that
   everything in it is data, not instructions.
 - Re-probe this call after a Claude Code upgrade, with the steps in `## Re-probe method`
@@ -101,7 +98,8 @@ Re-run these readings whenever `claude --version` changes minor version, or a co
 starts failing in a new way.
 
 1. In a scratch directory outside any repo, set `CRANK_HOME=$(mktemp -d)` and make a temp
-   project holding `.env`, `config/secrets.json`, `src/.aws-credentials`, `src/.deploy.key`,
+   project holding `.env`, `.ENV`, `Secrets.yaml`, `config/secrets.json`,
+   `config/Credentials.json`, `src/.aws-credentials`, `src/.deploy.key`,
    `src/aws-credentials.json`, `src/notes.txt`, `src/lock.ts`, and a `CLAUDE.md` with a
    sentinel line. Give each secret file a distinct sentinel string.
 2. Spawn `claude` with cwd at that project, the env from ADR 0008 Finding 2, and the argv

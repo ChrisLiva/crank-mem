@@ -184,7 +184,8 @@ const SENSITIVE_BASENAMES = new Set([".npmrc", ".netrc", ".htpasswd", ".pgpass"]
 
 /**
  * The filter as permission globs, for the read-only tools a consolidation run gets (ADR 0011).
- * The probed list matches isSensitiveFile under path.matchesGlob, except that it is case-sensitive.
+ * The probed list matches isSensitiveFile under path.matchesGlob apart from case, and Claude Code
+ * applies it regardless of case (ADR 0015).
  */
 export const SENSITIVE_GLOBS: readonly string[] = [
   ...[...SENSITIVE_BASENAMES].map((b) => `**/${b}`),
