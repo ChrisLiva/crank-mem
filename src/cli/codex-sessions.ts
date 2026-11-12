@@ -51,6 +51,52 @@ function subdirs(dir: string): string[] {
   }
 }
 
+/** The y/m/d day directories under `sessionsDir`, oldest first, minus days wholly before `sinceMs`. */
+function dayDirs(sessionsDir: string, sinceMs: number | null): string[] {
+  const days: string[] = [];
+  for (const y of subdirs(sessionsDir)) {
+    for (const m of subdirs(path.join(sessionsDir, y))) {
+      for (const d of subdirs(path.join(sessionsDir, y, m))) {
+        // Directory dates are local; a day of slack keeps the boundary day in.
+        if (sinceMs !== null && Date.UTC(+y, +m - 1, +d) + 2 * DAY_MS < sinceMs) continue;
+        days.push(path.join(sessionsDir, y, m, d));
+      }
+    }
+  }
+  return days;
+}
+
+function rolloutFiles(dir: string): string[] {
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((f) => f.startsWith("rollout-") && f.endsWith(".jsonl"))
+      .map((f) => path.join(dir, f));
+  } catch {
+    return [];
+  }
+}
+
+/** A rollout's verdict: null when it is not this project's root thread since `sinceMs` with a turn, or unreadable. */
+function classifyRollout(
+  file: string,
+  root: string,
+  sinceMs: number | null,
+): "injected" | "missed" | null {
+  try {
+    const meta = JSON.parse(firstLine(file));
+    const p = meta?.payload;
+    if (meta?.type !== "session_meta" || p?.cwd !== root) return null;
+    if (p.parent_thread_id || p.thread_source === "subagent") return null;
+    if (sinceMs !== null && !(Date.parse(p.timestamp ?? meta.timestamp) >= sinceMs)) return null;
+    const text = fs.readFileSync(file, "utf-8");
+    if (!text.includes(TURN)) return null;
+    return text.includes(INJECTED) ? "injected" : "missed";
+  } catch {
+    return null;
+  }
+}
+
 /** Count this project's root Codex threads since `sinceMs` (all when null) and how many lack the injection. */
 export function codexInjectionGaps(
   sessionsDir: string,
@@ -58,36 +104,12 @@ export function codexInjectionGaps(
   sinceMs: number | null,
 ): InjectionGaps {
   const gaps: InjectionGaps = { roots: 0, missed: 0 };
-  for (const y of subdirs(sessionsDir)) {
-    for (const m of subdirs(path.join(sessionsDir, y))) {
-      for (const d of subdirs(path.join(sessionsDir, y, m))) {
-        // Directory dates are local; a day of slack keeps the boundary day in.
-        if (sinceMs !== null && Date.UTC(+y, +m - 1, +d) + 2 * DAY_MS < sinceMs) continue;
-        const dir = path.join(sessionsDir, y, m, d);
-        let files: string[];
-        try {
-          files = fs
-            .readdirSync(dir)
-            .filter((f) => f.startsWith("rollout-") && f.endsWith(".jsonl"));
-        } catch {
-          continue;
-        }
-        for (const f of files) {
-          const file = path.join(dir, f);
-          try {
-            const meta = JSON.parse(firstLine(file));
-            const p = meta?.payload;
-            if (meta?.type !== "session_meta" || p?.cwd !== root) continue;
-            if (p.parent_thread_id || p.thread_source === "subagent") continue;
-            if (sinceMs !== null && !(Date.parse(p.timestamp ?? meta.timestamp) >= sinceMs))
-              continue;
-            const text = fs.readFileSync(file, "utf-8");
-            if (!text.includes(TURN)) continue;
-            gaps.roots++;
-            if (!text.includes(INJECTED)) gaps.missed++;
-          } catch {}
-        }
-      }
+  for (const dir of dayDirs(sessionsDir, sinceMs)) {
+    for (const file of rolloutFiles(dir)) {
+      const verdict = classifyRollout(file, root, sinceMs);
+      if (verdict === null) continue;
+      gaps.roots++;
+      if (verdict === "missed") gaps.missed++;
     }
   }
   return gaps;
