@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { CrankConfig } from "./config.ts";
+import { isProjectFile } from "./hook-io.ts";
 import { isIndexableName, toPosix } from "./indexable.ts";
 import type { FileEntry } from "./store.ts";
 import { SYMBOL_MAX_BYTES } from "./symbols.ts";
@@ -50,10 +51,6 @@ function firstUnique(values: string[]): string[] {
   return [...new Set(values)].slice(0, MAX_LINKS);
 }
 
-function isRegularFile(rootDir: string, rel: string): boolean {
-  return fs.statSync(path.join(rootDir, rel), { throwIfNoEntry: false })?.isFile() ?? false;
-}
-
 /** Exact path, then each extension, then `/index` + each; a `.js` specifier falls back to `.ts` then `.tsx`. */
 function resolveTsJs(rootDir: string, fromRel: string, specifier: string): string | null {
   if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
@@ -63,11 +60,11 @@ function resolveTsJs(rootDir: string, fromRel: string, specifier: string): strin
     ...TS_JS_EXTENSIONS.map((ext) => base + ext),
     ...TS_JS_EXTENSIONS.map((ext) => `${base}/index${ext}`),
   ];
-  const found = candidates.find((rel) => isRegularFile(rootDir, rel));
+  const found = candidates.find((rel) => isProjectFile(rootDir, rel));
   if (found) return found;
   if (base.endsWith(".js")) {
     const stem = base.slice(0, -".js".length);
-    return [`${stem}.ts`, `${stem}.tsx`].find((rel) => isRegularFile(rootDir, rel)) ?? null;
+    return [`${stem}.ts`, `${stem}.tsx`].find((rel) => isProjectFile(rootDir, rel)) ?? null;
   }
   return null;
 }
@@ -76,7 +73,7 @@ function resolveTsJs(rootDir: string, fromRel: string, specifier: string): strin
 function resolvePythonModule(rootDir: string, modulePath: string): string | null {
   if (modulePath === "." || modulePath === ".." || modulePath.startsWith("../")) return null;
   return (
-    [`${modulePath}.py`, `${modulePath}/__init__.py`].find((rel) => isRegularFile(rootDir, rel)) ??
+    [`${modulePath}.py`, `${modulePath}/__init__.py`].find((rel) => isProjectFile(rootDir, rel)) ??
     null
   );
 }
@@ -109,7 +106,7 @@ function pythonImports(rootDir: string, importer: string, content: string): stri
         : path.posix.join(path.posix.dirname(importer), "../".repeat(dots - 1), dotted);
     for (const name of pythonNames(list ?? line ?? "")) {
       const submodule = path.posix.join(base, name.replaceAll(".", "/")) + ".py";
-      const rel = isRegularFile(rootDir, submodule)
+      const rel = isProjectFile(rootDir, submodule)
         ? submodule
         : resolvePythonModule(rootDir, base);
       if (rel) found.push(rel);
@@ -122,7 +119,7 @@ function pythonImports(rootDir: string, importer: string, content: string): stri
 function goModule(rootDir: string, importer: string): { dir: string; module: string } | null {
   for (let dir = path.posix.dirname(importer); ; dir = path.posix.dirname(dir)) {
     const rel = path.posix.join(dir, "go.mod");
-    if (isRegularFile(rootDir, rel)) {
+    if (isProjectFile(rootDir, rel)) {
       const text = fs.readFileSync(path.join(rootDir, rel), "utf-8");
       const module = /^[ \t]*module[ \t]+"?(?<module>[^"\s]+)"?/m.exec(text)?.groups!.module;
       return module ? { dir, module } : null;
@@ -160,7 +157,7 @@ function goImports(rootDir: string, importer: string, content: string): string[]
 /** A module path as `<p>.rs`, else `<p>/mod.rs`. */
 function resolveRustModule(rootDir: string, modulePath: string): string | null {
   return (
-    [`${modulePath}.rs`, `${modulePath}/mod.rs`].find((rel) => isRegularFile(rootDir, rel)) ?? null
+    [`${modulePath}.rs`, `${modulePath}/mod.rs`].find((rel) => isProjectFile(rootDir, rel)) ?? null
   );
 }
 
@@ -239,7 +236,7 @@ function cImports(rootDir: string, importer: string, content: string): string[] 
     const rel = [
       path.posix.join(path.posix.dirname(importer), include),
       path.posix.normalize(include),
-    ].find((candidate) => isRegularFile(rootDir, candidate));
+    ].find((candidate) => isProjectFile(rootDir, candidate));
     if (rel) found.push(rel);
   }
   return found;

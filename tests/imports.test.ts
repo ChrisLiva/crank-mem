@@ -116,6 +116,15 @@ describe("TS/JS imports", () => {
   });
 });
 
+test("a specifier through a regular file costs only that specifier", () => {
+  const { index } = scanIndex({
+    "src/a.ts": 'import { b } from "./b";\nimport { x } from "./data/x";\n',
+    "src/b.ts": ONE_LINE,
+    "src/data": "not a directory\n",
+  });
+  expect(index.files["src/a.ts"].imports).toEqual(["src/b.ts"]);
+});
+
 test("Python imports resolve relative and absolute modules, falling back to the package", () => {
   const MOD_PY = [
     "from .sib import thing",
