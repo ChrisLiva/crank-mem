@@ -293,6 +293,9 @@ from a clone.
   `dashboard/node_modules` it installs
 - `bun run typecheck` — `tsc` over the CLI and the dashboard
 - `bun run format:check` — oxfmt; `bun run format` rewrites
+- `bun run lint:health` — knip (dead code, `knip.json`) then fallow
+  (cognitive complexity over 15, `.fallowrc.json`); the release `check` job
+  and `scripts/release.ts` run it
 
 Run the full suite as `caffeinate -i bun run test`: four parallel workers,
 then the `*.serial.test.ts` files. `docs/testing-load.md` holds the baseline

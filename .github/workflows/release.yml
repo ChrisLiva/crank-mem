@@ -32,6 +32,7 @@ jobs:
       - run: cd dashboard && bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run format:check
+      - run: bun run lint:health
 
   pack:
     needs: check

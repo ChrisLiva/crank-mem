@@ -89,6 +89,7 @@ if (answer !== "yes") fail("not confirmed; nothing was changed (pass --yes to sk
 
 gate("typecheck", root);
 gate("format:check", root);
+gate("lint:health", root);
 gate("test", root);
 
 const bumped = pkgText.replace(/("version"\s*:\s*)"[^"]*"/, `$1"${version}"`);
