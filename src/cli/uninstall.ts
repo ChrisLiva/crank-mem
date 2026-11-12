@@ -40,20 +40,7 @@ import { attemptRemoval, installPaths, type Report } from "./install-support.ts"
 
 export async function run(args: string[]): Promise<number> {
   const { flags } = parseArgs(args, COMMANDS.uninstall.value);
-
-  // Both removal passes and the legacy sweep can hit the same file, so each
-  // distinct stderr line prints once per run, in first-seen order.
-  const seen = new Set<string>();
-  const warn = (line: string): void => {
-    if (seen.has(line)) return;
-    seen.add(line);
-    console.error(line);
-  };
-  const print = (r: Report): Report => {
-    for (const line of r.lines) console.log(line);
-    for (const warning of r.warnings) warn(warning);
-    return r;
-  };
+  const { warn, print } = reporter();
 
   // A leftover pre-rename install (only crank/, no .crank/) can't be opened as
   // a project — sweep it and stop, so the new CLI can clean up after itself.
@@ -68,37 +55,11 @@ export async function run(args: string[]): Promise<number> {
   if (!project) return 1;
   const { root, crankDir } = project;
 
-  const restore =
-    flags.restore === true ||
-    (!flags.yes &&
-      (await choose(
-        "Restore the files crank-mem changed, as they were before it first changed them?",
-        ["restore", "surgical"],
-        "surgical",
-      )) === "restore");
+  const restore = await wantsRestore(flags);
 
   let status = print(removeInstall(project)).failed ? 1 : 0;
   if (restore) {
-    const result = restoreInstall(crankDir);
-    if (result.status === "no-backups") {
-      warn("crank-mem: no backups found — falling back to surgical removal.");
-    } else if (result.status === "unreadable") {
-      warn(
-        `crank-mem: could not read ${result.manifest} (${result.detail}) — falling back to surgical removal.`,
-      );
-      status = 1;
-    } else {
-      for (const p of result.paths) {
-        if (p.outcome === "copied") console.log(`  restored ${p.path}`);
-        else if (p.outcome === "removed") console.log(`  removed ${p.path} (crank-mem created it)`);
-        else if (p.outcome === "outside")
-          console.log(`  left ${p.path} as is (outside this project)`);
-        else {
-          warn(`crank-mem: could not restore ${p.path} (${p.code})`);
-          status = 1;
-        }
-      }
-    }
+    if (printRestore(crankDir, warn)) status = 1;
     // A second pass strips whatever the restored copies still carry, in
     // case a backup predates some wiring. It only strips crank-mem's entries.
     if (print(removeInstall(project)).failed) status = 1;
@@ -110,26 +71,89 @@ export async function run(args: string[]): Promise<number> {
 
   removeEmptyDirs(root, [".codex", ".claude"]);
 
-  const deleteCrank =
-    flags["delete-crank"] === true ||
-    (flags["keep-crank"] !== true &&
-      !flags.yes &&
-      (await choose("Delete the .crank/ data directory?", ["delete", "keep"], "keep")) ===
-        "delete");
-
-  if (deleteCrank) {
-    const left = deleteOwnedFiles(crankDir);
-    if (left.length === 0) console.log("  deleted .crank/");
-    else
-      console.log(
-        `  deleted crank-mem's files from .crank/, kept what other tools wrote: ${left.join(", ")}`,
-      );
-  } else {
-    console.log("  kept .crank/ (delete it manually when ready)");
-  }
+  printDataDir(crankDir, await wantsDelete(flags));
 
   console.log("crank-mem: uninstalled.");
   return status;
+}
+
+// Both removal passes and the legacy sweep can hit the same file, so each
+// distinct stderr line prints once per run, in first-seen order.
+function reporter(): { warn(line: string): void; print(r: Report): Report } {
+  const seen = new Set<string>();
+  const warn = (line: string): void => {
+    if (seen.has(line)) return;
+    seen.add(line);
+    console.error(line);
+  };
+  return {
+    warn,
+    print(r: Report): Report {
+      for (const line of r.lines) console.log(line);
+      for (const warning of r.warnings) warn(warning);
+      return r;
+    },
+  };
+}
+
+async function wantsRestore(flags: Record<string, string | boolean>): Promise<boolean> {
+  return (
+    flags.restore === true ||
+    (!flags.yes &&
+      (await choose(
+        "Restore the files crank-mem changed, as they were before it first changed them?",
+        ["restore", "surgical"],
+        "surgical",
+      )) === "restore")
+  );
+}
+
+async function wantsDelete(flags: Record<string, string | boolean>): Promise<boolean> {
+  return (
+    flags["delete-crank"] === true ||
+    (flags["keep-crank"] !== true &&
+      !flags.yes &&
+      (await choose("Delete the .crank/ data directory?", ["delete", "keep"], "keep")) === "delete")
+  );
+}
+
+/** Put back the backed-up files and print each outcome; true when the run must exit 1. */
+function printRestore(crankDir: string, warn: (line: string) => void): boolean {
+  const result = restoreInstall(crankDir);
+  if (result.status === "no-backups") {
+    warn("crank-mem: no backups found — falling back to surgical removal.");
+    return false;
+  }
+  if (result.status === "unreadable") {
+    warn(
+      `crank-mem: could not read ${result.manifest} (${result.detail}) — falling back to surgical removal.`,
+    );
+    return true;
+  }
+  let failed = false;
+  for (const p of result.paths) {
+    if (p.outcome === "copied") console.log(`  restored ${p.path}`);
+    else if (p.outcome === "removed") console.log(`  removed ${p.path} (crank-mem created it)`);
+    else if (p.outcome === "outside") console.log(`  left ${p.path} as is (outside this project)`);
+    else {
+      warn(`crank-mem: could not restore ${p.path} (${p.code})`);
+      failed = true;
+    }
+  }
+  return failed;
+}
+
+function printDataDir(crankDir: string, deleteCrank: boolean): void {
+  if (!deleteCrank) {
+    console.log("  kept .crank/ (delete it manually when ready)");
+    return;
+  }
+  const left = deleteOwnedFiles(crankDir);
+  if (left.length === 0) console.log("  deleted .crank/");
+  else
+    console.log(
+      `  deleted crank-mem's files from .crank/, kept what other tools wrote: ${left.join(", ")}`,
+    );
 }
 
 /**
