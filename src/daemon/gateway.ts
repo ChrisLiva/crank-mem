@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isObj, SENSITIVE_GLOBS, type Obj } from "../hooks/lib/config.ts";
-import { crankHome } from "../hooks/lib/user-state.ts";
+import { crankHome, writeStopState } from "../hooks/lib/user-state.ts";
 
 // The one door to the model: `claude -p` on the user's own Claude login,
 // with a fixed call shape and an allowlisted environment (ADR 0008).
@@ -190,11 +190,21 @@ export const RUN_DIR = "run";
 /**
  * One structured-output run on the user's Claude login, gated on `claude auth status`. Without `project`
  * both spawns run in an empty `<crank home>/run`; with it, both run in the project, since a deny rule
- * does not reach a directory passed by `--add-dir` (ADR 0011).
+ * does not reach a directory passed by `--add-dir` (ADR 0011). A stopped result also writes the stop state.
  */
 export async function askClaude<T>(
   req: ModelRequest<T>,
   opts: { timeoutMs?: number; project?: string } = {},
+): Promise<ModelResult<T>> {
+  const result = await askOnce(req, opts);
+  if (result.kind === "stopped")
+    writeStopState({ reason: result.reason, atMs: Date.now(), detail: result.detail });
+  return result;
+}
+
+async function askOnce<T>(
+  req: ModelRequest<T>,
+  opts: { timeoutMs?: number; project?: string },
 ): Promise<ModelResult<T>> {
   const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_MS;
   const project = opts.project ?? null;

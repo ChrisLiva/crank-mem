@@ -5,7 +5,7 @@ import { CRANK_DIR } from "../hooks/lib/config.ts";
 import { basenameIndex, citationStatus } from "../hooks/lib/injection.ts";
 import { localDate, type Memory, type PendingWork } from "../hooks/lib/memory.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
-import { writeStopState, writeTextAtomic } from "../hooks/lib/user-state.ts";
+import { writeTextAtomic } from "../hooks/lib/user-state.ts";
 import type { ConsolidationOutcome } from "../hooks/lib/wire.ts";
 import { applyEdits, numberBullets, type CerebrumEdit } from "./cerebrum-edit.ts";
 import { oneLine } from "./digest-prompt.ts";
@@ -240,8 +240,6 @@ export async function consolidate(
   });
   const sentProposals = new Set(work.proposals.map((p) => p.id));
   if (r.kind !== "ok") {
-    if (r.kind === "stopped")
-      writeStopState({ reason: r.reason, atMs: Date.now(), detail: r.detail });
     memory.recordConsolidation({
       outcome: r.kind,
       startedMs,
