@@ -73,3 +73,5 @@ digest, and `src/hooks/lib/journal.ts` is deleted, so nothing trims or reads
 `journal.md`, which stays on disk unread. A stopped digest or a stalled capture brings no
 protocol or nudge back. `src/templates/journal.md` is deleted, and `src/templates/cerebrum.md`
 holds only its headings, with no protocol text.
+
+Amended 2026-11-12: `injectionSources` (under Decision) is now `src/hooks/lib/injection.ts` → `sessionStartInjection`.

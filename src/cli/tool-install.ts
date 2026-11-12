@@ -3,7 +3,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { errorMessage } from "../hooks/lib/config.ts";
+import { errorMessage, readJsonObject } from "../hooks/lib/config.ts";
 import { pidAlive } from "../hooks/lib/lock.ts";
 import { daemonAlive, readDaemonState } from "../hooks/lib/spool.ts";
 import { crankHome, ensureCrankHome } from "../hooks/lib/user-state.ts";
@@ -149,12 +149,8 @@ async function download(url: string): Promise<Buffer> {
 
 /** The `version` in `<dir>/package.json` when it is a usable dir name, else null. */
 function releaseVersion(dir: string): string | null {
-  try {
-    const { version } = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8"));
-    return typeof version === "string" && VERSION_NAME.test(version) ? version : null;
-  } catch {
-    return null;
-  }
+  const version = readJsonObject(path.join(dir, "package.json"))?.version;
+  return typeof version === "string" && VERSION_NAME.test(version) ? version : null;
 }
 
 /**
@@ -212,13 +208,9 @@ export async function fetchRelease(
 export function pruneVersions(keep: string[]): string[] {
   const daemon = daemonAlive() ? readDaemonState()?.version : undefined;
   const kept = new Set(typeof daemon === "string" ? [...keep, daemon] : keep);
-  try {
-    const dashboard = JSON.parse(fs.readFileSync(path.join(crankHome(), TOKEN_FILE), "utf-8"));
-    if (typeof dashboard?.version === "string" && pidAlive(dashboard.pid)) {
-      kept.add(dashboard.version);
-    }
-  } catch {
-    // A missing or unparsable dashboard.json keeps nothing extra.
+  const dashboard = readJsonObject(path.join(crankHome(), TOKEN_FILE));
+  if (typeof dashboard?.version === "string" && pidAlive(dashboard.pid as number)) {
+    kept.add(dashboard.version);
   }
   let names: string[];
   try {

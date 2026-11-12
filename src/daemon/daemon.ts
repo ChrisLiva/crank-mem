@@ -12,7 +12,13 @@ import {
   toolRoot,
   versionAt,
 } from "../cli/version.ts";
-import { CONFIG_FILE, CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
+import {
+  CONFIG_FILE,
+  CRANK_DIR,
+  errorMessage,
+  loadConfig,
+  readJsonObject,
+} from "../hooks/lib/config.ts";
 import { trySteal } from "../hooks/lib/lock.ts";
 import {
   DAEMON_FILE,
@@ -121,11 +127,7 @@ function create(file: string, version: string): boolean {
 }
 
 function ownedBy(file: string, pid: number): boolean {
-  try {
-    return (JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<DaemonState>).pid === pid;
-  } catch {
-    return false;
-  }
+  return readJsonObject(file)?.pid === pid;
 }
 
 function sleep(ms: number): Promise<void> {

@@ -22,7 +22,6 @@ let snapshotCount = 0;
 const DAILY_SNAPSHOT = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
 const DAILY_KEEP = 7;
 
-/** The folder that holds the snapshots of `storeFile`. */
 export function snapshotDir(storeFile: string): string {
   return path.join(path.dirname(storeFile), SNAPSHOT_DIR);
 }
@@ -119,7 +118,7 @@ export function saveCurrentStore(mod: typeof sqlite, storeFile: string): string 
   if (!fs.existsSync(storeFile)) return null;
   const dir = snapshotDir(storeFile);
   const stamp = fileStamp();
-  // Read-write: under bun a read-only open of a closed WAL store with no -shm fails.
+  // Read-write, as openForRead explains.
   const current = new mod.DatabaseSync(storeFile);
   try {
     return writeSnapshot(current, dir, `${stamp}.db`);

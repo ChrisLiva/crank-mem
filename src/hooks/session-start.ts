@@ -1,26 +1,24 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import {
   readStdin,
   parsePayload,
-  findProjectRoot,
+  projectContext,
   emitAdditionalContext,
   runAdvisoryHook,
   isCodexPayload,
 } from "./lib/hook-io.ts";
-import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { loadIndex, commitIndex } from "./lib/store.ts";
 import { refreshIndex } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { sessionStartInjection } from "./lib/injection.ts";
-import { enableDebug, debugEvent } from "./lib/debug.ts";
+import { debugEvent } from "./lib/debug.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
 import { registerProject } from "./lib/registry.ts";
 
 // SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
 // included. Refreshes the index under lock, then emits the injection via
 // hookSpecificOutput.additionalContext. sessionStartInjection applies the digest
-// gate (ADR 0010); no state carries an upkeep prompt, and journal.md is never read.
+// gate (ADR 0010).
 // Advisory-only: every path exits 0.
 
 const REFRESH_BUDGET_MS = 2_000;
@@ -29,18 +27,15 @@ async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());
   if (!payload) return;
 
-  const root = findProjectRoot(typeof payload.cwd === "string" ? payload.cwd : process.cwd());
-  if (!root) return;
+  const ctx = projectContext(payload);
+  if (!ctx) return;
+  const { root, crankDir, config } = ctx;
   try {
     // findProjectRoot keeps a symlinked cwd; the CLI registers the realpath.
     registerProject(fs.realpathSync(root));
   } catch {
     // A root that cannot be resolved stays unregistered until init or upgrade.
   }
-
-  const crankDir = path.join(root, CRANK_DIR);
-  const config = loadConfig(crankDir);
-  enableDebug(crankDir, config.debug);
 
   let stalenessNote: string | null = null;
   let index = commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (current) => {

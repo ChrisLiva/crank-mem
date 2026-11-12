@@ -12,7 +12,7 @@ Three consecutive `caffeinate -i bun run test` runs at commit `6edd368`, 2026-11
 
 Plain `caffeinate -i bun test` at `6edd368`, every file serially in one process: load 4.08 at start and 4.04 at end, 0 burners, 829 pass and 0 fail, `Ran 829 tests across 46 files. [80.02s]`. Its 829 tests and 46 files equal the two lanes' counts summed (805 + 24, 44 + 2).
 
-For comparison, the first two-lane reading on this branch (commit `eb13262`, load 4.11) took 29.19 s for 834 tests in 42 files plus 29.44 s for 25 tests in 2 files.
+For comparison, the first two-lane reading (commit `eb13262`, load 4.11) took 29.19 s for 834 tests in 42 files plus 29.44 s for 25 tests in 2 files.
 
 ## How to run
 

@@ -213,3 +213,184 @@ test("the Updates section shows both versions and the self-update command, and a
   expect(page.textContent).not.toContain("crank-mem self-update");
   await unmount();
 });
+
+/** Runs `body` with the page's URL query set to `query`, then puts back the Health view. */
+async function at(query: string, body: () => Promise<void>): Promise<void> {
+  dom.history.replaceState(null, "", query);
+  try {
+    await body();
+  } finally {
+    dom.history.replaceState(null, "", "?view=health");
+  }
+}
+
+/** Presses `key` on the page, then lets the fetches it starts settle. */
+async function press(key: string): Promise<void> {
+  await React.act(async () => {
+    dom.document.body.dispatchEvent(new dom.KeyboardEvent("keydown", { key, bubbles: true }));
+  });
+  await React.act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+}
+
+/** The text of the list row the page marks as selected, or null when none is. */
+function selectedRow(page: any): string | null {
+  return page.querySelector("[data-row][aria-current]")?.textContent ?? null;
+}
+
+/** The text of the page's `name` section: "List" or "Detail". */
+function section(page: any, name: "List" | "Detail"): string {
+  return page.querySelector(`section[aria-label=${name}]`)?.textContent ?? "";
+}
+
+/** The `item` the page's URL holds. */
+const urlItem = () => new URLSearchParams(dom.location.search).get("item");
+
+const OBS = "/api/projects/p/observations";
+const line = (id: number, title: string) => ({
+  id,
+  createdAtMs: Date.UTC(2026, 10, 1),
+  type: "discovery",
+  title,
+  stale: false,
+});
+const observation = (id: number, title: string) => ({
+  ...line(id, title),
+  sessionId: "s1",
+  narrative: `narrative of ${title}`,
+  facts: [],
+  filesRead: [],
+  filesModified: [],
+  staleFlag: null,
+});
+
+test("the Memory view selects the first row, moves with j, counts the page and keeps an off-page item", async () => {
+  serve({
+    "/api/projects": { projects: [PROJECT] },
+    [OBS]: { rows: [line(11, "First line"), line(12, "Second line")], next: null, mode: "keyword" },
+    [`${OBS}/11`]: observation(11, "First line"),
+    [`${OBS}/12`]: observation(12, "Second line"),
+    [`${OBS}/99`]: observation(99, "Off-page line"),
+  });
+  await at("?view=memory", async () => {
+    const { page, unmount } = await openPage();
+    expect(selectedRow(page)).toContain("First line");
+    expect(urlItem()).toBe("11");
+    expect(section(page, "Detail")).toContain("narrative of First line");
+    expect(section(page, "List")).toContain("2 shown");
+    expect(section(page, "List")).toContain("keyword search");
+
+    await press("j");
+    expect(selectedRow(page)).toContain("Second line");
+    expect(urlItem()).toBe("12");
+    expect(section(page, "Detail")).toContain("narrative of Second line");
+    await unmount();
+  });
+
+  await at("?project=p&view=memory&item=99", async () => {
+    const { page, unmount } = await openPage();
+    expect(urlItem()).toBe("99");
+    expect(selectedRow(page)).toBeNull();
+    expect(section(page, "Detail")).toContain("narrative of Off-page line");
+    await unmount();
+  });
+
+  await at("?project=p&view=memory&item=98", async () => {
+    const { page, unmount } = await openPage();
+    expect(urlItem()).toBe("11");
+    expect(selectedRow(page)).toContain("First line");
+    expect(section(page, "Detail")).toContain("narrative of First line");
+    await unmount();
+  });
+});
+
+test("an empty Memory page says nothing matches and selects nothing", async () => {
+  serve({ "/api/projects": { projects: [PROJECT] }, [OBS]: { rows: [], next: null } });
+  await at("?view=memory", async () => {
+    const { page, unmount } = await openPage();
+    expect(section(page, "List")).toContain("Nothing matches.");
+    expect(section(page, "List")).toContain("0 shown");
+    expect(section(page, "List")).not.toContain("search");
+    expect(urlItem()).toBeNull();
+    await unmount();
+  });
+});
+
+test("a Memory fetch that fails shows its error in the pane it was filling", async () => {
+  const rows = { rows: [line(11, "First line")], next: null };
+  serve({
+    "/api/projects": { projects: [PROJECT] },
+    [OBS]: rows,
+    [`${OBS}/11`]: new TypeError("Failed to fetch"),
+  });
+  await at("?view=memory", async () => {
+    const { page, unmount } = await openPage();
+    expect(selectedRow(page)).toContain("First line");
+    expect(section(page, "Detail")).toContain("Failed to fetch");
+    await unmount();
+  });
+
+  serve({ "/api/projects": { projects: [PROJECT] }, [OBS]: new TypeError("Failed to fetch") });
+  await at("?view=memory", async () => {
+    const { page, unmount } = await openPage();
+    expect(section(page, "List")).toContain("Failed to fetch");
+    expect(page.querySelector("[data-row]")).toBeNull();
+    await unmount();
+  });
+});
+
+const PROPOSALS = "/api/projects/p/proposals";
+const proposal = (id: number, bullet: string) => ({
+  id,
+  kind: "add",
+  bullet: `- ${bullet}`,
+  state: "pending",
+  reason: null,
+  createdAtMs: Date.UTC(2026, 10, 1),
+  decidedAtMs: null,
+});
+
+test("the Curation proposals list selects the first proposal, moves with j and counts the page", async () => {
+  serve({
+    "/api/projects": { projects: [PROJECT] },
+    [PROPOSALS]: {
+      rows: [proposal(21, "First proposal"), proposal(22, "Second proposal")],
+      next: null,
+    },
+  });
+  await at("?view=curation", async () => {
+    const { page, unmount } = await openPage();
+    expect(selectedRow(page)).toContain("First proposal");
+    expect(urlItem()).toBe("21");
+    expect(section(page, "Detail")).toContain("First proposal");
+    expect(section(page, "List")).toContain("2 shown");
+
+    await press("j");
+    expect(selectedRow(page)).toContain("Second proposal");
+    expect(urlItem()).toBe("22");
+    expect(section(page, "Detail")).toContain("Second proposal");
+    await unmount();
+  });
+});
+
+test("an empty Curation proposals page says nothing is here yet", async () => {
+  serve({ "/api/projects": { projects: [PROJECT] }, [PROPOSALS]: { rows: [], next: null } });
+  await at("?view=curation", async () => {
+    const { page, unmount } = await openPage();
+    expect(section(page, "List")).toContain("Nothing here yet.");
+    expect(page.querySelector("[data-row]")).toBeNull();
+    expect(urlItem()).toBeNull();
+    await unmount();
+  });
+});
+
+test("a usage fetch that fails shows its error on the Usage view", async () => {
+  serve({
+    "/api/projects": { projects: [PROJECT] },
+    "/api/projects/p/usage": new TypeError("Failed to fetch"),
+  });
+  await at("?view=usage", async () => {
+    const { page, unmount } = await openPage();
+    expect(page.textContent).toContain("Failed to fetch");
+    await unmount();
+  });
+});

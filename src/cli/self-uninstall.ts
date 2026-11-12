@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { CONFIG_FILE, CRANK_DIR, errorMessage } from "../hooks/lib/config.ts";
-import { REGISTRY_FILE, registeredRoots } from "../hooks/lib/registry.ts";
+import { errorMessage } from "../hooks/lib/config.ts";
+import { installedRoots, REGISTRY_FILE } from "../hooks/lib/registry.ts";
 import { DAEMON_FILE, daemonAlive, readDaemonState, spoolDir } from "../hooks/lib/spool.ts";
 import { crankHome, SEEN_DIR, STOP_FILE } from "../hooks/lib/user-state.ts";
 import { modelsDir } from "../daemon/embedder.ts";
@@ -58,14 +58,9 @@ function stopDaemon(): void {
   }
 }
 
-/** Registered roots that still hold a crank-mem install. */
-function wiredRoots(): string[] {
-  return registeredRoots().filter((root) => fs.existsSync(path.join(root, CRANK_DIR, CONFIG_FILE)));
-}
-
 /** Uninstalls crank-mem from each wired project, or lists them; returns 1 when any uninstall failed. */
 async function unwireProjects(yes: boolean): Promise<number> {
-  const roots = wiredRoots();
+  const roots = installedRoots();
   if (roots.length === 0) return 0;
   const answer = yes
     ? "yes"

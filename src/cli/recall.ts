@@ -79,7 +79,7 @@ export async function search(args: string[]): Promise<number> {
   if (!project) return 1;
   const relFile = file === undefined ? null : repoRelative(project.root, process.cwd(), file);
   if (file !== undefined && relFile === null) return 0;
-  const host = typeof flags["model-host"] === "string" ? flags["model-host"] : undefined;
+  const host = stringFlag(flags["model-host"]) ?? undefined;
   return withMemory(project.root, true, async (memory) => {
     const embeddable = memory.hasVectors(EMBED_MODEL);
     const vector = await queryVector(memory, text, host);

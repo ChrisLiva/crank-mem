@@ -9,8 +9,17 @@ export type Obj = Record<string, unknown>;
 export const isObj = (v: unknown): v is Obj =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-export const errorMessage = (err: unknown): string =>
-  err instanceof Error ? err.message : String(err);
+/** The JSON object in `file`; null when it is missing, unparsable or not an object (arrays included). */
+export function readJsonObject(file: string): Obj | null {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf-8"));
+    return isObj(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export { errorMessage } from "./wire.ts";
 
 export const CRANK_DIR = ".crank";
 export const CONFIG_FILE = "config.json";
@@ -18,8 +27,7 @@ export const CONFIG_FILE = "config.json";
 export const LOCAL_CONFIG_FILE = "config.local.json";
 const MAX_FILE_SIZE_BYTES = 1024 * 1024;
 
-// Hidden paths (.git, .claude, .codex, .crank itself, …) are excluded by the
-// always-on dot rule in isExcluded, so only non-hidden names belong here.
+// Hidden names are excluded by isExcluded's dot rule.
 export const DEFAULT_EXCLUDES = [
   "node_modules",
   "dist",
@@ -52,8 +60,9 @@ export interface CrankConfig {
   runtime: "bun" | "node";
   vendored_version: string;
   /**
-   * Absolute path to the crank-mem clone these hooks were vendored from, so a
-   * session start can compare versions and report drift (lib/drift.ts). Empty
+   * Absolute path to the crank-mem these hooks were vendored from: a clone or
+   * an installed copy's `current` link, so a session start can compare versions
+   * and report drift (lib/drift.ts). Empty
    * on installs predating the field; `upgrade` stamps it.
    */
   clone_root: string;
@@ -155,14 +164,7 @@ function carryUnknown(config: CrankConfig, raw: Record<string, unknown>): void {
 }
 
 function loadDigest(crankDir: string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(
-      fs.readFileSync(path.join(crankDir, LOCAL_CONFIG_FILE), "utf-8"),
-    );
-    return isObj(parsed) && parsed.digest === true;
-  } catch {
-    return false;
-  }
+  return readJsonObject(path.join(crankDir, LOCAL_CONFIG_FILE))?.digest === true;
 }
 
 export function saveConfig(crankDir: string, config: CrankConfig): void {
@@ -174,8 +176,6 @@ export function saveConfig(crankDir: string, config: CrankConfig): void {
   if (digest) fs.writeFileSync(local, JSON.stringify({ digest: true }, null, 2) + "\n");
   else fs.rmSync(local, { force: true });
 }
-
-// ── Sensitive filter (always on, regardless of config) ──────────────────────
 
 const SENSITIVE_EXTENSIONS = new Set([
   ".pem",

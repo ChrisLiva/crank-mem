@@ -3,15 +3,14 @@ import * as path from "node:path";
 import {
   readStdin,
   parsePayload,
-  findProjectRoot,
+  projectContext,
   emitAdditionalContext,
   runAdvisoryHook,
   memoryPaths,
   isProjectFile,
   type HookPayload,
 } from "./lib/hook-io.ts";
-import { CRANK_DIR, loadConfig } from "./lib/config.ts";
-import { debugEvent, enableDebug, safePath } from "./lib/debug.ts";
+import { debugEvent, safePath } from "./lib/debug.ts";
 import { formatLine, memoryPath, openMemory, type MemoryReader } from "./lib/memory.ts";
 import { shellReadPaths } from "./lib/shell-reads.ts";
 import { transcriptStem } from "./lib/spool.ts";
@@ -107,11 +106,9 @@ async function main(): Promise<void> {
   const paths = readPaths(payload);
   if (paths.length === 0) return;
 
-  const cwd = typeof payload.cwd === "string" ? payload.cwd : process.cwd();
-  const root = findProjectRoot(cwd);
-  if (!root) return;
-  const crankDir = path.join(root, CRANK_DIR);
-  enableDebug(crankDir, loadConfig(crankDir).debug);
+  const ctx = projectContext(payload);
+  if (!ctx) return;
+  const { cwd, root } = ctx;
 
   const stem = transcriptStem(payload.transcript_path);
   if (!stem) return;

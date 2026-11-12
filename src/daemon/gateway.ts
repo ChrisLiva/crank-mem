@@ -2,17 +2,51 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isObj, SENSITIVE_GLOBS, type Obj } from "../hooks/lib/config.ts";
-import { crankHome } from "../hooks/lib/user-state.ts";
+import { crankHome, writeStopState } from "../hooks/lib/user-state.ts";
 
 // The one door to the model: `claude -p` on the user's own Claude login,
 // with a fixed call shape and an allowlisted environment (ADR 0008).
 
-export type ModelRequest<T> = {
-  system: string;
-  input: string;
-  schema: object;
-  validate: (value: unknown) => value is T;
+type Schema = {
+  type?: string;
+  enum?: readonly unknown[];
+  required?: readonly string[];
+  properties?: Record<string, Schema>;
+  items?: Schema;
+  additionalProperties?: boolean;
 };
+
+/** `T` is the shape `schema` describes: `classify` checks the output against `schema` before typing it as `T`. */
+export type ModelRequest<T> = { system: string; input: string; schema: Schema };
+
+/** Whether `value` fits `schema`, over the keywords the request schemas use; extra object keys pass. */
+export function matchesSchema<T>(schema: Schema, value: unknown): value is T {
+  if (schema.enum !== undefined && !schema.enum.includes(value)) return false;
+  switch (schema.type) {
+    case "object": {
+      if (!isObj(value)) return false;
+      const properties = Object.entries(schema.properties ?? {});
+      return (
+        (schema.required ?? []).every((key) => Object.hasOwn(value, key)) &&
+        properties.every(
+          ([key, sub]) => !Object.hasOwn(value, key) || matchesSchema(sub, value[key]),
+        )
+      );
+    }
+    case "array": {
+      const items = schema.items;
+      return (
+        Array.isArray(value) && (items === undefined || value.every((v) => matchesSchema(items, v)))
+      );
+    }
+    case "string":
+      return typeof value === "string";
+    case "integer":
+      return Number.isInteger(value);
+    default:
+      return true;
+  }
+}
 
 export type ModelResult<T> =
   | { kind: "ok"; output: T; model: string; costUsd: number }
@@ -119,7 +153,7 @@ function lastResult(stdout: string): Obj | null {
  * The fixed call shape (ADR 0008). With a `project`, the run gets read-only tools over it, room for
  * their turns, and deny rules for the sensitive-file filter (ADR 0011).
  */
-function callArgs(system: string, schema: object, project: string | null): string[] {
+function callArgs(system: string, schema: Schema, project: string | null): string[] {
   const settings =
     project === null
       ? { disableAllHooks: true }
@@ -156,11 +190,21 @@ export const RUN_DIR = "run";
 /**
  * One structured-output run on the user's Claude login, gated on `claude auth status`. Without `project`
  * both spawns run in an empty `<crank home>/run`; with it, both run in the project, since a deny rule
- * does not reach a directory passed by `--add-dir` (ADR 0011).
+ * does not reach a directory passed by `--add-dir` (ADR 0011). A stopped result also writes the stop state.
  */
 export async function askClaude<T>(
   req: ModelRequest<T>,
   opts: { timeoutMs?: number; project?: string } = {},
+): Promise<ModelResult<T>> {
+  const result = await askOnce(req, opts);
+  if (result.kind === "stopped")
+    writeStopState({ reason: result.reason, atMs: Date.now(), detail: result.detail });
+  return result;
+}
+
+async function askOnce<T>(
+  req: ModelRequest<T>,
+  opts: { timeoutMs?: number; project?: string },
 ): Promise<ModelResult<T>> {
   const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_MS;
   const project = opts.project ?? null;
@@ -194,12 +238,12 @@ export async function askClaude<T>(
     true,
   );
   if (run.failure) return run.failure;
-  return classify(run, req.validate);
+  return classify<T>(run, req.schema);
 }
 
 /** A `-p` run that failed on the login: "Not logged in" in failure text, or HTTP 401/403. */
 function loginStop(run: Pick<Run, "stdout">, result: Obj | null): ModelResult<never> | null {
-  // Only failure text counts: a non-JSON line (exp/d.out) or an error result's `result` (plan/bare.jsonl).
+  // Only failure text counts: a non-JSON line or an error result's `result` (ADR 0008).
   // JSON lines also carry the digest's own text, which may quote the error.
   const plainText = run.stdout.split("\n").filter((line) => parseJson(line) === undefined);
   const errorText =
@@ -217,11 +261,8 @@ function loginStop(run: Pick<Run, "stdout">, result: Obj | null): ModelResult<ne
   return null;
 }
 
-/** Settle a finished `-p` run. Credential failures also read `subtype: "success"` (exp/c1), so `subtype` alone decides nothing. */
-export function classify<T>(
-  run: Pick<Run, "code" | "stdout">,
-  validate: (value: unknown) => value is T,
-): ModelResult<T> {
+/** Settle a finished `-p` run. Credential failures also read `subtype: "success"` (ADR 0008), so `subtype` alone decides nothing. */
+export function classify<T>(run: Pick<Run, "code" | "stdout">, schema: Schema): ModelResult<T> {
   const result = lastResult(run.stdout);
   const modelUsage = isObj(result?.modelUsage) ? result.modelUsage : {};
   const providers = Object.values(modelUsage)
@@ -250,7 +291,7 @@ export function classify<T>(
   if (result.structured_output === undefined || result.structured_output === null) {
     return { kind: "rejected", detail: "claude -p returned no structured output" };
   }
-  if (!validate(result.structured_output))
+  if (!matchesSchema<T>(schema, result.structured_output))
     return { kind: "rejected", detail: "claude -p structured output failed the schema" };
   if (providers.length === 0)
     return { kind: "stopped", reason: "credential", detail: "claude -p result named no provider" };

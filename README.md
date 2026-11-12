@@ -55,7 +55,7 @@ or `CRANK_NO_UPDATE_CHECK=1` turns the automatic checks off. With
 digest jobs, so auto mode acts only while digests are on (`crank-mem digest on`).
 The last check and these settings live in `~/.crank/update.json`.
 
-`crank-mem upgrade` in one project repairs that project. It re-vendors the hooks copied into `.crank/hooks/`, adds the
+`crank-mem upgrade` in one project repairs that project. It adds the
 `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`,
 `Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the wired Claude settings file, adds hook wiring the install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
 wrote to the current form, and removes crank hooks from the Claude settings
@@ -63,8 +63,8 @@ file the git mode does not use, since wiring in both runs every hook twice.
 It brings every item back to the choices init recorded in `.crank/config.json`:
 when init wired Codex it re-wires `.codex/hooks.json` and the `[features]`
 snippet in `.codex/config.toml`, it re-vendors `.crank/hooks/` whenever it differs from the running crank-mem,
-and it re-seeds a missing `cerebrum.md`. With `--codex-trust write` it
-recomputes the trusted hashes only when one is missing or stale. A failed
+and it re-seeds a missing `cerebrum.md`. When init recorded `--codex-trust write`, it
+recomputes the trusted hashes only when one is missing or outdated. A failed
 repair prints a warning, every other repair still runs, and the upgrade exits 1.
 A hook command you edited stays as written. It replaces a `.crank/.gitignore`
 that is not the current allowlist, which admits only crank-mem's tracked files
@@ -100,7 +100,7 @@ Requires bun, or node >= 23.6 (runs TypeScript directly).
 - `crank-mem stats` — index report; memory health (cerebrum bullets injected against total, preferences left out, the oldest bullet left out, cited paths that still exist, days since the last audit); capture health (a status line naming the first problem and the command that fixes it, digest on, off or stopped, daemon, spool waiting and parked, store counts, last digest, the month's cost at list price, pending `proposals`, `stale` rows, the last `consolidation` and its outcome, `last snapshot`, embedder); whether Codex threads got the injection and whether its hook trust is current
 - `crank-mem dashboard` — serve a read-only memory dashboard on `127.0.0.1` until Ctrl-C: a Health board of every registered project (capture status, the command that fixes a stalled one, cost and 30-day digests), then each project's Health, Curation, Usage and Memory views, with per-day charts in Health and Usage. It prints `crank-mem dashboard: http://127.0.0.1:<port>/?token=<token>` and opens that URL in the browser; the token, kept in `~/.crank/dashboard.json`, trades for a session cookie. `--port <n>` picks the port (default `38700` plus your uid mod 100), and `--no-open` skips the browser. It refuses until `setup` has built the dashboard
 - `crank-mem upgrade [--all]` — re-vendor hooks and repair their wiring after an update, and add the project to `~/.crank/projects.json`, the list the dashboard shows; `--all` installs crank-mem's packages once, then repairs every project in that list, skipping a missing root and a project whose anatomy lock is held
-- `crank-mem self-update [--to vX.Y.Z]` — install the latest release, or the tagged one, make it the current version and repair every registered project with it; the previous version stays installed and older ones are removed, except one a running daemon uses. It refuses in a clone, which updates with `git pull`
+- `crank-mem self-update [--to vX.Y.Z]` — install the latest release, or the tagged one, make it the current version and repair every registered project with it; the previous version stays installed and older ones are removed, except the one this process, a live daemon or a live dashboard runs. It refuses in a clone, which updates with `git pull`
 - `crank-mem rollback` — make the previous installed version the current one and repair every registered project with it. It refuses when a project's memory store has a schema newer than that version reads, naming the projects and `crank-mem restore-memory`, and refuses in a clone
 - `crank-mem self-uninstall` — remove the installed crank-mem: stop the daemon, offer to run `crank-mem uninstall` in every registered project (`--yes` accepts), then remove `~/.crank/versions/`, the `current` link, the `crank-mem` link in the bin dir (`--bin-dir <dir>`, default `~/.local/bin`) and the PATH block in your shell rc file. `--purge` also removes the state crank-mem keeps in `~/.crank` (the spool, models, registry, dashboard token and daemon files) and nothing another tool keeps there
 - `crank-mem uninstall` — remove all wiring, offer backup restore: `--restore` puts each project file crank-mem changed back as it was before crank-mem first changed it and deletes the files crank-mem created, while files outside the project, such as `~/.codex/config.toml`, only lose crank-mem's entries; `--delete-crank` deletes only the files crank-mem writes in `.crank/`, `memory.db` and its `-wal` and `-shm` files included, and removes the directory only when nothing else is left in it; it exits 1, naming the file, when it cannot remove crank-mem's entries from a file (one that is not valid JSON, or one it cannot read or write)
@@ -108,7 +108,7 @@ Requires bun, or node >= 23.6 (runs TypeScript directly).
 ### Layout under `.crank/`
 
 `anatomy-index.json` (data), `anatomy.md` (human/agent view), `cerebrum.md`
-(semantic memory, kept by consolidation), `cerebrum-archive.md` (bullets
+(the cerebrum, kept by consolidation), `cerebrum-archive.md` (bullets
 consolidation removed or replaced, each with its reason; never injected),
 `memory.db` (digested memory, kept out of git), `config.json`, `config.local.json` (the per-checkout digest switch, kept out of git), `hooks/` (vendored), `backups/` (init/upgrade backups,
 plus `backups/cerebrum/`: the last 5 copies of cerebrum.md, taken before each
@@ -141,7 +141,7 @@ readable `memory.db` or digests are running, a recall pointer to
 `crank-mem digest on` turns digests on for a checkout of a project. It writes
 the switch to the gitignored `.crank/config.local.json`, so a teammate's checkout
 or a linked worktree stays off until someone runs it there. Claude Code's Stop and
-SessionEnd hooks then drop a signal for the session into a per-user spool under
+SessionEnd hooks then write the session's entry into a per-user spool under
 `~/.crank` (or `$CRANK_HOME`), which crank-mem creates at mode 0700; a
 directory that already exists keeps its mode. They also start a small detached
 daemon, one per user, which runs one digest job at a time across all projects
@@ -157,10 +157,7 @@ The run gets only `HOME`, `USER`, `PATH`, `TMPDIR` and
 servers (ADR 0008). `crank-mem stats` shows the month's digest cost at list
 price. Codex sessions are not digested.
 
-Nothing asks the agent to keep memory, whether digests run or not: session
-start injects no cerebrum or journal protocol, and Stop and post-write add
-nothing the model sees (ADR 0010). A `journal.md` from an earlier release stays
-on disk unread.
+Nothing asks the agent to keep memory, whether digests run or not (ADR 0010).
 
 A session still running is digested too: the daemon digests a live session 2
 hours after it first sees it, then 2 hours after each digest of it, so a long
@@ -233,8 +230,8 @@ copies with `npx skills update` (`crank-mem upgrade` never touches them).
 
 Invocation is user-only: `/crank-mem-audit` in Claude Code, `$crank-mem-audit`
 in Codex. An audit is dated by its backup directory under
-`.crank/backups/`, the one that holds only copies of the memory files:
-`cerebrum.md`, `journal.md` and `cerebrum-archive.md`.
+`.crank/backups/`, the one that holds only a copy of `cerebrum.md`
+(older audits may also hold `journal.md` and `cerebrum-archive.md`).
 
 ### Debugging
 

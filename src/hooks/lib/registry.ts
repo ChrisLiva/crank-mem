@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { CONFIG_FILE, CRANK_DIR, readJsonObject } from "./config.ts";
 import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 
 // The per-user list of project roots, kept at <crank home>/projects.json.
@@ -14,16 +15,12 @@ type Entry = { root: string; addedAtMs: number };
 
 /** The listed entries; a missing or malformed file reads as none. */
 function readEntries(): Entry[] {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(crankHome(), REGISTRY_FILE), "utf-8"));
-    if (!Array.isArray(parsed?.projects)) return [];
-    return parsed.projects.filter(
-      (e: unknown): e is Entry =>
-        typeof (e as Entry)?.root === "string" && typeof (e as Entry)?.addedAtMs === "number",
-    );
-  } catch {
-    return [];
-  }
+  const projects = readJsonObject(path.join(crankHome(), REGISTRY_FILE))?.projects;
+  if (!Array.isArray(projects)) return [];
+  return projects.filter(
+    (e: unknown): e is Entry =>
+      typeof (e as Entry)?.root === "string" && typeof (e as Entry)?.addedAtMs === "number",
+  );
 }
 
 function writeEntries(projects: Entry[]): void {
@@ -53,4 +50,9 @@ export function unregisterProject(root: string): void {
 
 export function registeredRoots(): string[] {
   return readEntries().map((e) => e.root);
+}
+
+/** The registered roots that still hold a crank-mem install (`.crank/config.json`). */
+export function installedRoots(): string[] {
+  return registeredRoots().filter((root) => fs.existsSync(path.join(root, CRANK_DIR, CONFIG_FILE)));
 }

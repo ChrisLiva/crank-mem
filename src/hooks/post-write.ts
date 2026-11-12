@@ -2,17 +2,17 @@ import * as path from "node:path";
 import {
   readStdin,
   parsePayload,
-  findProjectRoot,
+  projectContext,
   runAdvisoryHook,
   repoRelative,
   type HookPayload,
 } from "./lib/hook-io.ts";
-import { loadConfig, CRANK_DIR } from "./lib/config.ts";
+import { CRANK_DIR } from "./lib/config.ts";
 import { commitIndex } from "./lib/store.ts";
 import { indexFile } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { parseApplyPatch } from "./lib/apply-patch.ts";
-import { enableDebug, debugEvent, safePath } from "./lib/debug.ts";
+import { debugEvent, safePath } from "./lib/debug.ts";
 
 // PostToolUse hook: re-index of written files. Claude matcher is
 // Write|Edit|MultiEdit (file_path in tool_input); Codex matcher is
@@ -95,13 +95,9 @@ async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());
   if (!payload) return;
 
-  const cwd = typeof payload.cwd === "string" ? payload.cwd : process.cwd();
-  const root = findProjectRoot(cwd);
-  if (!root) return;
-
-  const crankDir = path.join(root, CRANK_DIR);
-  const config = loadConfig(crankDir);
-  enableDebug(crankDir, config.debug);
+  const ctx = projectContext(payload);
+  if (!ctx) return;
+  const { cwd, root, crankDir, config } = ctx;
 
   const { ops, skip } = toWriteOps(payload, root, cwd);
   if (ops.length === 0) {

@@ -1,7 +1,4 @@
-import * as path from "node:path";
-import { readStdin, parsePayload, findProjectRoot, runAdvisoryHook } from "./lib/hook-io.ts";
-import { CRANK_DIR, loadConfig } from "./lib/config.ts";
-import { enableDebug } from "./lib/debug.ts";
+import { readStdin, parsePayload, projectContext, runAdvisoryHook } from "./lib/hook-io.ts";
 import { signalDigest } from "./lib/spool.ts";
 
 // Stop hook, Claude Code only. With `digest` on it writes the session's spool
@@ -12,13 +9,9 @@ async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());
   if (!payload) return;
 
-  const root = findProjectRoot(typeof payload.cwd === "string" ? payload.cwd : process.cwd());
-  if (!root) return;
-
-  const crankDir = path.join(root, CRANK_DIR);
-  const config = loadConfig(crankDir);
-  enableDebug(crankDir, config.debug);
-  signalDigest(payload, root, config, false);
+  const ctx = projectContext(payload);
+  if (!ctx) return;
+  signalDigest(payload, ctx.root, ctx.config, false);
 }
 
 await runAdvisoryHook("stop", main);

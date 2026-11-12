@@ -224,11 +224,7 @@ export function openMemory(file: string, mode: "read" | "write"): MemoryRead | M
     }
     return read ? readerAt(db, file, v) : writerAt(db, file, v);
   } catch {
-    try {
-      db?.close();
-    } catch {
-      /* already closed or never opened */
-    }
+    db?.close();
     return { status: "unreadable" };
   }
 }

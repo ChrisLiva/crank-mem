@@ -29,7 +29,7 @@ const BACKUP_KEEP = 5;
 // Episodic memory, `.crank/journal.md`. No hook reads or writes it.
 export const JOURNAL_FILE = "journal.md";
 // Upkeep state earlier releases wrote under .crank/. Nothing reads or writes
-// either any more; `uninstall --delete-crank` removes them by name.
+// them; `uninstall --delete-crank` removes them by name.
 export const MARKER_FILE = "cerebrum-nudge.json";
 export const DEDUP_FILE = "cerebrum-dedup.json";
 
@@ -87,7 +87,9 @@ export function splitPreamble(md: string): { preamble: string; body: string | nu
   return { preamble: md.slice(0, cut), body: md.slice(cut) };
 }
 
-// What the audit skill's backup step copies (skills/crank-mem-audit/SKILL.md).
+// The names an audit backup dir may hold: the audit skill's backup step
+// (skills/crank-mem-audit/SKILL.md) copies only cerebrum.md, and older audits
+// also copied journal.md and cerebrum-archive.md.
 const AUDIT_BACKUP_FILES = new Set([CEREBRUM_FILE, JOURNAL_FILE, ARCHIVE_FILE]);
 
 /**

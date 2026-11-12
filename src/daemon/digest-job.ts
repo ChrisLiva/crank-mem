@@ -7,7 +7,7 @@ import { CRANK_DIR, errorMessage } from "../hooks/lib/config.ts";
 import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
 import { deleteEntry, readSpool, settleEntry, type SpoolEntry } from "../hooks/lib/spool.ts";
-import { readStopState, writeStopState } from "../hooks/lib/user-state.ts";
+import { readStopState } from "../hooks/lib/user-state.ts";
 import { digestRequest, type Digest, type DigestContext } from "./digest-prompt.ts";
 import { EMBED_MODEL, embed } from "./embedder.ts";
 import { CONSOLIDATE_EVERY_MS, consolidate } from "./consolidate.ts";
@@ -82,10 +82,7 @@ async function digest(
     timeoutMs,
   });
   if (r.kind === "retry") return 1;
-  if (r.kind === "stopped") {
-    writeStopState({ reason: r.reason, atMs: Date.now(), detail: r.detail });
-    return 0;
-  }
+  if (r.kind === "stopped") return 0;
   const session: SessionKey = { id: stem, agent: "claude", transcriptPath: entry.transcriptPath };
   if (r.kind === "rejected") {
     if (memory.recordRejection(session) >= REJECTION_LIMIT) {
@@ -134,7 +131,7 @@ async function consolidateQuietly(
   try {
     await consolidate(root, memory, opts);
   } catch (err) {
-    process.stderr.write(`crank-mem: consolidation skipped (${errorMessage(err)})\n`);
+    console.error(`crank-mem: consolidation skipped (${errorMessage(err)})`);
   }
 }
 

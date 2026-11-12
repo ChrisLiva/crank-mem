@@ -1,14 +1,11 @@
-import * as path from "node:path";
 import {
   readStdin,
   parsePayload,
-  findProjectRoot,
+  projectContext,
   emitAdditionalContext,
   runAdvisoryHook,
 } from "./lib/hook-io.ts";
-import { loadConfig, CRANK_DIR } from "./lib/config.ts";
 import { subagentInjection } from "./lib/injection.ts";
-import { enableDebug } from "./lib/debug.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
 
 // SubagentStart hook (Claude Code only). SessionStart never fires inside a
@@ -21,12 +18,9 @@ async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());
   if (!payload) return;
 
-  const root = findProjectRoot(typeof payload.cwd === "string" ? payload.cwd : process.cwd());
-  if (!root) return;
-
-  const crankDir = path.join(root, CRANK_DIR);
-  const config = loadConfig(crankDir);
-  enableDebug(crankDir, config.debug);
+  const ctx = projectContext(payload);
+  if (!ctx) return;
+  const { root, crankDir, config } = ctx;
 
   const result = subagentInjection(root, crankDir, config, {
     agentType: typeof payload.agent_type === "string" ? payload.agent_type : null,

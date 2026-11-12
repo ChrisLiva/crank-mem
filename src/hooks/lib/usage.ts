@@ -148,7 +148,7 @@ export function recordUsage(root: string, actor: UsageActor, event: UsageEvent):
     if (size + bytes > USAGE_MAX_BYTES) rotate(file, bytes);
     fs.appendFileSync(file, line);
   } catch {
-    // Advisory: a read-only .crank/ or a full disk loses this line, never the hook.
+    // Advisory: see the module header.
   }
 }
 

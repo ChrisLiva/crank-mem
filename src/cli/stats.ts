@@ -24,6 +24,7 @@ import { readStopState } from "../hooks/lib/user-state.ts";
 import { daemonAlive, readParked, readSpool, type SpoolItem } from "../hooks/lib/spool.ts";
 import { formatUsd, projectStatus, type HealthSummary } from "../hooks/lib/wire.ts";
 import { localDate, memoryPath, openMemory } from "../hooks/lib/memory.ts";
+import { ISO_DATE } from "../hooks/lib/bullets.ts";
 import { latestSnapshot } from "../hooks/lib/store-upkeep.ts";
 import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
 import { readUpdateState, updateAvailable } from "./updates.ts";
@@ -87,7 +88,7 @@ function oldestHidden(hidden: string[]): string {
   const dates = hidden.map(
     (b) =>
       b
-        .match(/\b\d{4}-\d{2}-\d{2}\b/g)
+        .match(ISO_DATE)
         ?.filter((d) => !Number.isNaN(Date.parse(d)))
         .sort()
         .at(-1) ?? null,

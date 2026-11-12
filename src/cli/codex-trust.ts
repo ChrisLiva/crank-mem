@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
+import { isObj, readJsonObject } from "../hooks/lib/config.ts";
 import { isCrankHookCommand, type HooksMap } from "./settings.ts";
 
 // Opt-in Codex per-hook trust: compute trusted_hash entries the way codex-rs
@@ -67,14 +68,8 @@ function eachCrankHandler(
 
 /** Parse the `hooks` map out of a hooks.json on disk; null when unreadable. */
 function readHooksMap(hooksJsonPath: string): HooksMap | null {
-  try {
-    const root = JSON.parse(fs.readFileSync(hooksJsonPath, "utf-8"));
-    const hooks = root?.hooks;
-    if (typeof hooks !== "object" || hooks === null) return null;
-    return hooks as HooksMap;
-  } catch {
-    return null;
-  }
+  const hooks = readJsonObject(hooksJsonPath)?.hooks;
+  return isObj(hooks) ? (hooks as HooksMap) : null;
 }
 
 /**

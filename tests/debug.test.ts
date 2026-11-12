@@ -2,8 +2,22 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { makeCrankProject, runHook, enableDebugConfig, readDebugLog } from "./helpers.ts";
-import { claudeSessionStart, claudePostWrite, codexApplyPatch } from "./fixtures/payloads.ts";
+import {
+  makeCrankProject,
+  makeCrankHome,
+  runHook,
+  enableDebugConfig,
+  readDebugLog,
+} from "./helpers.ts";
+import {
+  claudeSessionStart,
+  claudePostWrite,
+  claudePostRead,
+  claudeSessionEnd,
+  claudeStop,
+  claudeSubagentStart,
+  codexApplyPatch,
+} from "./fixtures/payloads.ts";
 import { loadIndex } from "../src/hooks/lib/store.ts";
 
 const SESSION_START = "src/hooks/session-start.ts";
@@ -49,6 +63,49 @@ describe("debug logging (black-box)", () => {
     const writeEvents = records[1]!.events;
     expect(writeEvents.find((e: any) => e.event === "reindex").committed).toBe(true);
     expect(writeEvents.some((e: any) => e.event === "lock-waited")).toBe(false);
+  });
+
+  test("a payload without cwd finds the project from the process cwd, and every hook logs a record", () => {
+    const root = makeCrankProject({ "a.ts": "const a = 1;" });
+    enableDebugConfig(root);
+    const transcript = path.join(root, "t.jsonl");
+    const hooks: Array<[string, object]> = [
+      ["session-start", claudeSessionStart(root)],
+      ["subagent-start", claudeSubagentStart(root)],
+      ["post-write", claudePostWrite(root, "a.ts")],
+      ["post-read", claudePostRead(root, "a.ts", transcript)],
+      ["stop", claudeStop(root)],
+      ["session-end", claudeSessionEnd(root, transcript)],
+    ];
+    for (const [hook, payload] of hooks) {
+      const { cwd: _, ...withoutCwd } = payload as Record<string, unknown>;
+      const run = runHook(`src/hooks/${hook}.ts`, JSON.stringify(withoutCwd), root);
+      expect(run.status).toBe(0);
+    }
+    const records = readDebugLog(root);
+    expect(records.map((r) => r.hook)).toEqual(hooks.map(([hook]) => hook));
+    for (const r of records) expect(r.ok).toBe(true);
+  });
+
+  test("a cwd outside any project leaves stop, session-end, post-write and post-read silent", () => {
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-bare-"));
+    const home = makeCrankHome();
+    const transcript = path.join(bare, "t.jsonl");
+    const hooks: Array<[string, object]> = [
+      ["stop", claudeStop(bare)],
+      ["session-end", claudeSessionEnd(bare, transcript)],
+      ["post-write", claudePostWrite(bare, "a.ts")],
+      ["post-read", claudePostRead(bare, "a.ts", transcript)],
+    ];
+    for (const [hook, payload] of hooks) {
+      const run = runHook(`src/hooks/${hook}.ts`, JSON.stringify(payload), bare, {
+        CRANK_HOME: home,
+      });
+      expect(run.status).toBe(0);
+      expect(run.stdout).toBe("");
+      expect(run.stderr).toBe("");
+    }
+    expect(fs.existsSync(path.join(home, "spool"))).toBe(false);
   });
 
   test("CRANK_DEBUG=1 enables logging when config says off", () => {

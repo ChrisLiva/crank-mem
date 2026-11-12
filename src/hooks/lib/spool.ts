@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { errorMessage, isObj, type CrankConfig } from "./config.ts";
+import { errorMessage, readJsonObject, type CrankConfig } from "./config.ts";
 import { debugEvent } from "./debug.ts";
 import type { HookPayload } from "./hook-io.ts";
 import {
@@ -76,7 +76,7 @@ function writeSignal(
   writeJsonAtomic(path.join(spoolDir(), stem + EXT), entry);
 }
 
-/** The hooks' entry point: signal when the project turned digests on. Never throws. */
+/** The hooks' entry point: write the session's spool entry when the project turned digests on. Never throws. */
 export function signalDigest(
   payload: HookPayload,
   projectRoot: string,
@@ -99,14 +99,7 @@ export function signalDigest(
 
 /** The parsed daemon.json; null when it cannot be read or does not hold a JSON object. */
 export function readDaemonState(): Partial<DaemonState> | null {
-  try {
-    const state: unknown = JSON.parse(
-      fs.readFileSync(path.join(crankHome(), DAEMON_FILE), "utf-8"),
-    );
-    return typeof state === "object" && state !== null ? (state as Partial<DaemonState>) : null;
-  } catch {
-    return null;
-  }
+  return readJsonObject(path.join(crankHome(), DAEMON_FILE)) as Partial<DaemonState> | null;
 }
 
 /**
@@ -169,16 +162,12 @@ function readEntries(dir: string): SpoolItem[] {
   const items: SpoolItem[] = [];
   for (const name of names) {
     if (!name.endsWith(EXT)) continue;
-    try {
-      const entry: SpoolEntry = JSON.parse(fs.readFileSync(path.join(dir, name), "utf-8"));
-      if (isObj(entry)) {
-        // An entry written before entries carried cwd takes its project root.
-        if (typeof entry.cwd !== "string") entry.cwd = entry.projectRoot;
-        items.push({ stem: name.slice(0, -EXT.length), entry });
-      }
-    } catch {
-      // Unparseable or vanished mid-read: skip it.
-    }
+    // Unparseable or vanished mid-read: skip it.
+    const entry = readJsonObject(path.join(dir, name)) as SpoolEntry | null;
+    if (!entry) continue;
+    // An entry written before entries carried cwd takes its project root.
+    if (typeof entry.cwd !== "string") entry.cwd = entry.projectRoot;
+    items.push({ stem: name.slice(0, -EXT.length), entry });
   }
   return items;
 }
@@ -243,14 +232,8 @@ export function settleEntry(stem: string, updatedAt: number, how: "delete" | "pa
   } catch {
     return false;
   }
-  let same = false;
-  try {
-    same =
-      (JSON.parse(fs.readFileSync(claim, "utf-8")) as Partial<SpoolEntry> | null)?.updatedAt ===
-      updatedAt;
-  } catch {
-    // Unparseable: not the entry the job read.
-  }
+  // Unparseable: not the entry the job read.
+  const same = readJsonObject(claim)?.updatedAt === updatedAt;
   if (!same) {
     try {
       fs.linkSync(claim, file);

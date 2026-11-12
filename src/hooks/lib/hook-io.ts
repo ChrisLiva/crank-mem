@@ -1,7 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CRANK_DIR, errorMessage, isSensitiveFile } from "./config.ts";
-import { flushDebug } from "./debug.ts";
+import {
+  CRANK_DIR,
+  errorMessage,
+  isSensitiveFile,
+  loadConfig,
+  type CrankConfig,
+} from "./config.ts";
+import { enableDebug, flushDebug } from "./debug.ts";
 
 // Hook I/O helpers. Hooks are advisory-only: they must never fail the tool
 // call, so payload parsing degrades to null and callers exit 0.
@@ -56,6 +62,23 @@ export function findProjectRoot(cwd: string): string | null {
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+/**
+ * The project a hook payload belongs to: its cwd (the payload's, else the process's),
+ * root, `.crank/` dir and config, with debug logging enabled per that config.
+ * Null when no root holds crank-mem.
+ */
+export function projectContext(
+  payload: HookPayload,
+): { cwd: string; root: string; crankDir: string; config: CrankConfig } | null {
+  const cwd = typeof payload.cwd === "string" ? payload.cwd : process.cwd();
+  const root = findProjectRoot(cwd);
+  if (!root) return null;
+  const crankDir = path.join(root, CRANK_DIR);
+  const config = loadConfig(crankDir);
+  enableDebug(crankDir, config.debug);
+  return { cwd, root, crankDir, config };
 }
 
 /** `p` (absolute, or relative to `cwd`) as a `/`-separated path under `root`; null for the root itself or outside it. */

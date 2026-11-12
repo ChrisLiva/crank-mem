@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { cn } from "cn";
+import { errorMessage } from "../../../src/hooks/lib/wire";
 import {
   fetchUsage,
   type ActivityWindow,
@@ -21,7 +22,6 @@ import {
   WINDOWS,
 } from "./shared";
 
-/** A share as a whole percent, or `—` when there was nothing to divide. */
 function percent(share: number | null): string {
   return share === null ? "—" : `${Math.round(share * 100)}%`;
 }
@@ -67,7 +67,7 @@ export function UsageView({
         setLoaded({ key, metrics });
         setError(null);
       } catch (err) {
-        if (isCurrent()) setError(err instanceof Error ? err.message : String(err));
+        if (isCurrent()) setError(errorMessage(err));
       }
     },
     [key],

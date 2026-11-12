@@ -15,6 +15,7 @@ import {
   modeIgnoreFile,
   pushLine,
   report,
+  type InstallContext,
   type InstallItem,
   type Report,
 } from "./install-support.ts";
@@ -52,40 +53,39 @@ function unignoreForCommit(r: Report, root: string, backup: (file: string) => vo
     );
 }
 
+// Commit mode drops a stale ignore block; ignore and exclude mode regain a
+// missing one, whose absence exposes .crank/ to git. Returns the ignore file
+// it added the block to, or null.
+function ensureGitIgnoreState(ctx: InstallContext, r: Report): string | null {
+  const { root, config } = ctx;
+  const backup = backupWith(ctx);
+  if (config.git === "commit") {
+    unignoreForCommit(r, root, backup);
+    return null;
+  }
+  const ignoreFile = modeIgnoreFile(root, config.git);
+  return ignoreFile !== null && addIgnoreLines(ignoreFile, backup) ? ignoreFile : null;
+}
+
 export const gitIgnoreState: InstallItem = {
   apply(ctx) {
-    const { root, config } = ctx;
-    const backup = backupWith(ctx);
     const r = report();
-    if (config.git === "commit") {
-      unignoreForCommit(r, root, backup);
-      return r;
-    }
-    const ignoreFile = modeIgnoreFile(root, config.git);
-    if (ignoreFile) addIgnoreLines(ignoreFile, backup);
+    ensureGitIgnoreState(ctx, r);
     return r;
   },
-  // Ignore and exclude mode regain a missing ignore block, whose absence
-  // exposes .crank/ to git.
   repair(ctx) {
     const { root, config } = ctx;
-    const backup = backupWith(ctx);
     const r = report();
-    if (config.git === "commit") {
-      attemptRepair(r, "check .crank/cerebrum.md against git ignores", () =>
-        unignoreForCommit(r, root, backup),
-      );
-      return r;
-    }
     const ignoreFile = modeIgnoreFile(root, config.git);
-    if (ignoreFile) {
-      attemptRepair(r, `write ${path.relative(root, ignoreFile)}`, () => {
-        if (addIgnoreLines(ignoreFile, backup))
-          r.lines.push(
-            `  added the crank-mem .crank/ ignore block to ${path.relative(root, ignoreFile)}`,
-          );
-      });
-    }
+    const action =
+      ignoreFile === null
+        ? "check .crank/cerebrum.md against git ignores"
+        : `write ${path.relative(root, ignoreFile)}`;
+    attemptRepair(r, action, () => {
+      const added = ensureGitIgnoreState(ctx, r);
+      if (added !== null)
+        r.lines.push(`  added the crank-mem .crank/ ignore block to ${path.relative(root, added)}`);
+    });
     return r;
   },
   remove({ root, crankDir }) {

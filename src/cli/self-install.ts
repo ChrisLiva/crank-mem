@@ -1,8 +1,7 @@
-import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { CONFIG_FILE, CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
-import { registeredRoots } from "../hooks/lib/registry.ts";
+import { CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
+import { installedRoots } from "../hooks/lib/registry.ts";
 import { crankHome } from "../hooks/lib/user-state.ts";
 import { parseArgs, positive, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
@@ -46,12 +45,9 @@ async function offerPath(binDir: string, yes: boolean): Promise<void> {
 /** Registered projects whose config records a tool root other than the stable `current` link. */
 function projectsOffCurrent(): string[] {
   const current = path.join(crankHome(), CURRENT_LINK);
-  return registeredRoots().filter((root) => {
-    const crankDir = path.join(root, CRANK_DIR);
-    return (
-      fs.existsSync(path.join(crankDir, CONFIG_FILE)) && loadConfig(crankDir).clone_root !== current
-    );
-  });
+  return installedRoots().filter(
+    (root) => loadConfig(path.join(root, CRANK_DIR)).clone_root !== current,
+  );
 }
 
 /** Offers to repoint projects at `current`; an accepted offer repairs every registered project. */

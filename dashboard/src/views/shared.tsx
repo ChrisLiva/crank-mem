@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { Check, Copy } from "lucide-react";
+import { errorMessage } from "../../../src/hooks/lib/wire";
 import { ACTIVITY_DAYS, type ConsolidationRow, type Note, type Page, type Tone } from "@/api";
 import { Button } from "@/components/ui/button";
 import { usePoll } from "@/hooks/use-poll";
@@ -151,6 +152,23 @@ export function Segmented<T extends string | number>({
   );
 }
 
+/** j/k move `item` along `keys`, which are the list's rows in order; null keys (still loading) ignore them. */
+export function useListNav(
+  keys: string[] | null,
+  item: string | null,
+  setItem: (item: string | null) => void,
+): void {
+  const selected = keys === null || item === null ? -1 : keys.indexOf(item);
+  const select = useCallback(
+    (i: number) => {
+      const key = keys?.[i];
+      if (key !== undefined) setItem(key);
+    },
+    [keys, setItem],
+  );
+  useListKeys(keys?.length ?? 0, selected, select);
+}
+
 /**
  * Keeps `item` on one of `keys`, which are the list's rows in order: the first key when
  * `item` is missing or gone, null when the list is empty. j/k move it. While `keys` is
@@ -166,22 +184,67 @@ export function useSelection(
   useEffect(() => {
     if (keys !== null && selected < 0 && first !== item) setItem(first);
   }, [keys, selected, first, item, setItem]);
-  const select = useCallback(
-    (i: number) => {
-      const key = keys?.[i];
-      if (key !== undefined) setItem(key);
-    },
-    [keys, setItem],
-  );
-  useListKeys(keys?.length ?? 0, selected, select);
+  useListNav(keys, item, setItem);
 }
 
 /** The list-and-detail views' split: the list column, then the chosen row's detail. */
 export const SPLIT = "grid min-h-0 flex-1 md:grid-cols-[minmax(20rem,28rem)_1fr]";
-export const LIST_COLUMN =
+const LIST_COLUMN =
   "flex max-h-[70dvh] min-h-0 flex-col border-b bg-card md:max-h-none md:border-r md:border-b-0";
 export const DETAIL_COLUMN = "min-h-0 overflow-auto";
 export const DETAIL_BODY = "grid max-w-3xl gap-6 px-6 pt-6 pb-12 md:px-8";
+
+/**
+ * A list-and-detail view's list column: `head`, then the note, the error, the `empty`
+ * message or the rows, then `foot`. `rows` is null while the list loads.
+ */
+export function ListColumn<T extends { id: number }>({
+  head,
+  note,
+  error,
+  rows,
+  empty,
+  item,
+  setItem,
+  renderRow,
+  foot,
+}: {
+  head: ReactNode;
+  note: string | null;
+  error: string | null;
+  rows: T[] | null;
+  empty: string;
+  item: string | null;
+  setItem: (item: string | null) => void;
+  renderRow: (row: T) => ReactNode;
+  foot: ReactNode;
+}) {
+  const message = note ?? error ?? (rows?.length === 0 ? empty : null);
+  return (
+    <section aria-label="List" className={LIST_COLUMN}>
+      <div className="grid gap-3 border-b px-4 py-4">{head}</div>
+      <div data-list className="min-h-0 flex-1 overflow-auto">
+        {message !== null ? (
+          <p
+            className={cn(
+              "px-4 py-8 text-center",
+              note === null && error !== null ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {message}
+          </p>
+        ) : (
+          rows?.map((r) => (
+            <Row key={r.id} selected={String(r.id) === item} onClick={() => setItem(String(r.id))}>
+              {renderRow(r)}
+            </Row>
+          ))
+        )}
+      </div>
+      {foot}
+    </section>
+  );
+}
 
 /** A list row button; the selected row takes the selection wash. */
 export function Row({
@@ -362,7 +425,7 @@ export function usePaged<T extends { id: number }>(
         return { ...got, rows: [...same.rows, ...got.rows], pages: same.pages + 1 };
       });
     } catch (err) {
-      if (keyRef.current === asked) setError(err instanceof Error ? err.message : String(err));
+      if (keyRef.current === asked) setError(errorMessage(err));
     }
   };
   usePoll(() => load(null), [key]);

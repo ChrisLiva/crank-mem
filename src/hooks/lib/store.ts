@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { readJsonObject } from "./config.ts";
 import { withLock } from "./lock.ts";
 import type { SymbolEntry } from "./symbols.ts";
 
@@ -55,23 +56,18 @@ export function emptyIndex(): AnatomyIndex {
 }
 
 export function loadIndex(crankDir: string): AnatomyIndex {
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(crankDir, INDEX_FILE), "utf-8"));
-    if (
-      typeof raw !== "object" ||
-      raw === null ||
-      raw.version !== INDEX_VERSION ||
-      typeof raw.files !== "object" ||
-      raw.files === null ||
-      typeof raw.meta !== "object" ||
-      raw.meta === null
-    ) {
-      return emptyIndex();
-    }
-    return raw as AnatomyIndex;
-  } catch {
+  const raw = readJsonObject(path.join(crankDir, INDEX_FILE));
+  if (
+    raw === null ||
+    raw.version !== INDEX_VERSION ||
+    typeof raw.files !== "object" ||
+    raw.files === null ||
+    typeof raw.meta !== "object" ||
+    raw.meta === null
+  ) {
     return emptyIndex();
   }
+  return raw as unknown as AnatomyIndex;
 }
 
 /** Atomic-ish save: write temp then rename (callers hold the lock). */

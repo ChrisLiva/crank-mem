@@ -1,11 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ARCHIVE_FILE, CEREBRUM_FILE, backupCerebrum } from "../hooks/lib/cerebrum-files.ts";
-import { CRANK_DIR, isObj } from "../hooks/lib/config.ts";
+import { CRANK_DIR } from "../hooks/lib/config.ts";
 import { basenameIndex, citationStatus } from "../hooks/lib/injection.ts";
 import { localDate, type Memory, type PendingWork } from "../hooks/lib/memory.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
-import { writeStopState, writeTextAtomic } from "../hooks/lib/user-state.ts";
+import { writeTextAtomic } from "../hooks/lib/user-state.ts";
 import type { ConsolidationOutcome } from "../hooks/lib/wire.ts";
 import { applyEdits, numberBullets, type CerebrumEdit } from "./cerebrum-edit.ts";
 import { oneLine } from "./digest-prompt.ts";
@@ -99,42 +99,6 @@ type Consolidation = {
   stale: { id: number; verdict: (typeof STALE_VERDICTS)[number] }[];
 };
 
-const optional = (v: Record<string, unknown>, key: string, ok: (x: unknown) => boolean) =>
-  v[key] === undefined || ok(v[key]);
-const isString = (x: unknown) => typeof x === "string";
-
-const isEdit = (v: unknown): boolean =>
-  isObj(v) &&
-  EDIT_OPS.includes(v.op as OutputEdit["op"]) &&
-  optional(v, "heading", isString) &&
-  optional(v, "bullet_id", Number.isInteger) &&
-  optional(v, "bullet", isString) &&
-  optional(v, "proposal", Number.isInteger) &&
-  optional(v, "reason", isString);
-const isVerdict = (v: unknown): boolean =>
-  isObj(v) &&
-  Number.isInteger(v.id) &&
-  PROPOSAL_VERDICTS.includes(v.verdict as Consolidation["proposals"][number]["verdict"]) &&
-  typeof v.reason === "string";
-const isStaleVerdict = (v: unknown): boolean =>
-  isObj(v) &&
-  Number.isInteger(v.id) &&
-  STALE_VERDICTS.includes(v.verdict as Consolidation["stale"][number]["verdict"]);
-
-/** The flat shape only: what the edits mean is checked against the sent work after the run. */
-function validate(value: unknown): value is Consolidation {
-  return (
-    isObj(value) &&
-    Array.isArray(value.edits) &&
-    value.edits.every(isEdit) &&
-    Array.isArray(value.proposals) &&
-    value.proposals.every(isVerdict) &&
-    Array.isArray(value.stale) &&
-    value.stale.every(isStaleVerdict)
-  );
-}
-
-/** A titled input block, or "" when it has no lines. */
 const block = (title: string, lines: string[]) =>
   lines.length === 0 ? "" : `[${title}]\n${lines.join("\n")}\n`;
 
@@ -169,7 +133,7 @@ export function consolidationRequest(
   ]
     .filter((b) => b !== "")
     .join("\n");
-  return { system: SYSTEM, input, schema: SCHEMA, validate };
+  return { system: SYSTEM, input, schema: SCHEMA };
 }
 
 /** The output edit as `applyEdits` takes it, or null when it lacks a field its op needs or names an unsent proposal. */
@@ -275,8 +239,6 @@ export async function consolidate(
   });
   const sentProposals = new Set(work.proposals.map((p) => p.id));
   if (r.kind !== "ok") {
-    if (r.kind === "stopped")
-      writeStopState({ reason: r.reason, atMs: Date.now(), detail: r.detail });
     memory.recordConsolidation({
       outcome: r.kind,
       startedMs,

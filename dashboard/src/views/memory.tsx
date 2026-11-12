@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { cn } from "cn";
 import { Check } from "lucide-react";
 import {
@@ -13,19 +13,19 @@ import {
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useListKeys } from "@/hooks/use-list-keys";
+import { errorMessage } from "../../../src/hooks/lib/wire";
 import {
   DETAIL_BODY,
   DETAIL_COLUMN,
   formatTime,
   LABEL,
-  LIST_COLUMN,
+  ListColumn,
   ListFoot,
   Pairs,
   Pill,
   Prose,
-  Row,
   SPLIT,
+  useListNav,
   usePaged,
 } from "./shared";
 
@@ -39,6 +39,33 @@ function useSettled<T>(value: T, ms: number): T {
     return () => clearTimeout(t);
   }, [value, ms]);
   return settled;
+}
+
+/** The observation `item` names, fetched when it changes; `item` clears when the store has no such row. */
+function useObservationDetail(
+  projectId: string,
+  item: string | null,
+  setItem: (item: string | null) => void,
+): Observation | Note | null {
+  const [detail, setDetail] = useState<Observation | Note | null>(null);
+  useEffect(() => {
+    setDetail(null);
+    if (item === null) return;
+    let live = true;
+    fetchObservation(projectId, item)
+      .then((got) => {
+        if (!live) return;
+        if (got === null) setItem(null);
+        else setDetail(got);
+      })
+      .catch((err: unknown) => {
+        if (live) setDetail({ note: errorMessage(err) });
+      });
+    return () => {
+      live = false;
+    };
+  }, [projectId, item, setItem]);
+  return detail;
 }
 
 export function MemoryView({
@@ -62,75 +89,60 @@ export function MemoryView({
     fetchObservations(projectId, filters, before),
   );
 
-  const lines = current?.rows ?? [];
+  const rows = current?.rows ?? null;
+  const first = rows?.[0];
   useEffect(() => {
-    if (item === null && lines.length > 0) setItem(String(lines[0]!.id));
-  }, [item, lines, setItem]);
+    if (item === null && first !== undefined) setItem(String(first.id));
+  }, [item, first, setItem]);
 
-  const [detail, setDetail] = useState<Observation | Note | null>(null);
-  useEffect(() => {
-    setDetail(null);
-    if (item === null) return;
-    let live = true;
-    fetchObservation(projectId, item)
-      .then((got) => {
-        if (!live) return;
-        if (got === null) setItem(null);
-        else setDetail(got);
-      })
-      .catch((err: unknown) => {
-        if (live) setDetail({ note: err instanceof Error ? err.message : String(err) });
-      });
-    return () => {
-      live = false;
-    };
-  }, [projectId, item, setItem]);
+  const detail = useObservationDetail(projectId, item, setItem);
 
-  const selected = lines.findIndex((l) => String(l.id) === item);
-  const selectIndex = useCallback(
-    (i: number) => {
-      const line = lines[i];
-      if (line !== undefined) setItem(String(line.id));
-    },
-    [lines, setItem],
-  );
-  useListKeys(lines.length, selected, selectIndex);
+  useListNav(rows?.map((l) => String(l.id)) ?? null, item, setItem);
 
   return (
     <main className={SPLIT}>
-      <section aria-label="List" className={LIST_COLUMN}>
-        <div className="grid gap-3 border-b px-4 py-4">
-          <div className="grid gap-0.5">
-            <h1 className="text-base font-semibold">Memory</h1>
-            <p className="text-xs text-muted-foreground">
-              Observations digests stored from past sessions
-            </p>
-          </div>
-          {note === null && (
-            <MemoryFilters
-              qText={qText}
-              setQText={setQText}
-              type={type}
-              setType={setType}
-              fileText={fileText}
-              setFileText={setFileText}
-              stale={stale}
-              setStale={setStale}
-            />
-          )}
-        </div>
-        <div data-list className="min-h-0 flex-1 overflow-auto">
-          <MemoryList
-            note={note}
-            error={error}
-            current={current}
-            lines={lines}
-            item={item}
-            setItem={setItem}
+      <ListColumn
+        head={
+          <>
+            <div className="grid gap-0.5">
+              <h1 className="text-base font-semibold">Memory</h1>
+              <p className="text-xs text-muted-foreground">
+                Observations digests stored from past sessions
+              </p>
+            </div>
+            {note === null && (
+              <MemoryFilters
+                qText={qText}
+                setQText={setQText}
+                type={type}
+                setType={setType}
+                fileText={fileText}
+                setFileText={setFileText}
+                stale={stale}
+                setStale={setStale}
+              />
+            )}
+          </>
+        }
+        note={note}
+        error={error}
+        rows={rows}
+        empty="Nothing matches."
+        item={item}
+        setItem={setItem}
+        renderRow={(line) => <MemoryRow line={line} />}
+        foot={
+          <ListFoot
+            start={
+              <>
+                {current !== null && <span>{current.rows.length} shown</span>}
+                {current?.mode != null && <span>{current.mode} search</span>}
+              </>
+            }
+            older={older}
           />
-        </div>
-        <MemoryFoot current={current} older={older} />
-      </section>
+        }
+      />
       <section aria-label="Detail" className={DETAIL_COLUMN}>
         <MemoryDetail note={note} detail={detail} />
       </section>
@@ -206,69 +218,22 @@ function MemoryFilters({
   );
 }
 
-/** The observation rows, or the note, the error or the empty message in their place. */
-function MemoryList({
-  note,
-  error,
-  current,
-  lines,
-  item,
-  setItem,
-}: {
-  note: string | null;
-  error: string | null;
-  current: { rows: ObservationLine[] } | null;
-  lines: ObservationLine[];
-  item: string | null;
-  setItem: (item: string | null) => void;
-}) {
-  return note !== null ? (
-    <p className="px-4 py-8 text-center text-muted-foreground">{note}</p>
-  ) : error !== null ? (
-    <p className="px-4 py-8 text-center text-destructive">{error}</p>
-  ) : current !== null && current.rows.length === 0 ? (
-    <p className="px-4 py-8 text-center text-muted-foreground">Nothing matches.</p>
-  ) : (
-    lines.map((line) => (
-      <Row
-        key={line.id}
-        selected={String(line.id) === item}
-        onClick={() => setItem(String(line.id))}
-      >
-        <span className="flex min-w-0 items-center gap-2">
-          <span data-title className="min-w-0 flex-1 truncate font-medium">
-            {line.title}
-          </span>
-          {line.stale && <Pill tone="bad">stale</Pill>}
-        </span>
-        <span className="flex gap-2 text-xs text-muted-foreground">
-          <span>{line.type}</span>
-          <span className="tabular-nums">{formatTime(line.createdAtMs)}</span>
-          <span className="font-mono">#{line.id}</span>
-        </span>
-      </Row>
-    ))
-  );
-}
-
-/** The shown count and the search mode, with the button for older pages. */
-function MemoryFoot({
-  current,
-  older,
-}: {
-  current: { rows: ObservationLine[]; mode: string | null } | null;
-  older: (() => void) | null;
-}) {
+/** One observation's list row: its title and stale pill, then its type, time and id. */
+function MemoryRow({ line }: { line: ObservationLine }) {
   return (
-    <ListFoot
-      start={
-        <>
-          {current !== null && <span>{current.rows.length} shown</span>}
-          {current?.mode != null && <span>{current.mode} search</span>}
-        </>
-      }
-      older={older}
-    />
+    <>
+      <span className="flex min-w-0 items-center gap-2">
+        <span data-title className="min-w-0 flex-1 truncate font-medium">
+          {line.title}
+        </span>
+        {line.stale && <Pill tone="bad">stale</Pill>}
+      </span>
+      <span className="flex gap-2 text-xs text-muted-foreground">
+        <span>{line.type}</span>
+        <span className="tabular-nums">{formatTime(line.createdAtMs)}</span>
+        <span className="font-mono">#{line.id}</span>
+      </span>
+    </>
   );
 }
 
