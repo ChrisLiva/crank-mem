@@ -61,6 +61,12 @@ describe("describeFile", () => {
 });
 
 describe("describeFile extraction rules", () => {
+  test("a # comment under a shebang describes a shell script", () => {
+    expect(
+      describeFile(tmpFile("build.sh", "#!/bin/sh\n# Builds the release tarball.\nset -e\n")),
+    ).toBe("Builds the release tarball.");
+  });
+
   test("C preprocessor lines are not descriptions", () => {
     expect(
       describeFile(tmpFile("a.hpp", "#pragma once\n\n#include <vector>\n\nstruct Mesh {};\n")),

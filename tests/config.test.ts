@@ -73,11 +73,17 @@ describe("loadConfig sanitization", () => {
     const config = loadConfig(dir);
     expect(config.git).toBe("exclude");
     expect(config.runtime).toBe("bun");
+    const accepted = loadConfig(dirWithConfig(JSON.stringify({ runtime: "node", git: "commit" })));
+    expect(accepted.runtime).toBe("node");
+    expect(accepted.git).toBe("commit");
   });
 
   test("excludes must be an array of strings", () => {
     const dir = dirWithConfig(JSON.stringify({ excludes: ["dist", 42] }));
     expect(loadConfig(dir).excludes).toEqual(DEFAULT_EXCLUDES);
+    expect(
+      loadConfig(dirWithConfig(JSON.stringify({ excludes: ["dist", "vendor"] }))).excludes,
+    ).toEqual(["dist", "vendor"]);
   });
 
   test("non-object config falls back entirely", () => {
