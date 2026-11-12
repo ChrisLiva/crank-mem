@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { isObj, isSensitiveFile } from "./config.ts";
 import { isCodexPayload, type HookPayload } from "./hook-io.ts";
+import { withLock } from "./lock.ts";
 import { memoryPath } from "./memory.ts";
 
 // One JSON line per use of a memory or code channel, appended to the
@@ -11,6 +12,8 @@ import { memoryPath } from "./memory.ts";
 
 export const USAGE_FILE = "usage.jsonl";
 export const USAGE_ROTATED_FILE = "usage.1.jsonl";
+/** Held while one writer rotates, so writers racing at the limit rotate once. */
+export const USAGE_LOCK_FILE = "usage.lock";
 /** An append that would take usage.jsonl past this first renames it to USAGE_ROTATED_FILE. */
 const USAGE_MAX_BYTES = 4 * 1024 * 1024;
 /** Every list in a line, nested ones included, keeps only its first USAGE_MAX_LIST entries. */
@@ -105,6 +108,28 @@ function dropSensitive(event: UsageEvent): UsageEvent {
 }
 
 /**
+ * Renames `file` to USAGE_ROTATED_FILE under USAGE_LOCK_FILE, re-checking the size inside the
+ * lock, so of the writers that crossed the limit together exactly one rotates. A writer that
+ * finds the lock taken, or the file already gone, skips the rotation and only appends.
+ */
+function rotate(file: string, bytes: number): void {
+  const dir = path.dirname(file);
+  withLock(
+    dir,
+    0,
+    () => {
+      try {
+        if (fs.statSync(file).size + bytes <= USAGE_MAX_BYTES) return;
+        fs.renameSync(file, path.join(dir, USAGE_ROTATED_FILE));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
+    },
+    USAGE_LOCK_FILE,
+  );
+}
+
+/**
  * Append one usage line for `root`'s store, rotating the file first when the line would take it
  * past USAGE_MAX_BYTES. A sensitive `file` or `path` is recorded as null. Never throws.
  */
@@ -119,9 +144,8 @@ export function recordUsage(root: string, actor: UsageActor, event: UsageEvent):
     } catch {
       // No usage.jsonl yet: size stays 0 and this line starts the file.
     }
-    if (size + Buffer.byteLength(line, "utf-8") > USAGE_MAX_BYTES) {
-      fs.renameSync(file, path.join(path.dirname(file), USAGE_ROTATED_FILE));
-    }
+    const bytes = Buffer.byteLength(line, "utf-8");
+    if (size + bytes > USAGE_MAX_BYTES) rotate(file, bytes);
     fs.appendFileSync(file, line);
   } catch {
     // Advisory: a read-only .crank/ or a full disk loses this line, never the hook.

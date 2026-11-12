@@ -4,7 +4,8 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { debugEvent } from "./debug.ts";
 
-// Cross-process mutual exclusion for anatomy writers.
+// Cross-process mutual exclusion over a lock file in .crank/: LOCK_FILE for
+// anatomy writers, or the file a caller names, such as usage rotation's.
 //
 // Mechanism: lockfile created with the "wx" flag (atomic O_EXCL on macOS,
 // Linux and Windows, no native deps). The file body records the owner for
@@ -100,12 +101,18 @@ export function trySteal(lockPath: string): void {
 }
 
 /**
- * Run `fn` while holding the anatomy lock. Returns fn's result, or null if
- * the lock could not be acquired within `budgetMs` (caller must degrade
- * gracefully — skip the update, never block).
+ * Run `fn` while holding `lockFile` in `crankDir` (the anatomy lock by
+ * default). Returns fn's result, or null if the lock could not be acquired
+ * within `budgetMs` (caller must degrade gracefully — skip the update, never
+ * block).
  */
-export function withLock<T>(crankDir: string, budgetMs: number, fn: () => T): T | null {
-  const lockPath = path.join(crankDir, LOCK_FILE);
+export function withLock<T>(
+  crankDir: string,
+  budgetMs: number,
+  fn: () => T,
+  lockFile = LOCK_FILE,
+): T | null {
+  const lockPath = path.join(crankDir, lockFile);
   const started = Date.now();
   const deadline = started + budgetMs;
   let steals = 0;
@@ -121,7 +128,12 @@ export function withLock<T>(crankDir: string, budgetMs: number, fn: () => T): T 
     if (Date.now() >= deadline) {
       // The one place lock contention is unambiguous: commitIndex collapses
       // "lock lost" and "nothing to write" into the same null.
-      debugEvent("lock-timeout", { waitedMs: Date.now() - started, budgetMs, steals });
+      debugEvent("lock-timeout", {
+        lock: lockFile,
+        waitedMs: Date.now() - started,
+        budgetMs,
+        steals,
+      });
       return null;
     }
     sleep(POLL_MIN_MS + Math.floor(Math.random() * POLL_MIN_MS));
@@ -129,7 +141,8 @@ export function withLock<T>(crankDir: string, budgetMs: number, fn: () => T): T 
   // A wait shorter than one poll interval means the lock was free; below it,
   // only a steal is worth logging.
   const waitedMs = Date.now() - started;
-  if (waitedMs >= POLL_MIN_MS || steals > 0) debugEvent("lock-waited", { waitedMs, steals });
+  if (waitedMs >= POLL_MIN_MS || steals > 0)
+    debugEvent("lock-waited", { lock: lockFile, waitedMs, steals });
 
   try {
     return fn();
