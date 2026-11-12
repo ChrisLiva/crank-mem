@@ -93,6 +93,43 @@ describe("redaction and caps", () => {
     expect(d.text).not.toContain("hh");
     expect(d.text).not.toContain("chars cut");
   });
+
+  const resultOf = (text: string) => ({
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "toolu_x", content: text }],
+    },
+  });
+  const distillCall = (call: object) =>
+    distill(writeTranscript([call, resultOf("VALUE=SENTINEL_X")]), null, 400_000).text;
+
+  test.each([
+    "cat .env|head",
+    "source .env;",
+    "grep KEY .env&&echo ok",
+    "cat<.env",
+    "cat .env>/dev/null",
+    "(cat .env)",
+    "echo $(cat .env)",
+    "echo `cat .env`",
+  ])("omits the result of a Bash read of a sensitive file joined to an operator: %s", (cmd) => {
+    const text = distillCall(bashCall(cmd));
+    expect(text).toContain("[sensitive file omitted]");
+    expect(text).not.toContain("SENTINEL_X");
+  });
+
+  test("omits the result of a notebook tool on a sensitive notebook path", () => {
+    const text = distillCall(toolCall("NotebookEdit", { notebook_path: "nb/credentials.ipynb" }));
+    expect(text).toContain("[sensitive file omitted]");
+    expect(text).not.toContain("SENTINEL_X");
+  });
+
+  test("keeps the result of a Bash read of a file whose name only contains env", () => {
+    const text = distillCall(bashCall("cat src/environment.ts"));
+    expect(text).toContain("VALUE=SENTINEL_X");
+    expect(text).not.toContain("[sensitive file omitted]");
+  });
 });
 
 describe("after", () => {

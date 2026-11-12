@@ -25,7 +25,7 @@ import {
 import { LOG_FILE } from "../hooks/lib/debug.ts";
 import { MEMORY_FILE } from "../hooks/lib/memory.ts";
 import { SNAPSHOT_DIR } from "../hooks/lib/store-upkeep.ts";
-import { USAGE_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
+import { USAGE_FILE, USAGE_LOCK_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
 import { openProject } from "./project.ts";
 import { restoreInstall } from "./backups.ts";
 import { removeInstall } from "./install.ts";
@@ -207,6 +207,7 @@ function deleteOwnedFiles(crankDir: string): string[] {
     `${MEMORY_FILE}-shm`,
     USAGE_FILE,
     USAGE_ROTATED_FILE,
+    USAGE_LOCK_FILE,
   ];
   for (const name of owned) fs.rmSync(path.join(crankDir, name), { recursive: true, force: true });
   for (const name of readdirOrEmpty(crankDir)) {

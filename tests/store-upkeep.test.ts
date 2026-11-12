@@ -108,13 +108,14 @@ test("the due check counts a -v1.db snapshot and skips a .tmp file", () => {
   expect(fs.readdirSync(v1.dir)).toEqual(["2026-01-01T00-00-00-000Z-v1.db"]);
 
   const tmp = planted("memory.db.1.1.tmp");
+  setMtime(path.join(tmp.dir, "memory.db.1.1.tmp"), Date.UTC(2026, 0, 1));
   expect(tmp.m.maintain()).not.toBeNull();
   const names = fs.readdirSync(tmp.dir);
   expect(names).toHaveLength(1);
   expect(names[0]).toMatch(DAILY);
 });
 
-test("the trim keeps the newest 7 daily snapshots and every other name, and removes temp files", () => {
+test("the trim keeps the newest 7 daily snapshots and every other name, and removes temp files older than an hour", () => {
   const { root, file, dir } = store();
   seedMemory(root, [{ title: "x" }]);
   fs.mkdirSync(dir, { recursive: true });
@@ -129,13 +130,15 @@ test("the trim keeps the newest 7 daily snapshots and every other name, and remo
     fs.writeFileSync(p, "");
     setMtime(p, Date.UTC(2026, 0, 1));
   }
+  fs.writeFileSync(path.join(dir, "memory.db.999.1.tmp"), "");
 
   expect(writable(file).maintain()).not.toBeNull();
   const names = fs.readdirSync(dir).sort();
-  expect(names).toHaveLength(10);
-  expect(names.slice(0, -1)).toEqual([...kept, ...days.slice(1)]);
-  expect(names.at(-1)).toMatch(DAILY);
-  expect(names.at(-1)! > days.at(-1)!).toBe(true);
+  expect(names).toHaveLength(11);
+  expect(names.slice(0, -2)).toEqual([...kept, ...days.slice(1)]);
+  expect(names.at(-2)).toMatch(DAILY);
+  expect(names.at(-2)! > days.at(-1)!).toBe(true);
+  expect(names.at(-1)).toBe("memory.db.999.1.tmp");
 });
 
 test("a snapshot that cannot be written throws and deletes nothing", () => {

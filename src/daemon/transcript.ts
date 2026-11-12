@@ -151,10 +151,12 @@ function indexCalls(all: Rec[]): Map<string, Call> {
 
 function touchesSensitiveFile(name: string, input: unknown): boolean {
   if (!isObj(input)) return false;
-  const { file_path, path: p, command } = input;
-  const candidates = [file_path, p].filter((v): v is string => typeof v === "string");
+  const { file_path, path: p, notebook_path, command } = input;
+  const candidates = [file_path, p, notebook_path].filter(
+    (v): v is string => typeof v === "string",
+  );
   if (name === "Bash" && typeof command === "string") {
-    candidates.push(...command.split(/\s+/).map((t) => t.replace(/["']/g, "")));
+    candidates.push(...command.replace(/["']/g, "").split(/[\s|&;<>()`$]+/));
   }
   return candidates.some((c) => c !== "" && isSensitiveFile(path.posix.basename(c)));
 }

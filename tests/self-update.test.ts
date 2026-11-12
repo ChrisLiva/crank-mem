@@ -91,6 +91,28 @@ describe("self-update", () => {
     expect(versions(H3)).toEqual(["1.0.0", "1.1.0", "1.2.0"]);
   }, 30_000);
 
+  test("pruning keeps the version a live dashboard runs", async () => {
+    for (const [pid, kept] of [
+      [process.pid, ["1.0.0", "1.1.0", "1.2.0"]],
+      [99999999, ["1.1.0", "1.2.0"]],
+    ] as const) {
+      const { H: H3, env } = await setup();
+      expect(runInstalled(H3, tempDir("crank-cwd-"), ["self-update"], env).status).toBe(0);
+      fs.writeFileSync(
+        path.join(H3, "dashboard.json"),
+        JSON.stringify({ token: "0".repeat(64), pid, version: "1.0.0" }),
+      );
+      const result = runInstalled(
+        H3,
+        tempDir("crank-cwd-"),
+        ["self-update", "--to", "v1.2.0"],
+        env,
+      );
+      expect(result.status).toBe(0);
+      expect([pid, versions(H3)]).toEqual([pid, [...kept]]);
+    }
+  }, 60_000);
+
   test("a checksum mismatch changes nothing", async () => {
     const { H, R, env } = await setup();
     fs.writeFileSync(
@@ -167,6 +189,15 @@ describe("rollback", () => {
     expect(result.stderr).toContain(fs.realpathSync(P));
     expect(result.stderr).toContain("newer");
     expect(result.stderr).toContain("crank-mem restore-memory");
+    expect(current(H)).toBe("versions/1.1.0");
+  }, 60_000);
+
+  test("a previous version that does not prepare refuses and keeps current", async () => {
+    const { H, env } = await updated();
+    fs.rmSync(path.join(H, "versions/1.0.0/dashboard/dist/.crank-version"));
+    const result = runInstalled(H, tempDir("crank-cwd-"), ["rollback"], env);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("could not install 1.0.0");
     expect(current(H)).toBe("versions/1.1.0");
   }, 60_000);
 

@@ -42,6 +42,18 @@ describe("withLock", () => {
   });
 
   test("steals a stale lock (old timestamp)", () => {
+    // Another host's lock past 10 s, and a live pid past the 10-minute pid-reuse guard.
+    for (const body of [
+      { pid: 99999999, hostname: "elsewhere", acquiredAt: Date.now() - 60_000 },
+      { pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() - 11 * 60_000 },
+    ]) {
+      const dir = tmpDir();
+      fs.writeFileSync(path.join(dir, LOCK), JSON.stringify(body));
+      expect(withLock(dir, 2000, () => "stolen")).toBe("stolen");
+    }
+  });
+
+  test("a live owner past 10 s keeps the lock", () => {
     const dir = tmpDir();
     fs.writeFileSync(
       path.join(dir, LOCK),
@@ -51,7 +63,15 @@ describe("withLock", () => {
         acquiredAt: Date.now() - 60_000,
       }),
     );
-    expect(withLock(dir, 2000, () => "stolen")).toBe("stolen");
+    expect(withLock(dir, 200, () => 42)).toBeNull();
+  });
+
+  test("releasing does not remove a lock another process took", () => {
+    const dir = tmpDir();
+    const lockPath = path.join(dir, LOCK);
+    const other = JSON.stringify({ pid: 99999998, hostname: "elsewhere", acquiredAt: Date.now() });
+    withLock(dir, 1000, () => fs.writeFileSync(lockPath, other));
+    expect(fs.readFileSync(lockPath, "utf-8")).toBe(other);
   });
 
   test("steals a dead-pid lock", () => {

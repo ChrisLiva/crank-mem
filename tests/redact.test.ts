@@ -87,6 +87,14 @@ const KEYED_ROWS: [string, string][] = [
   ["a -----BEGIN " + "PRIVATE KEY-----\nMIIabc\nMIIdef", "a [redacted]"],
   ["password=", "password="],
   ['{"api_key": ""}', '{"api_key": ""}'],
+  ["DB_PASSWORD=hunter2", "DB_PASSWORD=[redacted]"],
+  ["OPENAI_API_KEY=abc123xyz", "OPENAI_API_KEY=[redacted]"],
+  ["GITHUB_TOKEN=ghx123abc", "GITHUB_TOKEN=[redacted]"],
+  ["SECRET_KEY=django-xyz", "SECRET_KEY=[redacted]"],
+  ["client_secret: s3cr3t", "client_secret: [redacted]"],
+  ["x-api-key: abc123", "x-api-key: [redacted]"],
+  ["MY_APP_SECRET=v4lue", "MY_APP_SECRET=[redacted]"],
+  ["SLACK_BOT_TOKEN=v4lue", "SLACK_BOT_TOKEN=[redacted]"],
 ];
 
 describe("redact keyed values", () => {
@@ -106,6 +114,11 @@ describe("redact leaves near-misses alone", () => {
     "AKIA",
     "secretary: Bob",
     "ghp_short",
+    "xtoken=abc",
+    "password_hint: blue",
+    "refresh_token_ttl=30",
+    "input_tokens=12",
+    "token-limit: 5",
     "",
   ])("%j", (input) => {
     expect(redact(input)).toBe(input);

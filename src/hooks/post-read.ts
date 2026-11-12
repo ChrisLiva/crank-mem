@@ -15,7 +15,7 @@ import { debugEvent, enableDebug, safePath } from "./lib/debug.ts";
 import { formatLine, memoryPath, openMemory, type MemoryReader } from "./lib/memory.ts";
 import { shellReadPaths } from "./lib/shell-reads.ts";
 import { transcriptStem } from "./lib/spool.ts";
-import { SEEN_DIR, crankHome, ensureCrankHome, writeJsonAtomic } from "./lib/user-state.ts";
+import { SEEN_DIR, crankHome } from "./lib/user-state.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
 
 // PostToolUse hook for Claude's Read and Bash, Claude Code only (ADR 0009).
@@ -35,10 +35,10 @@ function readPaths(payload: HookPayload): string[] {
   return [];
 }
 
+/** The paths a marker holds, one per line; a missing marker holds none. */
 function readSeen(file: string): string[] {
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
-    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === "string") : [];
+    return fs.readFileSync(file, "utf-8").split("\n").filter(Boolean);
   } catch {
     return [];
   }
@@ -90,10 +90,11 @@ function histories(memory: MemoryReader, root: string, unseen: string[]): Histor
   return out;
 }
 
-function markSeen(seenFile: string, seen: string[], marked: string[]): void {
+/** Appends, so parallel hooks on one transcript each keep their marks. */
+function markSeen(seenFile: string, marked: string[]): void {
   try {
-    ensureCrankHome();
-    writeJsonAtomic(seenFile, [...seen, ...marked]);
+    fs.mkdirSync(path.dirname(seenFile), { recursive: true, mode: 0o700 });
+    fs.appendFileSync(seenFile, marked.map((p) => p + "\n").join(""));
   } catch {
     // A lost marker costs only a repeat of this history.
   }
@@ -122,7 +123,7 @@ async function main(): Promise<void> {
   const file = memoryPath(root);
   if (!fs.existsSync(file)) return;
 
-  const seenFile = path.join(crankHome(), SEEN_DIR, `${stem}-${agent}.json`);
+  const seenFile = path.join(crankHome(), SEEN_DIR, `${stem}-${agent}.seen`);
   const seen = readSeen(seenFile);
   const opened = openMemory(file, "read");
   if (opened.status !== "open") return;
@@ -139,7 +140,7 @@ async function main(): Promise<void> {
   const context = sections.join(SEP);
   if (sections.length > 0) {
     const marked = shown.map((s) => s.path);
-    markSeen(seenFile, seen, marked);
+    markSeen(seenFile, marked);
     emitAdditionalContext("PostToolUse", context);
     debugEvent("file-history", { paths: marked.map(safePath) });
   }

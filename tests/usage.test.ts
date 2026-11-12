@@ -398,6 +398,33 @@ describe("usage capture: rotation, failure and placement", () => {
     expect(lines[0]!.v).toBe(1);
   });
 
+  test("concurrent writers at the 4 MiB mark rotate once and keep every line", async () => {
+    const root = makeCrankProject();
+    const padding = "x".repeat(4 * 1024 * 1024 - 10) + "\n";
+    fs.writeFileSync(path.join(root, ".crank/usage.jsonl"), padding);
+    const at = String(Date.now() + 1000);
+    const children = Array.from({ length: 8 }, (_, n) =>
+      Bun.spawn(["bun", path.join(REPO_ROOT, "tests/fixtures/usage-writer.ts"), root, `${n}`, at], {
+        env: childEnv(),
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    );
+    expect(await Promise.all(children.map((c) => c.exited))).toEqual(Array(8).fill(0));
+    const rotated = fs.readFileSync(path.join(root, ".crank/usage.1.jsonl"), "utf-8");
+    expect(rotated.startsWith(padding)).toBe(true);
+    const lines = [
+      ...rotated
+        .slice(padding.length)
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l)),
+      ...usageLines(root),
+    ];
+    expect(lines.map((l) => l.requested[0]).sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    for (const line of lines) expect(line).toMatchObject({ v: 1, channel: "get" });
+  });
+
   test("a line that cannot be written changes neither output nor exit status", () => {
     const root = makeCrankProject({ "src/a.ts": "export const a = 1;\n" });
     const home = makeCrankHome();

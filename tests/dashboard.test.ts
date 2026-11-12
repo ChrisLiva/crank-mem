@@ -270,7 +270,11 @@ describe("dashboard server", () => {
     });
     const file = tokenFile(home);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-    expect(JSON.parse(fs.readFileSync(file, "utf-8"))).toEqual({ token: first.token });
+    expect(JSON.parse(fs.readFileSync(file, "utf-8"))).toEqual({
+      token: first.token,
+      pid: expect.any(Number),
+      version: cliVersion(),
+    });
     expect(await first.stop()).toBe(0);
 
     const second = await startDashboard(home, ["--port", "0"], { cwd: makeCrankProject() });
@@ -287,7 +291,11 @@ describe("dashboard server", () => {
       expect(dash.token).toMatch(/^[0-9a-f]{64}$/);
       expect(seen).not.toContain(dash.token);
       seen.push(dash.token);
-      expect(JSON.parse(fs.readFileSync(file, "utf-8"))).toEqual({ token: dash.token });
+      expect(JSON.parse(fs.readFileSync(file, "utf-8"))).toEqual({
+        token: dash.token,
+        pid: expect.any(Number),
+        version: cliVersion(),
+      });
       expect(fs.statSync(file).mode & 0o777).toBe(0o600);
       await dash.stop();
     }
@@ -322,16 +330,17 @@ describe("dashboard server", () => {
     }
   }, 20_000);
 
-  test("SIGTERM and SIGINT each exit 0, free the port and leave the token file alone", async () => {
+  test("SIGTERM and SIGINT each exit 0, free the port and keep the token", async () => {
     const home = makeCrankHome();
-    let before: Buffer | undefined;
+    const storedToken = () => JSON.parse(fs.readFileSync(tokenFile(home), "utf-8")).token;
+    let before: string | undefined;
     for (const signal of ["SIGTERM", "SIGINT"] as const) {
       const dash = await startDashboard(home, ["--port", "0"]);
-      before ??= fs.readFileSync(tokenFile(home));
+      before ??= storedToken();
       expect((await dash.get("/")).status).toBe(200);
       expect([signal, await dash.stop(signal)]).toEqual([signal, 0]);
       await listenOn(portOf(dash.url));
-      expect(fs.readFileSync(tokenFile(home)).equals(before)).toBe(true);
+      expect(storedToken()).toBe(before!);
     }
   }, 30_000);
 

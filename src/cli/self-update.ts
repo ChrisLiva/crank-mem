@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import type * as sqlite from "node:sqlite";
 import * as path from "node:path";
 import { errorMessage } from "../hooks/lib/config.ts";
-import { memoryPath } from "../hooks/lib/memory.ts";
+import { memoryPath, openForRead } from "../hooks/lib/memory.ts";
 import { userVersion } from "../hooks/lib/memory-schema.ts";
 import { registeredRoots } from "../hooks/lib/registry.ts";
 import { parseArgs, stringFlag } from "./args.ts";
@@ -21,12 +21,14 @@ import { cliVersion, newer, versionsDir } from "./version.ts";
 
 // `crank-mem self-update`: downloads the latest release (or `--to <tag>`),
 // makes it `current`, prunes versions neither it nor this process nor a live
-// daemon runs, then repairs every registered project from the new version.
+// daemon or dashboard runs, then repairs every registered project from the
+// new version.
 // `--check` checks for a release now; `--auto` and `--check-daily` only
 // record their settings in update.json.
-// `crank-mem rollback`: makes the previous installed version `current` and
-// repairs every project from it. Going back to an older version, by either
-// command, first checks that no registered store's schema is newer than it.
+// `crank-mem rollback`: prepares the previous installed version (its packages
+// and dashboard stamp), makes it `current` and repairs every project from it.
+// Going back to an older version, by either command, first checks that no
+// registered store's schema is newer than it.
 
 /** Runs `upgrade --all` through the `current` link, so the repair runs the version just activated. */
 function repairFromCurrent(): number {
@@ -53,12 +55,12 @@ function schemaBlockers(targetDir: string): Blockers {
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
   if (!mod) return { ok: true };
   const roots = registeredRoots().filter((root) => {
-    let db: sqlite.DatabaseSync | undefined;
+    let db: sqlite.DatabaseSync | null = null;
     try {
-      db = new mod.DatabaseSync(memoryPath(root), { readOnly: true });
-      return userVersion(db) > target;
+      db = openForRead(mod, memoryPath(root));
+      return db !== null && userVersion(db) > target;
     } catch {
-      // A missing store, or one that is not a database, the older version reports itself.
+      // A store that is not a database, the older version reports itself.
       return false;
     } finally {
       try {
@@ -135,7 +137,13 @@ async function rollback(): Promise<number> {
     console.error("crank-mem: no previous version to roll back to");
     return 1;
   }
-  if (refuseOlder(version, path.join(versionsDir(), version))) return 1;
+  const dir = path.join(versionsDir(), version);
+  if (refuseOlder(version, dir)) return 1;
+  const prepared = prepareVersion(dir);
+  if (!prepared.ok) {
+    console.error(`crank-mem: could not install ${version} (${prepared.detail})`);
+    return 1;
+  }
   if (!makeCurrent(version, cliVersion())) return 1;
   return repairFromCurrent();
 }

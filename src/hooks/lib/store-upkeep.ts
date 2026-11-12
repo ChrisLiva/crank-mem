@@ -13,6 +13,8 @@ export const SNAPSHOT_DIR = path.join("backups", "memory");
 /** How often the maintenance pass snapshots the store, and how long a stale-flagged row survives it. */
 const MAINTAIN_EVERY_MS = 24 * 3_600_000;
 const STALE_KEEP_MS = 90 * 24 * 3_600_000;
+/** The trim removes a .tmp only past this age: a snapshot in flight in another process is younger. */
+const TMP_KEEP_MS = 3_600_000;
 
 let snapshotCount = 0;
 
@@ -57,10 +59,20 @@ function writeSnapshot(db: sqlite.DatabaseSync, dir: string, name: string): stri
   }
 }
 
+/** True for a .tmp in `dir` last written over TMP_KEEP_MS ago; false when it has vanished. */
+function abandonedTmp(dir: string, name: string): boolean {
+  if (!name.endsWith(".tmp")) return false;
+  try {
+    return Date.now() - fs.statSync(path.join(dir, name)).mtimeMs > TMP_KEEP_MS;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The daily pass. Null when the newest `.db` snapshot is no more than MAINTAIN_EVERY_MS old at nowMs.
  * Otherwise: writes `<fileStamp>.db`, calls deleteStale(nowMs - STALE_KEEP_MS), trims daily names
- * to DAILY_KEEP and removes every .tmp. Throws, before deleteStale, when the snapshot fails.
+ * to DAILY_KEEP and removes every .tmp older than an hour. Throws, before deleteStale, when the snapshot fails.
  * `nowMs` sets only the due comparison and the stale cutoff: the snapshot's name is `fileStamp()`
  * and its mtime the real write time.
  */
@@ -77,7 +89,7 @@ export function dailyUpkeep(
   const deleted = deleteStale(nowMs - STALE_KEEP_MS);
   const names = fs.readdirSync(dir);
   const daily = names.filter((n) => DAILY_SNAPSHOT.test(n)).sort();
-  for (const n of [...daily.slice(0, -DAILY_KEEP), ...names.filter((n) => n.endsWith(".tmp"))]) {
+  for (const n of [...daily.slice(0, -DAILY_KEEP), ...names.filter((n) => abandonedTmp(dir, n))]) {
     fs.rmSync(path.join(dir, n), { force: true });
   }
   return { snapshot, deleted };

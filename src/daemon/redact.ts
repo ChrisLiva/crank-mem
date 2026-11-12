@@ -35,7 +35,7 @@ const PEM =
 // Each keeps group 1 (the key and its punctuation) and masks group 2 (the value).
 // A value runs to the next whitespace, quote, backslash, comma or semicolon.
 const KEYED_VALUES: RegExp[] = [
-  /\b((?:password|passwd|pwd|secret|api_key|apikey|api-key|access_token|auth_token|token|aws_secret_access_key|aws_session_token)\b\\?["']?\s*[:=]\s*\\?["']?)([^\s"'\\,;]+)/gi,
+  /\b((?:[a-z0-9]+[_-])*(?:password|passwd|pwd|secret|api_key|apikey|api-key|access_token|auth_token|token|aws_secret_access_key|aws_session_token)(?:[_-]key)?\b\\?["']?\s*[:=]\s*\\?["']?)([^\s"'\\,;]+)/gi,
   /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)([^\s@/]+)(?=@)/gi,
   /\b(authorization\s*:\s*(?:(?:bearer|basic|token|digest)\s+)?)([^\s"'\\,;]+)/gi,
 ];
