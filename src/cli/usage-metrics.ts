@@ -161,31 +161,37 @@ function recallReach(lines: UsageLine[]): number | null {
   return share(recalled.size, started.size);
 }
 
+/** Add `id` to `session`'s set in `map`. */
+function addId(map: Map<string, Set<number>>, session: string, id: number): void {
+  const ids = map.get(session);
+  if (ids) ids.add(id);
+  else map.set(session, new Set([id]));
+}
+
+/** The number of (session, id) pairs in `map`. */
+function pairCount(map: Map<string, Set<number>>): number {
+  return [...map.values()].reduce((n, ids) => n + ids.size, 0);
+}
+
+/** The ids a line surfaced to the agent: start injection and file history, never search. */
+function surfacedIds(l: UsageLine): number[] {
+  if (l.channel === "session-start") return l.ids;
+  if (l.channel === "file-history") return l.shown.flatMap((s) => s.ids);
+  return [];
+}
+
 /** The share of distinct (session, id) pairs surfaced to a Claude session that a later get or timeline in it opened. */
 function surfacedFollowThrough(lines: UsageLine[]): number | null {
   const surfaced = new Map<string, Set<number>>();
   const opened = new Map<string, Set<number>>();
-  const add = (map: Map<string, Set<number>>, session: string, id: number) => {
-    const ids = map.get(session);
-    if (ids) ids.add(id);
-    else map.set(session, new Set([id]));
-  };
   for (const l of lines) {
     if (l.agent !== "claude" || l.session === null) continue;
     for (const id of openedIds(l)) {
-      if (surfaced.get(l.session)?.has(id)) add(opened, l.session, id);
+      if (surfaced.get(l.session)?.has(id)) addId(opened, l.session, id);
     }
-    const shown =
-      l.channel === "session-start"
-        ? l.ids
-        : l.channel === "file-history"
-          ? l.shown.flatMap((s) => s.ids)
-          : [];
-    for (const id of shown) add(surfaced, l.session, id);
+    for (const id of surfacedIds(l)) addId(surfaced, l.session, id);
   }
-  const total = (map: Map<string, Set<number>>) =>
-    [...map.values()].reduce((n, ids) => n + ids.size, 0);
-  return share(total(opened), total(surfaced));
+  return share(pairCount(opened), pairCount(surfaced));
 }
 
 /** Searches grouped by normalized query, most run first. */
