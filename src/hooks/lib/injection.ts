@@ -228,28 +228,14 @@ export function excerptOf(
   cited?: CitedFiles,
   balanced = false,
 ): Excerpt {
-  const prefsLines: string[] = [];
-  const memoryLines: string[] = [];
-  let bucket: string[] | null = null;
-  for (const line of md.split("\n")) {
-    if (line.startsWith("## ")) {
-      const heading = line.slice(3).trim().toLowerCase();
-      bucket =
-        heading === PREFS_HEADING ? prefsLines : MEMORY_HEADINGS.has(heading) ? memoryLines : null;
-    }
-    bucket?.push(line);
-  }
-
-  const allPrefs = parseBullets(prefsLines);
-  const allMemory = parseBullets(memoryLines);
+  const sections = cerebrumSections(md);
+  const allPrefs = parseBullets(sections.prefs);
+  const allMemory = parseBullets(sections.memory);
   const prefs = [...allPrefs];
   const memory = [...allMemory];
   const total = prefs.length + memory.length;
   const prefsTotal = prefs.length;
-  const prefsIndex: string[] = [];
-  while (prefs.length && estimateProseTokens(prefs.join("\n")) > PREFS_TOKEN_CAP) {
-    prefsIndex.push(indexEntry(prefs.shift()!));
-  }
+  const prefsIndex = capPrefs(prefs);
   const memoryIndex = memory
     .splice(0, Math.max(0, memory.length - MEMORY_RECENT_COUNT))
     .map(indexEntry);
@@ -259,35 +245,16 @@ export function excerptOf(
       list.forEach((b, i) => (list[i] = b + citationTags(b, cited, byName)));
   }
 
-  const render = (): string => {
-    if (!prefs.length && !memory.length && !prefsIndex.length && !memoryIndex.length) return "";
-    const parts: string[] = [CEREBRUM_HEADER];
-    if (prefs.length) parts.push("### User Preferences", ...prefs);
-    if (memory.length) parts.push("### Memory", ...memory);
-    const hidden = total - prefs.length - memory.length;
-    if (hidden) parts.push(`### Not shown (${hidden} of ${total}; grep .crank/cerebrum.md)`);
-    parts.push(...prefsIndex, ...memoryIndex);
-    return parts.join("\n");
-  };
-
-  const size = (list: string[]): number => bytes(list.join("\n"));
-  let text = render();
+  const state: ExcerptState = { prefs, memory, prefsIndex, memoryIndex, total };
+  let text = renderExcerpt(state);
   while (
     text &&
     (estimateProseTokens(text) > CEREBRUM_INJECT_TOKEN_CAP || bytes(text) > budgetBytes)
   ) {
-    const indexOver =
-      balanced || !memory.length || size(memoryIndex) > MEMORY_INDEX_ALLOWANCE_BYTES;
-    if (memoryIndex.length && indexOver) memoryIndex.shift();
-    else if (balanced && prefsIndex.length) prefsIndex.shift();
-    else if (memory.length && !(balanced && size(prefs) > size(memory))) {
-      const dropped = memory.shift()!;
-      if (!balanced) memoryIndex.push(indexEntry(dropped));
-    } else if (prefsIndex.length) prefsIndex.shift();
-    else prefs.shift();
-    text = render();
+    shedOne(state, balanced);
+    text = renderExcerpt(state);
   }
-  // Every cut above takes from the front, so the hidden bullets are the oldest.
+  // Every cut takes from the front, so the hidden bullets are the oldest.
   return {
     text,
     total,
@@ -299,6 +266,69 @@ export function excerptOf(
       ...allMemory.slice(0, allMemory.length - memory.length),
     ],
   };
+}
+
+/** The excerpt's bullet and index lists; `shedOne` cuts each from the front in place. */
+interface ExcerptState {
+  prefs: string[];
+  memory: string[];
+  prefsIndex: string[];
+  memoryIndex: string[];
+  total: number;
+}
+
+/** The lines under the preferences heading and under every memory heading, headings included. */
+function cerebrumSections(md: string): { prefs: string[]; memory: string[] } {
+  const prefs: string[] = [];
+  const memory: string[] = [];
+  let bucket: string[] | null = null;
+  for (const line of md.split("\n")) {
+    if (line.startsWith("## ")) {
+      const heading = line.slice(3).trim().toLowerCase();
+      bucket = heading === PREFS_HEADING ? prefs : MEMORY_HEADINGS.has(heading) ? memory : null;
+    }
+    bucket?.push(line);
+  }
+  return { prefs, memory };
+}
+
+/** Moves the oldest preferences into index entries until the rest fit PREFS_TOKEN_CAP. */
+function capPrefs(prefs: string[]): string[] {
+  const prefsIndex: string[] = [];
+  while (prefs.length && estimateProseTokens(prefs.join("\n")) > PREFS_TOKEN_CAP) {
+    prefsIndex.push(indexEntry(prefs.shift()!));
+  }
+  return prefsIndex;
+}
+
+function renderExcerpt(state: ExcerptState): string {
+  const { prefs, memory, prefsIndex, memoryIndex, total } = state;
+  if (!prefs.length && !memory.length && !prefsIndex.length && !memoryIndex.length) return "";
+  const parts: string[] = [CEREBRUM_HEADER];
+  if (prefs.length) parts.push("### User Preferences", ...prefs);
+  if (memory.length) parts.push("### Memory", ...memory);
+  const hidden = total - prefs.length - memory.length;
+  if (hidden) parts.push(`### Not shown (${hidden} of ${total}; grep .crank/cerebrum.md)`);
+  parts.push(...prefsIndex, ...memoryIndex);
+  return parts.join("\n");
+}
+
+function listBytes(list: string[]): number {
+  return bytes(list.join("\n"));
+}
+
+/** One cut by the drop rule `excerptOf` documents. */
+function shedOne(state: ExcerptState, balanced: boolean): void {
+  const { prefs, memory, prefsIndex, memoryIndex } = state;
+  const indexOver =
+    balanced || !memory.length || listBytes(memoryIndex) > MEMORY_INDEX_ALLOWANCE_BYTES;
+  if (memoryIndex.length && indexOver) memoryIndex.shift();
+  else if (balanced && prefsIndex.length) prefsIndex.shift();
+  else if (memory.length && !(balanced && listBytes(prefs) > listBytes(memory))) {
+    const dropped = memory.shift()!;
+    if (!balanced) memoryIndex.push(indexEntry(dropped));
+  } else if (prefsIndex.length) prefsIndex.shift();
+  else prefs.shift();
 }
 
 /** What the excerpt checks a bullet's citations against. */
