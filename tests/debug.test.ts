@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { makeCrankProject, runHook, enableDebugConfig, readDebugLog } from "./helpers.ts";
-import { claudeSessionStart, claudePostWrite } from "./fixtures/payloads.ts";
+import { claudeSessionStart, claudePostWrite, codexApplyPatch } from "./fixtures/payloads.ts";
 import { loadIndex } from "../src/hooks/lib/store.ts";
 
 const SESSION_START = "src/hooks/session-start.ts";
@@ -158,6 +158,29 @@ describe("debug logging (black-box)", () => {
       const run = runHook(POST_WRITE, JSON.stringify(payload));
       expect(run.status).toBe(0);
       expect(noOps(root)).toMatchObject({ tool: "Write", reason: "no-path" });
+    });
+
+    test("an apply_patch whose every path is unindexable reports its first skip", () => {
+      const root = makeCrankProject({ "a.ts": "const a = 1;" });
+      enableDebugConfig(root);
+      const patch = [
+        "*** Begin Patch",
+        "*** Update File: .crank/cerebrum.md",
+        "+x",
+        `*** Add File: ${path.join(os.tmpdir(), "elsewhere", "b.ts")}`,
+        "+y",
+        "*** End Patch",
+      ].join("\n");
+
+      const run = runHook(POST_WRITE, JSON.stringify(codexApplyPatch(root, patch)));
+      expect(run.status).toBe(0);
+      expect(noOps(root)).toMatchObject({ tool: "apply_patch", reason: "crank-internal" });
+
+      const headerless = "*** Begin Patch\n+z\n*** End Patch";
+      expect(runHook(POST_WRITE, JSON.stringify(codexApplyPatch(root, headerless))).status).toBe(0);
+      expect(
+        readDebugLog(root)[1]!.events.find((e: any) => e.event === "no-write-ops"),
+      ).toMatchObject({ tool: "apply_patch", reason: "no-path" });
     });
 
     test("a tool the hook does not handle: unhandled-tool", () => {

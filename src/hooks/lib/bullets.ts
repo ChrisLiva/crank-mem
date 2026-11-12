@@ -15,6 +15,13 @@ export interface Block {
   lines: string[];
 }
 
+/** Append `line` to the last block when it is an `other` block, else push a new one. */
+function appendOther(blocks: Block[], line: string): void {
+  const last = blocks[blocks.length - 1];
+  if (last && last.kind === "other") last.lines.push(line);
+  else blocks.push({ kind: "other", lines: [line] });
+}
+
 /**
  * Group lines into bullet blocks and everything else.
  *
@@ -33,18 +40,14 @@ export function parseBlocks(lines: string[]): Block[] {
   for (const line of lines) {
     if (line.startsWith("#")) {
       open = null;
-      const last = blocks[blocks.length - 1];
-      if (last && last.kind === "other") last.lines.push(line);
-      else blocks.push({ kind: "other", lines: [line] });
+      appendOther(blocks, line);
     } else if (line.startsWith("- ")) {
       open = { kind: "bullet", lines: [line] };
       blocks.push(open);
     } else if (open) {
       open.lines.push(line);
     } else {
-      const last = blocks[blocks.length - 1];
-      if (last && last.kind === "other") last.lines.push(line);
-      else blocks.push({ kind: "other", lines: [line] });
+      appendOther(blocks, line);
     }
   }
   return blocks;

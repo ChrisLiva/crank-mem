@@ -61,6 +61,12 @@ describe("describeFile", () => {
 });
 
 describe("describeFile extraction rules", () => {
+  test("a # comment under a shebang describes a shell script", () => {
+    expect(
+      describeFile(tmpFile("build.sh", "#!/bin/sh\n# Builds the release tarball.\nset -e\n")),
+    ).toBe("Builds the release tarball.");
+  });
+
   test("C preprocessor lines are not descriptions", () => {
     expect(
       describeFile(tmpFile("a.hpp", "#pragma once\n\n#include <vector>\n\nstruct Mesh {};\n")),
@@ -79,6 +85,14 @@ describe("describeFile extraction rules", () => {
     const src =
       '/*\n * Copyright (c) 2020 Acme\n *\n * Permission is hereby granted, free of charge, to any person\n * obtaining a copy of this software.\n */\n\n/* Slices meshes into layers. */\n#include "c.h"\n';
     expect(describeFile(tmpFile("c.cpp", src))).toBe("Slices meshes into layers.");
+  });
+
+  test("code after */ on the comment's line ends the comment scan", () => {
+    expect(
+      describeFile(
+        tmpFile("a.ts", "/* Parses widgets. */ const x = 1;\nexport function widget() {}\n"),
+      ),
+    ).toBe("Defines widget");
   });
 
   test("separator and copyright line comments are skipped", () => {

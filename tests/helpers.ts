@@ -661,7 +661,7 @@ export function makeModelHome(): string {
  * Start `script` under this runtime with `args` plus `--log <file>`; it prints `PORT <n>` once
  * listening on 127.0.0.1 and appends each requested path to the log, which `requests()` lists.
  */
-export async function startFixtureServer(
+async function startFixtureServer(
   script: string,
   args: string[],
 ): Promise<{ url: string; requests(): string[]; stop(): void }> {

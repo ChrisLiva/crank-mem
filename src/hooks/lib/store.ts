@@ -31,7 +31,7 @@ export interface Churn {
   paths: string[];
 }
 
-export interface IndexMeta {
+interface IndexMeta {
   lastScanned: string | null;
   fileCount: number;
   /** Set when a refresh ran out of time budget and skipped entries. */

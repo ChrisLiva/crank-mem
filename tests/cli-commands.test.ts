@@ -401,6 +401,28 @@ describe("stats: codex wiring", () => {
     );
     rollout(codexHome, "other", { cwd: "/elsewhere", timestamp: later }, [turn]);
     rollout(codexHome, "old", { cwd: root, timestamp: "2020-01-01T00:00:00.000Z" }, [turn]);
+    // Not counted either: files that are not rollouts, a broken first line, an undated thread.
+    const dayDir = path.join(
+      codexHome,
+      "sessions",
+      later.slice(0, 4),
+      later.slice(5, 7),
+      later.slice(8, 10),
+    );
+    const missed = path.join(dayDir, "rollout-missed.jsonl");
+    fs.copyFileSync(missed, path.join(dayDir, "notes.jsonl"));
+    fs.copyFileSync(missed, path.join(dayDir, "rollout-notes.txt"));
+    fs.writeFileSync(
+      path.join(dayDir, "rollout-broken.jsonl"),
+      "not json\n" + JSON.stringify(turn) + "\n",
+    );
+    fs.writeFileSync(
+      path.join(dayDir, "rollout-undated.jsonl"),
+      [
+        JSON.stringify({ type: "session_meta", payload: { cwd: root, thread_source: "user" } }),
+        JSON.stringify(turn),
+      ].join("\n") + "\n",
+    );
 
     const run = cliWithCodexHome(codexHome, root, "stats");
     expect(run.status).toBe(0);

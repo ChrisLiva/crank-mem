@@ -1,0 +1,15 @@
+{
+  "rules": {
+    "unused-files": "off",
+    "unused-exports": "off",
+    "unused-types": "off",
+    "unused-dependencies": "off",
+    "unlisted-dependencies": "off",
+    "unlisted-binaries": "off",
+    "duplicate-exports": "off",
+    "complexity-cyclomatic": "warn",
+    "complexity-crap": "warn",
+    "complexity-file-lines": "warn",
+    "complexity-cognitive": "error"
+  }
+}

@@ -634,7 +634,7 @@ describe("self-uninstall", () => {
 describe("release script", () => {
   const SCRIPT = path.join(REPO_ROOT, "scripts/release.ts");
   const PKG =
-    '{\n  "name": "fixture",\n  "version": "1.0.0",\n  "scripts": {\n    "typecheck": "true",\n    "format:check": "true",\n    "test": "TEST"\n  }\n}\n';
+    '{\n  "name": "fixture",\n  "version": "1.0.0",\n  "scripts": {\n    "typecheck": "true",\n    "format:check": "true",\n    "lint:health": "true",\n    "test": "TEST"\n  }\n}\n';
 
   /** A git env with a fixed identity and no user or system config, so no signing or hooks apply. */
   function gitEnv(): Record<string, string> {
@@ -687,6 +687,7 @@ describe("release script", () => {
     const r = repo();
     const run = release(r.work, r.env, "patch", "--yes");
     expect(run.status).toBe(0);
+    expect(run.stdout).toContain("release: bun run lint:health");
     expect(run.stdout).toContain("pushed v1.0.1");
     expect(r.git(r.remote, "rev-parse", "v1.0.1^{commit}")).toBe(
       r.git(r.remote, "rev-parse", "main"),

@@ -79,6 +79,43 @@ function fromModuleDocstring(head: string): string | null {
   );
 }
 
+interface CommentLine {
+  text: string;
+  inBlock: boolean;
+  /** The line closes a comment run: a block's end, a blank line, a shebang or a directive. */
+  endsRun: boolean;
+}
+
+/** One line inside or opening a `/* *\/` block; null when code follows the `*\/`. */
+function blockCommentLine(line: string, inBlock: boolean): CommentLine | null {
+  const body = inBlock ? line : line.slice(2);
+  const end = body.indexOf("*/");
+  if (end < 0) return { text: body.replace(/^\*+|\*+$/g, ""), inBlock: true, endsRun: false };
+  if (body.slice(end + 2).trim()) return null; // code follows on the same line
+  return { text: body.slice(0, end).replace(/^\*+|\*+$/g, ""), inBlock: false, endsRun: true };
+}
+
+/** Classifies one line of the leading comments; null at the first line of code. */
+function commentLine(raw: string, inBlock: boolean, cFamily: boolean): CommentLine | null {
+  const line = raw.trim();
+  let parsed: CommentLine | null;
+  if (inBlock || line.startsWith("/*")) {
+    parsed = blockCommentLine(line, inBlock);
+  } else if (line.startsWith("//")) {
+    parsed = { text: line.replace(/^\/+!?/, ""), inBlock: false, endsRun: false };
+  } else if (line.startsWith("#") && !cFamily && !line.startsWith("#!")) {
+    parsed = { text: line.replace(/^#+/, ""), inBlock: false, endsRun: false };
+  } else if (line && !line.startsWith("#")) {
+    return null;
+  } else {
+    // blank line, shebang or C preprocessor directive
+    return { text: "", inBlock: false, endsRun: true };
+  }
+  if (!parsed) return null;
+  const text = parsed.text.trim();
+  return { ...parsed, text: cFamily && text.startsWith("#") ? "" : text }; // commented-out directive
+}
+
 /**
  * First useful line of the `//`, `#` and `/* *\/` comments above the first
  * line of code. Skips directives and punctuation-only lines; copyright or
@@ -89,31 +126,13 @@ function fromLeadingComments(head: string, cFamily: boolean): string | null {
   let inBlock = false;
   let skipping = false;
   for (const raw of head.split("\n")) {
-    let line = raw.trim();
-    let endsRun = false;
-    if (inBlock || line.startsWith("/*")) {
-      if (!inBlock) line = line.slice(2);
-      const end = line.indexOf("*/");
-      inBlock = end < 0;
-      endsRun = !inBlock;
-      if (endsRun && line.slice(end + 2).trim()) break; // code follows on the same line
-      if (endsRun) line = line.slice(0, end);
-      line = line.replace(/^\*+|\*+$/g, "");
-    } else if (line.startsWith("//")) {
-      line = line.replace(/^\/+!?/, "");
-    } else if (line.startsWith("#") && !cFamily && !line.startsWith("#!")) {
-      line = line.replace(/^#+/, "");
-    } else if (line && !line.startsWith("#")) {
-      break;
-    } else {
-      line = ""; // blank line, shebang or C preprocessor directive
-      endsRun = true;
-    }
-    line = line.trim();
-    if (cFamily && line.startsWith("#")) line = ""; // commented-out directive
-    if (BOILERPLATE.test(line)) skipping = true;
-    else if (!skipping && /[\p{L}\p{N}]/u.test(line) && !DIRECTIVE.test(line)) return line;
-    if (endsRun) skipping = false;
+    const line = commentLine(raw, inBlock, cFamily);
+    if (!line) break;
+    inBlock = line.inBlock;
+    if (BOILERPLATE.test(line.text)) skipping = true;
+    else if (!skipping && /[\p{L}\p{N}]/u.test(line.text) && !DIRECTIVE.test(line.text))
+      return line.text;
+    if (line.endsRun) skipping = false;
   }
   return null;
 }
@@ -141,18 +160,28 @@ export function describeFile(filePath: string): string {
   const ext = path.extname(base);
   if (base === "package.json") {
     // Prefer the manifest's own description over the generic label.
-    try {
-      const desc = JSON.parse(head).description;
-      if (typeof desc === "string" && desc) return cap(desc);
-    } catch {}
+    const desc = jsonDescription(head);
+    if (desc) return desc;
   }
   if (known) return known;
   if (ext === ".json") {
-    try {
-      const desc = JSON.parse(head).description;
-      if (typeof desc === "string" && desc) return cap(desc);
-    } catch {}
+    const desc = jsonDescription(head);
+    if (desc) return desc;
   }
+  return proseDescription(head, ext) ?? "";
+}
+
+/** A JSON document's "description" string, capped; null when it has none. */
+function jsonDescription(head: string): string | null {
+  try {
+    const desc = JSON.parse(head).description;
+    if (typeof desc === "string" && desc) return cap(desc);
+  } catch {}
+  return null;
+}
+
+/** Markdown heading for prose files, then docstring, comments or declaration for code. */
+function proseDescription(head: string, ext: string): string | null {
   if (ext === ".md" || ext === ".rst" || ext === ".adoc" || ext === ".txt") {
     const d = fromMarkdown(head);
     if (d) return cap(d);
@@ -160,7 +189,7 @@ export function describeFile(filePath: string): string {
   if (DATA_EXTENSIONS.has(ext)) return "";
   const docstring = ext === ".py" || ext === ".pyi" ? fromModuleDocstring(head) : null;
   const d = docstring ?? fromLeadingComments(head, C_FAMILY.has(ext)) ?? fromDeclaration(head);
-  return d ? cap(d) : "";
+  return d ? cap(d) : null;
 }
 
 /** True when one of the file's first lines is a generator banner. */

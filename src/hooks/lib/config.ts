@@ -16,7 +16,7 @@ export const CRANK_DIR = ".crank";
 export const CONFIG_FILE = "config.json";
 /** Per-checkout settings, kept out of git by .crank/.gitignore's `/*` line. */
 export const LOCAL_CONFIG_FILE = "config.local.json";
-export const MAX_FILE_SIZE_BYTES = 1024 * 1024;
+const MAX_FILE_SIZE_BYTES = 1024 * 1024;
 
 // Hidden paths (.git, .claude, .codex, .crank itself, …) are excluded by the
 // always-on dot rule in isExcluded, so only non-hidden names belong here.
@@ -106,43 +106,52 @@ const CODEX_CHOICES: readonly CodexChoice[] = ["skip", "review", "trust"];
 export function loadConfig(crankDir: string): CrankConfig {
   const config = defaultConfig();
   config.digest = loadDigest(crankDir);
-  let raw: Record<string, unknown>;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(crankDir, CONFIG_FILE), "utf-8"));
-    if (typeof parsed !== "object" || parsed === null) return config;
-    raw = parsed as Record<string, unknown>;
-  } catch {
-    return config;
-  }
+  const raw = readRawConfig(crankDir);
+  if (raw === null) return config;
   for (const key of Object.keys(config) as (keyof CrankConfig)[]) {
     const value = raw[key];
     if (value === undefined || key === "digest" || key === "codex") continue;
-    if (key === "excludes") {
-      if (Array.isArray(value) && value.every((v) => typeof v === "string"))
-        config.excludes = value;
-    } else if (key === "git") {
-      if (GIT_MODES.includes(value as CrankConfig["git"])) config.git = value as CrankConfig["git"];
-    } else if (key === "runtime") {
-      if (RUNTIMES.includes(value as CrankConfig["runtime"]))
-        config.runtime = value as CrankConfig["runtime"];
-    } else if (
-      typeof value === typeof config[key] &&
-      (typeof value !== "number" || (Number.isFinite(value) && value > 0))
-    ) {
-      (config as unknown as Record<string, unknown>)[key] = value;
-    }
+    if (acceptedValue(key, value, config)) Object.assign(config, { [key]: value });
   }
-  // Installs before `codex` recorded only whether init wrote trust entries.
-  config.codex = CODEX_CHOICES.includes(raw.codex as CodexChoice)
-    ? (raw.codex as CodexChoice)
-    : raw.codex_trust_written === true
-      ? "trust"
-      : null;
+  config.codex = codexChoice(raw);
+  carryUnknown(config, raw);
+  return config;
+}
+
+/** config.json parsed; null when unreadable, invalid, or not an object (a top-level array passes). */
+function readRawConfig(crankDir: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(crankDir, CONFIG_FILE), "utf-8"));
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a known field's raw value has the shape the field expects. */
+function acceptedValue(key: keyof CrankConfig, value: unknown, config: CrankConfig): boolean {
+  if (key === "excludes") return Array.isArray(value) && value.every((v) => typeof v === "string");
+  if (key === "git") return GIT_MODES.includes(value as CrankConfig["git"]);
+  if (key === "runtime") return RUNTIMES.includes(value as CrankConfig["runtime"]);
+  return (
+    typeof value === typeof config[key] &&
+    (typeof value !== "number" || (Number.isFinite(value) && value > 0))
+  );
+}
+
+/** Installs before `codex` recorded only whether init wrote trust entries. */
+function codexChoice(raw: Record<string, unknown>): CodexChoice | null {
+  if (CODEX_CHOICES.includes(raw.codex as CodexChoice)) return raw.codex as CodexChoice;
+  return raw.codex_trust_written === true ? "trust" : null;
+}
+
+/** Copy unknown keys through verbatim; `key in config` also drops inherited names such as `__proto__`. */
+function carryUnknown(config: CrankConfig, raw: Record<string, unknown>): void {
   for (const key of Object.keys(raw)) {
     if (key in config || LEGACY_KEYS.has(key)) continue;
-    (config as unknown as Record<string, unknown>)[key] = raw[key];
+    Object.assign(config, { [key]: raw[key] });
   }
-  return config;
 }
 
 function loadDigest(crankDir: string): boolean {

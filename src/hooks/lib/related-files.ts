@@ -62,14 +62,30 @@ function matches(term: string, file: string, node: Node): boolean {
   );
 }
 
-/** Import edges, plus a C# `using` to each other file declaring that namespace. */
-function edges(graph: Map<string, Node>): Array<[string, string]> {
+/** Each file's edge to every file it imports, in graph order. */
+function importEdges(graph: Map<string, Node>): Array<[string, string]> {
   const out: Array<[string, string]> = [];
-  const declaring = new Map<string, string[]>();
   for (const [file, node] of graph) {
     for (const target of node.imports) out.push([file, target]);
+  }
+  return out;
+}
+
+/** Each C# namespace and the files declaring it, in graph order. */
+function declaringFiles(graph: Map<string, Node>): Map<string, string[]> {
+  const declaring = new Map<string, string[]>();
+  for (const [file, node] of graph) {
     for (const ns of node.declares) declaring.set(ns, [...(declaring.get(ns) ?? []), file]);
   }
+  return declaring;
+}
+
+/** A C# `using` to each other file declaring that namespace, skipping namespaces declared too widely. */
+function namespaceEdges(
+  graph: Map<string, Node>,
+  declaring: Map<string, string[]>,
+): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
   for (const [file, node] of graph) {
     for (const ns of node.uses) {
       const targets = declaring.get(ns) ?? [];
@@ -78,6 +94,11 @@ function edges(graph: Map<string, Node>): Array<[string, string]> {
     }
   }
   return out;
+}
+
+/** Import edges, plus a C# `using` to each other file declaring that namespace. */
+function edges(graph: Map<string, Node>): Array<[string, string]> {
+  return [...importEdges(graph), ...namespaceEdges(graph, declaringFiles(graph))];
 }
 
 /** The files a query names (seeds) and the files one import hop from them (neighbours). */

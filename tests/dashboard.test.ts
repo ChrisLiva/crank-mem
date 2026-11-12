@@ -1115,7 +1115,7 @@ describe("activity", () => {
       days: Record<string, number | string>[];
     };
     expect(days).toHaveLength(7);
-    const { date, costUsd, ...today } = days[6]!;
+    const { date: _date, costUsd, ...today } = days[6]!;
     expect(today).toEqual({
       digests: 2,
       observations: 2,

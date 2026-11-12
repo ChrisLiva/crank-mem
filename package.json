@@ -9,6 +9,7 @@
     "test": "bun test --parallel=4 --path-ignore-patterns='dashboard/**' --path-ignore-patterns='**/*.serial.test.ts'; p=$?; bun test .serial.test.ts; s=$?; [ $p -eq 0 ] && [ $s -eq 0 ]",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
+    "lint:health": "knip && fallow health --complexity --no-cache -q",
     "release": "bun scripts/release.ts"
   },
   "dependencies": {
@@ -20,6 +21,8 @@
     "@happy-dom/global-registrator": "21.0.4",
     "@types/bun": "^1.3.14",
     "@types/node": "^24.0.0",
+    "fallow": "3.42.0",
+    "knip": "6.45.1",
     "oxfmt": "0.76.0",
     "typescript": "^5.8.0"
   }

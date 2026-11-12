@@ -87,29 +87,44 @@ function pythonNames(list: string): string[] {
     .filter((name) => /^[\w.]+$/.test(name));
 }
 
+/** The files an `import <modules>` line names. */
+function pythonPlainTargets(rootDir: string, modules: string): string[] {
+  const found: string[] = [];
+  for (const name of pythonNames(modules)) {
+    const rel = resolvePythonModule(rootDir, name.replaceAll(".", "/"));
+    if (rel) found.push(rel);
+  }
+  return found;
+}
+
+/** A `from` module as a slash path, with leading dots resolved against `importer`'s directory. */
+function pythonModuleBase(importer: string, module: string): string {
+  const dots = /^\.*/.exec(module)![0].length;
+  const dotted = module.slice(dots).replaceAll(".", "/");
+  return dots === 0
+    ? dotted
+    : path.posix.join(path.posix.dirname(importer), "../".repeat(dots - 1), dotted);
+}
+
+/** Each name as a submodule of `base`, else `base` itself. */
+function pythonFromTargets(rootDir: string, base: string, names: string): string[] {
+  const found: string[] = [];
+  for (const name of pythonNames(names)) {
+    const submodule = path.posix.join(base, name.replaceAll(".", "/")) + ".py";
+    const rel = isProjectFile(rootDir, submodule) ? submodule : resolvePythonModule(rootDir, base);
+    if (rel) found.push(rel);
+  }
+  return found;
+}
+
 function pythonImports(rootDir: string, importer: string, content: string): string[] {
   const found: string[] = [];
   for (const m of content.matchAll(PYTHON_IMPORT)) {
     const { module, list, line, modules } = m.groups!;
-    if (modules !== undefined) {
-      for (const name of pythonNames(modules)) {
-        const rel = resolvePythonModule(rootDir, name.replaceAll(".", "/"));
-        if (rel) found.push(rel);
-      }
-      continue;
-    }
-    const dots = /^\.*/.exec(module!)![0].length;
-    const dotted = module!.slice(dots).replaceAll(".", "/");
-    const base =
-      dots === 0
-        ? dotted
-        : path.posix.join(path.posix.dirname(importer), "../".repeat(dots - 1), dotted);
-    for (const name of pythonNames(list ?? line ?? "")) {
-      const submodule = path.posix.join(base, name.replaceAll(".", "/")) + ".py";
-      const rel = isProjectFile(rootDir, submodule)
-        ? submodule
-        : resolvePythonModule(rootDir, base);
-      if (rel) found.push(rel);
+    if (modules !== undefined) found.push(...pythonPlainTargets(rootDir, modules));
+    else {
+      const base = pythonModuleBase(importer, module!);
+      found.push(...pythonFromTargets(rootDir, base, list ?? line ?? ""));
     }
   }
   return found;
@@ -128,33 +143,46 @@ function goModule(rootDir: string, importer: string): { dir: string; module: str
   }
 }
 
-function goImports(rootDir: string, importer: string, content: string): string[] {
+/** Every quoted import path, single or in a block, in source order. */
+function goImportPaths(content: string): string[] {
   const importPaths: string[] = [];
   for (const m of content.matchAll(GO_IMPORT)) {
     const { single, block } = m.groups!;
     if (single !== undefined) importPaths.push(single);
     else for (const line of block!.matchAll(GO_BLOCK_LINE)) importPaths.push(line.groups!.path!);
   }
+  return importPaths;
+}
+
+/** The package's non-test `.go` files, sorted; `[]` outside the module, for a non-directory, or over the cap. */
+function goPackageFiles(
+  rootDir: string,
+  mod: { dir: string; module: string },
+  importPath: string,
+): string[] {
+  if (importPath !== mod.module && !importPath.startsWith(`${mod.module}/`)) return [];
+  const pkgDir = path.posix.join(mod.dir, importPath.slice(mod.module.length));
+  const abs = path.join(rootDir, pkgDir);
+  let isDir = false;
+  try {
+    isDir = fs.statSync(abs, { throwIfNoEntry: false })?.isDirectory() === true;
+  } catch {}
+  if (!isDir) return [];
+  const goFiles = fs
+    .readdirSync(abs, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".go") && !e.name.endsWith("_test.go"))
+    .map((e) => path.posix.join(pkgDir, e.name))
+    .sort();
+  return goFiles.length <= GO_PACKAGE_MAX_FILES ? goFiles : [];
+}
+
+function goImports(rootDir: string, importer: string, content: string): string[] {
+  const importPaths = goImportPaths(content);
   if (importPaths.length === 0) return [];
   const mod = goModule(rootDir, importer);
   if (!mod) return [];
   const found: string[] = [];
-  for (const importPath of importPaths) {
-    if (importPath !== mod.module && !importPath.startsWith(`${mod.module}/`)) continue;
-    const pkgDir = path.posix.join(mod.dir, importPath.slice(mod.module.length));
-    const abs = path.join(rootDir, pkgDir);
-    let isDir = false;
-    try {
-      isDir = fs.statSync(abs, { throwIfNoEntry: false })?.isDirectory() === true;
-    } catch {}
-    if (!isDir) continue;
-    const goFiles = fs
-      .readdirSync(abs, { withFileTypes: true })
-      .filter((e) => e.isFile() && e.name.endsWith(".go") && !e.name.endsWith("_test.go"))
-      .map((e) => path.posix.join(pkgDir, e.name))
-      .sort();
-    if (goFiles.length <= GO_PACKAGE_MAX_FILES) found.push(...goFiles);
-  }
+  for (const importPath of importPaths) found.push(...goPackageFiles(rootDir, mod, importPath));
   return found;
 }
 
@@ -199,13 +227,28 @@ function rustCrateSrc(importer: string): string | null {
   return null;
 }
 
-function rustImports(rootDir: string, importer: string, content: string): string[] {
-  const found: string[] = [];
+/** The directory `importer`'s `mod <name>;` children live in. */
+function rustModDir(importer: string): string {
   const dir = path.posix.dirname(importer);
   const fileName = path.posix.basename(importer);
-  const modDir = RUST_MOD_ROOTS.includes(fileName)
+  return RUST_MOD_ROOTS.includes(fileName)
     ? dir
     : path.posix.join(dir, fileName.slice(0, -".rs".length));
+}
+
+/** The file of the longest `crate::` prefix of `segments` that resolves under `crateSrc`. */
+function rustCrateTarget(rootDir: string, crateSrc: string, segments: string[]): string | null {
+  if (segments[0] !== "crate") return null;
+  for (let end = segments.length; end > 1; end--) {
+    const rel = resolveRustModule(rootDir, path.posix.join(crateSrc, ...segments.slice(1, end)));
+    if (rel) return rel;
+  }
+  return null;
+}
+
+function rustImports(rootDir: string, importer: string, content: string): string[] {
+  const found: string[] = [];
+  const modDir = rustModDir(importer);
   const crateSrc = rustCrateSrc(importer);
   for (const m of content.matchAll(RUST_ITEM)) {
     const { mod, use } = m.groups!;
@@ -216,17 +259,8 @@ function rustImports(rootDir: string, importer: string, content: string): string
     }
     if (crateSrc === null) continue;
     for (const segments of rustUsePaths(use!)) {
-      if (segments[0] !== "crate") continue;
-      for (let end = segments.length; end > 1; end--) {
-        const rel = resolveRustModule(
-          rootDir,
-          path.posix.join(crateSrc, ...segments.slice(1, end)),
-        );
-        if (rel) {
-          found.push(rel);
-          break;
-        }
-      }
+      const rel = rustCrateTarget(rootDir, crateSrc, segments);
+      if (rel) found.push(rel);
     }
   }
   return found;
@@ -269,6 +303,21 @@ function tsJsImports(rootDir: string, importer: string, content: string): string
   return found;
 }
 
+type ImportExtractor = (rootDir: string, importer: string, content: string) => string[];
+
+const EXTRACTORS = new Map<string, ImportExtractor>([
+  ...TS_JS_EXTENSIONS.map((ext): [string, ImportExtractor] => [ext, tsJsImports]),
+  [".py", pythonImports],
+  [".go", goImports],
+  [".rs", rustImports],
+  ...C_EXTENSIONS.map((ext): [string, ImportExtractor] => [ext, cImports]),
+]);
+
+/** The import targets of the extractor for `ext`, or `[]` for a language without one. */
+function importTargets(rootDir: string, importer: string, ext: string, content: string): string[] {
+  return EXTRACTORS.get(ext)?.(rootDir, importer, content) ?? [];
+}
+
 /**
  * The files `relPath` imports, as repo-relative paths in source order, or for
  * C# the namespaces it declares and uses. `{}` when nothing resolves; never
@@ -288,17 +337,7 @@ export function fileLinks(
       const namespaces = csNamespaces(content);
       return Object.keys(namespaces).length > 0 ? { namespaces } : {};
     }
-    const targets = TS_JS_EXTENSIONS.includes(ext)
-      ? tsJsImports(rootDir, importer, content)
-      : ext === ".py"
-        ? pythonImports(rootDir, importer, content)
-        : ext === ".go"
-          ? goImports(rootDir, importer, content)
-          : ext === ".rs"
-            ? rustImports(rootDir, importer, content)
-            : C_EXTENSIONS.includes(ext)
-              ? cImports(rootDir, importer, content)
-              : [];
+    const targets = importTargets(rootDir, importer, ext, content);
     const imports = firstUnique(
       targets.filter((rel) => rel !== importer && isIndexableName(rel, config)),
     );
