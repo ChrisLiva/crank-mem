@@ -31,6 +31,94 @@ function detectRuntime(): CrankConfig["runtime"] | null {
   return null;
 }
 
+// Strict choice flags: reject bad values before prompting or touching disk.
+const CHOICE_FLAGS = [
+  ["git", ["commit", "ignore", "exclude"]],
+  ["codex", ["merge", "skip"]],
+  ["codex-trust", ["write", "skip"]],
+] as const;
+
+type Flags = Record<string, string | boolean>;
+
+function invalidChoice(flags: Flags): string | null {
+  for (const [name, choices] of CHOICE_FLAGS) {
+    const value = flags[name];
+    if (typeof value === "string" && !(choices as readonly string[]).includes(value)) {
+      return `crank-mem: invalid --${name} ${value} (expected: ${choices.join(" | ")})`;
+    }
+  }
+  return null;
+}
+
+/** A validated string flag wins, then `--yes` takes the preset, else the prompt asks. */
+async function flagOr<T extends string>(
+  value: string | boolean | undefined,
+  yes: boolean,
+  preset: T,
+  ask: () => Promise<T>,
+): Promise<T> {
+  if (typeof value === "string") return value as T;
+  return yes ? preset : ask();
+}
+
+async function askChoices(
+  flags: Flags,
+  yes: boolean,
+  root: string,
+): Promise<{ gitMode: CrankConfig["git"]; codexMode: string; codexTrust: string }> {
+  const gitMode = await flagOr(flags.git, yes, "exclude", () =>
+    choose("Track .crank/ in git?", ["commit", "ignore", "exclude"] as const, "exclude"),
+  );
+  // Pre-existing .codex wiring is a conflict — default to leaving it alone.
+  const codexMode =
+    typeof flags.codex !== "string" && !fs.existsSync(installPaths(root).codexHooks)
+      ? "merge"
+      : await flagOr(flags.codex, yes, "skip", () =>
+          choose(
+            ".codex/hooks.json exists — merge crank hooks into it?",
+            ["merge", "skip"],
+            "skip",
+          ),
+        );
+  const codexTrust = await flagOr(flags["codex-trust"], yes, "skip", () =>
+    choose("Write Codex trusted_hash entries to ~/.codex/config.toml?", ["write", "skip"], "skip"),
+  );
+  return { gitMode, codexMode, codexTrust };
+}
+
+function codexChoiceFor(codexMode: string, codexTrust: string): CodexChoice {
+  if (codexMode !== "merge") return "skip";
+  return codexTrust === "write" ? "trust" : "review";
+}
+
+/** Backup dir, first scan, config, then every item; null after printing the failure lines. */
+function installAll(
+  root: string,
+  crankDir: string,
+  config: CrankConfig & { codex: CodexChoice },
+): { scanned: ReturnType<typeof commitIndex>; installed: ReturnType<typeof applyInstall> } | null {
+  fs.mkdirSync(crankDir, { recursive: true });
+  const backupDir = newBackupDir(crankDir);
+  // Each writer backs up its file just before writing it, so a partial failure
+  // is recoverable through `uninstall --restore`; init prints that hint instead of rolling back.
+  try {
+    const scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
+    saveConfig(crankDir, config);
+    const installed = applyInstall({ root, crankDir, config, backupDir: () => backupDir });
+    return { scanned, installed };
+  } catch (err) {
+    console.error(`crank-mem: ${errorMessage(err)}`);
+    // uninstall needs .crank/config.json; before it exists nothing outside
+    // .crank/ has been touched yet, so the honest hint is just to delete it.
+    if (fs.existsSync(path.join(crankDir, "config.json"))) {
+      console.error("init failed partway — run `crank-mem uninstall --restore` to roll back.");
+    } else {
+      console.error("init failed before wiring anything — delete .crank/ and retry.");
+    }
+    return null;
+  }
+}
+
 export async function run(args: string[]): Promise<number> {
   printUpdateNotice();
   const { flags } = parseArgs(args, COMMANDS.init.value);
@@ -51,61 +139,15 @@ export async function run(args: string[]): Promise<number> {
     return 1;
   }
 
-  // ── Choices ──────────────────────────────────────────────────────────────
-  // Strict choice flags: reject bad values before prompting or touching disk.
-  const CHOICE_FLAGS = [
-    ["git", ["commit", "ignore", "exclude"]],
-    ["codex", ["merge", "skip"]],
-    ["codex-trust", ["write", "skip"]],
-  ] as const;
-  for (const [name, choices] of CHOICE_FLAGS) {
-    const value = flags[name];
-    if (typeof value === "string" && !(choices as readonly string[]).includes(value)) {
-      console.error(`crank-mem: invalid --${name} ${value} (expected: ${choices.join(" | ")})`);
-      return 1;
-    }
+  const invalid = invalidChoice(flags);
+  if (invalid) {
+    console.error(invalid);
+    return 1;
   }
 
-  const gitMode: CrankConfig["git"] =
-    typeof flags.git === "string"
-      ? (flags.git as CrankConfig["git"])
-      : yes
-        ? "exclude"
-        : await choose("Track .crank/ in git?", ["commit", "ignore", "exclude"], "exclude");
-
+  const { gitMode, codexMode, codexTrust } = await askChoices(flags, yes, root);
   const adrPath = typeof flags.adr === "string" ? flags.adr : "docs/adr";
 
-  const codexHooksJson = installPaths(root).codexHooks;
-  let codexMode: string;
-  if (typeof flags.codex === "string") {
-    codexMode = flags.codex;
-  } else if (fs.existsSync(codexHooksJson)) {
-    // Pre-existing .codex wiring is a conflict — default to leaving it alone.
-    codexMode = yes
-      ? "skip"
-      : await choose(
-          ".codex/hooks.json exists — merge crank hooks into it?",
-          ["merge", "skip"],
-          "skip",
-        );
-  } else {
-    codexMode = "merge";
-  }
-
-  const codexTrust =
-    typeof flags["codex-trust"] === "string"
-      ? flags["codex-trust"]
-      : yes
-        ? "skip"
-        : await choose(
-            "Write Codex trusted_hash entries to ~/.codex/config.toml?",
-            ["write", "skip"],
-            "skip",
-          );
-
-  // ── Backup dir, config, first scan, then every item ──────────────────────
-  fs.mkdirSync(crankDir, { recursive: true });
-  const backupDir = newBackupDir(crankDir);
   const config: CrankConfig & { codex: CodexChoice } = {
     ...defaultConfig(),
     adr_path: adrPath,
@@ -113,28 +155,12 @@ export async function run(args: string[]): Promise<number> {
     runtime,
     vendored_version: cliVersion(),
     clone_root: toolRoot(),
-    codex: codexMode !== "merge" ? "skip" : codexTrust === "write" ? "trust" : "review",
+    codex: codexChoiceFor(codexMode, codexTrust),
   };
 
-  // Each writer backs up its file just before writing it, so a partial failure
-  // is recoverable through `uninstall --restore`; init prints that hint instead of rolling back.
-  let scanned: ReturnType<typeof commitIndex>;
-  let installed: ReturnType<typeof applyInstall>;
-  try {
-    scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
-    saveConfig(crankDir, config);
-    installed = applyInstall({ root, crankDir, config, backupDir: () => backupDir });
-  } catch (err) {
-    console.error(`crank-mem: ${errorMessage(err)}`);
-    // uninstall needs .crank/config.json; before it exists nothing outside
-    // .crank/ has been touched yet, so the honest hint is just to delete it.
-    if (fs.existsSync(path.join(crankDir, "config.json"))) {
-      console.error("init failed partway — run `crank-mem uninstall --restore` to roll back.");
-    } else {
-      console.error("init failed before wiring anything — delete .crank/ and retry.");
-    }
-    return 1;
-  }
+  const result = installAll(root, crankDir, config);
+  if (!result) return 1;
+  const { scanned, installed } = result;
 
   // ── Summary ──────────────────────────────────────────────────────────────
   console.log(`crank-mem ${cliVersion()} initialized (runtime: ${runtime}, git: ${gitMode})`);
