@@ -1,0 +1,22 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "src/cli/main.ts",
+        "src/hooks/*.ts",
+        "scripts/*.ts",
+        "tests/**/*.test.ts",
+        "tests/fixtures/*.ts"
+      ],
+      "project": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+      "ignore": ["tests/fixtures/code/**"],
+      "ignoreDependencies": ["@vscode/tree-sitter-wasm"],
+      "ignoreBinaries": ["shasum", "scan"]
+    },
+    "dashboard": {}
+  },
+  "ignoreIssues": {
+    "dashboard/src/components/ui/**": ["exports"]
+  }
+}
