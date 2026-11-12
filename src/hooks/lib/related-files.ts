@@ -2,6 +2,8 @@ import * as path from "node:path";
 import type { AnatomyIndex } from "./store.ts";
 
 const MAX_TERM_FILES = 5;
+/** Path-like (`.`, `/`) or identifier-shaped (`_`, a lowercase-then-uppercase pair); plain words seed nothing. */
+const SEEDING_TERM = /[./_]|[a-z][A-Z]/;
 const MAX_SEEDS = 20;
 const MAX_NEIGHBOURS = 100;
 const MAX_DECLARING_FILES = 10;
@@ -46,8 +48,9 @@ function nodes(index: AnatomyIndex): Map<string, Node> {
 function terms(text: string): string[] {
   return text
     .split(/[\s,;:()[\]{}"'`]+/)
-    .map((t) => t.replace(/[?!.]+$/, "").toLowerCase())
-    .filter((t) => t.length >= 3);
+    .map((t) => t.replace(/[?!.]+$/, ""))
+    .filter((t) => t.length >= 3 && SEEDING_TERM.test(t))
+    .map((t) => t.toLowerCase());
 }
 
 function matches(term: string, file: string, node: Node): boolean {

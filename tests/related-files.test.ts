@@ -33,7 +33,6 @@ test("terms match a file by path, path suffix, basename, stem or symbol", () => 
     "withLock",
     "LOCK.TS",
     "(lock.ts),",
-    "WITHLOCK",
     "SRC/LOCK.TS",
     ["`lock.ts`", "[lock.ts]:", "{lock.ts};", '"lock.ts"', "'lock.ts'", "lock.ts."].join(" "),
     "src/lock.ts",
@@ -44,11 +43,12 @@ test("terms match a file by path, path suffix, basename, stem or symbol", () => 
   expect(relatedFiles(G, "LIB/FOO.TEST.TS").seeds).toEqual(["src/lib/foo.test.ts"]);
   expect(relatedFiles(G, "lib/foo.test").seeds).toEqual([]);
   expect(relatedFiles(G, "foo.test").seeds).toEqual(["src/lib/foo.test.ts"]);
-  expect(relatedFiles(G, "foo").seeds).toEqual(["src/lib/foo.ts"]);
   expect(relatedFiles(G, "foo.ts").seeds).toEqual(["src/lib/foo.ts"]);
   const short = idx({ "x/ab.ts": {}, "x/abc.ts": {} });
   expect(relatedFiles(short, "ab")).toEqual({ seeds: [], neighbours: [] });
-  expect(relatedFiles(short, "abc")).toEqual({ seeds: ["x/abc.ts"], neighbours: [] });
+  expect(relatedFiles(short, "abc")).toEqual({ seeds: [], neighbours: [] });
+  expect(relatedFiles(short, "aB")).toEqual({ seeds: [], neighbours: [] });
+  expect(relatedFiles(short, "aBc")).toEqual({ seeds: ["x/abc.ts"], neighbours: [] });
 });
 
 test("neighbours run both ways, most-touched first, never a seed or a missing path", () => {
@@ -152,4 +152,39 @@ test("malformed entries contribute nothing and never throw", () => {
     seeds: [],
     neighbours: [],
   });
+});
+
+test("only path-like and identifier-shaped terms seed", () => {
+  const E = { seeds: [], neighbours: [] };
+  const B = idx({
+    "bin/crank-mem": {},
+    "src/cli/main.ts": {},
+    "src/cli/recall.ts": {
+      symbols: [{ name: "search", kind: "fn", startLine: 1, endLine: 1, tokens: 1 }],
+    },
+  });
+  for (const t of ["WITHLOCK", "withlock", "lock", "foo", "foo."]) {
+    expect(relatedFiles(G, t)).toEqual(E);
+  }
+  for (const t of ["crank-mem", "main", "search"]) {
+    expect(relatedFiles(B, t)).toEqual(E);
+  }
+  expect(relatedFiles(B, "bin/crank-mem")).toEqual({ seeds: ["bin/crank-mem"], neighbours: [] });
+  expect(relatedFiles(B, "main.ts")).toEqual({ seeds: ["src/cli/main.ts"], neighbours: [] });
+
+  expect(relatedFiles(G, "withLock")).toEqual({
+    seeds: ["src/lock.ts"],
+    neighbours: ["src/a.ts", "src/b.ts"],
+  });
+  const U = idx({
+    "src/cfg.py": {
+      symbols: [{ name: "read_config", kind: "fn", startLine: 1, endLine: 1, tokens: 1 }],
+    },
+    "x/my_mod.ts": {},
+    "x/my_mod.test.ts": {},
+  });
+  expect(relatedFiles(U, "read_config")).toEqual({ seeds: ["src/cfg.py"], neighbours: [] });
+  expect(relatedFiles(U, "READ_CONFIG")).toEqual({ seeds: ["src/cfg.py"], neighbours: [] });
+  expect(relatedFiles(U, "my_mod")).toEqual({ seeds: ["x/my_mod.ts"], neighbours: [] });
+  expect(relatedFiles(U, "my_mod.test")).toEqual({ seeds: ["x/my_mod.test.ts"], neighbours: [] });
 });
