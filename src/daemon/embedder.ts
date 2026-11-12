@@ -34,7 +34,7 @@ export async function embedderReady(): Promise<boolean> {
   }
 }
 
-let originalFetch: ((input: string | URL, init?: any) => Promise<any>) | null = null;
+let originalFetch: (typeof import("@huggingface/transformers"))["env"]["fetch"] | null = null;
 
 export async function embed(
   texts: string[],

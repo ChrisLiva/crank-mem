@@ -131,7 +131,7 @@ async function consolidateQuietly(
   try {
     await consolidate(root, memory, opts);
   } catch (err) {
-    process.stderr.write(`crank-mem: consolidation skipped (${errorMessage(err)})\n`);
+    console.error(`crank-mem: consolidation skipped (${errorMessage(err)})`);
   }
 }
 

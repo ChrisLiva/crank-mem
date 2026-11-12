@@ -63,11 +63,7 @@ function schemaBlockers(targetDir: string): Blockers {
       // A store that is not a database, the older version reports itself.
       return false;
     } finally {
-      try {
-        db?.close();
-      } catch {
-        /* already closed */
-      }
+      db?.close();
     }
   });
   return roots.length === 0 ? { ok: true } : { ok: false, roots };

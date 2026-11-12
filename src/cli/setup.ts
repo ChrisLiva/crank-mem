@@ -4,7 +4,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { embed, EMBED_MODEL, modelPresent, modelsDir } from "../daemon/embedder.ts";
 import { errorMessage } from "../hooks/lib/config.ts";
 import { ensureCrankHome } from "../hooks/lib/user-state.ts";
-import { parseArgs, positive } from "./args.ts";
+import { parseArgs, positive, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { cliVersion, installedCopy, REPO_ROOT } from "./version.ts";
 import { printUpdateNotice } from "./updates.ts";
@@ -127,7 +127,7 @@ export async function ensureModel(opts: {
 export async function run(args: string[]): Promise<number> {
   printUpdateNotice();
   const { flags } = parseArgs(args, COMMANDS.setup.value);
-  const host = typeof flags["model-host"] === "string" ? flags["model-host"] : undefined;
+  const host = stringFlag(flags["model-host"]) ?? undefined;
   const fetchTimeoutMs = positive(flags["fetch-timeout-ms"], 0) || undefined;
   const fromInstalledCopy = installedCopy();
 
