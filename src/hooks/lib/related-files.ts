@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { isObj } from "./config.ts";
 import type { AnatomyIndex } from "./store.ts";
 
 const MAX_TERM_FILES = 5;
@@ -20,22 +21,18 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 /** `loadIndex` checks only the top-level shape, so every entry field is read defensively. */
 function nodes(index: AnatomyIndex): Map<string, Node> {
   const out = new Map<string, Node>();
   const paths = Object.keys(index.files).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   for (const file of paths) {
     const entry: unknown = index.files[file];
-    if (!isObject(entry)) continue;
+    if (!isObj(entry)) continue;
     const symbols = Array.isArray(entry.symbols) ? entry.symbols : [];
-    const namespaces = isObject(entry.namespaces) ? entry.namespaces : {};
+    const namespaces = isObj(entry.namespaces) ? entry.namespaces : {};
     out.set(file, {
       imports: strings(entry.imports),
-      symbols: strings(symbols.map((s: unknown) => (isObject(s) ? s.name : undefined))).map((s) =>
+      symbols: strings(symbols.map((s: unknown) => (isObj(s) ? s.name : undefined))).map((s) =>
         s.toLowerCase(),
       ),
       declares: strings(namespaces.declares),

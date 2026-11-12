@@ -140,10 +140,14 @@ test("malformed entries contribute nothing and never throw", () => {
       imports: [3, "src/x.ts"] as unknown as string[],
       namespaces: { uses: 7 } as unknown as FileEntry["namespaces"],
     },
+    "src/w.ts": { imports: ["src/arr.ts"] },
   });
   const files = i.files as Record<string, unknown>;
   files["src/z.ts"] = null;
   files["src/m.ts"] = 7;
+  files["src/arr.ts"] = [];
+  expect(relatedFiles(i, "arr.ts")).toEqual({ seeds: [], neighbours: [] });
+  expect(relatedFiles(i, "w.ts")).toEqual({ seeds: ["src/w.ts"], neighbours: [] });
   expect(relatedFiles(i, "src/y.ts")).toEqual({ seeds: ["src/y.ts"], neighbours: ["src/x.ts"] });
   expect(relatedFiles(i, "x.ts")).toEqual({ seeds: ["src/x.ts"], neighbours: ["src/y.ts"] });
   expect(relatedFiles(i, "z.ts m.ts src/z.ts src/m.ts")).toEqual({ seeds: [], neighbours: [] });
