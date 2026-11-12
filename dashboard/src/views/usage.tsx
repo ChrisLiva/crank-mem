@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { cn } from "cn";
+import { errorMessage } from "../../../src/hooks/lib/wire";
 import {
   fetchUsage,
   type ActivityWindow,
@@ -67,7 +68,7 @@ export function UsageView({
         setLoaded({ key, metrics });
         setError(null);
       } catch (err) {
-        if (isCurrent()) setError(err instanceof Error ? err.message : String(err));
+        if (isCurrent()) setError(errorMessage(err));
       }
     },
     [key],

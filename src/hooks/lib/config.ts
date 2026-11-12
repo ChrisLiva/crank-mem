@@ -19,8 +19,7 @@ export function readJsonObject(file: string): Obj | null {
   }
 }
 
-export const errorMessage = (err: unknown): string =>
-  err instanceof Error ? err.message : String(err);
+export { errorMessage } from "./wire.ts";
 
 export const CRANK_DIR = ".crank";
 export const CONFIG_FILE = "config.json";

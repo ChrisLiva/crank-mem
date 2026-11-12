@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { cn } from "cn";
+import { errorMessage } from "../../src/hooks/lib/wire";
 import { fetchHealth, fetchProjects, type HealthSummary, type Project } from "./api";
 import { usePerProject } from "./hooks/use-per-project";
 import { usePoll } from "./hooks/use-poll";
@@ -56,7 +57,7 @@ export function App() {
           : { ...p, project: list[0]?.id ?? null, tab: null, item: null },
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }, []);
   const health = usePerProject(projects ?? [], fetchHealth);

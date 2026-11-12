@@ -19,14 +19,13 @@ import {
   DETAIL_COLUMN,
   formatTime,
   LABEL,
-  LIST_COLUMN,
+  ListColumn,
   ListFoot,
   ObservationLink,
   OUTCOME_TONE,
   Pairs,
   Pill,
   Prose,
-  Row,
   SPLIT,
   usePaged,
   useSelection,
@@ -65,29 +64,17 @@ function PagedList<T extends { id: number }>({
 
   return (
     <main className={SPLIT}>
-      <section aria-label="List" className={LIST_COLUMN}>
-        <div className="grid gap-3 border-b px-4 py-4">{head}</div>
-        <div data-list className="min-h-0 flex-1 overflow-auto">
-          {note !== null ? (
-            <p className="px-4 py-8 text-center text-muted-foreground">{note}</p>
-          ) : error !== null ? (
-            <p className="px-4 py-8 text-center text-destructive">{error}</p>
-          ) : current !== null && current.rows.length === 0 ? (
-            <p className="px-4 py-8 text-center text-muted-foreground">Nothing here yet.</p>
-          ) : (
-            current?.rows.map((r) => (
-              <Row
-                key={r.id}
-                selected={String(r.id) === item}
-                onClick={() => setItem(String(r.id))}
-              >
-                {spec.row(r)}
-              </Row>
-            ))
-          )}
-        </div>
-        <ListFoot start={current !== null && `${current.rows.length} shown`} older={older} />
-      </section>
+      <ListColumn
+        head={head}
+        note={note}
+        error={error}
+        rows={current?.rows ?? null}
+        empty="Nothing here yet."
+        item={item}
+        setItem={setItem}
+        renderRow={spec.row}
+        foot={<ListFoot start={current !== null && `${current.rows.length} shown`} older={older} />}
+      />
       <section aria-label="Detail" className={DETAIL_COLUMN}>
         {note !== null ? (
           <p className="px-6 py-8 text-muted-foreground md:px-8">{note}</p>

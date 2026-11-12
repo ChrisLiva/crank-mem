@@ -67,6 +67,10 @@ type StoreStatus = "open" | "missing" | "older" | "newer" | "unreadable";
 
 export type Tone = "ok" | "warn" | "bad" | "off";
 
+/** A thrown value's message: an Error's `message`, anything else as a string. */
+export const errorMessage = (err: unknown): string =>
+  err instanceof Error ? err.message : String(err);
+
 /** Dollars to the cent, or to two significant digits under a cent: one Haiku digest costs about $0.002. */
 export function formatUsd(usd: number): string {
   return usd > 0 && usd < 0.01 ? `$${usd.toPrecision(2)}` : `$${usd.toFixed(2)}`;
