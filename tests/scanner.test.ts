@@ -232,17 +232,18 @@ describe("refreshIndex", () => {
     const config = defaultConfig();
     const index = fullScan(root, config);
 
-    // change a (content + size), add c, delete b
+    // change a (content + size), add c and d, delete b
     fs.writeFileSync(path.join(root, "a.ts"), "const a = 12345; // changed now");
     fs.writeFileSync(path.join(root, "c.ts"), "const c = 1;");
+    fs.writeFileSync(path.join(root, "d.ts"), "const d = 1;");
     fs.unlinkSync(path.join(root, "b.ts"));
 
     const result = refreshIndex(root, config, index, 5000);
     expect(result.changed).toBe(1);
-    expect(result.added).toBe(1);
+    expect(result.added).toBe(2);
     expect(result.removed).toBe(1);
     expect(result.partial).toBe(false);
-    expect(Object.keys(result.index.files).sort()).toEqual(["a.ts", "c.ts"]);
+    expect(Object.keys(result.index.files).sort()).toEqual(["a.ts", "c.ts", "d.ts"]);
   });
 
   test("unchanged files are not re-extracted", () => {
@@ -269,17 +270,18 @@ describe("refreshIndex", () => {
     expect(result.removed).toBe(1);
   });
 
-  test("zero budget marks partial", () => {
-    const root = makeProject({ "a.ts": "const a = 1;" });
+  test("zero budget marks partial and still drops deleted files", () => {
+    const root = makeProject({ "a.ts": "const a = 1;", "gone.ts": "const g = 1;" });
     const config = defaultConfig();
-    const result = refreshIndex(
-      root,
-      config,
-      { version: 1, meta: { lastScanned: null, fileCount: 0 }, files: {} },
-      -1,
-    );
+    const index = fullScan(root, config);
+    fs.unlinkSync(path.join(root, "gone.ts"));
+    fs.writeFileSync(path.join(root, "new.ts"), "const n = 1;");
+    const result = refreshIndex(root, config, index, -1);
     expect(result.partial).toBe(true);
     expect(result.index.meta.partial).toBe(true);
+    expect(result.removed).toBe(1);
+    expect(result.added).toBe(0);
+    expect(Object.keys(result.index.files)).toEqual(["a.ts"]);
   });
 });
 

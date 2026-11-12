@@ -1247,12 +1247,13 @@ describe("usageMetrics (in-process)", () => {
       line(T + 60_000, "S1", { channel: "session-start", source: "startup", ids: [1, 2, 4] }),
       line(T + 120_000, "S1", history([2, 3])),
       line(T + 180_000, "S1", history([2, 3])),
-      searchLine(T + 240_000, "claude", "S1", "q", [2]),
+      searchLine(T + 240_000, "claude", "S1", "q", [2, 7]),
       line(T + 300_000, "S2", get([1])),
       line(T + 310_000, "C", { channel: "session-start", source: "startup", ids: [5] }, "codex"),
       line(T + 320_000, null, history([6])),
       line(T + 11_040_000, "S1", get([2])),
       line(T + 11_100_000, "S1", { channel: "timeline", anchor: 3, depth: 5, ids: [3] }),
+      line(T + 11_160_000, "S1", get([7])),
     ];
     expect(metricsOf(lines, 7).surfacedFollowThrough).toBe(0.5);
     expect(metricsOf(lines, 7, true).surfacedFollowThrough).toBe(0.5);

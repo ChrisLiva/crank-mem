@@ -123,12 +123,13 @@ describe("describeFile extraction rules", () => {
     ).toBe("Defines load");
   });
 
-  test("json without a description field gets none, even with glob stars", () => {
+  test("a data file without a description field gets none, even with glob stars or a comment line", () => {
     expect(
       describeFile(
         tmpFile("h.json", '{\n  "files": { "includes": ["**/src/**/*", "!**/dist"] }\n}\n'),
       ),
     ).toBe("");
+    expect(describeFile(tmpFile("sales.csv", "# Sales export\nregion,total\n"))).toBe("");
   });
 
   test("a docblock after the first import does not describe the file", () => {
