@@ -185,19 +185,38 @@ export function memoryPath(root: string): string {
     : own;
 }
 
+/**
+ * Opens a store to read, or returns null when the file is missing (node:sqlite creates a missing file on open).
+ * Read-write: under bun a read-only open of a closed WAL store with no -shm fails.
+ */
+export function openForRead(mod: typeof sqlite, file: string): sqlite.DatabaseSync | null {
+  if (!fs.existsSync(file)) return null;
+  const db = new mod.DatabaseSync(file, { timeout: 200 });
+  try {
+    db.exec("PRAGMA query_only=ON");
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+  return db;
+}
+
 export function openMemory(file: string, mode: "read"): MemoryRead;
 export function openMemory(file: string, mode: "write"): MemoryWrite;
 export function openMemory(file: string, mode: "read" | "write"): MemoryRead | MemoryWrite {
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
   if (!mod) return { status: "unreadable" };
   const read = mode === "read";
-  // node:sqlite creates a missing file on open, so a reader checks first.
-  if (read && !fs.existsSync(file)) return { status: "missing" };
   let db: sqlite.DatabaseSync | undefined;
   try {
-    if (!read) fs.mkdirSync(path.dirname(file), { recursive: true });
-    db = new mod.DatabaseSync(file, { timeout: read ? 200 : 10000 });
-    if (read) db.exec("PRAGMA query_only=ON");
+    if (read) {
+      const opened = openForRead(mod, file);
+      if (opened === null) return { status: "missing" };
+      db = opened;
+    } else {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      db = new mod.DatabaseSync(file, { timeout: 10000 });
+    }
     const v = userVersion(db);
     if (v > SCHEMA_VERSION) {
       db.close();
@@ -324,7 +343,9 @@ export async function restoreMemory(
   if (!mod) throw new Error("node:sqlite is unavailable");
   let src: sqlite.DatabaseSync;
   try {
-    src = new mod.DatabaseSync(snapshotFile, { readOnly: true });
+    const opened = openForRead(mod, snapshotFile);
+    if (opened === null) return { status: "invalid", detail: "unable to open database file" };
+    src = opened;
   } catch (err) {
     return { status: "invalid", detail: errorMessage(err) };
   }

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import type * as sqlite from "node:sqlite";
 import * as path from "node:path";
 import { errorMessage } from "../hooks/lib/config.ts";
-import { memoryPath } from "../hooks/lib/memory.ts";
+import { memoryPath, openForRead } from "../hooks/lib/memory.ts";
 import { userVersion } from "../hooks/lib/memory-schema.ts";
 import { registeredRoots } from "../hooks/lib/registry.ts";
 import { parseArgs, stringFlag } from "./args.ts";
@@ -53,12 +53,12 @@ function schemaBlockers(targetDir: string): Blockers {
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
   if (!mod) return { ok: true };
   const roots = registeredRoots().filter((root) => {
-    let db: sqlite.DatabaseSync | undefined;
+    let db: sqlite.DatabaseSync | null = null;
     try {
-      db = new mod.DatabaseSync(memoryPath(root), { readOnly: true });
-      return userVersion(db) > target;
+      db = openForRead(mod, memoryPath(root));
+      return db !== null && userVersion(db) > target;
     } catch {
-      // A missing store, or one that is not a database, the older version reports itself.
+      // A store that is not a database, the older version reports itself.
       return false;
     } finally {
       try {
