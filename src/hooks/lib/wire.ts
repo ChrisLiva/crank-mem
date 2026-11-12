@@ -216,6 +216,8 @@ export type UsageMetrics = {
   zeroResultShare: number | null;
   keywordShare: number | null;
   followThrough: number | null;
+  recallReach: number | null;
+  surfacedFollowThrough: number | null;
   topQueries: {
     query: string;
     count: number;

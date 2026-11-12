@@ -433,7 +433,6 @@ function inject(root: string): string {
 
 // Digest-era injection. Every run passes one temp CRANK_HOME per project, so a
 // planted stop file or spool entry is the one the hook reads.
-const PAST_WORK = "- Past work: `crank-mem search <query>`";
 const NOTE_STOPPED =
   "_Note: crank-mem digests stopped (login): run `crank-mem digest resume` once that is fixed._";
 const NOTE_WAITED =
@@ -488,7 +487,8 @@ describe("digests running (black-box)", () => {
   test("next steps come from the newest digest, only when short and not none", () => {
     const { root, home } = memoryProject(true);
     seedMemory(root, titled(2), { nextSteps: "Wire the daemon." });
-    expect(injectIn(root, home)).toContain(
+    const ctx = injectIn(root, home);
+    expect(sectionOf(ctx, "## Next steps (last digested session)\n")).toBe(
       "## Next steps (last digested session)\nWire the daemon.",
     );
     // A spool entry for this project means its last session is not digested yet.
@@ -513,9 +513,17 @@ describe("digests running (black-box)", () => {
     const before = injectIn(root, home);
     expect(before).not.toContain("## Recent memory");
     expect(count(before, RECALL_BULLET)).toBe(1);
+    const pointer =
+      "- Past work: before you change how an area behaves, debug a failure again, or act on earlier work the user mentions, run `crank-mem search <query>`; open any `#id` shown here or in file history with `crank-mem get <id...>`, and `crank-mem timeline <id>` shows what surrounds one.";
+    expect(count(before, pointer)).toBe(1);
+    expect(before.indexOf(CODE_BULLET)).toBeLessThan(before.indexOf(pointer));
+    expect(count(before, `${CODE_BULLET}\n${pointer}\n- Memory is not proof`)).toBe(1);
 
     seedMemory(root, titled(60));
-    const section = sectionOf(injectIn(root, home), "## Recent memory\n")!;
+    const section = sectionOf(
+      injectIn(root, home),
+      "## Recent memory (open one: `crank-mem get <id>`)\n",
+    )!;
     expect(Buffer.byteLength(section, "utf-8")).toBeLessThanOrEqual(1536);
     const opened = openMemory(memoryPath(root), "read");
     if (opened.status !== "open") throw new Error(opened.status);
@@ -530,6 +538,16 @@ describe("digests running (black-box)", () => {
     );
   });
 
+  test("a Codex SessionStart with an open store carries the recall pointer and recent memory", () => {
+    const { root, home } = memoryProject(true);
+    seedMemory(root, titled(3));
+    const ctx = injectIn(root, home, codexSessionStart(root));
+    expect(count(ctx, RECALL_BULLET)).toBe(1);
+    const section = sectionOf(ctx, "## Recent memory (open one: `crank-mem get <id>`)\n");
+    expect(section).toBeDefined();
+    expect(section!.split("\n").slice(1)).toHaveLength(3);
+  });
+
   test("recent memory leaves out a stale row", () => {
     const { root, home } = memoryProject(true);
     const [a] = seedMemory(root, [
@@ -537,7 +555,10 @@ describe("digests running (black-box)", () => {
       { title: "Lock files live in .crank" },
     ]) as [number];
     seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
-    const section = sectionOf(injectIn(root, home), "## Recent memory\n")!;
+    const section = sectionOf(
+      injectIn(root, home),
+      "## Recent memory (open one: `crank-mem get <id>`)\n",
+    )!;
     expect(section).toMatch(/\n#\d+ \S+ discovery Lock files live in \.crank(\n|$)/);
     expect(section).not.toContain("Lock retry is two seconds");
   });
@@ -588,7 +609,7 @@ describe("digests running (black-box)", () => {
     const { root, home } = memoryProject(true);
     plantMemory(root, "unreadable");
     const ctx = injectIn(root, home);
-    for (const absent of ["## Recent memory", "## Next steps", PAST_WORK])
+    for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
       expect(ctx).not.toContain(absent);
   });
 

@@ -248,7 +248,7 @@ A zinc greyscale carries almost everything; one blue and four state tones are th
 
 Two layouts carry the page. Scrolling views (Health, Usage) center a column up to 1400px wide with 16px side padding (24px from `md`), 24–32px top padding, and 40px between the projects overview and the focused project (24px between Usage sections). List-and-detail views (Curation, Memory) split the screen: a card-white list column of 20–28rem with a right hairline, then a scrolling detail pane whose body caps at 768px with 24px gaps and 24–32px padding. Below `md` the split stacks and the list caps at 70% of the viewport height.
 
-The top bar is sticky: a 56px row (wordmark, project switcher, spacer, host pill reading read-only) over a 40px row of view tabs. Stat cards run 2 columns, 3 from `md`, 6 (Health) or 5 (Usage) from `xl`, with 12px gaps. Charts pair two-up from `lg` with 16px gaps; the Usage calls chart takes 2fr beside a 1fr bar-list card.
+The top bar is sticky: a 56px row (wordmark, project switcher, spacer, host pill reading read-only) over a 40px row of view tabs. Stat cards run 2 columns, 3 (Health) or 4 (Usage) from `md`, 6 (Health) or 7 (Usage) from `xl`, with 12px gaps. Charts pair two-up from `lg` with 16px gaps; the Usage calls chart takes 2fr beside a 1fr bar-list card.
 
 Spacing steps on a 4px base: 2px hairline gaps inside segmented controls and stacked bars, 4–8px inside rows, 12px between cards, 16px card padding, 24–40px between sections.
 

@@ -77,7 +77,9 @@ function histories(memory: MemoryReader, root: string, unseen: string[]): Histor
     const tag = changedSince(path.join(root, rel), lines[0]!.createdAtMs)
       ? " [file changed since]"
       : "";
-    const section = `History of ${rel}:${tag}\n` + lines.map(formatLine).join("\n");
+    const section =
+      `History of ${rel} (open one: \`crank-mem get <id>\`):${tag}\n` +
+      lines.map(formatLine).join("\n");
     if (Buffer.byteLength([...out.sections, section].join(SEP)) > MAX_BYTES) {
       out.cut = unseen.slice(i);
       break;
