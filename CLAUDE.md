@@ -61,3 +61,5 @@ Run the full suite as `caffeinate -i bun run test`; on battery a Mac sleeps mid-
 The preload (`tests/preload.ts`) gives each test process temp `CRANK_HOME`, `CODEX_HOME` and `TMPDIR` under one root it removes in `afterAll`: each file is its own process under `--parallel`, while plain `bun test` and the serial lane share one process, so their files share the root and any per-process memo (`initedCopy`, `sharedDashboardDir`).
 
 To probe an fs failure path (such as `src/hooks/lib/spool.ts` → `settleEntry`'s non-`EEXIST` link fallback), run the probe under node: assigning `fs.linkSync` on the default `node:fs` import and calling `syncBuiltinESMExports()` reaches a module's `import * as fs` namespace under node 26 (the call threw the mock's `EPERM`) but not under bun 1.4 (it threw the real `ENOENT`).
+
+Under bun 1.4, `fs.statSync(p, { throwIfNoEntry: false })` still throws `ENOTDIR` when a component of `p` is a regular file (node returns `undefined`), so a stat that must not throw catches per call, as `src/hooks/lib/hook-io.ts` → `isProjectFile` does; `tests/imports.test.ts` → "a specifier through a regular file costs only that specifier" pins it.
