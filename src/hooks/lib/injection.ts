@@ -50,7 +50,7 @@ export const MEMORY_INDEX_ALLOWANCE_BYTES = 600;
 export const INJECTION_HEADING = "## crank-mem (project memory)";
 /** Points at the memory store's read commands; see recallApplies for when it shows. */
 export const RECALL_BULLET =
-  "- Past work: `crank-mem search <query>` finds stored observations by meaning or keyword, `crank-mem timeline <id>` shows what surrounds one, and `crank-mem get <id...>` prints them in full.";
+  "- Past work: before you change how an area behaves, debug a failure again, or act on earlier work the user mentions, run `crank-mem search <query>`; open any `#id` shown here or in file history with `crank-mem get <id...>`, and `crank-mem timeline <id>` shows what surrounds one.";
 /** Points at the code commands; session start and SubagentStart show it ungated. */
 export const CODE_BULLET =
   "- Code: `crank-mem outline <file>` lists a source file's symbols with line ranges, and `crank-mem unfold <file> <symbol|line>` prints one in full.";

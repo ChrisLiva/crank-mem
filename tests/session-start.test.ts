@@ -433,7 +433,6 @@ function inject(root: string): string {
 
 // Digest-era injection. Every run passes one temp CRANK_HOME per project, so a
 // planted stop file or spool entry is the one the hook reads.
-const PAST_WORK = "- Past work: `crank-mem search <query>`";
 const NOTE_STOPPED =
   "_Note: crank-mem digests stopped (login): run `crank-mem digest resume` once that is fixed._";
 const NOTE_WAITED =
@@ -513,6 +512,11 @@ describe("digests running (black-box)", () => {
     const before = injectIn(root, home);
     expect(before).not.toContain("## Recent memory");
     expect(count(before, RECALL_BULLET)).toBe(1);
+    const pointer =
+      "- Past work: before you change how an area behaves, debug a failure again, or act on earlier work the user mentions, run `crank-mem search <query>`; open any `#id` shown here or in file history with `crank-mem get <id...>`, and `crank-mem timeline <id>` shows what surrounds one.";
+    expect(count(before, pointer)).toBe(1);
+    expect(before.indexOf(CODE_BULLET)).toBeLessThan(before.indexOf(pointer));
+    expect(count(before, `${CODE_BULLET}\n${pointer}\n- Memory is not proof`)).toBe(1);
 
     seedMemory(root, titled(60));
     const section = sectionOf(injectIn(root, home), "## Recent memory\n")!;
@@ -528,6 +532,13 @@ describe("digests running (black-box)", () => {
     expect(Buffer.byteLength([section, all[lines.length]].join("\n"), "utf-8")).toBeGreaterThan(
       1536,
     );
+  });
+
+  test("a Codex SessionStart with an open store carries the recall pointer and recent memory", () => {
+    const { root, home } = memoryProject(true);
+    seedMemory(root, titled(3));
+    const ctx = injectIn(root, home, codexSessionStart(root));
+    expect(count(ctx, RECALL_BULLET)).toBe(1);
   });
 
   test("recent memory leaves out a stale row", () => {
@@ -588,7 +599,7 @@ describe("digests running (black-box)", () => {
     const { root, home } = memoryProject(true);
     plantMemory(root, "unreadable");
     const ctx = injectIn(root, home);
-    for (const absent of ["## Recent memory", "## Next steps", PAST_WORK])
+    for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
       expect(ctx).not.toContain(absent);
   });
 

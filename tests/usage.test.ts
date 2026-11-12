@@ -127,8 +127,11 @@ describe("usage capture: the session-start line", () => {
   test("without cerebrum.md the line records no cerebrum; a bullet-less one counts zero", () => {
     const bare = makeCrankProject();
     fs.rmSync(path.join(bare, ".crank/cerebrum.md"));
-    expect(sessionStart(bare, claudeSessionStart(bare)).status).toBe(0);
+    const bareRun = sessionStart(bare, claudeSessionStart(bare));
+    expect(bareRun.status).toBe(0);
+    expect(additionalContext(bareRun.stdout)).not.toContain(RECALL_BULLET);
     const [noFile] = usageLines(bare);
+    expect(noFile!.recallPointer).toBe(false);
     expect(noFile!.cerebrum).toBe(false);
     expect(noFile!.cerebrumBullets).toBeNull();
     expect(noFile!.ids).toEqual([]);
