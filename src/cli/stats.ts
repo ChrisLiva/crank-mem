@@ -4,13 +4,13 @@ import { openProject } from "./project.ts";
 import { loadIndex, INDEX_FILE, type AnatomyIndex } from "../hooks/lib/store.ts";
 import { walkProject } from "../hooks/lib/scanner.ts";
 import type { CrankConfig } from "../hooks/lib/config.ts";
-import { fileCitations, sessionStartInjection } from "../hooks/lib/injection.ts";
 import {
-  auditSkillInstalled,
-  CEREBRUM_FILE,
-  installedAtMs,
-  lastAuditMs,
-} from "../hooks/lib/cerebrum-files.ts";
+  fileCitations,
+  readCerebrum,
+  sessionStartInjection,
+  type Excerpt,
+} from "../hooks/lib/injection.ts";
+import { auditSkillInstalled, installedAtMs, lastAuditMs } from "../hooks/lib/cerebrum-files.ts";
 import { hasCrankHooks } from "./settings.ts";
 import { installPaths } from "./install-support.ts";
 import { codexInjectionGaps } from "./codex-sessions.ts";
@@ -53,72 +53,64 @@ function memoryLines(
   config: CrankConfig,
   index: AnatomyIndex,
 ): string[] {
-  const lines: string[] = [];
-  let cerebrumMd: string | null = null;
-  try {
-    cerebrumMd = fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
-  } catch {
-    // Unreadable: cerebrumMd stays null and the row reads missing.
-  }
+  const cerebrumMd = readCerebrum(crankDir);
   const { excerpt: e } = sessionStartInjection(root, crankDir, config, index, {
     codex: false,
     source: null,
     stalenessNote: null,
   });
+  const lines = e
+    ? excerptRows(root, cerebrumMd, e)
+    : [row("cerebrum", cerebrumMd === null ? "missing" : "empty")];
+  lines.push(row("last audit", lastAuditValue(root, crankDir)));
+  return lines;
+}
 
-  if (!e) {
-    lines.push(row("cerebrum", cerebrumMd === null ? "missing" : "empty"));
-  } else {
-    lines.push(row("cerebrum bullets", `${e.shown} of ${e.total} injected`));
-    lines.push(row("prefs dropped", `${e.prefsTotal - e.prefsShown} of ${e.prefsTotal}`));
+/** The excerpt's rows: bullets shown, prefs dropped, the oldest hidden bullet and cited paths. */
+function excerptRows(root: string, cerebrumMd: string | null, e: Excerpt): string[] {
+  // Only paths with a directory: a bare basename may live anywhere.
+  const cited = [...new Set(fileCitations(cerebrumMd ?? "").filter((rel) => rel.includes("/")))];
+  const existing = cited.filter((rel) => fs.existsSync(path.join(root, rel))).length;
+  return [
+    row("cerebrum bullets", `${e.shown} of ${e.total} injected`),
+    row("prefs dropped", `${e.prefsTotal - e.prefsShown} of ${e.prefsTotal}`),
+    row("oldest hidden", oldestHidden(e.hidden)),
+    row("cited paths", cited.length ? `${existing} of ${cited.length} exist` : "none cited"),
+  ];
+}
 
-    // A bullet's date is the latest one it carries: a (supersedes …) date is older.
-    // A string Date.parse rejects, such as MySQL's 0000-00-00, is not a date.
-    const dates = e.hidden.map(
-      (b) =>
-        b
-          .match(/\b\d{4}-\d{2}-\d{2}\b/g)
-          ?.filter((d) => !Number.isNaN(Date.parse(d)))
-          .sort()
-          .at(-1) ?? null,
-    );
-    const dated = dates.filter((d): d is string => d !== null).sort();
-    const undated = dates.length - dated.length;
-    lines.push(
-      row(
-        "oldest hidden",
-        !dates.length
-          ? "none hidden"
-          : (dated.length ? `${dated[0]} (${ageOf(Date.parse(dated[0]!))})` : "no dated bullet") +
-              (undated ? `, ${undated} undated` : ""),
-      ),
-    );
+/** The `oldest hidden` row's value: the oldest hidden bullet's date and age, and how many carry none. */
+function oldestHidden(hidden: string[]): string {
+  if (!hidden.length) return "none hidden";
+  // A bullet's date is the latest one it carries: a (supersedes …) date is older.
+  // A string Date.parse rejects, such as MySQL's 0000-00-00, is not a date.
+  const dates = hidden.map(
+    (b) =>
+      b
+        .match(/\b\d{4}-\d{2}-\d{2}\b/g)
+        ?.filter((d) => !Number.isNaN(Date.parse(d)))
+        .sort()
+        .at(-1) ?? null,
+  );
+  const dated = dates.filter((d): d is string => d !== null).sort();
+  const undated = dates.length - dated.length;
+  return (
+    (dated.length ? `${dated[0]} (${ageOf(Date.parse(dated[0]!))})` : "no dated bullet") +
+    (undated ? `, ${undated} undated` : "")
+  );
+}
 
-    // Only paths with a directory: a bare basename may live anywhere.
-    const cited = [...new Set(fileCitations(cerebrumMd ?? "").filter((rel) => rel.includes("/")))];
-    const existing = cited.filter((rel) => fs.existsSync(path.join(root, rel))).length;
-    lines.push(
-      row("cited paths", cited.length ? `${existing} of ${cited.length} exist` : "none cited"),
-    );
-  }
-
+/** The `last audit` row's value: when the audit skill last ran, and whether it is installed. */
+function lastAuditValue(root: string, crankDir: string): string {
   const audited = lastAuditMs(crankDir);
   const installed = installedAtMs(crankDir);
   const skill =
     auditSkillInstalled(root, false) || auditSkillInstalled(root, true)
       ? ""
       : "; audit skill not installed";
-  lines.push(
-    row(
-      "last audit",
-      (audited !== null
-        ? ageOf(audited)
-        : installed !== null
-          ? `never (installed ${ageOf(installed)})`
-          : "never") + skill,
-    ),
-  );
-  return lines;
+  if (audited !== null) return ageOf(audited) + skill;
+  if (installed !== null) return `never (installed ${ageOf(installed)})` + skill;
+  return "never" + skill;
 }
 
 /** The `update:` row's value: an available release, the last check's date, or no check yet. */
@@ -220,11 +212,13 @@ async function captureRows(
   return rows;
 }
 
-export async function run(_args: string[]): Promise<number> {
-  const project = openProject();
-  if (!project) return 1;
-  const { root, crankDir, config } = project;
-  const index = loadIndex(crankDir);
+/** The index rows: files indexed, coverage of the uncapped walk, last scan, size and config. */
+function indexLines(
+  root: string,
+  crankDir: string,
+  config: CrankConfig,
+  index: AnatomyIndex,
+): string[] {
   // Uncapped: the hooks' walk stops at max_files, so its count cannot show
   // how much of the project the cap leaves out. stats has no time budget.
   const walked = walkProject(root, { ...config, max_files: Infinity }).files;
@@ -236,27 +230,19 @@ export async function run(_args: string[]): Promise<number> {
   } catch {
     // No index yet: the size reads 0.
   }
-
-  console.log(`crank-mem stats`);
-  console.log(
+  return [
     `  files indexed:    ${indexed}${index.meta.truncated ? ` (capped at max_files ${config.max_files})` : ""}`,
-  );
-  console.log(`  indexable files:  ${walked.length} (coverage ${coverage}%)`);
-  console.log(
+    `  indexable files:  ${walked.length} (coverage ${coverage}%)`,
     `  last scan:        ${age(index.meta.lastScanned)}${index.meta.partial ? " (partial)" : ""}`,
-  );
-  console.log(`  index size:       ${(indexSize / 1024).toFixed(1)} KB`);
-  console.log(`  runtime:          ${config.runtime} (vendored ${config.vendored_version})`);
-  console.log(`  injection budget: ${config.injection_budget_bytes} bytes`);
-  if (installedCopy()) console.log(row("update", updateValue()));
-  for (const line of memoryLines(root, crankDir, config, index)) console.log(line);
-  for (const [label, value] of await captureRows(root, config)) console.log(row(label, value));
+    `  index size:       ${(indexSize / 1024).toFixed(1)} KB`,
+    `  runtime:          ${config.runtime} (vendored ${config.vendored_version})`,
+    `  injection budget: ${config.injection_budget_bytes} bytes`,
+  ];
+}
 
-  const { codexHooks } = installPaths(root);
-  if (!hasCrankHooks(codexHooks)) {
-    console.log(`  codex:            not wired`);
-    return 0;
-  }
+/** The codex rows: wiring, whether root threads got the injection, and hook and project trust. */
+function codexLines(root: string, crankDir: string, codexHooks: string): string[] {
+  if (!hasCrankHooks(codexHooks)) return [`  codex:            not wired`];
   // Codex logs nothing when a hook never runs, so read its own rollouts and
   // trust config to show whether the wiring is live.
   const since = installedAtMs(crankDir);
@@ -264,25 +250,37 @@ export async function run(_args: string[]): Promise<number> {
   const trust = codexTrustStatus(userCodexConfigPath(), root, codexHooks);
   const hashes = trust.current + trust.stale + trust.missing;
   const window = since === null ? "" : " since install";
-  console.log(
+  const lines = [
     gaps.roots === 0
       ? `  codex sessions:   no root threads${window}`
       : `  codex sessions:   ${gaps.missed} of ${gaps.roots} root threads${window} got no injection`,
-  );
-  console.log(
     `  codex hook trust: ${trust.current} of ${hashes} hashes current` +
       `${trust.stale ? `, ${trust.stale} stale` : ""}${trust.missing ? `, ${trust.missing} missing` : ""}`,
-  );
+  ];
   if (trust.projectTrustLevel === null) {
     // Codex may resolve trust from a parent directory; no probe has tested that (ADR 0002).
-    console.log(
+    lines.push(
       `  codex project:    no exact-path trust_level in ${userCodexConfigPath()}; a parent directory's entry may apply`,
     );
   } else if (trust.projectTrustLevel !== "trusted") {
-    console.log(
+    lines.push(
       `  codex project:    trust_level = "${trust.projectTrustLevel}", so codex loads no .codex/ hooks here`,
     );
   }
-  if (trust.stale || trust.missing) for (const line of CODEX_REVIEW_HINT) console.log(line);
+  if (trust.stale || trust.missing) lines.push(...CODEX_REVIEW_HINT);
+  return lines;
+}
+
+export async function run(_args: string[]): Promise<number> {
+  const project = openProject();
+  if (!project) return 1;
+  const { root, crankDir, config } = project;
+  const index = loadIndex(crankDir);
+  console.log(`crank-mem stats`);
+  for (const line of indexLines(root, crankDir, config, index)) console.log(line);
+  if (installedCopy()) console.log(row("update", updateValue()));
+  for (const line of memoryLines(root, crankDir, config, index)) console.log(line);
+  for (const [label, value] of await captureRows(root, config)) console.log(row(label, value));
+  for (const line of codexLines(root, crankDir, installPaths(root).codexHooks)) console.log(line);
   return 0;
 }

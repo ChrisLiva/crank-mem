@@ -594,7 +594,7 @@ export function subagentInjection(
 }
 
 /** The one read of cerebrum.md; any read error reads as absent. */
-function readCerebrum(crankDir: string): string | null {
+export function readCerebrum(crankDir: string): string | null {
   try {
     return fs.readFileSync(path.join(crankDir, CEREBRUM_FILE), "utf-8");
   } catch {
