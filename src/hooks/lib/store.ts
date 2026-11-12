@@ -6,7 +6,7 @@ import type { SymbolEntry } from "./symbols.ts";
 // anatomy-index.json load/save. Corrupt or missing index degrades to empty —
 // the next full scan reconverges; nothing here may throw out of load.
 
-export const INDEX_VERSION = 1;
+export const INDEX_VERSION = 2;
 export const INDEX_FILE = "anatomy-index.json";
 export const ANATOMY_FILE = "anatomy.md";
 
@@ -18,6 +18,10 @@ export interface FileEntry {
   symbols?: SymbolEntry[];
   /** Agent writes since the file last showed up in the churn list; pins it past the cap. */
   writeCount?: number;
+  /** Indexable files this file imports, repo-relative, in source order; never rendered. */
+  imports?: string[];
+  /** Namespaces this file declares and uses; never rendered. */
+  namespaces?: { declares?: string[]; uses?: string[] };
 }
 
 export interface Churn {

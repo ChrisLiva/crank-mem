@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { git, gitCommit, makeCrankProject, runHook } from "./helpers.ts";
+import { git, gitCommit, makeCrankProject, runCli, runHook } from "./helpers.ts";
 import {
   claudePostWrite,
   claudePostEdit,
@@ -141,6 +141,40 @@ describe("post-write hook (black-box)", () => {
     expect(index.files["added.ts"]!.description).toBe("Added by codex.");
     expect(index.files["keep.ts"]!.description).toBe("Keep updated.");
     expect(index.files["gone.ts"]).toBeUndefined();
+  });
+
+  test("a write refreshes the file's imports, from Claude and from Codex apply_patch", () => {
+    const root = makeCrankProject({
+      "src/a.ts": 'import "./b";\n',
+      "src/b.ts": "export const b = 1;\n",
+      "src/c.ts": "export const c = 1;\n",
+    });
+    expect(runCli(root, ["scan"]).status).toBe(0);
+    const imports = () => loadIndex(path.join(root, ".crank")).files["src/a.ts"]!.imports;
+    expect(imports()).toEqual(["src/b.ts"]);
+
+    fs.writeFileSync(path.join(root, "src/a.ts"), 'import "./c";\n');
+    const claude = runHook(
+      HOOK,
+      JSON.stringify(claudePostWrite(root, path.join(root, "src/a.ts"))),
+    );
+    expect(claude.status).toBe(0);
+    expect(claude.stdout).toBe("");
+    expect(imports()).toEqual(["src/c.ts"]);
+
+    fs.writeFileSync(path.join(root, "src/a.ts"), 'import "./b";\n');
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: src/a.ts",
+      "@@",
+      '-import "./c";',
+      '+import "./b";',
+      "*** End Patch",
+    ].join("\n");
+    const codex = runHook(HOOK, JSON.stringify(codexApplyPatch(root, patch)));
+    expect(codex.status).toBe(0);
+    expect(codex.stdout).toBe("");
+    expect(imports()).toEqual(["src/b.ts"]);
   });
 
   test("relative apply_patch path resolves against session cwd, not project root", () => {

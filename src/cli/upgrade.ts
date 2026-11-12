@@ -8,10 +8,20 @@ import { dashboardCurrent, dashboardDir, installPackages, setUpDashboard } from 
 import { openProject, reportMigration } from "./project.ts";
 import { newBackupDir } from "./backups.ts";
 import { printReport, repairInstall, resolveCodex } from "./install.ts";
-import { CONFIG_FILE, CRANK_DIR, loadConfig, saveConfig } from "../hooks/lib/config.ts";
+import {
+  CONFIG_FILE,
+  CRANK_DIR,
+  errorMessage,
+  isObj,
+  loadConfig,
+  saveConfig,
+} from "../hooks/lib/config.ts";
 import { CLI_LOCK_BUDGET_MS, withLock } from "../hooks/lib/lock.ts";
 import { memoryPath, migrateStore } from "../hooks/lib/memory.ts";
 import { registeredRoots } from "../hooks/lib/registry.ts";
+import { fullScan } from "../hooks/lib/scanner.ts";
+import { commitIndex, INDEX_FILE, INDEX_VERSION } from "../hooks/lib/store.ts";
+import { scanCompleteLine } from "./scan.ts";
 
 // Non-interactive: after a `git pull` in the clone or a new installed copy,
 // repair every install item (src/cli/install.ts) to the recorded install: the
@@ -23,9 +33,10 @@ import { registeredRoots } from "../hooks/lib/registry.ts";
 // instead of the current directory, each under its anatomy lock.
 // Of config.json it updates only vendored_version, clone_root and a missing codex.
 // Of cerebrum it seeds a missing one from the template and replaces only an
-// unedited 0.8.1 template preamble, after backing the file up; it never touches
-// the index. Recomputes Codex trusted hashes only when the config records trust
-// and an entry is missing, stale or a PascalCase orphan.
+// unedited 0.8.1 template preamble, after backing the file up; it scans an index
+// that is missing or not at INDEX_VERSION. Recomputes Codex trusted hashes only
+// when the config records trust and an entry is missing, stale or a PascalCase
+// orphan.
 // Exits 1 when any repair failed, after every step has run.
 
 export async function run(args: string[]): Promise<number> {
@@ -71,13 +82,50 @@ export async function repairProject(
   const crankDir = path.join(root, CRANK_DIR);
   if (!fs.existsSync(path.join(crankDir, CONFIG_FILE))) return "missing";
   const repair = () => (repairSync(root, crankDir) ? "failed" : "ok");
-  if (!opts.lock) return repair();
   // withLock's callback is synchronous, so the whole repair stays inside it.
-  const locked = withLock(crankDir, CLI_LOCK_BUDGET_MS, () => {
-    console.log(`crank-mem: repairing ${root}`);
-    return repair();
-  });
-  return locked ?? "busy";
+  const result = opts.lock
+    ? withLock(crankDir, CLI_LOCK_BUDGET_MS, () => {
+        console.log(`crank-mem: repairing ${root}`);
+        return repair();
+      })
+    : repair();
+  if (result === null) return "busy";
+  // withLock is not reentrant, so the scan takes the lock after the repair releases it.
+  scanLagging(root, crankDir);
+  return result;
+}
+
+/**
+ * Rebuilds the anatomy index when the file on disk is not at INDEX_VERSION. A
+ * scan that fails or finds the lock held costs only the scan, never the
+ * repair's result or a later project of `--all`.
+ */
+function scanLagging(root: string, crankDir: string): void {
+  if (indexVersion(crankDir) === INDEX_VERSION) return;
+  try {
+    const config = loadConfig(crankDir);
+    const index = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, (current) =>
+      fullScan(root, config, current),
+    );
+    if (index === null) console.error("crank-mem: anatomy busy, scan skipped");
+    else console.log(scanCompleteLine(index.meta.fileCount));
+  } catch (err) {
+    console.error(`crank-mem: could not scan (${errorMessage(err)})`);
+  }
+}
+
+/**
+ * The `version` the index file records; undefined when it is missing or
+ * unparsable. Reads the raw file because loadIndex stamps every mismatch with
+ * INDEX_VERSION.
+ */
+function indexVersion(crankDir: string): unknown {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(crankDir, INDEX_FILE), "utf-8"));
+    return isObj(parsed) ? parsed.version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Repairs every registered project in registry order; 1 when any repair failed. */

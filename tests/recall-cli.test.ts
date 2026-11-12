@@ -59,6 +59,34 @@ describe("store placement", () => {
   });
 });
 
+describe("graph search", () => {
+  test("a query naming a file surfaces observations linked to its import neighbour", () => {
+    const root = initedCopy({
+      "src/a.ts": 'import { b } from "./b";\nexport const a = b;\n',
+      "src/b.ts": "export const b = 1;\n",
+    });
+    const [o1] = seedMemory(root, [
+      { title: "Lock budget raised", narrative: "budget", filesModified: ["src/b.ts"] },
+    ]) as [number];
+    const neighbourOnly = runCli(root, ["search", "src/a.ts"]);
+    expect(neighbourOnly.status).toBe(0);
+    expect(neighbourOnly.stdout).toMatch(
+      new RegExp(`^#${o1} \\d{4}-\\d{2}-\\d{2} discovery Lock budget raised\\n$`),
+    );
+
+    const [o2] = seedMemory(root, [{ title: "Alpha src/a.ts notes", narrative: "plain" }]) as [
+      number,
+    ];
+    const ids = (stdout: string) => [...stdout.matchAll(/^#(\d+) /gm)].map((m) => Number(m[1]));
+    expect(ids(runCli(root, ["search", "src/a.ts"]).stdout)).toEqual([o2, o1]);
+
+    fs.writeFileSync(path.join(root, ".crank", "anatomy-index.json"), "{not json");
+    const corrupt = runCli(root, ["search", "src/a.ts"]);
+    expect(corrupt.status).toBe(0);
+    expect(ids(corrupt.stdout)).toEqual([o2]);
+  });
+});
+
 function localDate(offsetDays: number, timeZone: string): string {
   return new Date(Date.now() + offsetDays * 86_400_000).toLocaleDateString("en-CA", { timeZone });
 }

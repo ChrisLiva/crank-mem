@@ -348,6 +348,31 @@ describe("upgrade --all", () => {
     expect(vendored(b)).toBe(cliVersion());
     expect(run.status).toBe(1);
   });
+
+  const V1_INDEX = '{"version":1,"meta":{"lastScanned":null,"fileCount":0},"files":{}}';
+  const indexOf = (root: string) => path.join(root, ".crank/anatomy-index.json");
+
+  test("a project whose index predates version 2 is scanned; a current one is not", () => {
+    const { home, a, b } = twoProjects();
+    fs.writeFileSync(indexOf(b), V1_INDEX);
+    const aBefore = fs.readFileSync(indexOf(a));
+    const run = upgradeAll(home, fakeTool("bun", 0));
+    expect(run.status).toBe(0);
+    expect(run.stdout.split("full scan complete")).toHaveLength(2);
+    expect(JSON.parse(fs.readFileSync(indexOf(b), "utf-8")).version).toBe(2);
+    expect(fs.readFileSync(indexOf(a))).toEqual(aBefore);
+  });
+
+  test("a project whose scan throws does not stop the next one", () => {
+    const { home, a, b } = twoProjects();
+    fs.rmSync(indexOf(a));
+    fs.mkdirSync(indexOf(a));
+    fs.writeFileSync(indexOf(b), V1_INDEX);
+    const run = upgradeAll(home, fakeTool("bun", 0));
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("crank-mem: could not scan (");
+    expect(JSON.parse(fs.readFileSync(indexOf(b), "utf-8")).version).toBe(2);
+  });
 });
 
 describe("digest on and the embedder", () => {

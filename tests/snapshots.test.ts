@@ -152,6 +152,8 @@ describe("migration", () => {
       const up = runCli(root, ["upgrade"]);
       expect(up.status).toBe(1);
       expect(up.stderr).toContain("crank-mem: could not migrate memory.db (");
+      const index = path.join(root, ".crank/anatomy-index.json");
+      expect(JSON.parse(fs.readFileSync(index, "utf-8")).version).toBe(2);
 
       const search = runCli(root, ["search", "lock"]);
       expect(search.status).toBe(1);

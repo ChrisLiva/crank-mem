@@ -6,6 +6,8 @@ import * as path from "node:path";
 import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { isProjectFile } from "../hooks/lib/hook-io.ts";
 import { memoryPath, memoryStatus, withReader } from "../hooks/lib/memory.ts";
+import { relatedFiles } from "../hooks/lib/related-files.ts";
+import { loadIndex } from "../hooks/lib/store.ts";
 import { readUsage } from "../hooks/lib/usage.ts";
 import {
   ACTIVITY_DAYS,
@@ -161,7 +163,14 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
   const body = await withReader(memoryPath(root), async (memory) => {
     if (q !== null) {
       const vector = await queryVector(memory, q);
-      const lines = memory.search({ ...filters, text: q, vector, sinceMs: null, limit: PAGE });
+      const lines = memory.search({
+        ...filters,
+        text: q,
+        vector,
+        sinceMs: null,
+        limit: PAGE,
+        related: relatedFiles(loadIndex(path.join(root, CRANK_DIR)), q),
+      });
       return { rows: lines, next: null, mode: vector !== null ? "hybrid" : "keyword" };
     }
     const page = pageOf(
