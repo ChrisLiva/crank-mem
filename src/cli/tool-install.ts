@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { errorMessage } from "../hooks/lib/config.ts";
+import { pidAlive } from "../hooks/lib/lock.ts";
 import { daemonAlive, readDaemonState } from "../hooks/lib/spool.ts";
 import { crankHome, ensureCrankHome } from "../hooks/lib/user-state.ts";
 import { TOKEN_FILE } from "./dashboard.ts";
@@ -24,17 +25,6 @@ export const TOOL_BUSY = "crank-mem: another install or update is running";
 export const DEFAULT_BIN_DIR = path.join(os.homedir(), ".local/bin");
 /** A version usable as a dir name under `versions/`, the same test install.sh applies. */
 const VERSION_NAME = /^[0-9A-Za-z][0-9A-Za-z.+-]*$/;
-
-/** True unless signalling `pid` reports no such process; EPERM means it lives under another user. */
-function pidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
 
 /** Creates the lock holding this pid; replaces a lock whose pid is dead or unreadable. */
 function takeLock(file: string): boolean {

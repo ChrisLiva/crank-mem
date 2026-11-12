@@ -8,15 +8,19 @@ import { debugEvent } from "./debug.ts";
 //
 // Mechanism: lockfile created with the "wx" flag (atomic O_EXCL on macOS,
 // Linux and Windows, no native deps). The file body records the owner for
-// staleness detection. A stale lock (older than STALE_MS, or a dead pid on
-// the same host) is stolen via rename-then-unlink: rename is atomic, so of N
-// competing stealers exactly one wins and the rest keep waiting.
+// staleness detection. A lock whose owner is on this host is stale when its
+// pid is dead, or older than LIVE_OWNER_MAX_MS; any other lock is stale when
+// older than STALE_MS. A stale lock is stolen via rename-then-unlink: rename
+// is atomic, so of N competing stealers exactly one wins and the rest keep
+// waiting. Release removes the lock only while it still holds our body.
 //
 // Callers NEVER block the agent: on budget exhaustion withLock returns null
 // and the caller skips its update (the next writer converges the state).
 
 export const LOCK_FILE = "anatomy-index.lock";
 const STALE_MS = 10_000; // Matches the 10-second hook timeout that settings.ts sets.
+/** Pid-reuse guard: a same-host lock this old is stale even when its pid is alive. */
+const LIVE_OWNER_MAX_MS = 10 * 60_000;
 /** Floor of the acquire poll backoff, and so the shortest wait that means real contention. */
 const POLL_MIN_MS = 25;
 
@@ -34,13 +38,26 @@ function sleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function tryAcquire(lockPath: string): boolean {
+/** True unless signalling `pid` reports no such process; EPERM means it lives under another user. */
+export function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Creates the lock; returns the body written, or null when the lock exists. */
+function tryAcquire(lockPath: string): string | null {
   try {
     const body: LockBody = { pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() };
-    fs.writeFileSync(lockPath, JSON.stringify(body), { flag: "wx" });
-    return true;
+    const text = JSON.stringify(body);
+    fs.writeFileSync(lockPath, text, { flag: "wx" });
+    return text;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -48,16 +65,11 @@ function isStale(lockPath: string): boolean {
   try {
     const body = JSON.parse(fs.readFileSync(lockPath, "utf-8")) as LockBody;
     if (typeof body.acquiredAt !== "number") return true;
-    if (Date.now() - body.acquiredAt > STALE_MS) return true;
     if (body.hostname === os.hostname() && typeof body.pid === "number") {
-      try {
-        process.kill(body.pid, 0);
-        return false; // owner alive
-      } catch (err) {
-        return (err as NodeJS.ErrnoException).code === "ESRCH";
-      }
+      if (!pidAlive(body.pid)) return true;
+      return Date.now() - body.acquiredAt > LIVE_OWNER_MAX_MS;
     }
-    return false;
+    return Date.now() - body.acquiredAt > STALE_MS;
   } catch {
     // Unreadable/corrupt lock body: only age can save us; treat unreadable
     // as stale so a garbage file cannot deadlock the system forever.
@@ -70,9 +82,13 @@ function isStale(lockPath: string): boolean {
   }
 }
 
+function graveyardName(lockPath: string): string {
+  return lockPath + "." + crypto.randomBytes(4).toString("hex") + ".stale";
+}
+
 /** Steal a stale lock: rename it to a random name and unlink that, so of N stealers one wins. */
 export function trySteal(lockPath: string): void {
-  const graveyard = lockPath + "." + crypto.randomBytes(4).toString("hex") + ".stale";
+  const graveyard = graveyardName(lockPath);
   try {
     fs.renameSync(lockPath, graveyard);
     try {
@@ -93,9 +109,11 @@ export function withLock<T>(crankDir: string, budgetMs: number, fn: () => T): T 
   const started = Date.now();
   const deadline = started + budgetMs;
   let steals = 0;
+  let ours: string | null;
 
   while (true) {
-    if (tryAcquire(lockPath)) break;
+    ours = tryAcquire(lockPath);
+    if (ours !== null) break;
     if (isStale(lockPath)) {
       trySteal(lockPath);
       steals++;
@@ -116,8 +134,36 @@ export function withLock<T>(crankDir: string, budgetMs: number, fn: () => T): T 
   try {
     return fn();
   } finally {
-    try {
-      fs.unlinkSync(lockPath);
-    } catch {}
+    release(lockPath, ours);
   }
+}
+
+/** Removes the lock only while it holds `ours`; a lock another process took stays with it. */
+function release(lockPath: string, ours: string): void {
+  try {
+    if (fs.readFileSync(lockPath, "utf-8") !== ours) return;
+  } catch {
+    return; // Gone: nothing of ours to remove.
+  }
+  const graveyard = graveyardName(lockPath);
+  try {
+    fs.renameSync(lockPath, graveyard);
+  } catch {
+    return;
+  }
+  let moved: string | null = null;
+  try {
+    moved = fs.readFileSync(graveyard, "utf-8");
+  } catch {}
+  if (moved !== ours) {
+    // A steal landed between the read and the rename: put the new owner's lock back.
+    try {
+      fs.linkSync(graveyard, lockPath);
+    } catch {
+      // EEXIST: a newer lock already stands at lockPath.
+    }
+  }
+  try {
+    fs.unlinkSync(graveyard);
+  } catch {}
 }
