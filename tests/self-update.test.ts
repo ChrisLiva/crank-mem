@@ -91,6 +91,28 @@ describe("self-update", () => {
     expect(versions(H3)).toEqual(["1.0.0", "1.1.0", "1.2.0"]);
   }, 30_000);
 
+  test("pruning keeps the version a live dashboard runs", async () => {
+    for (const [pid, kept] of [
+      [process.pid, ["1.0.0", "1.1.0", "1.2.0"]],
+      [99999999, ["1.1.0", "1.2.0"]],
+    ] as const) {
+      const { H: H3, env } = await setup();
+      expect(runInstalled(H3, tempDir("crank-cwd-"), ["self-update"], env).status).toBe(0);
+      fs.writeFileSync(
+        path.join(H3, "dashboard.json"),
+        JSON.stringify({ token: "0".repeat(64), pid, version: "1.0.0" }),
+      );
+      const result = runInstalled(
+        H3,
+        tempDir("crank-cwd-"),
+        ["self-update", "--to", "v1.2.0"],
+        env,
+      );
+      expect(result.status).toBe(0);
+      expect([pid, versions(H3)]).toEqual([pid, [...kept]]);
+    }
+  }, 60_000);
+
   test("a checksum mismatch changes nothing", async () => {
     const { H, R, env } = await setup();
     fs.writeFileSync(

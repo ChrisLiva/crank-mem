@@ -21,7 +21,8 @@ import { cliVersion, newer, versionsDir } from "./version.ts";
 
 // `crank-mem self-update`: downloads the latest release (or `--to <tag>`),
 // makes it `current`, prunes versions neither it nor this process nor a live
-// daemon runs, then repairs every registered project from the new version.
+// daemon or dashboard runs, then repairs every registered project from the
+// new version.
 // `--check` checks for a release now; `--auto` and `--check-daily` only
 // record their settings in update.json.
 // `crank-mem rollback`: prepares the previous installed version (its packages

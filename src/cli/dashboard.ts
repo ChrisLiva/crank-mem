@@ -11,7 +11,8 @@ import { CHECK_EVERY_MS, printUpdateNotice } from "./updates.ts";
 import { cliVersion } from "./version.ts";
 
 // `crank-mem dashboard`: serve the built dashboard on 127.0.0.1 until a
-// signal. Its only write is <crank home>/dashboard.json, the session token.
+// signal. Its only write is <crank home>/dashboard.json: the session token,
+// and this process's pid and version, which keep its copy from being pruned.
 
 export const TOKEN_FILE = "dashboard.json";
 const TOKEN = /^[0-9a-f]{64}$/;
@@ -94,6 +95,8 @@ export async function run(args: string[]): Promise<number> {
     return 1;
   }
 
+  const tokenFile = path.join(crankHome(), TOKEN_FILE);
+  writeJsonAtomic(tokenFile, { token, pid: process.pid, version: cliVersion() }, { mode: 0o600 });
   const url = `http://127.0.0.1:${server.port}/?token=${token}`;
   console.log(`crank-mem dashboard: ${url}`);
   printUpdateNotice();

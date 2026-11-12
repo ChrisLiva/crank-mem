@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { errorMessage } from "../hooks/lib/config.ts";
 import { daemonAlive, readDaemonState } from "../hooks/lib/spool.ts";
 import { crankHome, ensureCrankHome } from "../hooks/lib/user-state.ts";
+import { TOKEN_FILE } from "./dashboard.ts";
 import { dashboardCurrent, installPackages } from "./setup.ts";
 import { CURRENT_LINK, releaseBase, VERSIONS_DIR, versionAt, versionsDir } from "./version.ts";
 
@@ -215,12 +216,20 @@ export async function fetchRelease(
 }
 
 /**
- * Removes every `versions/<v>` not in `keep` and not the version a live daemon runs;
+ * Removes every `versions/<v>` not in `keep` and not the version a live daemon or dashboard runs;
  * returns the removed versions. Dot entries, such as install.sh's downloads in progress, stay.
  */
 export function pruneVersions(keep: string[]): string[] {
   const daemon = daemonAlive() ? readDaemonState()?.version : undefined;
   const kept = new Set(typeof daemon === "string" ? [...keep, daemon] : keep);
+  try {
+    const dashboard = JSON.parse(fs.readFileSync(path.join(crankHome(), TOKEN_FILE), "utf-8"));
+    if (typeof dashboard?.version === "string" && pidAlive(dashboard.pid)) {
+      kept.add(dashboard.version);
+    }
+  } catch {
+    // A missing or unparsable dashboard.json keeps nothing extra.
+  }
   let names: string[];
   try {
     names = fs.readdirSync(versionsDir());
