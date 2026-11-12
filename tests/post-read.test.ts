@@ -130,6 +130,38 @@ describe("post-read once per agent per session", () => {
       "History of src/a.ts (open one: `crank-mem get <id>`):",
     );
   });
+
+  test("parallel reads of different files each mark their file", async () => {
+    const names = Array.from({ length: 8 }, (_, i) => `src/f${i}.ts`);
+    const root = makeCrankProject(Object.fromEntries(names.map((n) => [n, "export {};\n"])));
+    seedMemory(
+      root,
+      names.map((n) => ({ title: `Read ${n}`, filesRead: [n] })),
+    );
+    const env = { CRANK_HOME: makeCrankHome() };
+    const payload = (n: string) => claudePostRead(root, path.join(root, n), TRANSCRIPT);
+    const children = names.map((n) =>
+      Bun.spawn(["bun", path.join(REPO_ROOT, HOOK)], {
+        cwd: root,
+        env: childEnv(env),
+        stdin: new Blob([JSON.stringify(payload(n))]),
+        stdout: "pipe",
+        stderr: "ignore",
+      }),
+    );
+    const outs = await Promise.all(
+      children.map(async (c) => {
+        await c.exited;
+        return new Response(c.stdout).text();
+      }),
+    );
+    for (const [i, out] of outs.entries()) {
+      expect(context({ status: 0, stdout: out, stderr: "" })).toStartWith(
+        `History of ${names[i]} (open one: \`crank-mem get <id>\`):`,
+      );
+    }
+    expect(names.map((n) => run(root, payload(n), env).stdout)).toEqual(names.map(() => ""));
+  }, 20_000);
 });
 
 describe("post-read change tag", () => {
