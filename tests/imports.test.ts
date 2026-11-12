@@ -207,3 +207,59 @@ test("an unreadable go.mod costs only the importing file its imports", () => {
     fs.chmodSync(goMod, 0o644);
   }
 });
+
+test("Rust mod declarations and crate paths resolve to the module files", () => {
+  const LIB_RS = [
+    "mod net;",
+    "pub mod util;",
+    "use crate::util::helpers::run;",
+    "pub use crate::net::{tcp, udp};",
+    "use std::fs;",
+    "use serde::Serialize;",
+    "use self::util::x;",
+    "use super::y;",
+    "",
+  ].join("\n");
+  const files: Record<string, string> = {
+    "src/lib.rs": LIB_RS,
+    "src/net/mod.rs": "mod tcp;\n",
+    "src/util.rs": "mod helpers;\n",
+    "crates/k/src/main.rs": "mod m;\nuse crate::m::f;\n",
+  };
+  for (const rel of [
+    "src/net/tcp.rs",
+    "src/net/udp.rs",
+    "src/util/helpers.rs",
+    "crates/k/src/m.rs",
+  ]) {
+    files[rel] = "pub fn f() {}\n";
+  }
+  const { index } = scanIndex(files);
+  expect(index.files["src/lib.rs"].imports).toEqual([
+    "src/net/mod.rs",
+    "src/util.rs",
+    "src/util/helpers.rs",
+    "src/net/tcp.rs",
+    "src/net/udp.rs",
+  ]);
+  expect(index.files["src/util.rs"].imports).toEqual(["src/util/helpers.rs"]);
+  expect(index.files["src/net/mod.rs"].imports).toEqual(["src/net/tcp.rs"]);
+  expect(index.files["crates/k/src/main.rs"].imports).toEqual(["crates/k/src/m.rs"]);
+});
+
+test("C/C++ quoted includes resolve beside the file, else from the project root", () => {
+  const files: Record<string, string> = {
+    "src/main.c": [
+      '#include "util.h"',
+      '#include "include/api.h"',
+      "#include <stdio.h>",
+      '#include "missing.h"',
+      "",
+    ].join("\n"),
+    "src/x.cpp": '#include "x.hpp"\n',
+  };
+  for (const rel of ["src/util.h", "include/api.h", "src/x.hpp"]) files[rel] = "int f(void);\n";
+  const { index } = scanIndex(files);
+  expect(index.files["src/main.c"].imports).toEqual(["src/util.h", "include/api.h"]);
+  expect(index.files["src/x.cpp"].imports).toEqual(["src/x.hpp"]);
+});

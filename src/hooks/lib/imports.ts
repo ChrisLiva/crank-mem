@@ -28,6 +28,17 @@ const GO_IMPORT =
 const GO_BLOCK_LINE = /^[ \t]*(?:[\w.]+[ \t]+)?"(?<path>[^"\n]+)"/gm;
 const GO_PACKAGE_MAX_FILES = 10;
 
+// `mod <name>;` or `use <tree>;` (each optionally `pub` or `pub(…)`),
+// anchored at a line start, in source order. An inline `mod x { … }` has no
+// file and does not match.
+const RUST_ITEM =
+  /^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?(?:mod[ \t]+(?<mod>\w+)[ \t]*;|use[ \t]+(?<use>[^;]+);)/gm;
+const RUST_MOD_ROOTS = ["mod.rs", "lib.rs", "main.rs"];
+
+const C_EXTENSIONS = [".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"];
+// A quoted `#include "<path>"`; angle includes name system headers and do not match.
+const C_INCLUDE = /^[ \t]*#[ \t]*include[ \t]*"(?<path>[^"\n]+)"/gm;
+
 const MAX_LINKS = 50;
 
 function firstUnique(values: string[]): string[] {
@@ -141,6 +152,94 @@ function goImports(rootDir: string, importer: string, content: string): string[]
   return found;
 }
 
+/** A module path as `<p>.rs`, else `<p>/mod.rs`. */
+function resolveRustModule(rootDir: string, modulePath: string): string | null {
+  return (
+    [`${modulePath}.rs`, `${modulePath}/mod.rs`].find((rel) => isRegularFile(rootDir, rel)) ?? null
+  );
+}
+
+/** Every path a use tree names, with `{a, b::c}` groups expanded and `as` aliases dropped. */
+function rustUsePaths(tree: string): string[][] {
+  const text = tree.replace(/\s+as\s+\w+/g, "").replace(/\s+/g, "");
+  const open = text.indexOf("{");
+  if (open === -1) return [text.split("::").filter(Boolean)];
+  const prefix = text.slice(0, open).split("::").filter(Boolean);
+  const inner = text.slice(open + 1, text.lastIndexOf("}"));
+  const branches: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    if (inner[i] === "{") depth++;
+    else if (inner[i] === "}") depth--;
+    else if (inner[i] === "," && depth === 0) {
+      branches.push(inner.slice(start, i));
+      start = i + 1;
+    }
+  }
+  branches.push(inner.slice(start));
+  return branches
+    .filter((branch) => branch !== "")
+    .flatMap((branch) =>
+      branch === "self" ? [prefix] : rustUsePaths(branch).map((p) => [...prefix, ...p]),
+    );
+}
+
+/** The nearest directory named `src` at or above `importer`'s directory. */
+function rustCrateSrc(importer: string): string | null {
+  for (let dir = path.posix.dirname(importer); dir !== "."; dir = path.posix.dirname(dir)) {
+    if (path.posix.basename(dir) === "src") return dir;
+  }
+  return null;
+}
+
+function rustImports(rootDir: string, importer: string, content: string): string[] {
+  const found: string[] = [];
+  const dir = path.posix.dirname(importer);
+  const fileName = path.posix.basename(importer);
+  const modDir = RUST_MOD_ROOTS.includes(fileName)
+    ? dir
+    : path.posix.join(dir, fileName.slice(0, -".rs".length));
+  const crateSrc = rustCrateSrc(importer);
+  for (const m of content.matchAll(RUST_ITEM)) {
+    const { mod, use } = m.groups!;
+    if (mod !== undefined) {
+      const rel = resolveRustModule(rootDir, path.posix.join(modDir, mod));
+      if (rel) found.push(rel);
+      continue;
+    }
+    if (crateSrc === null) continue;
+    for (const segments of rustUsePaths(use!)) {
+      if (segments[0] !== "crate") continue;
+      for (let end = segments.length; end > 1; end--) {
+        const rel = resolveRustModule(
+          rootDir,
+          path.posix.join(crateSrc, ...segments.slice(1, end)),
+        );
+        if (rel) {
+          found.push(rel);
+          break;
+        }
+      }
+    }
+  }
+  return found;
+}
+
+function cImports(rootDir: string, importer: string, content: string): string[] {
+  const found: string[] = [];
+  for (const m of content.matchAll(C_INCLUDE)) {
+    const include = m.groups!.path!;
+    if (include.startsWith("/")) continue;
+    const rel = [
+      path.posix.join(path.posix.dirname(importer), include),
+      path.posix.normalize(include),
+    ].find((candidate) => isRegularFile(rootDir, candidate));
+    if (rel) found.push(rel);
+  }
+  return found;
+}
+
 function tsJsImports(rootDir: string, importer: string, content: string): string[] {
   const found: string[] = [];
   for (const m of content.matchAll(TS_JS_SPECIFIER)) {
@@ -171,7 +270,11 @@ export function fileLinks(
         ? pythonImports(rootDir, importer, content)
         : ext === ".go"
           ? goImports(rootDir, importer, content)
-          : [];
+          : ext === ".rs"
+            ? rustImports(rootDir, importer, content)
+            : C_EXTENSIONS.includes(ext)
+              ? cImports(rootDir, importer, content)
+              : [];
     const imports = firstUnique(
       targets.filter((rel) => rel !== importer && isIndexableName(rel, config)),
     );
