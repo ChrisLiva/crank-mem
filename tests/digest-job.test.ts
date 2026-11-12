@@ -580,7 +580,7 @@ describe("digestRequest", () => {
   const req = (delta: string, previous: Parameters<typeof digestRequest>[1] = null) =>
     digestRequest(delta, previous, { cerebrum: null, existing: [] });
 
-  test("validate accepts the sample and rejects a missing field, an unknown type and a non-array", () => {
+  test("the digest schema accepts the sample and rejects a missing field, an unknown type and a non-array", () => {
     const { schema } = req("D");
     expect(matchesSchema(schema, SAMPLE_DIGEST)).toBe(true);
     const { learned: _, ...summary } = SAMPLE_DIGEST.summary;
@@ -601,7 +601,7 @@ describe("digestRequest", () => {
     expect(matchesSchema(schema, undefined)).toBe(false);
   });
 
-  test("validate rejects an output that misses either array or breaks its item shape", () => {
+  test("the digest schema rejects an output that misses either array or breaks its item shape", () => {
     const { schema } = req("D");
     const { proposals: _p, ...noProposals } = SAMPLE_DIGEST;
     const { stale: _s, ...noStale } = SAMPLE_DIGEST;
