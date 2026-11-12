@@ -155,7 +155,17 @@ export function UsageView({
 
 function Shares({ metrics: m }: { metrics: UsageMetrics }) {
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+      <Stat
+        label="Recall reach"
+        value={percent(m.recallReach)}
+        detail="sessions that searched or opened memory"
+      />
+      <Stat
+        label="Surfaced follow-through"
+        value={percent(m.surfacedFollowThrough)}
+        detail="surfaced ids the agent opened"
+      />
       <Stat label="Searches" value={m.searches.toLocaleString()} detail="crank-mem search calls" />
       <Stat
         label="Zero-result searches"
@@ -168,7 +178,7 @@ function Shares({ metrics: m }: { metrics: UsageMetrics }) {
         detail="ran without the local model"
       />
       <Stat
-        label="Follow-through"
+        label="Search follow-through"
         value={percent(m.followThrough)}
         detail="results the agent opened"
       />

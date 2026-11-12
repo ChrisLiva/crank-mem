@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { USAGE_CHANNELS } from "../src/hooks/lib/wire.ts";
 
 // The real dashboard page, rendered in happy-dom against stubbed /api answers.
 const DASHBOARD = new URL("../dashboard/", import.meta.url).pathname;
@@ -42,13 +43,18 @@ async function openPage(): Promise<{ page: any; unmount: () => Promise<void> }> 
   return { page, unmount: () => React.act(async () => root.unmount()) };
 }
 
-/** The text of the stat tile labelled `label`, after the label. */
-function tile(page: any, label: string): string {
+/** The stat tile element labelled `label`. */
+function tileOf(page: any, label: string): any {
   const el = [...page.querySelectorAll("div")].find(
     (d: any) => d.firstElementChild?.textContent === label && d.children.length > 1,
   );
   if (el === undefined) throw new Error(`no ${label} tile`);
-  return el.textContent.slice(label.length);
+  return el;
+}
+
+/** The text of the stat tile labelled `label`, after the label. */
+function tile(page: any, label: string): string {
+  return tileOf(page, label).textContent.slice(label.length);
 }
 
 const PROJECT = { id: "p", name: "proj", root: "/p", memory: "/p/.crank/memory.db" };
@@ -105,6 +111,52 @@ test("the focused project's tiles name its digest state and whether its observat
     expect(`${name}: ${tile(page, "Digest")}`).toStartWith(`${name}: ${digest}`);
     expect(`${name}: ${tile(page, "Observations")}`).toContain(observations);
     await unmount();
+  }
+});
+
+test("the usage view shows recall reach and surfaced follow-through first, and a null figure as a dash", async () => {
+  const zero = Object.fromEntries(USAGE_CHANNELS.map((c) => [c, 0]));
+  const perDay = Array.from({ length: 7 }, (_, i) => ({
+    date: `2026-11-0${i + 1}`,
+    counts: { ...zero },
+  }));
+  dom.history.replaceState(null, "", "?view=usage");
+  try {
+    serve({
+      "/api/projects": { projects: [PROJECT] },
+      "/api/projects/p/usage": {
+        perDay,
+        searches: 0,
+        zeroResultShare: null,
+        keywordShare: null,
+        followThrough: null,
+        recallReach: 0.5,
+        surfacedFollowThrough: null,
+        topQueries: [],
+        surfaced: [],
+        neverSurfacedShare: null,
+        filesWithoutMemory: [],
+      },
+    });
+    const { page, unmount } = await openPage();
+    const labels = [...tileOf(page, "Searches").parentElement.children].map(
+      (c: any) => c.firstElementChild.textContent,
+    );
+    expect(labels).toEqual([
+      "Recall reach",
+      "Surfaced follow-through",
+      "Searches",
+      "Zero-result searches",
+      "Keyword-only searches",
+      "Search follow-through",
+      "Never surfaced",
+    ]);
+    expect(tile(page, "Recall reach")).toBe("50%sessions that searched or opened memory");
+    expect(tile(page, "Surfaced follow-through")).toBe("—surfaced ids the agent opened");
+    expect(tile(page, "Search follow-through")).toBe("—results the agent opened");
+    await unmount();
+  } finally {
+    dom.history.replaceState(null, "", "?view=health");
   }
 });
 
