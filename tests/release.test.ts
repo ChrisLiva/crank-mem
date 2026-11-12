@@ -475,12 +475,20 @@ describe("self-install from a clone install", () => {
 
   test("without --yes and a tty the link is replaced, projects stay, and the re-run is printed", async () => {
     const t = await cloneInstall();
+    // A second registered root whose config is gone holds no install, so it is not offered.
+    const Q = tempDir("crank-release-unwired-");
+    expect(spawnSync("git", ["init", "-q"], { cwd: Q }).status).toBe(0);
+    expect(runCli(Q, ["init", "--yes"], { CRANK_HOME: t.H, HOME: t.HOME }).status).toBe(0);
+    fs.rmSync(path.join(Q, ".crank/config.json"));
     const result = installSh(["--bin-dir", t.bin], t.env);
     expect(result.status).toBe(0);
     expect(fs.readlinkSync(path.join(t.bin, "crank-mem"))).toBe(
       path.join(t.H, "current/bin/crank-mem"),
     );
     expect(t.config().clone_root).toBe(t.K);
+    expect(result.stdout).toContain("1 project runs hooks from another crank-mem");
+    expect(result.stdout).toContain(fs.realpathSync(t.P));
+    expect(result.stdout).not.toContain(fs.realpathSync(Q));
     expect(result.stdout).toContain("crank-mem self-install --yes");
   }, 60_000);
 
@@ -529,16 +537,27 @@ describe("self-uninstall", () => {
       const file = path.join(P, ".claude/settings.local.json");
       return fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
     };
-    return { H, HOME, bin, P, uninstall, settings };
+    /** A second registered project whose `.crank/config.json` was removed after init. */
+    const unwiredRoot = () => {
+      const Q = tempDir("crank-release-unwired-");
+      expect(spawnSync("git", ["init", "-q"], { cwd: Q }).status).toBe(0);
+      expect(runInstalled(H, Q, ["init", "--yes"], { HOME }).status).toBe(0);
+      fs.rmSync(path.join(Q, ".crank/config.json"));
+      return Q;
+    };
+    return { H, HOME, bin, P, uninstall, settings, unwiredRoot };
   }
 
   test("with --yes every registered project is uninstalled, then the tool's files go", () => {
     const t = installedSetup();
+    const Q = t.unwiredRoot();
     expect(t.settings()).toContain(".crank/hooks");
     const result = t.uninstall(["--yes"]);
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
     expect(t.settings()).not.toContain(".crank/hooks");
+    expect(result.stdout).toContain(`uninstalling from ${fs.realpathSync(t.P)}`);
+    expect(result.stdout).not.toContain(fs.realpathSync(Q));
     expect(fs.existsSync(path.join(t.P, ".crank/config.json"))).toBe(true);
     for (const gone of [path.join(t.H, "versions"), path.join(t.H, "current")]) {
       expect(fs.existsSync(gone)).toBe(false);
@@ -550,10 +569,12 @@ describe("self-uninstall", () => {
 
   test("without --yes and without a tty, projects stay wired and are listed", () => {
     const t = installedSetup();
+    const Q = t.unwiredRoot();
     const result = t.uninstall();
     expect(result.status).toBe(0);
     expect(t.settings()).toContain(".crank/hooks");
     expect(result.stdout).toContain(fs.realpathSync(t.P));
+    expect(result.stdout).not.toContain(fs.realpathSync(Q));
     expect(fs.existsSync(path.join(t.H, "versions"))).toBe(false);
     expect(fs.existsSync(path.join(t.H, "current"))).toBe(false);
     expect(() => fs.lstatSync(path.join(t.bin, "crank-mem"))).toThrow();
