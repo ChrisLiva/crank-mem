@@ -10,6 +10,8 @@ import {
   type MemoryReader,
   type SearchQuery,
 } from "../hooks/lib/memory.ts";
+import { relatedFiles } from "../hooks/lib/related-files.ts";
+import { loadIndex } from "../hooks/lib/store.ts";
 import { cliActor, recordUsage } from "../hooks/lib/usage.ts";
 import { isObservationType, type Observation } from "../hooks/lib/wire.ts";
 import { parseArgs, stringFlag } from "./args.ts";
@@ -94,7 +96,7 @@ export async function search(args: string[]): Promise<number> {
       sinceMs,
       file: relFile,
       stale,
-      related: { seeds: [], neighbours: [] },
+      related: relatedFiles(loadIndex(project.crankDir), text),
     });
     for (const hit of hits) console.log(formatLine(hit));
     recordUsage(project.root, cliActor(), {

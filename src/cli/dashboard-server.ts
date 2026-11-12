@@ -6,6 +6,8 @@ import * as path from "node:path";
 import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { isProjectFile } from "../hooks/lib/hook-io.ts";
 import { memoryPath, memoryStatus, withReader } from "../hooks/lib/memory.ts";
+import { relatedFiles } from "../hooks/lib/related-files.ts";
+import { loadIndex } from "../hooks/lib/store.ts";
 import { readUsage } from "../hooks/lib/usage.ts";
 import {
   ACTIVITY_DAYS,
@@ -167,7 +169,7 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
         vector,
         sinceMs: null,
         limit: PAGE,
-        related: { seeds: [], neighbours: [] },
+        related: relatedFiles(loadIndex(path.join(root, CRANK_DIR)), q),
       });
       return { rows: lines, next: null, mode: vector !== null ? "hybrid" : "keyword" };
     }

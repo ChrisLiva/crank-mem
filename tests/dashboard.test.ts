@@ -524,6 +524,21 @@ async function memoryJson(
 }
 
 describe("memory view", () => {
+  test("q surfaces an observation linked only to an import neighbour", async () => {
+    const home = makeCrankHome();
+    const root = registeredCopy(home, {
+      "src/a.ts": 'import { b } from "./b";\nexport const a = b;\n',
+      "src/b.ts": "export const b = 1;\n",
+    });
+    const [o1] = seedMemory(root, [
+      { title: "Lock budget raised", narrative: "budget", filesModified: ["src/b.ts"] },
+    ]);
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const found = await memoryJson(dash, root, "observations?q=src%2Fa.ts");
+    expect(found.rows.map((r: Line) => r.id)).toEqual([o1]);
+    expect(found.mode).toBe("keyword");
+  }, 20_000);
+
   test("observations page 50 lines newest first, and next pages strictly older lines", async () => {
     const home = makeCrankHome();
     const root = registeredCopy(home);
