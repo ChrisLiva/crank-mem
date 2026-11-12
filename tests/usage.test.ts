@@ -1107,6 +1107,8 @@ describe("usageMetrics (in-process)", () => {
       zeroResultShare: null,
       keywordShare: null,
       followThrough: null,
+      recallReach: null,
+      surfacedFollowThrough: null,
       topQueries: [],
       surfaced: [],
       neverSurfacedShare: 1,
@@ -1139,6 +1141,96 @@ describe("usageMetrics (in-process)", () => {
     );
   });
 
+  test("recall reach counts Claude sessions with a session start that ran search, timeline or get", () => {
+    const T = NOW - D;
+    const at = (i: number) => T + i * 1_000;
+    const start = (i: number, agent: string, session: string | null, source = "startup") => ({
+      v: 1,
+      agent,
+      session,
+      ts: at(i),
+      channel: "session-start",
+      source,
+      ids: [],
+    });
+    const lines = [
+      start(0, "claude", "S1"),
+      searchLine(at(1), "claude", "S1", "q", []),
+      start(2, "claude", "S2"),
+      start(3, "claude", "S3"),
+      {
+        v: 1,
+        agent: "claude",
+        session: "S3",
+        ts: at(4),
+        channel: "get",
+        requested: [1],
+        found: [1],
+      },
+      start(5, "claude", "S5", "compact"),
+      start(6, "claude", "S5", "resume"),
+      {
+        v: 1,
+        agent: "claude",
+        session: "S5",
+        ts: at(7),
+        channel: "timeline",
+        anchor: 1,
+        depth: 5,
+        ids: [1],
+      },
+      start(8, "codex", "C"),
+      {
+        v: 1,
+        agent: "manual",
+        session: null,
+        ts: at(9),
+        channel: "get",
+        requested: [1],
+        found: [1],
+      },
+      searchLine(at(10), "claude", "S4", "q", []),
+      start(11, "claude", null),
+    ];
+    expect(metricsOf(lines, 7).recallReach).toBe(0.75);
+    expect(metricsOf(lines, 7, true).recallReach).toBe(0.75);
+  });
+
+  test("surfaced follow-through counts distinct session ids opened after they surfaced", () => {
+    const T = NOW - D;
+    const line = (ts: number, session: string | null, rest: object, agent = "claude") => ({
+      v: 1,
+      agent,
+      session,
+      ts,
+      ...rest,
+    });
+    const get = (ids: number[]) => ({ channel: "get", requested: ids, found: ids });
+    const history = (ids: number[]) => ({
+      channel: "file-history",
+      tool: "Read",
+      shown: [{ path: "a.ts", ids }],
+      empty: [],
+      seen: [],
+      cut: [],
+      bytes: 1,
+    });
+    const lines = [
+      line(T, "S1", get([4])),
+      line(T + 60_000, "S1", { channel: "session-start", source: "startup", ids: [1, 2, 4] }),
+      line(T + 120_000, "S1", history([2, 3])),
+      line(T + 180_000, "S1", history([2, 3])),
+      searchLine(T + 240_000, "claude", "S1", "q", [2]),
+      line(T + 300_000, "S2", get([1])),
+      line(T + 310_000, "C", { channel: "session-start", source: "startup", ids: [5] }, "codex"),
+      line(T + 320_000, null, history([6])),
+      line(T + 11_040_000, "S1", get([2])),
+      line(T + 11_100_000, "S1", { channel: "timeline", anchor: 3, depth: 5, ids: [3] }),
+    ];
+    expect(metricsOf(lines, 7).surfacedFollowThrough).toBe(0.5);
+    expect(metricsOf(lines, 7, true).surfacedFollowThrough).toBe(0.5);
+  });
+
   test("a child started after a zone test runs in the system zone, or the zone it is given", () => {
     inZone("Asia/Tokyo", () => undefined);
     const zoneOf = (env: NodeJS.ProcessEnv) =>
@@ -1165,7 +1257,11 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
     expect(hook(READ_HOOK, claudePostRead(root, path.join(root, "a.ts"), TRANSCRIPT)).status).toBe(
       0,
     );
-    const claude = (args: string[]) => claudeCli(root, args, { CRANK_HOME: home });
+    const claude = (args: string[]) =>
+      claudeCli(root, args, {
+        CRANK_HOME: home,
+        CLAUDE_CODE_SESSION_ID: "a46b6073-1111-2222-3333-444455556666",
+      });
     expect(printedIds(claude(["search", "epsilon"]).stdout)).toEqual([hit]);
     expect(claude(["search", "zzz-none"]).stdout).toBe("");
     expect(claude(["timeline", String(hit)]).status).toBe(0);
@@ -1225,9 +1321,11 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
       );
     const listing = lines.filter((l) => lists(l).some((ids) => ids.includes(hit)));
     expect(all.surfaced.find((s: { id: number }) => s.id === hit).count).toBe(listing.length);
+    expect(all).toMatchObject({ recallReach: 1, surfacedFollowThrough: 0.5 });
 
     const agents = await usageOf(dash, root, "days=7&manual=0");
     expect(agents).toMatchObject({ searches: 2, zeroResultShare: 0.5, followThrough: 1 });
+    expect(agents).toMatchObject({ recallReach: 1, surfacedFollowThrough: 0.5 });
 
     const before = lineCount(root);
     const res = await dash.get(`/api/projects/${projectId(root)}/observations?q=epsilon`);

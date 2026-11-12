@@ -250,6 +250,14 @@ _Avoid_: Channel (unqualified), source
 The always-on record of each time project memory reached an agent, one line per use of a usage channel.
 _Avoid_: Analytics, telemetry
 
+**Recall reach**:
+The share of Claude sessions that ran at least one search, timeline or get.
+_Avoid_: Recall rate, adoption
+
+**Surfaced follow-through**:
+The share of observations surfaced to a Claude session that the session later opened with get or timeline.
+_Avoid_: Follow-through, open rate
+
 ### Install
 
 **Wiring**:
