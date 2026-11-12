@@ -1,14 +1,6 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
-import {
-  CONFIG_FILE,
-  CRANK_DIR,
-  errorMessage,
-  isObj,
-  loadConfig,
-  readJsonObject,
-} from "../hooks/lib/config.ts";
-import { registeredRoots } from "../hooks/lib/registry.ts";
+import { CRANK_DIR, errorMessage, isObj, loadConfig, readJsonObject } from "../hooks/lib/config.ts";
+import { installedRoots } from "../hooks/lib/registry.ts";
 import { crankHome, writeJsonAtomic } from "../hooks/lib/user-state.ts";
 import { cliVersion, installedCopy, newer, releaseBase } from "./version.ts";
 
@@ -94,10 +86,8 @@ export function checkDue(state: UpdateState, nowMs: number): boolean {
 export function laggingProjects(
   version: string,
 ): Array<{ root: string; name: string; vendored: string }> {
-  return registeredRoots().flatMap((root) => {
-    const crankDir = path.join(root, CRANK_DIR);
-    if (!fs.existsSync(path.join(crankDir, CONFIG_FILE))) return [];
-    const vendored = loadConfig(crankDir).vendored_version;
+  return installedRoots().flatMap((root) => {
+    const vendored = loadConfig(path.join(root, CRANK_DIR)).vendored_version;
     return newer(version, vendored) ? [{ root, name: path.basename(root), vendored }] : [];
   });
 }

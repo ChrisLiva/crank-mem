@@ -1,5 +1,6 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
-import { readJsonObject } from "./config.ts";
+import { CONFIG_FILE, CRANK_DIR, readJsonObject } from "./config.ts";
 import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 
 // The per-user list of project roots, kept at <crank home>/projects.json.
@@ -49,4 +50,9 @@ export function unregisterProject(root: string): void {
 
 export function registeredRoots(): string[] {
   return readEntries().map((e) => e.root);
+}
+
+/** The registered roots that still hold a crank-mem install (`.crank/config.json`). */
+export function installedRoots(): string[] {
+  return registeredRoots().filter((root) => fs.existsSync(path.join(root, CRANK_DIR, CONFIG_FILE)));
 }

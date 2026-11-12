@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { CONFIG_FILE, CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
+import { CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { isProjectFile } from "../hooks/lib/hook-io.ts";
 import { memoryPath, memoryStatus, withReader } from "../hooks/lib/memory.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
@@ -21,7 +21,7 @@ import {
 } from "../hooks/lib/wire.ts";
 import { EMBED_MODEL } from "../daemon/embedder.ts";
 import { queryVector } from "./recall.ts";
-import { registeredRoots } from "../hooks/lib/registry.ts";
+import { installedRoots } from "../hooks/lib/registry.ts";
 import { captureSummary } from "./stats.ts";
 import {
   checkDue,
@@ -99,8 +99,7 @@ type Project = { id: string; name: string; root: string };
  */
 function listProjects(): Project[] {
   const byStore = new Map<string, Project>();
-  for (const registered of registeredRoots()) {
-    if (!fs.existsSync(path.join(registered, CRANK_DIR, CONFIG_FILE))) continue;
+  for (const registered of installedRoots()) {
     const storeDir = path.dirname(memoryPath(registered));
     const root = path.dirname(storeDir);
     const id = crypto.createHash("sha256").update(storeDir).digest("hex").slice(0, 12);
