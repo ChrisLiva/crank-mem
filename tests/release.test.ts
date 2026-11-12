@@ -265,6 +265,15 @@ describe("install.sh", () => {
     expect(fs.existsSync(marker)).toBe(true);
   }, 60_000);
 
+  test("a recorded latest older than the installed version is checked again", async () => {
+    const t = await installer();
+    const stale = { version: "0.9.0", tag: "v0.9.0", releasedAt: "2026-01-01T00:00:00.000Z" };
+    fs.writeFileSync(path.join(t.H, "update.json"), JSON.stringify({ latest: stale }));
+    expect(installSh(["--yes", "--bin-dir", t.bin], t.env).status).toBe(0);
+    const state = JSON.parse(fs.readFileSync(path.join(t.H, "update.json"), "utf-8"));
+    expect(state.latest.version).toBe(V);
+  }, 60_000);
+
   test("without --bin-dir the link lands in ~/.local/bin", async () => {
     const t = await installer();
     const result = installSh(["--yes"], t.env);

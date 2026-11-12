@@ -68,6 +68,15 @@ export async function checkNow(timeoutMs = 10_000): Promise<UpdateState> {
   }
 }
 
+/**
+ * Checks now when `version`, just made current, is newer than the recorded latest release:
+ * a release since the last check left the record, which the dashboard shows, behind it.
+ */
+export async function recheckIfBehind(version: string): Promise<void> {
+  const { latest } = readUpdateState();
+  if (latest !== null && newer(version, latest.version)) await checkNow();
+}
+
 /** True when an installed copy with daily checks on has not checked within `CHECK_EVERY_MS`. */
 export function checkDue(state: UpdateState, nowMs: number): boolean {
   return (

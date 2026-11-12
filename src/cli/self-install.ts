@@ -9,6 +9,7 @@ import { choose } from "./prompt.ts";
 import { addPathBlock, rcTarget } from "./shell-rc.ts";
 import { ensureModel } from "./setup.ts";
 import { DEFAULT_BIN_DIR, linkBin, locked, makeCurrent, prepareVersion } from "./tool-install.ts";
+import { recheckIfBehind } from "./updates.ts";
 import { repairAll } from "./upgrade.ts";
 import { CURRENT_LINK, REPO_ROOT, versionAt } from "./version.ts";
 
@@ -81,6 +82,7 @@ async function install(opts: Options): Promise<number> {
     return 1;
   }
   if (!makeCurrent(version)) return 1;
+  await recheckIfBehind(version);
 
   let linked;
   try {

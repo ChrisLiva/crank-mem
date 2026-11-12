@@ -16,7 +16,7 @@ import {
   prepareVersion,
   pruneVersions,
 } from "./tool-install.ts";
-import { checkNow, writeUpdateState } from "./updates.ts";
+import { checkNow, recheckIfBehind, writeUpdateState } from "./updates.ts";
 import { cliVersion, newer, versionsDir } from "./version.ts";
 
 // `crank-mem self-update`: downloads the latest release (or `--to <tag>`),
@@ -117,6 +117,7 @@ async function update(tag: string | null): Promise<number> {
     return 1;
   }
   if (!makeCurrent(version, cliVersion())) return 1;
+  await recheckIfBehind(version);
   try {
     for (const removed of pruneVersions([version, cliVersion()])) {
       console.log(`crank-mem: removed ${removed}`);

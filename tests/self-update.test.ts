@@ -70,6 +70,19 @@ describe("self-update", () => {
     expect(versions(H)).toEqual(["1.0.0", "1.1.0"]);
   }, 30_000);
 
+  test("a recorded latest older than the new version is checked again", async () => {
+    const { H, env } = await setup();
+    const stale = { version: "1.0.0", tag: "v1.0.0", releasedAt: "2026-01-01T00:00:00.000Z" };
+    fs.writeFileSync(
+      path.join(H, "update.json"),
+      JSON.stringify({ latest: stale, checkedAtMs: 1 }),
+    );
+    expect(runInstalled(H, tempDir("crank-cwd-"), ["self-update"], env).status).toBe(0);
+    const state = JSON.parse(fs.readFileSync(path.join(H, "update.json"), "utf-8"));
+    expect(state.latest.version).toBe("1.1.0");
+    expect(state.checkedAtMs).toBeGreaterThan(1);
+  }, 30_000);
+
   test("a third version prunes the oldest", async () => {
     const { H, env } = await setup();
     expect(runInstalled(H, tempDir("crank-cwd-"), ["self-update"], env).status).toBe(0);
