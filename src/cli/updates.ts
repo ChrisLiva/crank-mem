@@ -109,7 +109,7 @@ export function updateAvailable(
 }
 
 /** The line a human-run command prints when an update is available, else null. */
-export function updateNotice(): string | null {
+function updateNotice(): string | null {
   const state = readUpdateState();
   if (!updateAvailable(state)) return null;
   return `crank-mem ${state.latest.version} is available (installed ${cliVersion()}) — run \`crank-mem self-update\`.`;

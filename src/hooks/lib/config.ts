@@ -16,7 +16,7 @@ export const CRANK_DIR = ".crank";
 export const CONFIG_FILE = "config.json";
 /** Per-checkout settings, kept out of git by .crank/.gitignore's `/*` line. */
 export const LOCAL_CONFIG_FILE = "config.local.json";
-export const MAX_FILE_SIZE_BYTES = 1024 * 1024;
+const MAX_FILE_SIZE_BYTES = 1024 * 1024;
 
 // Hidden paths (.git, .claude, .codex, .crank itself, …) are excluded by the
 // always-on dot rule in isExcluded, so only non-hidden names belong here.

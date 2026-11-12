@@ -4,8 +4,8 @@ import * as path from "node:path";
 // The marked block `self-install` adds to a shell's startup file to put the
 // bin dir on PATH, and `self-uninstall` removes.
 
-export const RC_START = "# >>> crank-mem >>>";
-export const RC_END = "# <<< crank-mem <<<";
+const RC_START = "# >>> crank-mem >>>";
+const RC_END = "# <<< crank-mem <<<";
 
 const RC_FILES = [".zshrc", ".bashrc", ".bash_profile", ".profile", ".config/fish/config.fish"];
 

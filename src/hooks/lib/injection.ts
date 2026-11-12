@@ -32,7 +32,7 @@ import type { ObservationLine } from "./wire.ts";
 // cost 74% of the injection; ADR 0005 records the measurement.
 
 /** Ceiling on the whole excerpt, set to catch a runaway file. */
-export const CEREBRUM_INJECT_TOKEN_CAP = 1500;
+const CEREBRUM_INJECT_TOKEN_CAP = 1500;
 /** Sub-cap on User Preferences, so prefs can't crowd memory out of the excerpt. */
 export const PREFS_TOKEN_CAP = 400;
 export const ADR_RECENT_COUNT = 20;
@@ -45,7 +45,7 @@ export const INDEX_ENTRY_CHARS = 48;
  * bullet under budget pressure, so a few long recent bullets cannot push every
  * hidden bullet's name out of the excerpt.
  */
-export const MEMORY_INDEX_ALLOWANCE_BYTES = 600;
+const MEMORY_INDEX_ALLOWANCE_BYTES = 600;
 /** First line of every injection; `crank-mem stats` finds it in Codex rollouts. */
 export const INJECTION_HEADING = "## crank-mem (project memory)";
 /** Points at the memory store's read commands; see recallApplies for when it shows. */
@@ -537,7 +537,7 @@ function adrSectionOf(sources: InjectionSources): string | null {
 }
 
 /** Load ADR filenames (NNNN-*.md) from the configured directory. */
-export function listAdrFilenames(projectRoot: string, adrPath: string): string[] {
+function listAdrFilenames(projectRoot: string, adrPath: string): string[] {
   try {
     return fs
       .readdirSync(path.join(projectRoot, adrPath))

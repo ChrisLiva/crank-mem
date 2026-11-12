@@ -20,7 +20,7 @@ export const TARBALL = "crank-mem.tar.gz";
 /** `<crank home>/tool.lock` holds the pid of the install or update in progress. */
 export const TOOL_LOCK = "tool.lock";
 /** What a command prints when another process holds the tool lock. */
-export const TOOL_BUSY = "crank-mem: another install or update is running";
+const TOOL_BUSY = "crank-mem: another install or update is running";
 /** Where `self-install` links the command and `self-uninstall` looks for it, unless `--bin-dir` says otherwise. */
 export const DEFAULT_BIN_DIR = path.join(os.homedir(), ".local/bin");
 /** A version usable as a dir name under `versions/`, the same test install.sh applies. */
@@ -48,7 +48,7 @@ function takeLock(file: string): boolean {
 }
 
 /** Runs `fn` holding `<crank home>/tool.lock`, or returns "locked" when a live process holds it. */
-export async function withToolLock<T>(fn: () => Promise<T>): Promise<T | "locked"> {
+async function withToolLock<T>(fn: () => Promise<T>): Promise<T | "locked"> {
   const file = path.join(ensureCrankHome(), TOOL_LOCK);
   if (!takeLock(file)) return "locked";
   try {
@@ -89,7 +89,7 @@ export function prepareVersion(dir: string): { ok: true } | { ok: false; detail:
 }
 
 /** Points `<crank home>/current` at `versions/<version>`; the rename means a reader never finds it missing. */
-export function activate(version: string): void {
+function activate(version: string): void {
   const link = path.join(crankHome(), CURRENT_LINK);
   const tmp = `${link}.${process.pid}.tmp`;
   fs.rmSync(tmp, { force: true });

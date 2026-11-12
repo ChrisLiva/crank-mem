@@ -71,7 +71,7 @@ function commandForms(script: string): Set<string> {
  * The subagent types that get the SubagentStart excerpt. The anchored list
  * leaves out custom and plugin agents; ADR 0007 records the census behind it.
  */
-export const SUBAGENT_MATCHER = "^(general-purpose|Explore|Plan|workflow-subagent)$";
+const SUBAGENT_MATCHER = "^(general-purpose|Explore|Plan|workflow-subagent)$";
 
 /** The hook entries crank-mem wires, per agent. */
 export function crankHooks(runtime: CrankConfig["runtime"], agent: Agent): HooksMap {
@@ -274,8 +274,8 @@ export function removeAllowRule(file: string): boolean {
 
 // ── Line-based files (.gitignore, .git/info/exclude, codex config.toml) ─────
 
-export const IGNORE_LINE = ".crank/";
-export const IGNORE_COMMENT = "# crank-mem";
+const IGNORE_LINE = ".crank/";
+const IGNORE_COMMENT = "# crank-mem";
 const IGNORE_BLOCK = `${IGNORE_COMMENT}\n${IGNORE_LINE}\n`;
 /** The block a legacy pre-rename install appended (non-dotted crank/). */
 export const LEGACY_IGNORE_BLOCK = `${IGNORE_COMMENT}\ncrank/\n`;
@@ -308,7 +308,7 @@ export function removeIgnoreLines(file: string, block: string = IGNORE_BLOCK): v
 
 // An allowlist: in commit mode only crank-mem's tracked files enter git, never
 // backups, the lockfile, the debug log, the nudge state, or another tool's files.
-export const CRANK_GITIGNORE =
+const CRANK_GITIGNORE =
   "/*\n!/.gitignore\n!/config.json\n!/cerebrum.md\n!/cerebrum-archive.md\n!/journal.md\n!/anatomy.md\n!/anatomy-index.json\n!/hooks/\n";
 
 /**
@@ -356,7 +356,7 @@ export function unignoreCerebrum(root: string, beforeStrip: (file: string) => vo
   }
 }
 
-export const CODEX_FEATURES_SNIPPET = "\n# crank-mem\n[features]\nhooks = true\n";
+const CODEX_FEATURES_SNIPPET = "\n# crank-mem\n[features]\nhooks = true\n";
 
 /** Ensure [features] hooks = true in a codex config.toml, non-destructively, calling `beforeWrite` before it writes. */
 export function ensureCodexFeatures(file: string, beforeWrite?: (file: string) => void): boolean {
