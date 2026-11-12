@@ -829,15 +829,15 @@ describe("search", () => {
     const R = { seeds: ["src/seed.ts"], neighbours: ["src/near.ts"] };
     const found = (over: Partial<SearchQuery> & { text: string }) =>
       ids(memory.search(query(over)));
-    expect(found({ text: "walrus", related: R })).toEqual([g3, k1, g1, g2]);
-    expect(found({ text: "walrus zzzz", related: R })).toEqual([g3, k1, g1, g2]);
-    expect(found({ text: "walrus", related: R, type: "discovery" })).toEqual([g3, k1, g2]);
+    expect(found({ text: "walrus", related: R })).toEqual([k1, g3, g1, g2]);
+    expect(found({ text: "walrus zzzz", related: R })).toEqual([k1, g3, g1, g2]);
+    expect(found({ text: "walrus", related: R, type: "discovery" })).toEqual([k1, g3, g2]);
     expect(found({ text: "walrus", related: R, file: "src/near.ts" })).toEqual([g3, g2]);
     expect(found({ text: "walrus" })).toEqual([k1]);
-    memory.putVectors("m1", [{ id: k1, vector: vec(1, 0, 0) }]);
+    memory.putVectors("m1", [{ id: g1, vector: vec(1, 0, 0) }]);
     const near = { model: "m1", values: vec(1, 0, 0) };
-    expect(found({ text: "walrus", vector: near, related: R })).toEqual([k1, g3, g1, g2]);
-    expect(found({ text: "walrus zzzz", vector: near, related: R })).toEqual([g3, k1, g1, g2]);
+    expect(found({ text: "walrus", vector: near, related: R })).toEqual([g1, k1, g3, g2]);
+    expect(found({ text: "walrus zzzz", vector: near, related: R })).toEqual([g1, g3, g2]);
   });
 
   test("the graph list honours since and stale", async () => {

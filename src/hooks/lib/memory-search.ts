@@ -3,9 +3,12 @@ import type { Memory } from "./memory.ts";
 import { all, hasVectors, LINE_COLUMNS, lineFilters, NEWEST_FIRST, toLine } from "./memory-read.ts";
 import type { ObservationLine } from "./wire.ts";
 
-// Search fuses a keyword list, a vector list and a graph list by reciprocal rank (k = RRF_K),
-// each list cut at LIST_DEPTH rows; equal scores go to the newest row.
+// Search fuses a keyword list, a vector list and a graph list by weighted reciprocal rank,
+// weight / (RRF_K + rank): 1 for the keyword and vector lists, GRAPH_WEIGHT for the graph list,
+// so a row only the graph list holds ranks below every row of the other two. Each list is cut
+// at LIST_DEPTH rows; equal scores go to the newest row.
 const RRF_K = 60;
+const GRAPH_WEIGHT = 0.3;
 const LIST_DEPTH = 50;
 
 function newestFirst(a: ObservationLine, b: ObservationLine): number {
@@ -61,15 +64,15 @@ export function search(
       LIST_DEPTH,
     ).map(toLine);
   };
-  const lists: ObservationLine[][] = [];
+  const lists: { rows: ObservationLine[]; weight: number }[] = [];
   const vector = query.vector;
   if (!vector || !hasVectors(db, vector.model)) {
     const and = keyword(" ");
-    lists.push(and.length > 0 ? and : keyword(" OR "));
+    lists.push({ rows: and.length > 0 ? and : keyword(" OR "), weight: 1 });
   } else {
-    lists.push(
-      keyword(" "),
-      all(
+    lists.push({ rows: keyword(" "), weight: 1 });
+    lists.push({
+      rows: all(
         db,
         `SELECT ${LINE_COLUMNS}, v.vector FROM observation_vectors v JOIN observations o ON o.id = v.observation_id
            WHERE v.model = ?${where}`,
@@ -86,16 +89,17 @@ export function search(
         .sort((x, y) => y.score - x.score || newestFirst(x.line, y.line))
         .slice(0, LIST_DEPTH)
         .map((s) => s.line),
-    );
+      weight: 1,
+    });
   }
   const { seeds, neighbours } = query.related;
   const graph = [...linked(seeds, []), ...linked(neighbours, seeds)].slice(0, LIST_DEPTH);
-  if (graph.length > 0) lists.push(graph);
+  if (graph.length > 0) lists.push({ rows: graph, weight: GRAPH_WEIGHT });
   const fused = new Map<number, { line: ObservationLine; score: number }>();
-  for (const list of lists) {
-    list.forEach((line, i) => {
+  for (const { rows, weight } of lists) {
+    rows.forEach((line, i) => {
       const entry = fused.get(line.id) ?? { line, score: 0 };
-      entry.score += 1 / (RRF_K + i + 1);
+      entry.score += weight / (RRF_K + i + 1);
       fused.set(line.id, entry);
     });
   }

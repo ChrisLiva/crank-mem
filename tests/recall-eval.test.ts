@@ -63,15 +63,9 @@ describe("recall-eval", () => {
       Array.from({ length: 9 }, (_, i) => ({ title: `kiwi kiwi filler ${i}`, narrative: "plain" })),
       { request: "qqq" },
     );
-    seedMemory(
-      root,
-      Array.from({ length: 10 }, (_, i) => ({
-        title: `graph row ${i}`,
-        narrative: "plain",
-        filesModified: ["src/b.ts"],
-      })),
-      { request: "rrr" },
-    );
+    seedMemory(root, [{ title: "kiwi graph", narrative: "plain", filesModified: ["src/b.ts"] }], {
+      request: "rrr",
+    });
     seedMemory(root, [{ title: "kiwi target", narrative: "plain" }], { request: "src/a.ts kiwi" });
     const run = evalRun(root, ["--root", root]);
     expect({ status: run.status, stdout: run.stdout }).toEqual({
