@@ -166,6 +166,8 @@ observation, `proposals` `[]` and `stale` `[]`. The Decision's "fixed argv from 
 and the empty `<crank home>/run/` cwd now govern the digest call only. ADR 0011 governs the
 consolidation call's tools, max turns, deny settings and project cwd.
 
+Amended 2026-11-12: `src/daemon/gateway.ts` → `matchesSchema` checks `structured_output` against the request's `schema`, the one passed as `--json-schema`, in place of the hand-written `validate`; like `validate`, it ignores `additionalProperties`.
+
 ## Re-probe method
 
 Re-run this reading whenever `claude --version` changes minor version, or a digest starts
