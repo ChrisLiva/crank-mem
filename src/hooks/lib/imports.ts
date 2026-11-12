@@ -143,7 +143,11 @@ function goImports(rootDir: string, importer: string, content: string): string[]
     if (importPath !== mod.module && !importPath.startsWith(`${mod.module}/`)) continue;
     const pkgDir = path.posix.join(mod.dir, importPath.slice(mod.module.length));
     const abs = path.join(rootDir, pkgDir);
-    if (!fs.statSync(abs, { throwIfNoEntry: false })?.isDirectory()) continue;
+    let isDir = false;
+    try {
+      isDir = fs.statSync(abs, { throwIfNoEntry: false })?.isDirectory() === true;
+    } catch {}
+    if (!isDir) continue;
     const goFiles = fs
       .readdirSync(abs, { withFileTypes: true })
       .filter((e) => e.isFile() && e.name.endsWith(".go") && !e.name.endsWith("_test.go"))

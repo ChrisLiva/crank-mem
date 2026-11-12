@@ -195,6 +195,17 @@ test("Go imports link every non-test file of a module package of at most 10 file
   expect(index.files["sub/x/x.go"].imports).toEqual(["sub/y/y.go"]);
 });
 
+test("a Go import path through a regular file costs only that import path", () => {
+  const { index } = scanIndex({
+    "go.mod": "module example.com/app\n",
+    "pkg/p.go": "package p\n",
+    data: "not a directory\n",
+    "cmd/main.go":
+      'package main\nimport (\n    "example.com/app/data/x"\n    "example.com/app/pkg"\n)\n',
+  });
+  expect(index.files["cmd/main.go"].imports).toEqual(["pkg/p.go"]);
+});
+
 test("an unreadable go.mod costs only the importing file its imports", () => {
   const root = makeCrankProject({
     "go.mod": "module example.com/app\n",
