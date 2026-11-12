@@ -170,6 +170,15 @@ describe("rollback", () => {
     expect(current(H)).toBe("versions/1.1.0");
   }, 60_000);
 
+  test("a previous version that does not prepare refuses and keeps current", async () => {
+    const { H, env } = await updated();
+    fs.rmSync(path.join(H, "versions/1.0.0/dashboard/dist/.crank-version"));
+    const result = runInstalled(H, tempDir("crank-cwd-"), ["rollback"], env);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("could not install 1.0.0");
+    expect(current(H)).toBe("versions/1.1.0");
+  }, 60_000);
+
   test("a store that does not open does not block", async () => {
     const { H, P, env } = await updated();
     plantMemory(P, "unreadable");

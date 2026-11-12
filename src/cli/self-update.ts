@@ -24,9 +24,10 @@ import { cliVersion, newer, versionsDir } from "./version.ts";
 // daemon runs, then repairs every registered project from the new version.
 // `--check` checks for a release now; `--auto` and `--check-daily` only
 // record their settings in update.json.
-// `crank-mem rollback`: makes the previous installed version `current` and
-// repairs every project from it. Going back to an older version, by either
-// command, first checks that no registered store's schema is newer than it.
+// `crank-mem rollback`: prepares the previous installed version (its packages
+// and dashboard stamp), makes it `current` and repairs every project from it.
+// Going back to an older version, by either command, first checks that no
+// registered store's schema is newer than it.
 
 /** Runs `upgrade --all` through the `current` link, so the repair runs the version just activated. */
 function repairFromCurrent(): number {
@@ -135,7 +136,13 @@ async function rollback(): Promise<number> {
     console.error("crank-mem: no previous version to roll back to");
     return 1;
   }
-  if (refuseOlder(version, path.join(versionsDir(), version))) return 1;
+  const dir = path.join(versionsDir(), version);
+  if (refuseOlder(version, dir)) return 1;
+  const prepared = prepareVersion(dir);
+  if (!prepared.ok) {
+    console.error(`crank-mem: could not install ${version} (${prepared.detail})`);
+    return 1;
+  }
   if (!makeCurrent(version, cliVersion())) return 1;
   return repairFromCurrent();
 }
