@@ -55,7 +55,7 @@ describe("post-read file history", () => {
     });
     expect(r.status).toBe(0);
     expect(r.stderr).toBe("");
-    expect(context(r)).toStartWith("History of src/a.ts:\n#");
+    expect(context(r)).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n#");
   });
 
   test("a Bash read names the same history as a Read", () => {
@@ -64,7 +64,7 @@ describe("post-read file history", () => {
     expect(read.status).toBe(0);
     const viaRead = context(read);
     // The newest five lines, newest first.
-    expect(viaRead).toStartWith("History of src/a.ts:\n#");
+    expect(viaRead).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n#");
     const lines = viaRead.split("\n").slice(1);
     expect(lines).toHaveLength(5);
     expect(lines[0]).toMatch(/^#\d+ \d{4}-\d\d-\d\d discovery Read a 6$/);
@@ -90,8 +90,8 @@ describe("post-read file history", () => {
     );
     for (const f of ["src/a.ts", "src/b.ts"]) setMtime(path.join(root, f), seedMs - HOUR);
     const ctx = context(run(root, claudePostBash(root, "cat src/a.ts src/b.ts", TRANSCRIPT)));
-    expect(ctx).toContain("History of src/a.ts:");
-    expect(ctx).not.toContain("History of src/b.ts:");
+    expect(ctx).toContain("History of src/a.ts (open one: `crank-mem get <id>`):");
+    expect(ctx).not.toContain("History of src/b.ts");
     expect(Buffer.byteLength(ctx)).toBeLessThanOrEqual(1536);
   });
 });
@@ -107,7 +107,9 @@ describe("post-read stale rows", () => {
     seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
     setMtime(path.join(root, "src/a.ts"), seedMs - HOUR);
     const ctx = context(run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)));
-    expect(ctx).toMatch(/^History of src\/a\.ts:\n#\d+ \S+ discovery Lock files live in \.crank$/);
+    expect(ctx).toMatch(
+      /^History of src\/a\.ts \(open one: `crank-mem get <id>`\):\n#\d+ \S+ discovery Lock files live in \.crank$/,
+    );
   });
 });
 
@@ -117,15 +119,15 @@ describe("post-read once per agent per session", () => {
     const env = { CRANK_HOME: makeCrankHome() };
     const file = path.join(root, "src/a.ts");
     expect(context(run(root, claudePostRead(root, file, TRANSCRIPT), env))).toStartWith(
-      "History of src/a.ts:",
+      "History of src/a.ts (open one: `crank-mem get <id>`):",
     );
     expect(run(root, claudePostRead(root, file, TRANSCRIPT), env).stdout).toBe("");
     expect(context(run(root, claudePostRead(root, file, TRANSCRIPT, "a1b2"), env))).toStartWith(
-      "History of src/a.ts:",
+      "History of src/a.ts (open one: `crank-mem get <id>`):",
     );
     const other = "/u/.claude/projects/-proj/7c2e9f14.jsonl";
     expect(context(run(root, claudePostRead(root, file, other), env))).toStartWith(
-      "History of src/a.ts:",
+      "History of src/a.ts (open one: `crank-mem get <id>`):",
     );
   });
 });
@@ -136,11 +138,11 @@ describe("post-read change tag", () => {
     const file = path.join(root, "src/a.ts");
     setMtime(file, seedMs + HOUR);
     expect(context(run(root, claudePostRead(root, file, TRANSCRIPT)))).toStartWith(
-      "History of src/a.ts: [file changed since]\n#",
+      "History of src/a.ts (open one: `crank-mem get <id>`): [file changed since]\n#",
     );
     setMtime(file, seedMs - HOUR);
     expect(context(run(root, claudePostRead(root, file, TRANSCRIPT)))).toStartWith(
-      "History of src/a.ts:\n#",
+      "History of src/a.ts (open one: `crank-mem get <id>`):\n#",
     );
     seedMemory(root, [{ title: "Gone", filesRead: ["src/gone.ts"] }]);
     expect(run(root, claudePostBash(root, "cat src/gone.ts", TRANSCRIPT)).stdout).toBe("");

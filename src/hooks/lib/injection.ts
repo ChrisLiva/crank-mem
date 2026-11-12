@@ -517,7 +517,8 @@ function recallSections(
   }
   // Newest first, so the cap drops the oldest whole lines.
   const lines = recent.map((line) => ({ id: line.id, text: formatLine(line) }));
-  const section = () => ["## Recent memory", ...lines.map((l) => l.text)].join("\n");
+  const section = () =>
+    ["## Recent memory (open one: `crank-mem get <id>`)", ...lines.map((l) => l.text)].join("\n");
   while (lines.length && bytes(section()) > RECENT_MEMORY_MAX_BYTES) lines.pop();
   if (lines.length && fit(section())) shown.recentIds = lines.map((l) => l.id);
   return shown;

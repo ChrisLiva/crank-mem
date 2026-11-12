@@ -487,7 +487,8 @@ describe("digests running (black-box)", () => {
   test("next steps come from the newest digest, only when short and not none", () => {
     const { root, home } = memoryProject(true);
     seedMemory(root, titled(2), { nextSteps: "Wire the daemon." });
-    expect(injectIn(root, home)).toContain(
+    const ctx = injectIn(root, home);
+    expect(sectionOf(ctx, "## Next steps (last digested session)\n")).toBe(
       "## Next steps (last digested session)\nWire the daemon.",
     );
     // A spool entry for this project means its last session is not digested yet.
@@ -519,7 +520,10 @@ describe("digests running (black-box)", () => {
     expect(count(before, `${CODE_BULLET}\n${pointer}\n- Memory is not proof`)).toBe(1);
 
     seedMemory(root, titled(60));
-    const section = sectionOf(injectIn(root, home), "## Recent memory\n")!;
+    const section = sectionOf(
+      injectIn(root, home),
+      "## Recent memory (open one: `crank-mem get <id>`)\n",
+    )!;
     expect(Buffer.byteLength(section, "utf-8")).toBeLessThanOrEqual(1536);
     const opened = openMemory(memoryPath(root), "read");
     if (opened.status !== "open") throw new Error(opened.status);
@@ -539,6 +543,9 @@ describe("digests running (black-box)", () => {
     seedMemory(root, titled(3));
     const ctx = injectIn(root, home, codexSessionStart(root));
     expect(count(ctx, RECALL_BULLET)).toBe(1);
+    const section = sectionOf(ctx, "## Recent memory (open one: `crank-mem get <id>`)\n");
+    expect(section).toBeDefined();
+    expect(section!.split("\n").slice(1)).toHaveLength(3);
   });
 
   test("recent memory leaves out a stale row", () => {
@@ -548,7 +555,10 @@ describe("digests running (black-box)", () => {
       { title: "Lock files live in .crank" },
     ]) as [number];
     seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
-    const section = sectionOf(injectIn(root, home), "## Recent memory\n")!;
+    const section = sectionOf(
+      injectIn(root, home),
+      "## Recent memory (open one: `crank-mem get <id>`)\n",
+    )!;
     expect(section).toMatch(/\n#\d+ \S+ discovery Lock files live in \.crank(\n|$)/);
     expect(section).not.toContain("Lock retry is two seconds");
   });
