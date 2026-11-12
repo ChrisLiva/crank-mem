@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readJsonObject } from "../hooks/lib/config.ts";
 import { crankHome } from "../hooks/lib/user-state.ts";
 
 /** Absolute path to the running crank-mem copy (repo root), symlinks resolved. */
@@ -13,12 +14,8 @@ export const CURRENT_LINK = "current";
 
 /** The version in `<root>/package.json`, "0.0.0" on any read or parse failure. */
 export function versionAt(root: string): string {
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf-8"));
-    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
+  const version = readJsonObject(path.join(root, "package.json"))?.version;
+  return typeof version === "string" ? version : "0.0.0";
 }
 
 /** Version of the running copy, from package.json. */

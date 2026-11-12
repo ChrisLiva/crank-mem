@@ -9,6 +9,16 @@ export type Obj = Record<string, unknown>;
 export const isObj = (v: unknown): v is Obj =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** The JSON object in `file`; null when it is missing, unparsable or not an object (arrays included). */
+export function readJsonObject(file: string): Obj | null {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf-8"));
+    return isObj(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export const errorMessage = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
 
@@ -155,14 +165,7 @@ function carryUnknown(config: CrankConfig, raw: Record<string, unknown>): void {
 }
 
 function loadDigest(crankDir: string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(
-      fs.readFileSync(path.join(crankDir, LOCAL_CONFIG_FILE), "utf-8"),
-    );
-    return isObj(parsed) && parsed.digest === true;
-  } catch {
-    return false;
-  }
+  return readJsonObject(path.join(crankDir, LOCAL_CONFIG_FILE))?.digest === true;
 }
 
 export function saveConfig(crankDir: string, config: CrankConfig): void {

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
-import * as fs from "node:fs";
 import * as path from "node:path";
+import { readJsonObject } from "../hooks/lib/config.ts";
 import { crankHome, ensureCrankHome, writeJsonAtomic } from "../hooks/lib/user-state.ts";
 import { parseArgs, positive, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
@@ -29,12 +29,8 @@ function portFrom(value: string | boolean | undefined): number | null {
 /** The stored token, or a fresh one written at mode 0600 when the file is missing or bad. */
 function sessionToken(): string {
   const file = path.join(crankHome(), TOKEN_FILE);
-  try {
-    const stored = JSON.parse(fs.readFileSync(file, "utf-8"))?.token;
-    if (typeof stored === "string" && TOKEN.test(stored)) return stored;
-  } catch {
-    // A missing or unparsable file gets a fresh token below.
-  }
+  const stored = readJsonObject(file)?.token;
+  if (typeof stored === "string" && TOKEN.test(stored)) return stored;
   const token = crypto.randomBytes(32).toString("hex");
   ensureCrankHome();
   writeJsonAtomic(file, { token }, { mode: 0o600 });

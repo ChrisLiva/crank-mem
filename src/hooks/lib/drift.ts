@@ -1,6 +1,5 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
-import type { CrankConfig } from "./config.ts";
+import { readJsonObject, type CrankConfig } from "./config.ts";
 
 // Vendored-hook drift: the hooks under .crank/hooks/ are a copy of the
 // src/hooks/ of the crank-mem that installed them (a clone or an installed
@@ -23,13 +22,7 @@ import type { CrankConfig } from "./config.ts";
  */
 export function driftNote(config: CrankConfig): string | null {
   if (!config.clone_root) return null;
-  let toolVersion: unknown;
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(config.clone_root, "package.json"), "utf-8"));
-    toolVersion = pkg?.version;
-  } catch {
-    return null;
-  }
+  const toolVersion = readJsonObject(path.join(config.clone_root, "package.json"))?.version;
   if (typeof toolVersion !== "string" || !toolVersion) return null;
   if (toolVersion === config.vendored_version) return null;
   return (

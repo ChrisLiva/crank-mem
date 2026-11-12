@@ -12,8 +12,8 @@ import {
   CONFIG_FILE,
   CRANK_DIR,
   errorMessage,
-  isObj,
   loadConfig,
+  readJsonObject,
   saveConfig,
 } from "../hooks/lib/config.ts";
 import { CLI_LOCK_BUDGET_MS, withLock } from "../hooks/lib/lock.ts";
@@ -120,12 +120,7 @@ function scanLagging(root: string, crankDir: string): void {
  * INDEX_VERSION.
  */
 function indexVersion(crankDir: string): unknown {
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(crankDir, INDEX_FILE), "utf-8"));
-    return isObj(parsed) ? parsed.version : undefined;
-  } catch {
-    return undefined;
-  }
+  return readJsonObject(path.join(crankDir, INDEX_FILE))?.version;
 }
 
 /** Repairs every registered project in registry order; 1 when any repair failed. */
@@ -181,10 +176,6 @@ function repairSync(root: string, crankDir: string): boolean {
 
 /** Whether config.json as written holds a `codex` key; a read or parse failure counts as none. */
 function rawHasCodexKey(file: string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf-8"));
-    return typeof parsed === "object" && parsed !== null && "codex" in parsed;
-  } catch {
-    return false;
-  }
+  const parsed = readJsonObject(file);
+  return parsed !== null && "codex" in parsed;
 }

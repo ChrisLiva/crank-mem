@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { readJsonObject } from "./config.ts";
 
 // Per-user state under <crank home>: $CRANK_HOME when set, otherwise ~/.crank.
 
@@ -66,13 +67,9 @@ export function writeJsonAtomic(file: string, value: unknown, opts: { mode?: num
 
 /** The recorded reason digests stopped, or null when none is recorded or the file is unreadable. */
 export function readStopState(): StopState | null {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(crankHome(), STOP_FILE), "utf-8"));
-    if (parsed?.reason !== "credential" && parsed?.reason !== "login") return null;
-    return parsed as StopState;
-  } catch {
-    return null;
-  }
+  const parsed = readJsonObject(path.join(crankHome(), STOP_FILE));
+  if (parsed?.reason !== "credential" && parsed?.reason !== "login") return null;
+  return parsed as StopState;
 }
 
 export function writeStopState(state: StopState): void {

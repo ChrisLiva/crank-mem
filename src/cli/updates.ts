@@ -1,6 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CONFIG_FILE, CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
+import {
+  CONFIG_FILE,
+  CRANK_DIR,
+  errorMessage,
+  isObj,
+  loadConfig,
+  readJsonObject,
+} from "../hooks/lib/config.ts";
 import { registeredRoots } from "../hooks/lib/registry.ts";
 import { crankHome, writeJsonAtomic } from "../hooks/lib/user-state.ts";
 import { cliVersion, installedCopy, newer, releaseBase } from "./version.ts";
@@ -27,8 +34,8 @@ function updateFile(): string {
 
 /** A `{ version, tag, releasedAt }` of strings, else null. */
 function asRelease(value: unknown): Release | null {
-  if (typeof value !== "object" || value === null) return null;
-  const { version, tag, releasedAt } = value as Record<string, unknown>;
+  if (!isObj(value)) return null;
+  const { version, tag, releasedAt } = value;
   return typeof version === "string" && typeof tag === "string" && typeof releasedAt === "string"
     ? { version, tag, releasedAt }
     : null;
@@ -36,13 +43,7 @@ function asRelease(value: unknown): Release | null {
 
 /** The recorded state; each missing or malformed field reads as its default. */
 export function readUpdateState(): UpdateState {
-  let raw: Record<string, unknown> = {};
-  try {
-    const parsed = JSON.parse(fs.readFileSync(updateFile(), "utf-8"));
-    if (typeof parsed === "object" && parsed !== null) raw = parsed;
-  } catch {
-    /* missing or unparsable: every field reads as its default */
-  }
+  const raw = readJsonObject(updateFile()) ?? {};
   return {
     checkDaily: typeof raw.checkDaily === "boolean" ? raw.checkDaily : true,
     auto: typeof raw.auto === "boolean" ? raw.auto : false,
