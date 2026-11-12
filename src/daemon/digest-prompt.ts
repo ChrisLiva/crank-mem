@@ -6,7 +6,6 @@ import {
   type ObservationType,
   type ProposalKind,
 } from "../hooks/lib/wire.ts";
-import { isObj } from "../hooks/lib/config.ts";
 import type { ModelRequest } from "./gateway.ts";
 
 export type Digest = {
@@ -117,40 +116,6 @@ const SCHEMA = {
   },
 };
 
-const isStrings = (v: unknown): v is string[] =>
-  Array.isArray(v) && v.every((s) => typeof s === "string");
-
-function isObservation(v: unknown): boolean {
-  return (
-    isObj(v) &&
-    OBSERVATION_TYPES.includes(v.type as ObservationType) &&
-    typeof v.title === "string" &&
-    typeof v.narrative === "string" &&
-    isStrings(v.facts) &&
-    isStrings(v.files_read) &&
-    isStrings(v.files_modified)
-  );
-}
-
-const isProposal = (v: unknown): boolean =>
-  isObj(v) && PROPOSAL_KINDS.includes(v.kind as ProposalKind) && typeof v.bullet === "string";
-
-const isStaleFlag = (v: unknown): boolean =>
-  isObj(v) && Number.isInteger(v.id) && typeof v.reason === "string";
-
-function validate(value: unknown): value is Digest {
-  if (
-    !isObj(value) ||
-    !Array.isArray(value.observations) ||
-    !value.observations.every(isObservation)
-  )
-    return false;
-  if (!Array.isArray(value.proposals) || !value.proposals.every(isProposal)) return false;
-  if (!Array.isArray(value.stale) || !value.stale.every(isStaleFlag)) return false;
-  const summary = value.summary;
-  return isObj(summary) && SUMMARY_KEYS.every((key) => typeof summary[key] === "string");
-}
-
 export const oneLine = (text: string) => text.replace(/\s+/g, " ");
 
 /**
@@ -177,6 +142,5 @@ export function digestRequest(
     system: SYSTEM,
     input: prior + cerebrum + existing + "[TRANSCRIPT]\n" + delta,
     schema: SCHEMA,
-    validate,
   };
 }

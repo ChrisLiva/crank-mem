@@ -29,7 +29,7 @@ const QUOTING = {
 };
 
 describe("classify", () => {
-  const { validate } = digestRequest("D", null, { cerebrum: null, existing: [] });
+  const { schema } = digestRequest("D", null, { cerebrum: null, existing: [] });
 
   test.each([
     [
@@ -76,6 +76,6 @@ describe("classify", () => {
       { kind: "retry" },
     ],
   ] as const)("%s", (_, code, lines, expected) => {
-    expect(classify({ code, stdout: lines.join("\n") + "\n" }, validate)).toMatchObject(expected);
+    expect(classify({ code, stdout: lines.join("\n") + "\n" }, schema)).toMatchObject(expected);
   });
 });

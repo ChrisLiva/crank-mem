@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { digestRequest, type Digest } from "../src/daemon/digest-prompt.ts";
+import { matchesSchema } from "../src/daemon/gateway.ts";
 import { EMBED_MODEL } from "../src/daemon/embedder.ts";
 import { redact } from "../src/daemon/redact.ts";
 import { memoryPath, openMemory, type Position } from "../src/hooks/lib/memory.ts";
@@ -580,30 +581,40 @@ describe("digestRequest", () => {
     digestRequest(delta, previous, { cerebrum: null, existing: [] });
 
   test("validate accepts the sample and rejects a missing field, an unknown type and a non-array", () => {
-    const { validate } = req("D");
-    expect(validate(SAMPLE_DIGEST)).toBe(true);
+    const { schema } = req("D");
+    expect(matchesSchema(schema, SAMPLE_DIGEST)).toBe(true);
     const { learned: _, ...summary } = SAMPLE_DIGEST.summary;
-    expect(validate({ ...SAMPLE_DIGEST, summary })).toBe(false);
+    expect(matchesSchema(schema, { ...SAMPLE_DIGEST, summary })).toBe(false);
     const [first, ...others] = SAMPLE_DIGEST.observations;
     expect(
-      validate({ ...SAMPLE_DIGEST, observations: [{ ...first!, type: "security" }, ...others] }),
+      matchesSchema(schema, {
+        ...SAMPLE_DIGEST,
+        observations: [{ ...first!, type: "security" }, ...others],
+      }),
     ).toBe(false);
     expect(
-      validate({ ...SAMPLE_DIGEST, observations: [{ ...first!, facts: "x" }, ...others] }),
+      matchesSchema(schema, {
+        ...SAMPLE_DIGEST,
+        observations: [{ ...first!, facts: "x" }, ...others],
+      }),
     ).toBe(false);
-    expect(validate(undefined)).toBe(false);
+    expect(matchesSchema(schema, undefined)).toBe(false);
   });
 
   test("validate rejects an output that misses either array or breaks its item shape", () => {
-    const { validate } = req("D");
+    const { schema } = req("D");
     const { proposals: _p, ...noProposals } = SAMPLE_DIGEST;
     const { stale: _s, ...noStale } = SAMPLE_DIGEST;
-    expect(validate(noProposals)).toBe(false);
-    expect(validate(noStale)).toBe(false);
-    expect(validate({ ...SAMPLE_DIGEST, stale: [{ id: 1.5, reason: "r" }] })).toBe(false);
-    expect(validate({ ...SAMPLE_DIGEST, proposals: [{ kind: "other", bullet: "b" }] })).toBe(false);
+    expect(matchesSchema(schema, noProposals)).toBe(false);
+    expect(matchesSchema(schema, noStale)).toBe(false);
+    expect(matchesSchema(schema, { ...SAMPLE_DIGEST, stale: [{ id: 1.5, reason: "r" }] })).toBe(
+      false,
+    );
     expect(
-      validate({
+      matchesSchema(schema, { ...SAMPLE_DIGEST, proposals: [{ kind: "other", bullet: "b" }] }),
+    ).toBe(false);
+    expect(
+      matchesSchema(schema, {
         ...SAMPLE_DIGEST,
         stale: [{ id: 1, reason: "r" }],
         proposals: [{ kind: "memory", bullet: "b" }],

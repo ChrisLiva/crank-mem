@@ -7,12 +7,46 @@ import { crankHome } from "../hooks/lib/user-state.ts";
 // The one door to the model: `claude -p` on the user's own Claude login,
 // with a fixed call shape and an allowlisted environment (ADR 0008).
 
-export type ModelRequest<T> = {
-  system: string;
-  input: string;
-  schema: object;
-  validate: (value: unknown) => value is T;
+type Schema = {
+  type?: string;
+  enum?: readonly unknown[];
+  required?: readonly string[];
+  properties?: Record<string, Schema>;
+  items?: Schema;
+  additionalProperties?: boolean;
 };
+
+/** `T` is the shape `schema` describes: `classify` checks the output against `schema` before typing it as `T`. */
+export type ModelRequest<T> = { system: string; input: string; schema: Schema };
+
+/** Whether `value` fits `schema`, over the keywords the request schemas use; extra object keys pass. */
+export function matchesSchema<T>(schema: Schema, value: unknown): value is T {
+  if (schema.enum !== undefined && !schema.enum.includes(value)) return false;
+  switch (schema.type) {
+    case "object": {
+      if (!isObj(value)) return false;
+      const properties = Object.entries(schema.properties ?? {});
+      return (
+        (schema.required ?? []).every((key) => Object.hasOwn(value, key)) &&
+        properties.every(
+          ([key, sub]) => !Object.hasOwn(value, key) || matchesSchema(sub, value[key]),
+        )
+      );
+    }
+    case "array": {
+      const items = schema.items;
+      return (
+        Array.isArray(value) && (items === undefined || value.every((v) => matchesSchema(items, v)))
+      );
+    }
+    case "string":
+      return typeof value === "string";
+    case "integer":
+      return Number.isInteger(value);
+    default:
+      return true;
+  }
+}
 
 export type ModelResult<T> =
   | { kind: "ok"; output: T; model: string; costUsd: number }
@@ -119,7 +153,7 @@ function lastResult(stdout: string): Obj | null {
  * The fixed call shape (ADR 0008). With a `project`, the run gets read-only tools over it, room for
  * their turns, and deny rules for the sensitive-file filter (ADR 0011).
  */
-function callArgs(system: string, schema: object, project: string | null): string[] {
+function callArgs(system: string, schema: Schema, project: string | null): string[] {
   const settings =
     project === null
       ? { disableAllHooks: true }
@@ -194,7 +228,7 @@ export async function askClaude<T>(
     true,
   );
   if (run.failure) return run.failure;
-  return classify(run, req.validate);
+  return classify<T>(run, req.schema);
 }
 
 /** A `-p` run that failed on the login: "Not logged in" in failure text, or HTTP 401/403. */
@@ -218,10 +252,7 @@ function loginStop(run: Pick<Run, "stdout">, result: Obj | null): ModelResult<ne
 }
 
 /** Settle a finished `-p` run. Credential failures also read `subtype: "success"` (exp/c1), so `subtype` alone decides nothing. */
-export function classify<T>(
-  run: Pick<Run, "code" | "stdout">,
-  validate: (value: unknown) => value is T,
-): ModelResult<T> {
+export function classify<T>(run: Pick<Run, "code" | "stdout">, schema: Schema): ModelResult<T> {
   const result = lastResult(run.stdout);
   const modelUsage = isObj(result?.modelUsage) ? result.modelUsage : {};
   const providers = Object.values(modelUsage)
@@ -250,7 +281,7 @@ export function classify<T>(
   if (result.structured_output === undefined || result.structured_output === null) {
     return { kind: "rejected", detail: "claude -p returned no structured output" };
   }
-  if (!validate(result.structured_output))
+  if (!matchesSchema<T>(schema, result.structured_output))
     return { kind: "rejected", detail: "claude -p structured output failed the schema" };
   if (providers.length === 0)
     return { kind: "stopped", reason: "credential", detail: "claude -p result named no provider" };
