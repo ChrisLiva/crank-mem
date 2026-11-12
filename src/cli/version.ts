@@ -36,6 +36,16 @@ export function installedCopy(): boolean {
   }
 }
 
+/**
+ * The version in use: the `current` copy's for an installed copy, which a long-running
+ * process such as the dashboard may have been updated past, else the running clone's.
+ */
+export function currentVersion(): string {
+  if (!installedCopy()) return cliVersion();
+  const version = readJsonObject(path.join(crankHome(), CURRENT_LINK, "package.json"))?.version;
+  return typeof version === "string" ? version : cliVersion();
+}
+
 /** The root to record and start from: the stable `current` link for an installed copy, else the clone. */
 export function toolRoot(): string {
   return installedCopy() ? path.join(crankHome(), CURRENT_LINK) : REPO_ROOT;

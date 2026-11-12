@@ -1234,6 +1234,17 @@ describe("updates", () => {
     }
   }, 20_000);
 
+  test("a running dashboard answers the version current moved to as installed", async () => {
+    const { home, dash } = await installedDashboard("http://127.0.0.1:9", [], {
+      latest: { version: "1.1.0", tag: "v1.1.0", releasedAt: "2026-11-09T00:00:00Z" },
+      checkedAtMs: Date.now(),
+    });
+    const status = async () => (await (await dash.get("/api/updates")).json()) as UpdateStatus;
+    expect([(await status()).installed, (await status()).available]).toEqual(["1.0.0", true]);
+    makeInstalledCopy(home, "1.1.0");
+    expect([(await status()).installed, (await status()).available]).toEqual(["1.1.0", false]);
+  }, 20_000);
+
   test("the dashboard startup prints the update notice once", async () => {
     const server = await startReleaseServer(latestRelease("9.9.9"));
     try {

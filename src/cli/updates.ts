@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { CRANK_DIR, errorMessage, isObj, loadConfig, readJsonObject } from "../hooks/lib/config.ts";
 import { installedRoots } from "../hooks/lib/registry.ts";
 import { crankHome, writeJsonAtomic } from "../hooks/lib/user-state.ts";
-import { cliVersion, installedCopy, newer, releaseBase } from "./version.ts";
+import { cliVersion, currentVersion, installedCopy, newer, releaseBase } from "./version.ts";
 
 // The release check's state in `<crank home>/update.json`: the user's settings
 // (`checkDaily`, `auto`) and the last check's result.
@@ -104,14 +104,14 @@ export function laggingProjects(
 export function updateAvailable(
   state: UpdateState,
 ): state is UpdateState & { latest: NonNullable<UpdateState["latest"]> } {
-  return installedCopy() && state.latest !== null && newer(state.latest.version, cliVersion());
+  return installedCopy() && state.latest !== null && newer(state.latest.version, currentVersion());
 }
 
 /** The line a human-run command prints when an update is available, else null. */
 function updateNotice(): string | null {
   const state = readUpdateState();
   if (!updateAvailable(state)) return null;
-  return `crank-mem ${state.latest.version} is available (installed ${cliVersion()}) — run \`crank-mem self-update\`.`;
+  return `crank-mem ${state.latest.version} is available (installed ${currentVersion()}) — run \`crank-mem self-update\`.`;
 }
 
 export function printUpdateNotice(): void {

@@ -31,7 +31,7 @@ import {
   updateAvailable,
 } from "./updates.ts";
 import { activityDays, usageMetrics, windowStart } from "./usage-metrics.ts";
-import { cliVersion, installedCopy, releaseBase } from "./version.ts";
+import { currentVersion, installedCopy, releaseBase } from "./version.ts";
 
 // The dashboard's HTTP server: loopback only, and every request carries the
 // session cookie, which the URL's `?token=` trades for once. The checks run
@@ -367,7 +367,7 @@ function updateStatus(): UpdateStatus {
     notesUrl: `${releaseBase()}/tag/${state.latest.tag}`,
   };
   return {
-    installed: cliVersion(),
+    installed: currentVersion(),
     installedCopy: installedCopy(),
     latest,
     available: updateAvailable(state),
@@ -375,7 +375,7 @@ function updateStatus(): UpdateStatus {
     error: state.error,
     auto: state.auto,
     checkDaily: state.checkDaily,
-    behind: laggingProjects(cliVersion()),
+    behind: laggingProjects(currentVersion()),
   };
 }
 
