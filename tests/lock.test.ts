@@ -42,9 +42,9 @@ describe("withLock", () => {
   });
 
   test("steals a stale lock (old timestamp)", () => {
-    // A dead pid with an old timestamp, and a live pid past the 10-minute pid-reuse guard.
+    // Another host's lock past 10 s, and a live pid past the 10-minute pid-reuse guard.
     for (const body of [
-      { pid: 99999999, hostname: os.hostname(), acquiredAt: Date.now() - 60_000 },
+      { pid: 99999999, hostname: "elsewhere", acquiredAt: Date.now() - 60_000 },
       { pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() - 11 * 60_000 },
     ]) {
       const dir = tmpDir();
