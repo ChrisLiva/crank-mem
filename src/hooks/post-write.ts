@@ -35,47 +35,59 @@ interface WriteScan {
   skip: { reason: SkipReason; dir?: string } | null;
 }
 
+type PathClass = { relPath: string } | { skip: NonNullable<WriteScan["skip"]> };
+
+function classifyPath(root: string, cwd: string, p: string): PathClass {
+  // Relative tool paths are relative to the session cwd, which may be a
+  // subdirectory of the project root.
+  const r = repoRelative(root, cwd, p);
+  // A directory is enough to answer "why wasn't my file indexed?", and no
+  // filename means no sensitive basename can reach the log.
+  if (!r) {
+    return {
+      skip: {
+        reason: "outside-root",
+        dir: path.dirname(path.isAbsolute(p) ? p : path.resolve(cwd, p)),
+      },
+    };
+  }
+  // Writes under .crank/ (cerebrum.md above all) are never indexable, so
+  // resolving them costs an index lock to learn nothing. Answer here instead.
+  if (r === CRANK_DIR || r.startsWith(`${CRANK_DIR}/`)) {
+    return { skip: { reason: "crank-internal", dir: path.dirname(r) } };
+  }
+  return { relPath: r };
+}
+
+function claudeWriteOps(input: Record<string, unknown>, root: string, cwd: string): WriteScan {
+  const p = input.file_path;
+  if (typeof p !== "string") return { ops: [], skip: { reason: "no-path" } };
+  const c = classifyPath(root, cwd, p);
+  if ("skip" in c) return { ops: [], skip: c.skip };
+  return { ops: [{ relPath: c.relPath, deleted: false }], skip: null };
+}
+
+function patchWriteOps(cmd: unknown, root: string, cwd: string): WriteScan {
+  if (typeof cmd !== "string") return { ops: [], skip: { reason: "no-path" } };
+  const out: WriteOp[] = [];
+  let skip: WriteScan["skip"] = null;
+  for (const op of parseApplyPatch(cmd)) {
+    const c = classifyPath(root, cwd, op.path);
+    // A patch can touch several files; one unindexable path among indexable
+    // ones is not a skip, so only the all-empty case reports a reason.
+    if ("skip" in c) skip ??= c.skip;
+    else out.push({ relPath: c.relPath, deleted: op.deleted });
+  }
+  return { ops: out, skip: out.length ? null : (skip ?? { reason: "no-path" }) };
+}
+
 function toWriteOps(payload: HookPayload, root: string, cwd: string): WriteScan {
   const toolName = payload.tool_name;
   const toolInput = payload.tool_input ?? {};
-
-  // Relative tool paths are relative to the session cwd, which may be a
-  // subdirectory of the project root.
-  const rel = (p: string) => repoRelative(root, cwd, p);
-
-  // Writes under .crank/ (cerebrum.md above all) are never indexable, so
-  // resolving them costs an index lock to learn nothing. Answer here instead.
-  const internal = (r: string): boolean => r === CRANK_DIR || r.startsWith(`${CRANK_DIR}/`);
-
-  // A directory is enough to answer "why wasn't my file indexed?", and no
-  // filename means no sensitive basename can reach the log.
-  const dirOf = (p: string): string => path.dirname(path.isAbsolute(p) ? p : path.resolve(cwd, p));
-
   if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") {
-    const p = toolInput.file_path;
-    if (typeof p !== "string") return { ops: [], skip: { reason: "no-path" } };
-    const r = rel(p);
-    if (!r) return { ops: [], skip: { reason: "outside-root", dir: dirOf(p) } };
-    if (internal(r)) return { ops: [], skip: { reason: "crank-internal", dir: path.dirname(r) } };
-    return { ops: [{ relPath: r, deleted: false }], skip: null };
+    return claudeWriteOps(toolInput, root, cwd);
   }
-
-  if (toolName === "apply_patch") {
-    const cmd = toolInput.command;
-    if (typeof cmd !== "string") return { ops: [], skip: { reason: "no-path" } };
-    const out: WriteOp[] = [];
-    let skip: WriteScan["skip"] = null;
-    for (const op of parseApplyPatch(cmd)) {
-      const r = rel(op.path);
-      // A patch can touch several files; one unindexable path among indexable
-      // ones is not a skip, so only the all-empty case reports a reason.
-      if (!r) skip ??= { reason: "outside-root", dir: dirOf(op.path) };
-      else if (internal(r)) skip ??= { reason: "crank-internal", dir: path.dirname(r) };
-      else out.push({ relPath: r, deleted: op.deleted });
-    }
-    return { ops: out, skip: out.length ? null : (skip ?? { reason: "no-path" }) };
-  }
-
+  if (toolName === "apply_patch") return patchWriteOps(toolInput.command, root, cwd);
   return { ops: [], skip: { reason: "unhandled-tool" } };
 }
 

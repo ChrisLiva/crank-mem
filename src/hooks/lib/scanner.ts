@@ -247,58 +247,75 @@ export function refreshIndex(
   const deadline = Date.now() + budgetMs;
   const walk = walkProject(rootDir, config, updateActivity(rootDir, config, index));
   const walked = walk.files;
-  const walkedSet = new Set(walked);
   let changed = 0,
     added = 0,
-    removed = 0,
     partial = false;
-
   // Deletions are cheap — always process them all.
-  for (const rel of Object.keys(index.files)) {
-    if (!walkedSet.has(rel)) {
-      delete index.files[rel];
-      removed++;
-    }
-  }
+  let removed = dropMissing(index, new Set(walked));
 
   for (const rel of walked) {
     if (Date.now() >= deadline) {
       partial = true;
       break;
     }
-    const existing = index.files[rel];
-    const abs = path.join(rootDir, rel);
-    if (existing) {
-      let stat: fs.Stats;
-      try {
-        stat = fs.statSync(abs);
-      } catch {
-        continue;
-      }
-      if (stat.size === existing.size && stat.mtimeMs === existing.mtimeMs) continue;
-      const entry = indexFile(rootDir, rel, config);
-      if (entry) {
-        index.files[rel] = keepPin(entry, existing);
-        changed++;
-      } else {
-        // No longer indexable (grew past the size cap, became unreadable) —
-        // drop the stale entry rather than carry it forever.
-        delete index.files[rel];
-        removed++;
-      }
-    } else {
-      const entry = indexFile(rootDir, rel, config);
-      if (entry) {
-        index.files[rel] = entry;
-        added++;
-      }
-    }
+    const outcome = refreshOne(rootDir, rel, config, index);
+    if (outcome === "changed") changed++;
+    else if (outcome === "added") added++;
+    else if (outcome === "removed") removed++;
   }
 
+  stampMeta(index, partial, walk);
+  return { index, changed, added, removed, partial };
+}
+
+/** Drops every indexed file the walk no longer lists; returns how many. */
+function dropMissing(index: AnatomyIndex, walkedSet: Set<string>): number {
+  let removed = 0;
+  for (const rel of Object.keys(index.files)) {
+    if (!walkedSet.has(rel)) {
+      delete index.files[rel];
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/** Re-indexes one walked file when its size or mtime moved, or adds it when new. */
+function refreshOne(
+  rootDir: string,
+  rel: string,
+  config: CrankConfig,
+  index: AnatomyIndex,
+): "changed" | "added" | "removed" | null {
+  const existing = index.files[rel];
+  if (!existing) {
+    const entry = indexFile(rootDir, rel, config);
+    if (!entry) return null;
+    index.files[rel] = entry;
+    return "added";
+  }
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(path.join(rootDir, rel));
+  } catch {
+    return null;
+  }
+  if (stat.size === existing.size && stat.mtimeMs === existing.mtimeMs) return null;
+  const entry = indexFile(rootDir, rel, config);
+  if (entry) {
+    index.files[rel] = keepPin(entry, existing);
+    return "changed";
+  }
+  // No longer indexable (grew past the size cap, became unreadable) —
+  // drop the stale entry rather than carry it forever.
+  delete index.files[rel];
+  return "removed";
+}
+
+function stampMeta(index: AnatomyIndex, partial: boolean, walk: Walk): void {
   index.meta.lastScanned = new Date().toISOString();
   index.meta.fileCount = Object.keys(index.files).length;
   if (partial) index.meta.partial = true;
   else delete index.meta.partial;
   recordWalk(index, walk);
-  return { index, changed, added, removed, partial };
 }
