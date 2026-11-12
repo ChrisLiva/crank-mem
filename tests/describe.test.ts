@@ -87,6 +87,14 @@ describe("describeFile extraction rules", () => {
     expect(describeFile(tmpFile("c.cpp", src))).toBe("Slices meshes into layers.");
   });
 
+  test("code after */ on the comment's line ends the comment scan", () => {
+    expect(
+      describeFile(
+        tmpFile("a.ts", "/* Parses widgets. */ const x = 1;\nexport function widget() {}\n"),
+      ),
+    ).toBe("Defines widget");
+  });
+
   test("separator and copyright line comments are skipped", () => {
     const src =
       '/////////////////\n// Copyright 2021 Acme\n/////////////////\n\n// Edge collapse queue.\n#include "e.h"\n';
