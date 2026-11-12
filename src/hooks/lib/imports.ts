@@ -16,6 +16,18 @@ const TS_JS_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", 
 const TS_JS_SPECIFIER =
   /\bfrom\s*["'](?<from>[^"'\n]+)["']|\bimport\s*["'](?<bare>[^"'\n]+)["']|\b(?:require|import)\s*\(\s*["'](?<call>[^"'\n]+)["']\s*\)/g;
 
+// `from <module> import <names>` (a parenthesized list may span lines) or
+// `import <modules>`, each anchored at a line start, in source order.
+const PYTHON_IMPORT =
+  /^[ \t]*(?:from[ \t]+(?<module>\.*[\w.]*)[ \t]+import[ \t]*(?:\((?<list>[^)]*)\)|(?<line>[^\n#]*))|import[ \t]+(?<modules>[^\n#]+))/gm;
+
+// A quoted path after `import` (with an optional alias), or an `import ( … )`
+// block whose lines each hold one optionally aliased path, in source order.
+const GO_IMPORT =
+  /^[ \t]*import[ \t]+(?:[\w.]+[ \t]+)?"(?<single>[^"\n]+)"|^[ \t]*import[ \t]*\((?<block>[^)]*)\)/gm;
+const GO_BLOCK_LINE = /^[ \t]*(?:[\w.]+[ \t]+)?"(?<path>[^"\n]+)"/gm;
+const GO_PACKAGE_MAX_FILES = 10;
+
 const MAX_LINKS = 50;
 
 function firstUnique(values: string[]): string[] {
@@ -44,6 +56,101 @@ function resolveTsJs(rootDir: string, fromRel: string, specifier: string): strin
   return null;
 }
 
+/** A dotted module path (slashes already) as `<p>.py`, else `<p>/__init__.py`. */
+function resolvePythonModule(rootDir: string, modulePath: string): string | null {
+  if (modulePath === "." || modulePath === ".." || modulePath.startsWith("../")) return null;
+  return (
+    [`${modulePath}.py`, `${modulePath}/__init__.py`].find((rel) => isRegularFile(rootDir, rel)) ??
+    null
+  );
+}
+
+/** Each name or module before an optional `as`, dropping comments and parentheses. */
+function pythonNames(list: string): string[] {
+  return list
+    .replace(/#[^\n]*/g, "")
+    .split(",")
+    .map((item) => item.trim().split(/\s+/)[0]!)
+    .filter((name) => /^[\w.]+$/.test(name));
+}
+
+function pythonImports(rootDir: string, importer: string, content: string): string[] {
+  const found: string[] = [];
+  for (const m of content.matchAll(PYTHON_IMPORT)) {
+    const { module, list, line, modules } = m.groups!;
+    if (modules !== undefined) {
+      for (const name of pythonNames(modules)) {
+        const rel = resolvePythonModule(rootDir, name.replaceAll(".", "/"));
+        if (rel) found.push(rel);
+      }
+      continue;
+    }
+    const dots = /^\.*/.exec(module!)![0].length;
+    const dotted = module!.slice(dots).replaceAll(".", "/");
+    const base =
+      dots === 0
+        ? dotted
+        : path.posix.join(path.posix.dirname(importer), "../".repeat(dots - 1), dotted);
+    for (const name of pythonNames(list ?? line ?? "")) {
+      const submodule = path.posix.join(base, name.replaceAll(".", "/")) + ".py";
+      const rel = isRegularFile(rootDir, submodule)
+        ? submodule
+        : resolvePythonModule(rootDir, base);
+      if (rel) found.push(rel);
+    }
+  }
+  return found;
+}
+
+/** The nearest `go.mod` at or above `importer`'s directory, read once: its directory and module path. */
+function goModule(rootDir: string, importer: string): { dir: string; module: string } | null {
+  for (let dir = path.posix.dirname(importer); ; dir = path.posix.dirname(dir)) {
+    const rel = path.posix.join(dir, "go.mod");
+    if (isRegularFile(rootDir, rel)) {
+      const text = fs.readFileSync(path.join(rootDir, rel), "utf-8");
+      const module = /^[ \t]*module[ \t]+"?(?<module>[^"\s]+)"?/m.exec(text)?.groups!.module;
+      return module ? { dir, module } : null;
+    }
+    if (dir === ".") return null;
+  }
+}
+
+function goImports(rootDir: string, importer: string, content: string): string[] {
+  const importPaths: string[] = [];
+  for (const m of content.matchAll(GO_IMPORT)) {
+    const { single, block } = m.groups!;
+    if (single !== undefined) importPaths.push(single);
+    else for (const line of block!.matchAll(GO_BLOCK_LINE)) importPaths.push(line.groups!.path!);
+  }
+  if (importPaths.length === 0) return [];
+  const mod = goModule(rootDir, importer);
+  if (!mod) return [];
+  const found: string[] = [];
+  for (const importPath of importPaths) {
+    if (importPath !== mod.module && !importPath.startsWith(`${mod.module}/`)) continue;
+    const pkgDir = path.posix.join(mod.dir, importPath.slice(mod.module.length));
+    const abs = path.join(rootDir, pkgDir);
+    if (!fs.statSync(abs, { throwIfNoEntry: false })?.isDirectory()) continue;
+    const goFiles = fs
+      .readdirSync(abs, { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.endsWith(".go") && !e.name.endsWith("_test.go"))
+      .map((e) => path.posix.join(pkgDir, e.name))
+      .sort();
+    if (goFiles.length <= GO_PACKAGE_MAX_FILES) found.push(...goFiles);
+  }
+  return found;
+}
+
+function tsJsImports(rootDir: string, importer: string, content: string): string[] {
+  const found: string[] = [];
+  for (const m of content.matchAll(TS_JS_SPECIFIER)) {
+    const { from, bare, call } = m.groups!;
+    const rel = resolveTsJs(rootDir, importer, (from ?? bare ?? call)!);
+    if (rel) found.push(rel);
+  }
+  return found;
+}
+
 /**
  * The files `relPath` imports, as repo-relative paths in source order. `{}`
  * when nothing resolves; never throws, since indexFile must not.
@@ -57,14 +164,17 @@ export function fileLinks(
   try {
     const importer = toPosix(relPath);
     if (content.length > SYMBOL_MAX_BYTES) return {};
-    if (!TS_JS_EXTENSIONS.includes(path.posix.extname(importer).toLowerCase())) return {};
-    const resolved: string[] = [];
-    for (const m of content.matchAll(TS_JS_SPECIFIER)) {
-      const { from, bare, call } = m.groups!;
-      const rel = resolveTsJs(rootDir, importer, (from ?? bare ?? call)!);
-      if (rel && rel !== importer && isIndexableName(rel, config)) resolved.push(rel);
-    }
-    const imports = firstUnique(resolved);
+    const ext = path.posix.extname(importer).toLowerCase();
+    const targets = TS_JS_EXTENSIONS.includes(ext)
+      ? tsJsImports(rootDir, importer, content)
+      : ext === ".py"
+        ? pythonImports(rootDir, importer, content)
+        : ext === ".go"
+          ? goImports(rootDir, importer, content)
+          : [];
+    const imports = firstUnique(
+      targets.filter((rel) => rel !== importer && isIndexableName(rel, config)),
+    );
     return imports.length > 0 ? { imports } : {};
   } catch {
     return {};

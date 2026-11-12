@@ -115,3 +115,95 @@ describe("TS/JS imports", () => {
     expect(lines.filter((l) => l.includes("src/a.ts") && l.includes("src/side.ts"))).toEqual([]);
   });
 });
+
+test("Python imports resolve relative and absolute modules, falling back to the package", () => {
+  const MOD_PY = [
+    "from .sib import thing",
+    "from ..top import t",
+    "from . import sub",
+    "import pkg.deep.leaf as L",
+    "from pkg.deep import (",
+    "    leaf2,",
+    "    missing,",
+    ")",
+    "import os, pkg.sib",
+    "import requests",
+    "from pkg import deep",
+    "",
+  ].join("\n");
+  const files: Record<string, string> = { "pkg/__init__.py": "", "pkg/mod.py": MOD_PY };
+  for (const rel of [
+    "pkg/sib.py",
+    "pkg/sub.py",
+    "top.py",
+    "pkg/deep/__init__.py",
+    "pkg/deep/leaf.py",
+    "pkg/deep/leaf2.py",
+  ]) {
+    files[rel] = "x = 1\n";
+  }
+  const { index } = scanIndex(files);
+  expect(index.files["pkg/mod.py"].imports).toEqual([
+    "pkg/sib.py",
+    "top.py",
+    "pkg/sub.py",
+    "pkg/deep/leaf.py",
+    "pkg/deep/leaf2.py",
+    "pkg/deep/__init__.py",
+    "pkg/__init__.py",
+  ]);
+  expect(index.files["pkg/sib.py"]).toBeDefined();
+  expect("imports" in index.files["pkg/sib.py"]).toBe(false);
+});
+
+test("Go imports link every non-test file of a module package of at most 10 files", () => {
+  const files: Record<string, string> = {
+    "go.mod": "module example.com/app\n",
+    "util/a.go": "package x\n",
+    "util/b.go": "package x\n",
+    "util/a_test.go": "package x\n",
+    "sub/go.mod": "module example.com/sub\n",
+    "sub/y/y.go": "package y\n",
+    "sub/x/x.go": 'package x\nimport "example.com/sub/y"\nimport "example.com/app/util"\n',
+    "cmd/main.go": [
+      "package main",
+      'import "example.com/app/util"',
+      "import (",
+      '    "fmt"',
+      '    t "example.com/app/ten"',
+      '    "example.com/app/big"',
+      '    "github.com/other/pkg"',
+      ")",
+      "",
+    ].join("\n"),
+  };
+  const ten = Array.from({ length: 10 }, (_, i) => `ten/f${String(i).padStart(2, "0")}.go`);
+  for (const rel of ten) files[rel] = "package x\n";
+  for (let i = 0; i <= 10; i++) files[`big/f${String(i).padStart(2, "0")}.go`] = "package x\n";
+  const { index } = scanIndex(files);
+  expect(index.files["util/a_test.go"]).toBeDefined();
+  expect(index.files["cmd/main.go"].imports).toEqual(["util/a.go", "util/b.go", ...ten]);
+  expect(index.files["sub/x/x.go"].imports).toEqual(["sub/y/y.go"]);
+});
+
+test("an unreadable go.mod costs only the importing file its imports", () => {
+  const root = makeCrankProject({
+    "go.mod": "module example.com/app\n",
+    "util/a.go": "package x\n",
+    "cmd/main.go": 'package main\nimport "example.com/app/util"\n',
+  });
+  const goMod = path.join(root, "go.mod");
+  fs.chmodSync(goMod, 0o000);
+  try {
+    const run = runCli(root, ["scan"]);
+    expect(run.status).toBe(0);
+    if (process.getuid?.() === 0) return;
+    const index = JSON.parse(
+      fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"),
+    );
+    expect(index.files["cmd/main.go"]).toBeDefined();
+    expect("imports" in index.files["cmd/main.go"]).toBe(false);
+  } finally {
+    fs.chmodSync(goMod, 0o644);
+  }
+});
