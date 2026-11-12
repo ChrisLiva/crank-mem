@@ -86,6 +86,8 @@ export type SearchQuery = {
   sinceMs: number | null;
   file: string | null;
   stale: boolean;
+  /** Files whose linked rows form the graph list: seeds' rows first, then neighbours'; both empty means no graph list. */
+  related: { seeds: string[]; neighbours: string[] };
 };
 type MemoryStats = {
   observations: number;

@@ -94,6 +94,7 @@ export async function search(args: string[]): Promise<number> {
       sinceMs,
       file: relFile,
       stale,
+      related: { seeds: [], neighbours: [] },
     });
     for (const hit of hits) console.log(formatLine(hit));
     recordUsage(project.root, cliActor(), {

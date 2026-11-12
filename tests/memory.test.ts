@@ -445,6 +445,7 @@ describe("consolidation work", () => {
       sinceMs: null,
       file: null,
       stale: false,
+      related: { seeds: [], neighbours: [] },
     };
     expect(memory.search(query).map((hit) => hit.id)).toEqual([s2]);
     expect(work.lastOkStartMs).toBe(t);
@@ -706,6 +707,7 @@ describe("search", () => {
       sinceMs: null,
       file: null,
       stale: false,
+      related: { seeds: [], neighbours: [] },
       ...over,
     };
   }
@@ -809,6 +811,67 @@ describe("search", () => {
     expect(hybrid({ file: "src/a.ts" })).toEqual([r1]);
     expect(hybrid({ limit: 2 }).length).toBe(2);
     expect(ids(memory.search(query({ text: "kiwi", type: "feature" })))).toEqual([r2]);
+  });
+
+  test("a graph list of rows linked to seed files, then neighbour files, fuses with the others", () => {
+    const memory = writable();
+    const [k1, g1, g2, g3] = seed(memory, [
+      obs({ title: "walrus tusk", narrative: "plain" }),
+      obs({
+        type: "bugfix",
+        title: "seed row",
+        narrative: "plain",
+        filesModified: ["src/seed.ts"],
+      }),
+      obs({ title: "near row", narrative: "plain", filesRead: ["src/near.ts"] }),
+      obs({ title: "both row", narrative: "plain", filesRead: ["src/seed.ts", "src/near.ts"] }),
+    ]) as [number, number, number, number];
+    const R = { seeds: ["src/seed.ts"], neighbours: ["src/near.ts"] };
+    const found = (over: Partial<SearchQuery> & { text: string }) =>
+      ids(memory.search(query(over)));
+    expect(found({ text: "walrus", related: R })).toEqual([g3, k1, g1, g2]);
+    expect(found({ text: "walrus zzzz", related: R })).toEqual([g3, k1, g1, g2]);
+    expect(found({ text: "walrus", related: R, type: "discovery" })).toEqual([g3, k1, g2]);
+    expect(found({ text: "walrus", related: R, file: "src/near.ts" })).toEqual([g3, g2]);
+    expect(found({ text: "walrus" })).toEqual([k1]);
+    memory.putVectors("m1", [{ id: k1, vector: vec(1, 0, 0) }]);
+    const near = { model: "m1", values: vec(1, 0, 0) };
+    expect(found({ text: "walrus", vector: near, related: R })).toEqual([k1, g3, g1, g2]);
+    expect(found({ text: "walrus zzzz", vector: near, related: R })).toEqual([g3, k1, g1, g2]);
+  });
+
+  test("the graph list honours since and stale", async () => {
+    const memory = writable();
+    const [a1] = seed(memory, [
+      obs({ title: "old row", narrative: "plain", filesModified: ["src/seed.ts"] }),
+    ]) as [number];
+    await sleep(2);
+    const t2 = Date.now();
+    const [a2, a3] = seed(memory, [
+      obs({ title: "new row", narrative: "plain", filesModified: ["src/seed.ts"] }),
+      obs({ title: "gone row", narrative: "plain", filesModified: ["src/seed.ts"] }),
+    ]) as [number, number];
+    memory.appendDigest(digest("flag-a3", null, P, { stale: [{ id: a3, reason: "gone" }] }));
+    expect(memory.get([a3])[0]!.stale).toBe(true);
+    const S = { seeds: ["src/seed.ts"], neighbours: [] };
+    const found = (over: Partial<SearchQuery>) =>
+      ids(memory.search(query({ text: "nomatch", related: S, ...over })));
+    expect(found({})).toEqual([a2, a1]);
+    expect(found({ sinceMs: t2 })).toEqual([a2]);
+    expect(found({ stale: true })).toEqual([a3, a2, a1]);
+    expect(found({ stale: true, sinceMs: t2 })).toEqual([a3, a2]);
+  });
+
+  test("the graph list stops at 50", () => {
+    const memory = writable();
+    seed(
+      memory,
+      Array.from({ length: 55 }, (_, i) =>
+        obs({ title: `row ${i}`, narrative: "plain", filesModified: ["src/hub.ts"] }),
+      ),
+    );
+    const hub = { seeds: ["src/hub.ts"], neighbours: [] };
+    expect(memory.search(query({ text: "nomatch", related: hub, limit: 100 })).length).toBe(50);
   });
 
   test("raw query text never parses as FTS5 syntax", () => {

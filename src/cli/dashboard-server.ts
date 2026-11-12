@@ -161,7 +161,14 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
   const body = await withReader(memoryPath(root), async (memory) => {
     if (q !== null) {
       const vector = await queryVector(memory, q);
-      const lines = memory.search({ ...filters, text: q, vector, sinceMs: null, limit: PAGE });
+      const lines = memory.search({
+        ...filters,
+        text: q,
+        vector,
+        sinceMs: null,
+        limit: PAGE,
+        related: { seeds: [], neighbours: [] },
+      });
       return { rows: lines, next: null, mode: vector !== null ? "hybrid" : "keyword" };
     }
     const page = pageOf(

@@ -24,7 +24,7 @@ import type {
 type Row = Record<string, unknown>;
 
 export const LINE_COLUMNS = "o.id, o.created_at, o.type, o.title, o.stale_at";
-const NEWEST_FIRST = "ORDER BY o.created_at DESC, o.id DESC";
+export const NEWEST_FIRST = "ORDER BY o.created_at DESC, o.id DESC";
 const UNEMBEDDED =
   "NOT EXISTS (SELECT 1 FROM observation_vectors v WHERE v.observation_id = o.id AND v.model = ?)";
 

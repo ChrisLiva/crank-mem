@@ -1,9 +1,9 @@
 import type * as sqlite from "node:sqlite";
 import type { Memory } from "./memory.ts";
-import { all, hasVectors, LINE_COLUMNS, lineFilters, toLine } from "./memory-read.ts";
+import { all, hasVectors, LINE_COLUMNS, lineFilters, NEWEST_FIRST, toLine } from "./memory-read.ts";
 import type { ObservationLine } from "./wire.ts";
 
-// Search fuses a keyword list and a vector list by reciprocal rank (k = RRF_K),
+// Search fuses a keyword list, a vector list and a graph list by reciprocal rank (k = RRF_K),
 // each list cut at LIST_DEPTH rows; equal scores go to the newest row.
 const RRF_K = 60;
 const LIST_DEPTH = 50;
@@ -46,30 +46,53 @@ export function search(
       LIST_DEPTH,
     ).map(toLine);
   };
+  const linkedTo = (paths: string[]): string =>
+    `o.id IN (SELECT observation_id FROM observation_files WHERE path IN (${paths.map(() => "?").join(", ")}))`;
+  const linked = (paths: string[], notPaths: string[]): ObservationLine[] => {
+    if (paths.length === 0) return [];
+    const exclude = notPaths.length === 0 ? "" : ` AND NOT ${linkedTo(notPaths)}`;
+    return all(
+      db,
+      `SELECT ${LINE_COLUMNS} FROM observations o
+         WHERE ${linkedTo(paths)}${exclude}${where} ${NEWEST_FIRST} LIMIT ?`,
+      ...paths,
+      ...notPaths,
+      ...params,
+      LIST_DEPTH,
+    ).map(toLine);
+  };
+  const lists: ObservationLine[][] = [];
   const vector = query.vector;
   if (!vector || !hasVectors(db, vector.model)) {
     const and = keyword(" ");
-    return (and.length > 0 ? and : keyword(" OR ")).slice(0, query.limit);
+    lists.push(and.length > 0 ? and : keyword(" OR "));
+  } else {
+    lists.push(
+      keyword(" "),
+      all(
+        db,
+        `SELECT ${LINE_COLUMNS}, v.vector FROM observation_vectors v JOIN observations o ON o.id = v.observation_id
+           WHERE v.model = ?${where}`,
+        vector.model,
+        ...params,
+      )
+        .map((row) => {
+          const bytes = row.vector as Uint8Array;
+          const stored = new Float32Array(
+            bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+          );
+          return { line: toLine(row), score: dot(stored, vector.values) };
+        })
+        .sort((x, y) => y.score - x.score || newestFirst(x.line, y.line))
+        .slice(0, LIST_DEPTH)
+        .map((s) => s.line),
+    );
   }
-  const byVector = all(
-    db,
-    `SELECT ${LINE_COLUMNS}, v.vector FROM observation_vectors v JOIN observations o ON o.id = v.observation_id
-       WHERE v.model = ?${where}`,
-    vector.model,
-    ...params,
-  )
-    .map((row) => {
-      const bytes = row.vector as Uint8Array;
-      const stored = new Float32Array(
-        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-      );
-      return { line: toLine(row), score: dot(stored, vector.values) };
-    })
-    .sort((x, y) => y.score - x.score || newestFirst(x.line, y.line))
-    .slice(0, LIST_DEPTH)
-    .map((s) => s.line);
+  const { seeds, neighbours } = query.related;
+  const graph = [...linked(seeds, []), ...linked(neighbours, seeds)].slice(0, LIST_DEPTH);
+  if (graph.length > 0) lists.push(graph);
   const fused = new Map<number, { line: ObservationLine; score: number }>();
-  for (const list of [keyword(" "), byVector]) {
+  for (const list of lists) {
     list.forEach((line, i) => {
       const entry = fused.get(line.id) ?? { line, score: 0 };
       entry.score += 1 / (RRF_K + i + 1);
