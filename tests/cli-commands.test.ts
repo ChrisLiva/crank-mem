@@ -33,6 +33,12 @@ function cliWithCodexHome(codexHome: string, cwd: string, ...args: string[]): Cl
 }
 
 const ALPHA = { "a.ts": "/** Alpha. */\nexport const a = 1;\n" };
+const LINKED = {
+  "src/a.ts": 'import { b } from "./b";\nexport const a = b;\n',
+  "src/b.ts": "export const b = 1;\n",
+};
+const V1_INDEX = '{"version":1,"meta":{"lastScanned":null,"fileCount":0},"files":{}}';
+const SCAN_LINE = /^crank-mem: full scan complete — \d+ files indexed → \.crank\/anatomy\.md$/m;
 
 /** A project inited on its own, for a test that reads the install time. */
 function initedProject(): string {
@@ -494,6 +500,76 @@ describe("upgrade", () => {
     expect(
       fs.readFileSync(path.join(crankDir, "backups", latest, "hooks/session-start.ts"), "utf-8"),
     ).toContain("stale vendored copy");
+  });
+
+  test("scans an index that is not at version 2, and leaves a version-2 one alone", () => {
+    const root = initedCopy(LINKED);
+    const indexFile = path.join(root, ".crank/anatomy-index.json");
+    fs.writeFileSync(indexFile, V1_INDEX);
+
+    const first = cli(root, "upgrade");
+    expect(first.status).toBe(0);
+    expect(first.stdout.match(new RegExp(SCAN_LINE.source, "gm"))).toHaveLength(1);
+    const lines = first.stdout.trimEnd().split("\n");
+    const repairLast = lines.findLastIndex((l) =>
+      /^crank-mem: (already at|upgraded vendored hooks) /.test(l),
+    );
+    expect(repairLast).toBeGreaterThanOrEqual(0);
+    expect(lines.findIndex((l) => SCAN_LINE.test(l))).toBeGreaterThan(repairLast);
+    const rebuilt = JSON.parse(fs.readFileSync(indexFile, "utf-8"));
+    expect(rebuilt.version).toBe(2);
+    expect(rebuilt.files["src/a.ts"].imports).toEqual(["src/b.ts"]);
+
+    const current = fs.readFileSync(indexFile);
+    const second = cli(root, "upgrade");
+    expect(second.status).toBe(0);
+    expect(second.stdout).not.toContain("full scan complete");
+    expect(fs.readFileSync(indexFile)).toEqual(current);
+
+    // A missing index is built under the project's own config.
+    fs.rmSync(indexFile);
+    const configFile = path.join(root, ".crank/config.json");
+    const config = JSON.parse(fs.readFileSync(configFile, "utf-8"));
+    config.excludes.push("b.ts");
+    fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+    const missing = cli(root, "upgrade");
+    expect(missing.status).toBe(0);
+    expect(missing.stdout).toMatch(SCAN_LINE);
+    const built = JSON.parse(fs.readFileSync(indexFile, "utf-8"));
+    expect(built.version).toBe(2);
+    expect(Object.keys(built.files)).not.toContain("src/b.ts");
+    expect(built.files["src/a.ts"]).not.toHaveProperty("imports");
+
+    fs.writeFileSync(indexFile, "{not json");
+    const unparsable = cli(root, "upgrade");
+    expect(unparsable.status).toBe(0);
+    expect(unparsable.stdout).toMatch(SCAN_LINE);
+    expect(JSON.parse(fs.readFileSync(indexFile, "utf-8")).version).toBe(2);
+  });
+
+  test("a held anatomy lock skips the scan", () => {
+    const root = initedCopy(LINKED);
+    const indexFile = path.join(root, ".crank/anatomy-index.json");
+    fs.writeFileSync(indexFile, V1_INDEX);
+    fs.writeFileSync(
+      path.join(root, ".crank/anatomy-index.lock"),
+      JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() }),
+    );
+    const run = cli(root, "upgrade");
+    expect(run.status).toBe(0);
+    expect(run.stderr.split("\n")).toContain("crank-mem: anatomy busy, scan skipped");
+    expect(fs.readFileSync(indexFile, "utf-8")).toBe(V1_INDEX);
+  }, 20_000);
+
+  test("a scan that throws costs only the scan", () => {
+    const root = initedCopy(LINKED);
+    const indexFile = path.join(root, ".crank/anatomy-index.json");
+    fs.rmSync(indexFile);
+    fs.mkdirSync(indexFile);
+    const run = cli(root, "upgrade");
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("crank-mem: could not scan (");
+    expect(run.stdout).not.toContain("full scan complete");
   });
 
   // Crank commands in the settings file the git mode does not use, plus wiring

@@ -16,8 +16,11 @@ export async function run(_args: string[]): Promise<number> {
     );
     return 1;
   }
-  console.log(
-    `crank-mem: full scan complete — ${index.meta.fileCount} files indexed → .crank/anatomy.md`,
-  );
+  console.log(scanCompleteLine(index.meta.fileCount));
   return 0;
+}
+
+/** The line a finished full scan prints, from `scan` and from `upgrade`. */
+export function scanCompleteLine(fileCount: number): string {
+  return `crank-mem: full scan complete — ${fileCount} files indexed → .crank/anatomy.md`;
 }
