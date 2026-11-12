@@ -403,6 +403,9 @@ describe("init → uninstall round-trip", () => {
     const init = cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
     expect(init.status).toBe(0);
     expect(init.stdout).toContain("removed duplicate crank hooks from .claude/settings.local.json");
+    expect(init.stdout.indexOf("hooks wired into")).toBeLessThan(
+      init.stdout.indexOf("removed duplicate crank hooks"),
+    );
     const crankStarts = [".claude/settings.json", ".claude/settings.local.json"].flatMap((rel) => {
       const parsed = JSON.parse(fs.readFileSync(path.join(root, rel), "utf-8"));
       return (parsed.hooks?.SessionStart ?? []).filter((g: any) =>

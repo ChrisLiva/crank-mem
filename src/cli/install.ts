@@ -108,15 +108,14 @@ const cerebrum: InstallItem = {
   remove: () => report(),
 };
 
+function ensureRegistered({ root }: InstallContext): Report {
+  registerProject(root);
+  return report();
+}
+
 const registry: InstallItem = {
-  apply({ root }) {
-    registerProject(root);
-    return report();
-  },
-  repair({ root }) {
-    registerProject(root);
-    return report();
-  },
+  apply: ensureRegistered,
+  repair: ensureRegistered,
   remove({ root }) {
     unregisterProject(root);
     return report();
