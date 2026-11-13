@@ -46,6 +46,8 @@ export type MemoryWrite =
   | { status: "open"; memory: Memory; migratedFrom: number | null }
   | { status: "newer" | "unreadable" }
   | { status: "unmigrated"; detail: string };
+/** A read's result: `fn`'s answer over an open store, or why the store did not open. */
+export type StoreRead<T> = { status: "open"; value: T } | { status: Exclude<StoreStatus, "open"> };
 export type StoreMigration =
   | { status: "absent" | "current" | "newer" }
   | { status: "migrated"; from: number; to: number }
@@ -264,6 +266,58 @@ function writerAt(db: sqlite.DatabaseSync, file: string, v: number): MemoryWrite
     return { status: "newer" };
   }
   return { status: "open", memory: createMemory(db, file), migratedFrom: from };
+}
+
+/** `fn`'s answer over the store of the project at `root`, opened to read and closed after; `fn` never runs for a store that does not open. An async `fn` fails to compile: the store closes before it settles. */
+export function readStoreSync<T>(
+  root: string,
+  fn: (memory: MemoryReader) => T extends PromiseLike<unknown> ? never : T,
+): StoreRead<T> {
+  const opened = openMemory(memoryPath(root), "read");
+  if (opened.status !== "open") return { status: opened.status };
+  try {
+    return { status: "open", value: fn(opened.memory) };
+  } finally {
+    opened.memory.close();
+  }
+}
+
+/** `readStoreSync` for an `fn` that may await. */
+export async function readStore<T>(
+  root: string,
+  fn: (memory: MemoryReader) => T | Promise<T>,
+): Promise<StoreRead<T>> {
+  const opened = openMemory(memoryPath(root), "read");
+  if (opened.status !== "open") return { status: opened.status };
+  try {
+    return { status: "open", value: await fn(opened.memory) };
+  } finally {
+    opened.memory.close();
+  }
+}
+
+export function storeStatus(root: string): StoreStatus {
+  return readStoreSync(root, () => null).status;
+}
+
+/** The store's `user_version`, whatever version this code reads; null when there is no store or it cannot be read. */
+export function storeVersion(root: string): number | null {
+  const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
+  if (!mod) return null;
+  let db: sqlite.DatabaseSync | null = null;
+  try {
+    db = openForRead(mod, memoryPath(root));
+    return db === null ? null : userVersion(db);
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
+/** The project's store opened to write, created or migrated first; the caller closes it. */
+export function openStoreForWrite(root: string): MemoryWrite {
+  return openMemory(memoryPath(root), "write");
 }
 
 /** `fn`'s answer over the store, opened read-only and closed after; a store that does not open answers its note. */

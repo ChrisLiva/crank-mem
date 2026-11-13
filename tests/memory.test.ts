@@ -5,16 +5,24 @@ import * as path from "node:path";
 import {
   formatLine,
   MEMORY_FILE,
-  memoryStatus,
   openMemory,
+  openStoreForWrite,
+  readStore,
+  readStoreSync,
+  storeStatus,
+  storeVersion,
   type DigestInput,
   type Memory,
+  type MemoryReader,
   type NewObservation,
   type Position,
   type SearchQuery,
 } from "../src/hooks/lib/memory.ts";
 import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
+import type { StoreStatus } from "../src/hooks/lib/wire.ts";
 import { V1_DDL } from "./fixtures/schema-v1.ts";
+import { plantMemory, seedMemory } from "./helpers.ts";
+import { workspace } from "./workspace.ts";
 
 const open: { close(): void }[] = [];
 
@@ -81,13 +89,11 @@ describe("openMemory", () => {
     const r = openMemory(file, "read");
     expect(r.status).toBe("open");
     if (r.status === "open") r.memory.close();
-    expect(memoryStatus(file)).toBe("open");
   });
 
   test("a missing path reads as missing and is not created", () => {
     const file = tmpFile();
     expect(openMemory(file, "read").status).toBe("missing");
-    expect(memoryStatus(file)).toBe("missing");
     expect(fs.existsSync(file)).toBe(false);
   });
 
@@ -104,7 +110,6 @@ describe("openMemory", () => {
     fs.writeFileSync(file, "this is not a database, just some text bytes\n".repeat(50));
     expect(openMemory(file, "read").status).toBe("unreadable");
     expect(openMemory(file, "write").status).toBe("unreadable");
-    expect(memoryStatus(file)).toBe("unreadable");
   });
 
   test("a database from a later schema version is newer in both modes", () => {
@@ -153,6 +158,204 @@ describe("openMemory", () => {
       process.getBuiltinModule = original;
     }
   });
+});
+
+describe("store by root", () => {
+  /** A root whose store holds the one observation `Root fact`. */
+  function openRoot(): string {
+    const root = path.dirname(path.dirname(tmpFile()));
+    const w = openStoreForWrite(root);
+    if (w.status !== "open") throw new Error(`expected open, got ${w.status}`);
+    try {
+      w.memory.appendDigest(
+        digest(
+          "root",
+          null,
+          { uuid: "u1", timestamp: "2026-01-01T00:00:00.000Z" },
+          { observations: [obs({ title: "Root fact", narrative: "n" })] },
+        ),
+      );
+    } finally {
+      w.memory.close();
+    }
+    return root;
+  }
+
+  const emptyRoot = () => path.dirname(path.dirname(tmpFile()));
+
+  function plantedRoot(state: "newer" | "unreadable"): string {
+    const root = emptyRoot();
+    plantMemory(root, state);
+    return root;
+  }
+
+  test("read journey", async () => {
+    const root = openRoot();
+    const zeroByte = emptyRoot();
+    fs.mkdirSync(path.join(zeroByte, ".crank"));
+    fs.writeFileSync(path.join(zeroByte, ".crank", MEMORY_FILE), "");
+    const rows: [string, StoreStatus][] = [
+      [root, "open"],
+      [emptyRoot(), "missing"],
+      [zeroByte, "missing"],
+      [plantedRoot("unreadable"), "unreadable"],
+      [plantedRoot("newer"), "newer"],
+      [path.dirname(path.dirname(v1File())), "older"],
+    ];
+    const statusesOf = async (r: string) => {
+      let calls = 0;
+      const fn = () => {
+        calls++;
+        return null;
+      };
+      return {
+        sync: readStoreSync(r, fn).status,
+        async: (await readStore(r, fn)).status,
+        status: storeStatus(r),
+        calls,
+      };
+    };
+    for (const [r, status] of rows) {
+      expect(await statusesOf(r)).toEqual({
+        sync: status,
+        async: status,
+        status,
+        calls: status === "open" ? 2 : 0,
+      });
+    }
+    const original = process.getBuiltinModule;
+    process.getBuiltinModule = () => undefined;
+    try {
+      expect(await statusesOf(root)).toEqual({
+        sync: "unreadable",
+        async: "unreadable",
+        status: "unreadable",
+        calls: 0,
+      });
+    } finally {
+      process.getBuiltinModule = original;
+    }
+
+    const store = path.join(root, ".crank", MEMORY_FILE);
+    const noSidecars = () =>
+      expect([fs.existsSync(`${store}-wal`), fs.existsSync(`${store}-shm`)]).toEqual([
+        false,
+        false,
+      ]);
+    const titles = (m: MemoryReader) => m.recent(5).map((l) => l.title);
+    expect(readStoreSync(root, titles)).toEqual({ status: "open", value: ["Root fact"] });
+    noSidecars();
+    expect(await readStore(root, async (m) => titles(m))).toEqual({
+      status: "open",
+      value: ["Root fact"],
+    });
+    noSidecars();
+    storeStatus(root);
+    noSidecars();
+
+    const missing = emptyRoot();
+    readStoreSync(missing, () => null);
+    await readStore(missing, () => null);
+    storeStatus(missing);
+    storeVersion(missing);
+    expect(fs.existsSync(path.join(missing, ".crank"))).toBe(false);
+
+    const boom = new Error("boom");
+    const saved: MemoryReader[] = [];
+    const throwing = (m: MemoryReader): null => {
+      saved.push(m);
+      throw boom;
+    };
+    let thrown: unknown;
+    try {
+      readStoreSync(root, throwing);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBe(boom);
+    await expect(readStore(root, throwing)).rejects.toBe(boom);
+    expect(saved).toHaveLength(2);
+    for (const m of saved) expect(() => m.recent(1)).toThrow("database is not open");
+    noSidecars();
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = readStore(root, async (m) => {
+      await gate;
+      return m.recent(5).length;
+    });
+    expect(await readStore(root, (m) => m.recent(5).length)).toEqual({ status: "open", value: 1 });
+    release();
+    expect(await first).toEqual({ status: "open", value: 1 });
+  });
+
+  test("storeVersion", () => {
+    expect(storeVersion(emptyRoot())).toBeNull();
+    expect(storeVersion(plantedRoot("unreadable"))).toBeNull();
+    const root = openRoot();
+    const original = process.getBuiltinModule;
+    process.getBuiltinModule = () => undefined;
+    try {
+      expect(storeVersion(root)).toBeNull();
+    } finally {
+      process.getBuiltinModule = original;
+    }
+    expect(storeVersion(root)).toBe(SCHEMA_VERSION);
+    const newer = plantedRoot("newer");
+    expect(fs.existsSync(path.join(newer, ".crank", `${MEMORY_FILE}-shm`))).toBe(false);
+    expect(storeVersion(newer)).toBe(SCHEMA_VERSION + 1);
+  });
+
+  test("openStoreForWrite", () => {
+    const fresh = emptyRoot();
+    const created = openStoreForWrite(fresh);
+    expect(created.status === "open" && created.migratedFrom).toBe(0);
+    if (created.status === "open") created.memory.close();
+    expect(fs.existsSync(path.join(fresh, ".crank", MEMORY_FILE))).toBe(true);
+    expect(openStoreForWrite(plantedRoot("newer"))).toEqual({ status: "newer" });
+    expect(openStoreForWrite(plantedRoot("unreadable"))).toEqual({ status: "unreadable" });
+
+    const older = path.dirname(path.dirname(v1File()));
+    const backups = path.join(older, ".crank/backups");
+    fs.mkdirSync(backups);
+    fs.chmodSync(backups, 0o555);
+    try {
+      const unmigrated = openStoreForWrite(older);
+      expect(unmigrated.status).toBe("unmigrated");
+      expect(unmigrated.status === "unmigrated" && typeof unmigrated.detail).toBe("string");
+      expect(storeStatus(older)).toBe("older");
+    } finally {
+      fs.chmodSync(backups, 0o755);
+    }
+  });
+
+  test("worktree mapping", async () => {
+    const ws = workspace();
+    seedMemory(ws.payments, [{ title: "Payments fact" }]);
+    const titles = (m: MemoryReader) => m.recent(5).map((l) => l.title);
+    expect(readStoreSync(ws.worktree, titles)).toEqual({
+      status: "open",
+      value: ["Payments fact"],
+    });
+    expect(await readStore(ws.worktree, titles)).toEqual({
+      status: "open",
+      value: ["Payments fact"],
+    });
+    const w = openStoreForWrite(ws.worktree);
+    expect(w.status === "open" && w.migratedFrom).toBeNull();
+    if (w.status === "open") w.memory.close();
+    expect(storeStatus(ws.worktree)).toBe("open");
+    expect(storeVersion(ws.worktree)).toBe(SCHEMA_VERSION);
+    expect(fs.existsSync(path.join(ws.worktree, ".crank"))).toBe(false);
+  });
+
+  // Never called: it holds the compile-time check that readStoreSync refuses an async reader.
+  function asyncReaderDoesNotCompile(): void {
+    // @ts-expect-error an async reader would outlive the store
+    readStoreSync("", async (m) => m.recent(1));
+  }
 });
 
 describe("appendDigest", () => {
