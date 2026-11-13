@@ -18,7 +18,8 @@ type Stop =
 
 const stops = new Map<string, Stop | null>();
 
-function isInstalled(dir: string): boolean {
+/** Whether `dir` holds a crank-mem install (`.crank/config.json`). */
+export function isInstalled(dir: string): boolean {
   return fs.existsSync(path.join(dir, CRANK_DIR, CONFIG_FILE));
 }
 
