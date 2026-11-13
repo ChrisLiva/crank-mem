@@ -17,7 +17,7 @@ import {
   saveConfig,
 } from "../hooks/lib/config.ts";
 import { CLI_LOCK_BUDGET_MS, withLock } from "../hooks/lib/lock.ts";
-import { memoryPath, migrateStore } from "../hooks/lib/memory.ts";
+import { migrateStore } from "../hooks/lib/memory.ts";
 import { projectName } from "../hooks/lib/owner.ts";
 import { registeredRoots } from "../hooks/lib/registry.ts";
 import { fullScan } from "../hooks/lib/scanner.ts";
@@ -162,7 +162,7 @@ function repairSync(root: string, crankDir: string): boolean {
   const repaired = repairInstall({ root, crankDir, config: stamped, backupDir: ensureBackupDir });
   printReport(repaired);
 
-  reportMigration(migrateStore(memoryPath(root)));
+  reportMigration(migrateStore(root));
 
   if (prev === current) console.log(`crank-mem: already at ${current} — nothing else to do.`);
   else if (stamped.vendored_version === current)

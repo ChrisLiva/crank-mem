@@ -196,7 +196,7 @@ export function memoryPath(root: string): string {
  * Opens a store to read, or returns null when the file is missing (node:sqlite creates a missing file on open).
  * Read-write: under bun a read-only open of a closed WAL store with no -shm fails.
  */
-export function openForRead(mod: typeof sqlite, file: string): sqlite.DatabaseSync | null {
+function openForRead(mod: typeof sqlite, file: string): sqlite.DatabaseSync | null {
   if (!fs.existsSync(file)) return null;
   const db = new mod.DatabaseSync(file, { timeout: 200 });
   try {
@@ -335,7 +335,8 @@ export async function withReader<T>(
 }
 
 /** Brings an existing store to the current schema (snapshotting a version-n store first); never creates a store. */
-export function migrateStore(storeFile: string): StoreMigration {
+export function migrateStore(root: string): StoreMigration {
+  const storeFile = memoryPath(root);
   if (!fs.existsSync(storeFile)) return { status: "absent" };
   const opened = openMemory(storeFile, "write");
   switch (opened.status) {
@@ -378,15 +379,16 @@ function snapshotProblem(src: sqlite.DatabaseSync): string | null {
 }
 
 /**
- * Copies `snapshotFile` over `storeFile`, first saving the current store as a daily snapshot.
+ * Copies `snapshotFile` over the store of the project at `root`, first saving the current store as a daily snapshot.
  * savedAs: where the previous store went, null when there was none.
  */
 export async function restoreMemory(
-  storeFile: string,
+  root: string,
   snapshotFile: string,
 ): Promise<
   { status: "restored"; savedAs: string | null } | { status: "invalid" | "busy"; detail: string }
 > {
+  const storeFile = memoryPath(root);
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
   if (!mod) throw new Error("node:sqlite is unavailable");
   let src: sqlite.DatabaseSync;

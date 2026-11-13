@@ -24,7 +24,7 @@ import { readStopState } from "../hooks/lib/user-state.ts";
 import { readUntouched } from "../hooks/lib/untouched.ts";
 import { daemonAlive, readParked, readSpool, type SpoolItem } from "../hooks/lib/spool.ts";
 import { formatUsd, projectStatus, STORE_TEXT, type HealthSummary } from "../hooks/lib/wire.ts";
-import { localDate, memoryPath, openMemory } from "../hooks/lib/memory.ts";
+import { localDate, memoryPath, readStoreSync } from "../hooks/lib/memory.ts";
 import { ISO_DATE } from "../hooks/lib/bullets.ts";
 import { latestSnapshot } from "../hooks/lib/store-upkeep.ts";
 import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
@@ -133,35 +133,30 @@ function updateValue(): string {
 export async function captureSummary(root: string, config: CrankConfig): Promise<HealthSummary> {
   const stop = readStopState();
   const ours = (items: SpoolItem[]) => items.filter(({ entry }) => entry.projectRoot === root);
-  const store = memoryPath(root);
-  const opened = openMemory(store, "read");
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const read = readStoreSync(root, (m) => m.stats(EMBED_MODEL, monthStart));
   let memory: HealthSummary["memory"] = null;
-  if (opened.status === "open") {
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    try {
-      const s = opened.memory.stats(EMBED_MODEL, monthStart);
-      memory = {
-        observations: s.observations,
-        unembedded: s.unembedded,
-        lastDigestMs: s.lastDigestMs,
-        monthCostUsd: s.costUsdSince,
-        pendingProposals: s.pendingProposals,
-        staleFlags: s.staleRows,
-        lastConsolidation: s.lastConsolidation,
-      };
-    } finally {
-      opened.memory.close();
-    }
+  if (read.status === "open") {
+    const s = read.value;
+    memory = {
+      observations: s.observations,
+      unembedded: s.unembedded,
+      lastDigestMs: s.lastDigestMs,
+      monthCostUsd: s.costUsdSince,
+      pendingProposals: s.pendingProposals,
+      staleFlags: s.staleRows,
+      lastConsolidation: s.lastConsolidation,
+    };
   }
   const facts: Omit<HealthSummary, "status"> = {
     digest: !config.digest ? "off" : stop ? "stopped" : "on",
     stopReason: config.digest && stop ? stop.reason : null,
     daemonAlive: daemonAlive(),
     spool: { waiting: ours(readSpool()).length, parked: ours(readParked()).length },
-    store: opened.status,
+    store: read.status,
     memory,
-    lastSnapshotMs: latestSnapshot(store)?.atMs ?? null,
+    lastSnapshotMs: latestSnapshot(memoryPath(root))?.atMs ?? null,
     embedderReady: await embedderReady(),
   };
   return { ...facts, status: projectStatus(facts) };
