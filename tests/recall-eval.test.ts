@@ -18,8 +18,22 @@ function evalRun(cwd: string, args: string[]) {
   });
 }
 
+/** Every path under `root`, each file's bytes, so a run that writes, adds or removes a file changes it. */
+function snapshot(root: string): Record<string, Buffer | null> {
+  return Object.fromEntries(
+    fs
+      .readdirSync(root, { recursive: true })
+      .map(String)
+      .sort()
+      .map((name) => {
+        const file = path.join(root, name);
+        return [name, fs.statSync(file).isFile() ? fs.readFileSync(file) : null];
+      }),
+  );
+}
+
 describe("recall-eval", () => {
-  test("prints each query's recall@10 with and without the graph, then the means", () => {
+  test("prints each query's recall@10 with and without the graph, then the means, and writes nothing", () => {
     const root = initedCopy(FILES);
     seedMemory(root, [{ title: "kiwi fruit", narrative: "plain" }], { request: "kiwi" });
     seedMemory(
@@ -48,6 +62,7 @@ describe("recall-eval", () => {
       "base recall@5 0.75 recall@10 0.75 mrr 0.75\n" +
       "graph recall@5 1.00 recall@10 1.00 mrr 1.00\n" +
       "lost 0 of 4 queries\n";
+    const before = snapshot(root);
     for (const [cwd, args] of [
       [root, ["--root", root]],
       [path.join(root, "src"), []],
@@ -55,6 +70,7 @@ describe("recall-eval", () => {
       const run = evalRun(cwd, [...args]);
       expect({ status: run.status, stdout: run.stdout }).toEqual({ status: 0, stdout: expected });
     }
+    expect(snapshot(root)).toEqual(before);
   });
 
   test("lost counts the queries whose graph top 10 drops a relevant id the baseline holds", () => {
@@ -82,7 +98,7 @@ describe("recall-eval", () => {
     });
   });
 
-  test("replays a labelled set's questions, skipping stale and unknown ids", () => {
+  test("replays a labelled set's questions, skipping stale and unknown ids, and writes nothing", () => {
     const root = initedCopy(FILES);
     seedMemory(
       root,
@@ -123,6 +139,7 @@ describe("recall-eval", () => {
       "graph recall@5 0.80 recall@10 0.80 mrr 0.70\n" +
       "lost 0 of 5 queries\n" +
       "skipped 2 of 7 questions\n";
+    const before = snapshot(root);
     for (const [cwd, args] of [
       [root, ["--root", root, "--set", "set.jsonl"]],
       [path.join(root, "src"), ["--set", "../set.jsonl"]],
@@ -134,28 +151,7 @@ describe("recall-eval", () => {
         stderr: "",
       });
     }
-  });
-
-  test("writes nothing to the store, the anatomy or the usage log", () => {
-    const root = initedCopy(FILES);
-    seedMemory(root, [{ title: "kiwi fruit", narrative: "plain" }], { request: "kiwi" });
-    const crank = path.join(root, ".crank");
-    const read = (name: string) => {
-      const file = path.join(crank, name);
-      return fs.existsSync(file) ? fs.readFileSync(file) : null;
-    };
-    const names = ["memory.db", "anatomy-index.json", "usage.jsonl"];
-    const before = names.map(read);
-    const listing = () => fs.readdirSync(root, { recursive: true }).map(String).sort();
-    const listed = listing();
-    expect(before[0]).not.toBeNull();
-    expect(before[1]).not.toBeNull();
-    const setFile = path.join(tempDir("crank-set-"), "set.jsonl");
-    fs.writeFileSync(setFile, '{"id": 1, "query": "kiwi"}\n');
-    expect(evalRun(root, ["--root", root]).status).toBe(0);
-    expect(evalRun(root, ["--root", root, "--set", setFile]).status).toBe(0);
-    expect(names.map(read)).toEqual(before);
-    expect(listing()).toEqual(listed);
+    expect(snapshot(root)).toEqual(before);
   });
 
   test("answers each store state and a bad root", () => {

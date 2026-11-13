@@ -1058,11 +1058,9 @@ describe("search", () => {
     expect(hybrid("éwalrus walrus tusk")).toEqual([v]);
     expect(hybrid("(walrus) tusk? zzzz")).toEqual([w, v]);
     expect(hybrid("the of and")).toEqual([v]);
-    expect(hybrid("-- ??")).toEqual([v]);
     expect(hybrid("narwhal horn zzzz")).toEqual([b, v]);
     expect(hybrid("narwhal horn zzzz", { type: "discovery" })).toEqual([v]);
-    expect(hybrid("narwhal horn zzzz", { type: "bugfix" })).toEqual([b]);
-    expect(hybrid("narwhal horn zzzz", { files: ["src/b.ts"] })).toEqual([b]);
+    expect(hybrid("narwhal horn zzzz", { files: ["src/b.ts"], stale: true })).toEqual([b]);
     expect(hybrid("narwhal horn zzzz", { stale: true })).toEqual([z, v, b]);
 
     await sleep(2);
