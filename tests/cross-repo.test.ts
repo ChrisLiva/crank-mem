@@ -1190,4 +1190,42 @@ describe("cross-repo memory", () => {
     expect(ctx).not.toContain("[cited file missing");
     expect(fs.readFileSync(anatomy)).toEqual(before);
   });
+
+  test("stats counts cited paths as the excerpt tags them, with and without the store", () => {
+    const ws = workspace();
+    seedMemory(ws.H, [], { links: ["payments-api"] });
+    sessionStart(ws, ws.payments);
+    fs.mkdirSync(path.join(ws.H, "lib/deep"), { recursive: true });
+    fs.writeFileSync(path.join(ws.H, "lib/deep/widget.ts"), "export const widget = 1;\n");
+    const cerebrum = path.join(ws.H, ".crank/cerebrum.md");
+    fs.appendFileSync(
+      cerebrum,
+      "- **Linked**: see `payments-api/src/a.ts`.\n" +
+        "- **Suffix**: see `deep/widget.ts`.\n" +
+        "- **Gone**: see `src/gone.ts`.\n",
+    );
+    const tags = () => sessionStart(ws, ws.H).match(/\[cited file[^\]]*\]/g);
+    const stats = (root: string) => {
+      const run = runCli(root, ["stats"], { CRANK_HOME: ws.home });
+      expect(run.status).toBe(0);
+      return run.stdout;
+    };
+
+    expect(tags()).toEqual(["[cited file missing: src/gone.ts]"]);
+    expect(stats(ws.H)).toContain("cited paths:      2 of 3 exist\n");
+
+    const db = memoryPath(ws.H);
+    for (const f of [db, `${db}-wal`, `${db}-shm`]) fs.rmSync(f, { force: true });
+    expect(tags()).toEqual([
+      "[cited file missing: payments-api/src/a.ts]",
+      "[cited file missing: src/gone.ts]",
+    ]);
+    expect(stats(ws.H)).toContain("cited paths:      1 of 3 exist\n");
+
+    seedMemory(ws.H, [], { links: ["payments-api"] });
+    fs.appendFileSync(cerebrum, "- **Linked gone**: see `payments-api/src/none.ts`.\n");
+    expect(stats(ws.H)).toContain("cited paths:      2 of 4 exist\n");
+
+    expect(stats(ws.payments)).toContain("cited paths:      none cited\n");
+  });
 });
