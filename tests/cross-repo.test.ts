@@ -17,6 +17,7 @@ import {
   journey,
   makeCrankHome,
   plantMemory,
+  projectId,
   readRecord,
   realModelsDir,
   rerun,
@@ -24,6 +25,7 @@ import {
   runHook,
   seedMemory,
   setMtime,
+  startDashboard,
   userRecord,
   withEnv,
 } from "./helpers.ts";
@@ -53,6 +55,9 @@ function sectionOf(ctx: string, header: string): string | undefined {
 }
 
 const lastLine = (root: string) => usageLines(root).at(-1);
+
+/** A CLI env outside any Claude session, so its searches never count toward a project's follow-through. */
+const sessionless = (ws: Ws) => ({ CRANK_HOME: ws.home, CLAUDECODE: "" });
 
 type Ws = ReturnType<typeof workspace>;
 
@@ -160,14 +165,14 @@ function proposalJourney(ws: Ws, hHandle: (hid: number) => string) {
 
 /** The `#<id>` lines `search <query>` prints in `root`. */
 function searchIds(ws: Ws, root: string, query: string): number[] {
-  return runCli(root, ["search", query], { CRANK_HOME: ws.home })
+  return runCli(root, ["search", query], sessionless(ws))
     .stdout.split("\n")
     .filter((l) => l.startsWith("#"))
     .map((l) => Number(/^#(\d+)/.exec(l)![1]));
 }
 
 const getText = (ws: Ws, root: string, id: number) =>
-  runCli(root, ["get", String(id)], { CRANK_HOME: ws.home }).stdout;
+  runCli(root, ["get", String(id)], sessionless(ws)).stdout;
 
 /** The `stale:` line `get <id>` prints in `root`, or undefined. */
 const staleLine = (ws: Ws, root: string, id: number) =>
@@ -183,7 +188,7 @@ const sessionStart = (ws: Ws, root: string) =>
   );
 
 describe("cross-repo memory", () => {
-  test("journey 1: a session started in H captures across projects", () => {
+  test("journey 1: a session started in H captures across projects", async () => {
     const ws = workspace();
     const hook = (name: string, payload: object) =>
       runHook(`src/hooks/${name}.ts`, JSON.stringify(payload), undefined, { CRANK_HOME: ws.home });
@@ -207,7 +212,7 @@ describe("cross-repo memory", () => {
     expect(scratchSessions()).toEqual([SESSION]);
 
     const r = withEnv({ CRANK_HOME: ws.home }, readUntouched).find((e) => e.root === ws.scratch)!;
-    const stats = runCli(ws.H, ["stats"], { CRANK_HOME: ws.home, TZ: "UTC" });
+    const stats = runCli(ws.H, ["stats"], { ...sessionless(ws), TZ: "UTC" });
     expect(stats.stdout).toContain(
       `  not installed:    1\n    ${ws.scratch}  last seen ${localDate(r.lastSeenMs)}\n`,
     );
@@ -274,7 +279,7 @@ describe("cross-repo memory", () => {
     );
     expect(staleLine(ws, ws.storefront, sid)).toContain("outdated");
     expect(staleLine(ws, ws.H, hid)).toContain("replaced");
-    expect(runCli(ws.storefront, ["stats"], { CRANK_HOME: ws.home }).stdout).toContain(
+    expect(runCli(ws.storefront, ["stats"], sessionless(ws)).stdout).toContain(
       "\n  stale:            1\n",
     );
     for (const root of [ws.storefront, ws.payments]) {
@@ -297,7 +302,7 @@ describe("cross-repo memory", () => {
     expect(hStart).toContain("Ship the storefront fix");
     expect(sessionStart(ws, ws.storefront)).not.toContain("Ship the storefront fix");
 
-    const cli = (args: string[]) => runCli(ws.H, args, { CRANK_HOME: ws.home });
+    const cli = (args: string[]) => runCli(ws.H, args, sessionless(ws));
     const [cid] = searchIds(ws, ws.storefront, "Cross fix");
     const cross = cli(["get", `storefront#${cid}`]);
     expect(cross.status).toBe(0);
@@ -332,6 +337,27 @@ describe("cross-repo memory", () => {
       stderr: "crank-mem: no observation #99999.\n",
     });
 
+    const [backId] = seedMemory(ws.H, [
+      {
+        title: "Back office",
+        narrative: "Seeded for the ledger check too.",
+        filesRead: ["src/h.ts"],
+      },
+    ]);
+    const [frontId] = seedMemory(ws.storefront, [
+      { title: "Front only", narrative: "Seeded for the ledger check.", filesRead: ["src/b.ts"] },
+    ]);
+    const found = (...args: string[]) =>
+      cli(["search", ...args])
+        .stdout.split("\n")
+        .filter(Boolean);
+    const backLine = expect.stringMatching(new RegExp(`^#${backId} .* Back office$`));
+    const frontLine = expect.stringMatching(new RegExp(`^storefront#${frontId} .* Front only$`));
+    expect(found("Front only")).toEqual([frontLine]);
+    expect(found("ledger")).toEqual([backLine, frontLine]);
+    expect(found("ledger", "--limit", "1")).toEqual([backLine]);
+    expect(found("Cross fix")).toEqual([expect.stringMatching(new RegExp(`^#${hCross} `))]);
+
     plantMemory(ws.payments, "newer");
     const paymentsUsage = usageLines(ws.payments).length;
     const hUsage = usageLines(ws.H).length;
@@ -352,6 +378,59 @@ describe("cross-repo memory", () => {
       stdout: "",
       stderr: MEMORY_NEWER_NOTE + "\n",
     });
+    const closed = cli(["search", "Cross fix"]);
+    expect(closed.stdout.split("\n").filter(Boolean)).toEqual([
+      expect.stringMatching(new RegExp(`^#${hCross} `)),
+    ]);
+    expect(closed.stderr).not.toContain(MEMORY_NEWER_NOTE);
+    expect(closed.stderr).not.toContain("payments");
+
+    const sessioned = { CRANK_HOME: ws.home, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "sess-1" };
+    expect(runCli(ws.H, ["search", "Front only"], sessioned).status).toBe(0);
+    const searched = { channel: "search", session: "sess-1", query: "Front only" };
+    expect(lastLine(ws.H)).toMatchObject({ ...searched, ids: [] });
+    expect(lastLine(ws.storefront)).toMatchObject({ ...searched, ids: [frontId] });
+    expect(runCli(ws.H, ["get", `storefront#${frontId}`], sessioned).status).toBe(0);
+    const dash = await startDashboard(ws.home, ["--port", "0"]);
+    try {
+      const res = await dash.get(`/api/projects/${projectId(ws.storefront)}/usage?days=7`);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { followThrough: unknown }).followThrough).toBe(1);
+    } finally {
+      await dash.stop();
+    }
+  }, 30_000);
+
+  test("a linked store's graph list follows the pairs", () => {
+    /** H's `search "src/h.ts"` lines, with H's row on `src/h.ts` citing `refs` and linking `links`. */
+    const run = (refs: { project: string; path: string; kind: "read" }[], links: string[]) => {
+      const ws = workspace();
+      sessionStart(ws, ws.H);
+      const [hid] = seedMemory(
+        ws.H,
+        [{ title: "Home pair", narrative: "Pairs the pay file.", filesRead: ["src/h.ts"], refs }],
+        { links },
+      );
+      const [ledger] = seedMemory(ws.payments, [
+        {
+          title: "Ledger close",
+          narrative: "Batches settle overnight.",
+          filesRead: ["src/pay.ts"],
+        },
+        { title: "Pay home row", narrative: "Unpaired words here.", filesRead: ["src/h.ts"] },
+      ]);
+      const lines = runCli(ws.H, ["search", "src/h.ts"], sessionless(ws)).stdout;
+      return { hid: hid!, ledger: ledger!, lines: lines.split("\n").filter(Boolean) };
+    };
+    const homeLine = (hid: number) => expect.stringMatching(new RegExp(`^#${hid} .* Home pair$`));
+
+    const paired = run([{ project: "payments-api", path: "src/pay.ts", kind: "read" }], []);
+    expect(paired.lines).toEqual([
+      homeLine(paired.hid),
+      expect.stringMatching(new RegExp(`^payments-api#${paired.ledger} .* Ledger close$`)),
+    ]);
+    const unpaired = run([], ["payments-api"]);
+    expect(unpaired.lines).toEqual([homeLine(unpaired.hid)]);
   }, 30_000);
 
   test("a stale flag may name the session's project by name", () => {

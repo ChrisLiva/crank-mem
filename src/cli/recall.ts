@@ -12,11 +12,11 @@ import {
   type SearchQuery,
 } from "../hooks/lib/memory.ts";
 import { projectName } from "../hooks/lib/owner.ts";
-import { rootOfName } from "../hooks/lib/registry.ts";
+import { linkedProjects, rootOfName } from "../hooks/lib/registry.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
-import { cliActor, recordUsage } from "../hooks/lib/usage.ts";
-import { isObservationType, type Observation } from "../hooks/lib/wire.ts";
+import { cliActor, recordUsage, type UsageEvent } from "../hooks/lib/usage.ts";
+import { isObservationType, type Observation, type ObservationLine } from "../hooks/lib/wire.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";
@@ -91,7 +91,7 @@ export async function search(args: string[]): Promise<number> {
     }
     const applied = limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT);
     const stale = flags.stale === true;
-    const hits = memory.search({
+    const hits = await federatedSearch(memory, project.root, {
       text,
       vector,
       limit: applied,
@@ -101,8 +101,8 @@ export async function search(args: string[]): Promise<number> {
       stale,
       related: relatedFiles(loadIndex(project.crankDir), text),
     });
-    for (const hit of hits) console.log(formatLine(hit.line));
-    recordUsage(project.root, cliActor(), {
+    for (const hit of hits) console.log(hit.name + formatLine(hit.line));
+    recordSearch(project.root, hits, {
       channel: "search",
       query: redact(text).slice(0, QUERY_CHARS),
       limit: applied,
@@ -111,11 +111,79 @@ export async function search(args: string[]): Promise<number> {
       file: relFile,
       stale,
       mode: vector === null ? "keyword" : "hybrid",
-      ids: hits.map((hit) => hit.line.id),
       ms: Date.now() - started,
     });
     return 0;
   });
+}
+
+/** One store's search hit: `name` prefixes its line (`""` for the current project), `hash` is its dedupe key. */
+type StoreHit = { name: string; root: string; line: ObservationLine; score: number; hash: string };
+
+function storeHits(
+  memory: MemoryReader,
+  name: string,
+  root: string,
+  query: SearchQuery,
+): StoreHit[] {
+  const hits = memory.search(query);
+  const hashes = memory.contentHashes(hits.map((hit) => hit.line.id));
+  return hits.map((hit) => ({
+    name,
+    root,
+    ...hit,
+    hash: hashes.get(hit.line.id) ?? `${root}#${hit.line.id}`,
+  }));
+}
+
+const PAIRED_PATHS = 50;
+
+/** The paths in `project` that `pairedPaths` on the current store gives for each of its seeds, deduped. */
+function pairedSeeds(memory: MemoryReader, seeds: string[], project: string): string[] {
+  const paths = new Set<string>();
+  for (const seed of seeds) {
+    for (const pair of memory.pairedPaths(seed, PAIRED_PATHS)) {
+      if (pair.project === project) paths.add(pair.path);
+    }
+  }
+  return [...paths];
+}
+
+/**
+ * The current store's hits and each linked store's that opens, by fused score with ties to the current
+ * project, one per content hash, cut to the query's limit. A linked store's graph list holds only the
+ * paths its pairs with the current seeds give.
+ */
+async function federatedSearch(
+  memory: MemoryReader,
+  root: string,
+  query: SearchQuery,
+): Promise<StoreHit[]> {
+  const hits = storeHits(memory, "", root, query);
+  for (const linked of linkedProjects(memory)) {
+    if (linked.root === root) continue;
+    const seeds = pairedSeeds(memory, query.related.seeds, linked.name);
+    const linkedQuery = { ...query, related: { seeds, neighbours: [] } };
+    const r = await withReader(memoryPath(linked.root), (m) =>
+      storeHits(m, linked.name, linked.root, linkedQuery),
+    );
+    if (Array.isArray(r)) hits.push(...r);
+  }
+  // A stable sort keeps the current store's hits, listed first, ahead of equal scores.
+  hits.sort((a, b) => b.score - a.score);
+  const seen = new Set<string>();
+  return hits.filter((hit) => !seen.has(hit.hash) && seen.add(hit.hash)).slice(0, query.limit);
+}
+
+type SearchEvent = Omit<Extract<UsageEvent, { channel: "search" }>, "ids">;
+
+/** One search usage line per store with that store's bare ids: the current project's always, each other's when it shows ids. */
+function recordSearch(current: string, hits: StoreHit[], event: SearchEvent): void {
+  const roots = new Set([current, ...hits.map((hit) => hit.root)]);
+  for (const root of roots) {
+    const ids = hits.filter((hit) => hit.root === root).map((hit) => hit.line.id);
+    recordUsage(root, cliActor(), { ...event, ids });
+  }
 }
 
 /**
