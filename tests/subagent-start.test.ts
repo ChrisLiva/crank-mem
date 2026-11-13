@@ -150,7 +150,9 @@ describe("subagent-start hook (black-box)", () => {
     const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(ws.H, "Explore")), ws.H, env);
     expect(run.status).toBe(0);
     const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    expect(ctx).toContain(bullet);
+    expect(ctx).toContain(
+      `${bullet} [cited file modified after this note; check: payments-api/src/a.ts]`,
+    );
     expect(ctx).not.toContain("[cited file missing");
   });
 });

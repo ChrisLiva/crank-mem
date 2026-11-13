@@ -256,24 +256,20 @@ describe("ownership", () => {
     });
   }
 
-  test("a scan leaves out files another project or repo owns", () => {
+  test("a scan leaves out files another project or repo owns, and the walk stops there", () => {
     const p = makeOwnersRepo();
     const index = fullScan(p, defaultConfig());
     expect(Object.keys(index.files).sort()).toEqual(["src/a.ts", "vendor/m/x.ts"]);
     expect(index.meta.candidateCount).toBe(2);
 
-    const q = makeOwnersTree({});
-    expect(Object.keys(fullScan(q, defaultConfig()).files).sort()).toEqual(["q1.ts", "q2.ts"]);
-  });
-
-  test("the walk stops at a nested project or repo", () => {
+    // Outside git the walk itself stops, so the child's files never count toward max_files.
     const extra: Record<string, string> = {};
     for (let i = 1; i <= 5; i++) extra[`child/f${i}.ts`] = `export const f${i} = 1;`;
     const q = makeOwnersTree(extra);
-    const index = fullScan(q, { ...defaultConfig(), max_files: 2 });
-    expect(Object.keys(index.files).sort()).toEqual(["q1.ts", "q2.ts"]);
-    expect(index.meta.truncated).toBeUndefined();
-    expect(index.meta.candidateCount).toBe(2);
+    const walked = fullScan(q, { ...defaultConfig(), max_files: 2 });
+    expect(Object.keys(walked.files).sort()).toEqual(["q1.ts", "q2.ts"]);
+    expect(walked.meta.truncated).toBeUndefined();
+    expect(walked.meta.candidateCount).toBe(2);
   });
 
   test("a refresh drops a file once a nested project claims it", () => {

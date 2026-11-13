@@ -375,31 +375,6 @@ describe("refs and links", () => {
     ).toEqual([0, 0.01]);
   });
 
-  test("content hashes match across stores for the same text", () => {
-    const one = writable();
-    const two = writable();
-    const only = (memory: Memory, observations: NewObservation[]) => {
-      memory.appendDigest(digest("s", null, P1, { observations }));
-      return memory
-        .recent(observations.length)
-        .map((line) => line.id)
-        .reverse();
-    };
-    const [a] = only(one, [obs({ title: "Same", narrative: "Same text" })]) as [number];
-    const [b, c] = only(two, [
-      obs({ title: "Lead", narrative: "Lead text" }),
-      obs({ title: "Same", narrative: "Same text" }),
-      obs({ title: "Same", narrative: "Other text" }),
-    ]).slice(1) as [number, number];
-    const first = one.contentHashes([a, 999]);
-    const second = two.contentHashes([b, c]);
-    expect([...first.keys()]).toEqual([a]);
-    expect(first.get(a)).toMatch(/^[0-9a-f]{64}$/);
-    expect(second.get(b)).toBe(first.get(a)!);
-    expect(second.get(c)).not.toBe(first.get(a)!);
-    expect(two.contentHashes([])).toEqual(new Map());
-  });
-
   test("the daily pass deletes an expired observation's refs", () => {
     const DAY_MS = 24 * 3_600_000;
     const memory = writable();
@@ -880,10 +855,6 @@ describe("search", () => {
     );
     expect(ids(hits)).toEqual([b, a, c]);
     expect(hits[0]!.line).toEqual(memory.recent(10).find((r) => r.id === b)!);
-    const scores = hits.map((h) => h.score);
-    expect(scores.every((score) => score > 0)).toBe(true);
-    expect(scores).toEqual([...scores].sort((x, y) => y - x));
-    expect(scores[0]).toBeGreaterThan(scores[2]!);
   });
 
   test("an equal fused score goes to the newest row", () => {

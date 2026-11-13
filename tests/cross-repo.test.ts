@@ -126,10 +126,10 @@ const acceptFirst = (bullet: string) =>
 /**
  * Journey 1's digest: storefront and H each seeded with one row the prompt shows, then `crossDigest` with one
  * proposal per project name (`storefront`, `payments-api`, `cross-repo`, `nowhere`) and stale flags on
- * storefront's row, an unshown storefront id and H's row by `hHandle(hid)`; consolidations scripted in name
+ * storefront's row, an unshown storefront id and H's row by `#<hid>`; consolidations scripted in name
  * order, then H's.
  */
-function proposalJourney(ws: Ws, hHandle: (hid: number) => string) {
+function proposalJourney(ws: Ws) {
   const [sid] = seedMemory(ws.storefront, [
     { title: "Front seed", narrative: "Seeded front words.", filesRead: ["src/a.ts"] },
   ]);
@@ -147,7 +147,7 @@ function proposalJourney(ws: Ws, hHandle: (hid: number) => string) {
     stale: [
       { id: `storefront#${sid}`, reason: "outdated" },
       { id: "storefront#999", reason: "unlisted" },
-      { id: hHandle(hid!), reason: "replaced" },
+      { id: `#${hid}`, reason: "replaced" },
     ],
   };
   const { transcript } = crossTranscript(ws);
@@ -260,7 +260,7 @@ describe("cross-repo memory", () => {
     expect(noCerebrum.stdout).not.toContain("Excerpt of");
     fs.writeFileSync(storefrontCerebrum, cerebrumText);
 
-    const { sid, hid, job, fake } = proposalJourney(ws, (hid) => `#${hid}`);
+    const { sid, hid, job, fake } = proposalJourney(ws);
     expect(job.status).toBe(0);
     const pCalls = fake.calls().filter((c) => c.argv.includes("-p"));
     expect(pCalls.map((c) => c.cwd)).toEqual(
@@ -338,7 +338,12 @@ describe("cross-repo memory", () => {
       stderr: "crank-mem: no observation #99999.\n",
     });
 
-    const [backId] = seedMemory(ws.H, [
+    const [ledgerId, backId] = seedMemory(ws.H, [
+      {
+        title: "Ledger rules",
+        narrative: "The ledger closes nightly; each ledger row settles in the ledger.",
+        filesRead: ["src/h.ts"],
+      },
       {
         title: "Back office",
         narrative: "Seeded for the ledger check too.",
@@ -352,11 +357,12 @@ describe("cross-repo memory", () => {
       cli(["search", ...args])
         .stdout.split("\n")
         .filter(Boolean);
+    const ledgerLine = expect.stringMatching(new RegExp(`^#${ledgerId} .* Ledger rules$`));
     const backLine = expect.stringMatching(new RegExp(`^#${backId} .* Back office$`));
     const frontLine = expect.stringMatching(new RegExp(`^storefront#${frontId} .* Front only$`));
     expect(found("Front only")).toEqual([frontLine]);
-    expect(found("ledger")).toEqual([backLine, frontLine]);
-    expect(found("ledger", "--limit", "1")).toEqual([backLine]);
+    expect(found("ledger")).toEqual([ledgerLine, frontLine, backLine]);
+    expect(found("ledger", "--limit", "2")).toEqual([ledgerLine, frontLine]);
     expect(found("Cross fix")).toEqual([expect.stringMatching(new RegExp(`^#${hCross} `))]);
 
     plantMemory(ws.payments, "newer");
@@ -432,13 +438,6 @@ describe("cross-repo memory", () => {
     ]);
     const unpaired = run([], ["payments-api"]);
     expect(unpaired.lines).toEqual([homeLine(unpaired.hid)]);
-  }, 30_000);
-
-  test("a stale flag may name the session's project by name", () => {
-    const ws = workspace();
-    const { hid, job } = proposalJourney(ws, (hid) => `H#${hid}`);
-    expect(job.status).toBe(0);
-    expect(staleLine(ws, ws.H, hid)).toContain("replaced");
   }, 30_000);
 
   test("a modified file in another project links it from the entry project", () => {

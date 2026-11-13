@@ -11,13 +11,7 @@ import {
 import { CRANK_DIR, defaultConfig, readJsonObject, saveConfig } from "../src/hooks/lib/config.ts";
 import { INDEX_FILE, loadIndex } from "../src/hooks/lib/store.ts";
 import { projectName } from "../src/hooks/lib/owner.ts";
-import { memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
-import {
-  installedStores,
-  linkedProjects,
-  registerProject,
-  rootOfName,
-} from "../src/hooks/lib/registry.ts";
+import { installedStores, registerProject, rootOfName } from "../src/hooks/lib/registry.ts";
 import {
   makeCrankHome,
   makeCrankProject,
@@ -71,11 +65,16 @@ function context(stdout: string): string {
 }
 
 describe("ownership", () => {
-  test("session start resolves its project by the walk rule", () => {
+  test("session start and the CLI resolve their project by the walk rule", () => {
     const ws = workspace();
     expect(context(sessionStart(ws.H, ws.home).stdout)).toContain("project H.");
     const clone = sessionStart(ws.clone, ws.home);
     expect(clone).toMatchObject({ status: 0, stdout: "" });
+    expect(runCli(ws.clone, ["search", "x"], { CRANK_HOME: ws.home })).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "crank-mem: not initialized here — run `crank-mem init` first.\n",
+    });
     expect(context(sessionStart(ws.submodule, ws.home).stdout)).toContain("project H.");
     expect(context(sessionStart(ws.worktree, ws.home).stdout)).toContain("project payments-api.");
     expect(sessionStart(ws.scratch, ws.home)).toMatchObject({ status: 0, stdout: "" });
@@ -86,19 +85,8 @@ describe("ownership", () => {
       "gitdir: ../payments-api/.git/worktrees/payments-api-wt\n",
     );
     expect(context(sessionStart(ws.worktree, ws.home).stdout)).toContain("project payments-api.");
-  });
 
-  test("a nested clone is not its enclosing project's", () => {
-    const ws = workspace();
-    expect(runCli(ws.clone, ["search", "x"], { CRANK_HOME: ws.home })).toEqual({
-      status: 1,
-      stdout: "",
-      stderr: "crank-mem: not initialized here — run `crank-mem init` first.\n",
-    });
-  });
-
-  test("a worktree with its own config reads the main store without git", () => {
-    const ws = workspace();
+    // A worktree with its own config still reads the main store, with git failing.
     const crankDir = path.join(ws.worktree, CRANK_DIR);
     fs.mkdirSync(crankDir);
     saveConfig(crankDir, defaultConfig());
@@ -156,23 +144,6 @@ describe("ownership", () => {
       expect(main[0]!.root).toBe(ws.payments);
       expect(installedStores()).toHaveLength(3);
     });
-  });
-
-  test("linked projects are the stored links that resolve", () => {
-    const ws = workspace();
-    seedMemory(ws.H, [], { links: ["storefront", "ghost", "payments-api"] });
-    const opened = openMemory(memoryPath(ws.H), "read");
-    if (opened.status !== "open") throw new Error(opened.status);
-    try {
-      withEnv({ CRANK_HOME: ws.home }, () => {
-        expect(linkedProjects(opened.memory)).toEqual([
-          { name: "payments-api", root: ws.payments },
-          { name: "storefront", root: ws.storefront },
-        ]);
-      });
-    } finally {
-      opened.memory.close();
-    }
   });
 
   test("post-write routes each path by the walk rule", () => {

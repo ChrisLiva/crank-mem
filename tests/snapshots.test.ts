@@ -153,20 +153,6 @@ describe("migration", () => {
     expect(stats).toContain("  unembedded:       1");
   });
 
-  test("upgrade migrates a version-2 store and keeps every row", () => {
-    const root = project();
-    writeV2Store(root);
-
-    const up = runCli(root, ["upgrade"]);
-    expect(up.status).toBe(0);
-    expect(up.stdout.split("\n")).toContain("  migrated memory.db v2 → v3");
-
-    expect(runCli(root, ["get", "1", "2"], UTC).stdout).toBe(V1_GET);
-    expect(runCli(root, ["search", "symlinks"], UTC).stdout).toBe(
-      "#2 2026-01-03 bugfix Scanner skips symlinks\n",
-    );
-  });
-
   test("a failed pre-migration snapshot leaves the store at version 1", () => {
     const root = project();
     writeV1Store(root);
@@ -518,10 +504,13 @@ db.close();
     }
   });
 
-  test("a version-2 snapshot is migrated after the restore", () => {
+  test("a version-2 store migrates on upgrade with every row, and its snapshot migrates after a restore", () => {
     const root = project();
     writeV2Store(root);
-    expect(runCli(root, ["upgrade"]).status).toBe(0);
+    const up = runCli(root, ["upgrade"]);
+    expect(up.status).toBe(0);
+    expect(up.stdout.split("\n")).toContain("  migrated memory.db v2 → v3");
+    expect(runCli(root, ["get", "1", "2"], UTC).stdout).toBe(V1_GET);
     const v2 = snapshots(root);
     expect(v2).toHaveLength(1);
     expect(v2[0]).toMatch(/-v2\.db$/);

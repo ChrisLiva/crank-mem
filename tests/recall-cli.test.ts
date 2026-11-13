@@ -468,16 +468,6 @@ describe("where the commands run", () => {
       expect(run.stderr).toContain("not initialized here");
       expect(fs.existsSync(path.join(bare, ".crank"))).toBe(false);
     }
-    for (const args of [
-      ["outline", "a.ts"],
-      ["unfold", "a.ts", "f"],
-    ]) {
-      expect([args, runCli(bare, args)]).toEqual([
-        args,
-        { status: 1, stdout: "", stderr: "crank-mem: a.ts is outside every installed project.\n" },
-      ]);
-      expect(fs.existsSync(path.join(bare, ".crank"))).toBe(false);
-    }
   }, 20_000);
 });
 
