@@ -1102,4 +1102,29 @@ describe("cross-repo memory", () => {
       fs.chmodSync(db, 0o644);
     }
   });
+
+  test("another project's excerpt resolves a citation of a project it links", () => {
+    const ws = workspace();
+    seedMemory(ws.payments, [], { links: ["storefront"] });
+    sessionStart(ws, ws.storefront);
+    const bullet = "- **Front**: see `storefront/src/a.ts` (2020-01-01).";
+    fs.appendFileSync(path.join(ws.payments, ".crank/cerebrum.md"), `${bullet}\n`);
+    const anatomy = path.join(ws.storefront, ".crank/anatomy-index.json");
+    const before = fs.readFileSync(anatomy);
+
+    const run = runHook(
+      "src/hooks/post-read.ts",
+      JSON.stringify(claudePostRead(ws.H, path.join(ws.payments, "src/a.ts"), TRANSCRIPT)),
+      ws.H,
+      { CRANK_HOME: ws.home },
+    );
+    expect(run.status).toBe(0);
+    const ctx = additionalContext(run.stdout);
+    expect(sectionOf(ctx, "Excerpt of")).toBeDefined();
+    expect(ctx).toContain(
+      `${bullet} [cited file modified after this note; check: storefront/src/a.ts]`,
+    );
+    expect(ctx).not.toContain("[cited file missing");
+    expect(fs.readFileSync(anatomy)).toEqual(before);
+  });
 });

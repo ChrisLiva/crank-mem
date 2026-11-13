@@ -655,12 +655,7 @@ export function subagentInjection(
   const md = readCerebrum(crankDir);
   // Balanced: at this budget the session-start order leaves no room for memory.
   const excerpt = md
-    ? excerptOf(
-        md,
-        SUBAGENT_EXCERPT_BYTES,
-        { index: loadIndex(crankDir), root, linked: linkedAnatomies(storeLinks(root)) },
-        true,
-      ).text
+    ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, citationSources(crankDir, root), true).text
     : "";
 
   const lines = [INJECTION_HEADING];
@@ -677,6 +672,11 @@ export function subagentInjection(
       recallPointer: recall,
     },
   };
+}
+
+/** A project's own anatomy and its store's linked anatomies, every one read and never written. */
+export function citationSources(crankDir: string, root: string): CitedFiles {
+  return { index: loadIndex(crankDir), root, linked: linkedAnatomies(storeLinks(root)) };
 }
 
 /** The store's links that resolve to an installed project; none when the store cannot be read. */
