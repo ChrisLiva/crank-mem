@@ -21,7 +21,8 @@ import {
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
-import { claudeSessionStart, codexSessionStart } from "./fixtures/payloads.ts";
+import { claudeSessionStart, claudeSubagentStart, codexSessionStart } from "./fixtures/payloads.ts";
+import { workspace } from "./workspace.ts";
 
 const HOOK = "src/hooks/session-start.ts";
 
@@ -786,5 +787,52 @@ describe("project registry (black-box)", () => {
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)), root, { CRANK_HOME: home });
     expect(run.status).toBe(0);
     expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("crank-mem");
+  });
+});
+
+describe("linked projects (black-box)", () => {
+  test("linked projects are named after the recall pointer", () => {
+    const ws = workspace();
+    seedMemory(ws.H, [], { links: ["storefront", "payments-api"] });
+    const ctx = injectIn(ws.H, ws.home);
+    expect(
+      count(
+        ctx,
+        `${RECALL_BULLET}\n- Search also covers linked projects: payments-api, storefront.\n- Memory is not proof`,
+      ),
+    ).toBe(1);
+    // SubagentStart does not gain the line.
+    const sub = runHook(
+      "src/hooks/subagent-start.ts",
+      JSON.stringify(claudeSubagentStart(ws.H, "Explore")),
+      ws.H,
+      { CRANK_HOME: ws.home },
+    );
+    expect(sub.status).toBe(0);
+    const subCtx: string = JSON.parse(sub.stdout).hookSpecificOutput.additionalContext;
+    expect(subCtx).toContain(RECALL_BULLET);
+    expect(subCtx).not.toContain("Search also covers");
+
+    // No resolvable link, or no link at all: today's text.
+    for (const links of [["ghost"], []]) {
+      const other = workspace();
+      seedMemory(other.H, [], { links });
+      const plain = injectIn(other.H, other.home);
+      expect(count(plain, `${RECALL_BULLET}\n- Memory is not proof`)).toBe(1);
+      expect(plain).not.toContain("Search also covers");
+    }
+
+    // A renamed project's link stops resolving.
+    const renamed = workspace();
+    seedMemory(renamed.H, [], { links: ["storefront"] });
+    expect(injectIn(renamed.H, renamed.home)).toContain(
+      "- Search also covers linked projects: storefront.",
+    );
+    saveConfig(path.join(renamed.storefront, ".crank"), {
+      ...defaultConfig(),
+      digest: true,
+      name: "shop",
+    });
+    expect(injectIn(renamed.H, renamed.home)).not.toContain("Search also covers");
   });
 });

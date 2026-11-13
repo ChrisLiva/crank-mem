@@ -15,6 +15,7 @@ import {
   memoryStatus,
   openMemory,
 } from "./memory.ts";
+import { linkedProjects } from "./registry.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
 import type { CrankConfig } from "./config.ts";
 import { loadIndex, type AnatomyIndex } from "./store.ts";
@@ -114,13 +115,25 @@ const RECENT_MEMORY_MAX_BYTES = 1536;
 /** Observations read for the recent memory section, before the byte cap. */
 const RECENT_MEMORY_ROWS = 50;
 
-function instructions(index: AnatomyIndex, codex: boolean, recall: boolean): string {
+/** The recall pointer, followed by the linked projects search also covers when there are any. */
+function recallBullets(linked: string[]): string[] {
+  return linked.length
+    ? [RECALL_BULLET, `- Search also covers linked projects: ${linked.join(", ")}.`]
+    : [RECALL_BULLET];
+}
+
+function instructions(
+  index: AnatomyIndex,
+  codex: boolean,
+  recall: boolean,
+  linked: string[],
+): string {
   const lead =
     "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`.";
   const bullets = [
     anatomyPointer(index, codex),
     CODE_BULLET,
-    ...(recall ? [RECALL_BULLET] : []),
+    ...(recall ? recallBullets(linked) : []),
     PROOF_AND_ADR_BULLETS,
   ];
   return `${INJECTION_HEADING}\n\n${lead}\n\n${bullets.join("\n")}`;
@@ -150,7 +163,13 @@ export interface InjectionSources {
 }
 
 type Recall =
-  | { status: "open"; nextSteps: string | null; recent: ObservationLine[] }
+  | {
+      status: "open";
+      nextSteps: string | null;
+      recent: ObservationLine[];
+      /** The store's links that resolve to an installed project, sorted by name. */
+      linked: { name: string; root: string }[];
+    }
   | { status: "missing" | "older" | "newer" | "unreadable" };
 
 /** The recall bullet shows with a readable store, and while digests run with none yet, since they will fill it. */
@@ -478,7 +497,10 @@ export function composeInjection(
   const running = sources.running ?? false;
   const recall = sources.recall;
   const recallPointer = recall ? recallApplies(running, recall.status) : false;
-  const parts: string[] = [instructions(sources.index, sources.codex ?? false, recallPointer)];
+  const linked = recall?.status === "open" ? recall.linked.map((p) => p.name) : [];
+  const parts: string[] = [
+    instructions(sources.index, sources.codex ?? false, recallPointer, linked),
+  ];
   const shown: Shown = {
     recentIds: [],
     nextSteps: false,
@@ -699,6 +721,7 @@ function readRecall(root: string, gate: DigestGate): Recall {
       status: "open",
       nextSteps: gate.running && gate.drained ? memory.latestNextSteps() : null,
       recent: memory.recent(RECENT_MEMORY_ROWS),
+      linked: linkedProjects(memory),
     };
   } catch {
     return { status: "unreadable" };
