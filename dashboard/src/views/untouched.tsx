@@ -3,7 +3,7 @@ import { fetchUntouched, type UntouchedRepo } from "@/api";
 import { usePoll } from "@/hooks/use-poll";
 import { Command, formatAgo, formatTime } from "./shared";
 
-/** Repos agents wrote to that have no crank-mem install; hidden while there are none. */
+/** Repos agents read or wrote that have no crank-mem install; hidden while there are none. */
 export function UntouchedSection() {
   const [repos, setRepos] = useState<UntouchedRepo[] | null>(null);
   usePoll(async (isCurrent) => {
@@ -22,7 +22,7 @@ export function UntouchedSection() {
           Not installed
         </h2>
         <p className="text-xs text-muted-foreground">
-          Agents wrote to these repos in the last 30 days; their memory is not captured
+          Agents read or wrote these repos in the last 30 days; their memory is not captured
         </p>
       </header>
       <ul className="grid gap-1">
