@@ -13,7 +13,7 @@ import {
   MEMORY_UNREADABLE_NOTE,
   memoryPath,
   NO_MEMORY_NOTE,
-  openMemory,
+  openStoreForWrite,
   type Memory,
 } from "../src/hooks/lib/memory.ts";
 import {
@@ -787,7 +787,7 @@ type ProposalJson = {
 
 /** Run `fn` on the project's store opened for writing, then close it. */
 function withWritable(root: string, fn: (memory: Memory) => void): void {
-  const opened = openMemory(memoryPath(root), "write");
+  const opened = openStoreForWrite(root);
   if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
   try {
     fn(opened.memory);

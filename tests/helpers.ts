@@ -8,7 +8,7 @@ import type * as sqlite from "node:sqlite";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import {
   memoryPath,
-  openMemory,
+  openStoreForWrite,
   type DigestInput,
   type NewObservation,
   type Position,
@@ -342,7 +342,7 @@ export function seedMemory(
 ): number[] {
   const n = ++seedCount;
   const sessionId = opts.session ?? `seed-${n}`;
-  const opened = openMemory(memoryPath(root), "write");
+  const opened = openStoreForWrite(root);
   if (opened.status !== "open") throw new Error(`seedMemory: store is ${opened.status}`);
   const memory = opened.memory;
   try {
@@ -391,7 +391,7 @@ export function seedMemory(
 
 /** Store one vector so `search` embeds its query. */
 export function plantVector(root: string, id: number): void {
-  const opened = openMemory(memoryPath(root), "write");
+  const opened = openStoreForWrite(root);
   if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
   try {
     opened.memory.putVectors(EMBED_MODEL, [{ id, vector: new Float32Array(384) }]);

@@ -21,7 +21,12 @@ import {
 } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
-import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
+import {
+  MEMORY_NEWER_NOTE,
+  formatLine,
+  openStoreForWrite,
+  readStoreSync,
+} from "../src/hooks/lib/memory.ts";
 import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
 import { claudeSessionStart, claudeSubagentStart, codexSessionStart } from "./fixtures/payloads.ts";
 import { workspace } from "./workspace.ts";
@@ -511,7 +516,7 @@ describe("digests running (black-box)", () => {
   test("recent memory lists whole lines, newest first, under its byte cap", () => {
     const { root, home } = memoryProject(true);
     // An open store with no rows: no section, but the bullet.
-    const empty = openMemory(memoryPath(root), "write");
+    const empty = openStoreForWrite(root);
     if (empty.status === "open") empty.memory.close();
     const before = injectIn(root, home);
     expect(before).not.toContain("## Recent memory");
@@ -528,10 +533,9 @@ describe("digests running (black-box)", () => {
       "## Recent memory (open one: `crank-mem get <id>`)\n",
     )!;
     expect(Buffer.byteLength(section, "utf-8")).toBeLessThanOrEqual(1536);
-    const opened = openMemory(memoryPath(root), "read");
-    if (opened.status !== "open") throw new Error(opened.status);
-    const all = opened.memory.recent(60).map(formatLine);
-    opened.memory.close();
+    const read = readStoreSync(root, (memory) => memory.recent(60).map(formatLine));
+    if (read.status !== "open") throw new Error(read.status);
+    const all = read.value;
     const lines = section.split("\n").slice(1);
     expect(lines.length).toBeGreaterThan(0);
     expect(lines).toEqual(all.slice(0, lines.length));
