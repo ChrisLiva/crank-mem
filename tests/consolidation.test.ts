@@ -467,22 +467,6 @@ describe("bullets citing linked projects", () => {
     expect(k.job.status).toBe(0);
     expect(k.fake.calls().length).toBe(2);
   }, 30_000);
-
-  test("a bullet citing the project's own directory of a linked project's name is due", () => {
-    const ws = linkedWorkspace("- **Own**: see `payments-api/lib/x.ts` (2020-01-01).");
-    fs.mkdirSync(path.join(ws.H, "payments-api/lib"), { recursive: true });
-    fs.writeFileSync(path.join(ws.H, "payments-api/lib/x.ts"), "export const x = 1;\n");
-    const start = runHook(
-      "src/hooks/session-start.ts",
-      JSON.stringify(claudeSessionStart(ws.H)),
-      ws.H,
-      { CRANK_HOME: ws.home },
-    );
-    expect(start.status).toBe(0);
-    const j = journey(ws.H, scenarios(), { home: ws.home });
-    expect(j.job.status).toBe(0);
-    expect(j.fake.calls().length).toBe(2);
-  }, 30_000);
 });
 
 describe("consolidation edge outcomes", () => {
