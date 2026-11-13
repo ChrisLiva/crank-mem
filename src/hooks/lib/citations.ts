@@ -74,7 +74,7 @@ export function citationCheck(
   linked: { resolve: Links } | { ignore: Links },
 ): CitationCheck {
   const resolve = "resolve" in linked;
-  const anatomies = linkedAnatomies("resolve" in linked ? linked.resolve : linked.ignore);
+  const anatomies = linkedAnatomies(resolve ? linked.resolve : linked.ignore);
   const own = anatomy(home.root, home.index);
   return {
     status(text, sinceMs) {
@@ -177,7 +177,7 @@ export function fileCitations(text: string): string[] {
 }
 
 /** `registry.ts` → `linkedProjects` of the project's store; none when the store cannot be read. */
-export function storeLinks(root: string): { name: string; root: string }[] {
+export function storeLinks(root: string): ReturnType<Links> {
   const opened = openMemory(memoryPath(root), "read");
   if (opened.status !== "open") return [];
   try {

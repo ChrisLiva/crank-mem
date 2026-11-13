@@ -133,7 +133,7 @@ The part of the cerebrum that an injection carries when the whole does not fit.
 _Avoid_: Summary, slice
 
 **Citation**:
-A file path or basename in backticks inside a bullet, which the excerpt checks against the anatomy.
+A file path or basename in backticks inside a bullet, which the excerpts, consolidation and `stats` check against the anatomy.
 _Avoid_: Reference, file link
 
 **Cerebrum archive**:

@@ -74,7 +74,8 @@ function memoryLines(
 function excerptRows(cerebrumMd: string | null, e: Excerpt, check: CitationCheck): string[] {
   // Only paths with a directory: a bare basename may live anywhere.
   const cited = [...new Set(fileCitations(cerebrumMd ?? "").filter((rel) => rel.includes("/")))];
-  const existing = cited.length - check.status(cerebrumMd ?? "", null).missing.length;
+  const missing = new Set(check.status(cerebrumMd ?? "", null).missing);
+  const existing = cited.filter((rel) => !missing.has(rel)).length;
   return [
     row("cerebrum bullets", `${e.shown} of ${e.total} injected`),
     row("prefs dropped", `${e.prefsTotal - e.prefsShown} of ${e.prefsTotal}`),
