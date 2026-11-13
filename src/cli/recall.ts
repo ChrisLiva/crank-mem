@@ -360,8 +360,8 @@ function routeHandles(handles: Handle[], current: string): HandleStore[] | null 
   const stores = new Map<string, HandleStore>();
   const targets = new Map<string, Target | null>([["", { name: "", root: current }]]);
   for (const h of handles) {
-    if (!targets.has(h.project)) targets.set(h.project, namedStore(h.project, current));
-    const target = targets.get(h.project)!;
+    let target = targets.get(h.project);
+    if (target === undefined) targets.set(h.project, (target = namedStore(h.project, current)));
     if (target === null) return null;
     const store = stores.get(target.root) ?? { ...target, ids: [] };
     store.ids.push(h.id);

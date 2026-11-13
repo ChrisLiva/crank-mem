@@ -127,11 +127,19 @@ export function route(
 ): { entry: EntryShare; others: Share[] } {
   const root = entry.projectRoot;
   const names = new Map<string, string>();
-  const nameOf = (r: string) => names.get(r) ?? names.set(r, projectName(r)).get(r)!;
+  const nameOf = (r: string) => {
+    let name = names.get(r);
+    if (name === undefined) names.set(r, (name = projectName(r)));
+    return name;
+  };
   const { copies, links, fallbacks } = copiesByOwner(output, entry, ownerOf, nameOf);
   const shares = new Map<string, Share>();
-  const shareOf = (r: string) =>
-    shares.get(r) ?? shares.set(r, { root: r, observations: [], proposals: [], stale: [] }).get(r)!;
+  const shareOf = (r: string) => {
+    let share = shares.get(r);
+    if (share === undefined)
+      shares.set(r, (share = { root: r, observations: [], proposals: [], stale: [] }));
+    return share;
+  };
   for (const [r, observations] of copies) shareOf(r).observations = observations;
   for (const { kind, bullet, project } of output.proposals)
     shareOf(shown.get(project)?.root ?? root).proposals.push({ kind, bullet });

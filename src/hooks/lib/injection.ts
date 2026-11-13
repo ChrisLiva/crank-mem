@@ -458,8 +458,8 @@ function resolveCitation(
 ): "missing" | "modified" | null {
   const head = linkedPrefix(rel, cited.root, (name) => cited.linked?.(name) !== undefined);
   const linked = head === null ? undefined : cited.linked?.(head);
-  if (!linked) return resolveIn(rel, cited, byName, cutoffMs);
-  return resolveIn(rel.slice(head!.length + 1), linked, linked.byName, cutoffMs);
+  if (head === null || !linked) return resolveIn(rel, cited, byName, cutoffMs);
+  return resolveIn(rel.slice(head.length + 1), linked, linked.byName, cutoffMs);
 }
 
 function resolveIn(
