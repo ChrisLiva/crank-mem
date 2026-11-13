@@ -11,15 +11,19 @@ import {
   type HookPayload,
 } from "./lib/hook-io.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
-import { formatLine, memoryPath, openMemory, type MemoryReader } from "./lib/memory.ts";
+import { formatLine, memoryPath, withReader } from "./lib/memory.ts";
+import { ownerOf, projectName } from "./lib/owner.ts";
+import { recordUntouched } from "./lib/untouched.ts";
 import { shellReadPaths } from "./lib/shell-reads.ts";
 import { transcriptStem } from "./lib/spool.ts";
 import { SEEN_DIR, crankHome } from "./lib/user-state.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
+import type { ObservationLine } from "./lib/wire.ts";
 
 // PostToolUse hook for Claude's Read and Bash, Claude Code only (ADR 0009).
 // When the agent reads a file memory has observations on, it adds that file's
-// newest lines, once per file per agent per session. Every path exits 0.
+// newest lines from the store of the project that owns it, once per file per
+// agent per session. Every path exits 0.
 
 const HISTORY_LINES = 5;
 const MAX_BYTES = 1536;
@@ -57,36 +61,132 @@ function agentOf(payload: HookPayload): string {
     : "main";
 }
 
-type Histories = {
+/** A read path its owner holds: the owner-relative path, the tree it sits in, and the store it reads. */
+type Read = { abs: string; rel: string; tree: string; owner: string; store: string };
+
+/** The read `p` names, or null when no installed project owns it or it is not a file now. */
+function resolveRead(cwd: string, p: string, session: string | null): Read | null {
+  const owner = ownerOf(path.resolve(cwd, p));
+  if (owner.kind === "unowned") {
+    if (owner.repo !== null) recordUntouched(owner.repo, session);
+    return null;
+  }
+  const rel = memoryPaths(owner.root, cwd, [p])[0];
+  const tree = owner.kind === "worktree" ? owner.top : owner.root;
+  if (rel === undefined || !isProjectFile(tree, rel)) return null;
+  return { abs: path.join(tree, rel), rel, tree, owner: owner.root, store: memoryPath(owner.root) };
+}
+
+/** Each read once, in order. */
+function resolveReads(cwd: string, paths: string[], session: string | null): Read[] {
+  const reads = new Map<string, Read>();
+  for (const p of paths) {
+    const r = resolveRead(cwd, p, session);
+    if (r && !reads.has(r.abs)) reads.set(r.abs, r);
+  }
+  return [...reads.values()];
+}
+
+/** Each store's history for its unseen reads; a store that does not open as "open" is absent. */
+async function fetchHistories(
+  reads: Read[],
+  isSeen: (r: Read) => boolean,
+): Promise<Map<string, Map<string, ObservationLine[]>>> {
+  const out = new Map<string, Map<string, ObservationLine[]>>();
+  for (const store of new Set(reads.map((r) => r.store))) {
+    const rels = reads.filter((r) => r.store === store && !isSeen(r)).map((r) => r.rel);
+    const got = await withReader(
+      store,
+      (m) => new Map(rels.map((rel) => [rel, m.fileHistory(rel, HISTORY_LINES)])),
+    );
+    if (got instanceof Map) out.set(store, got);
+  }
+  return out;
+}
+
+type Tally = {
+  owner: string;
   sections: string[];
   shown: { path: string; ids: number[] }[];
   empty: string[];
+  seen: string[];
   cut: string[];
 };
 
-/** Each unseen path's history section, in order, until the next one would pass MAX_BYTES. */
-function histories(memory: MemoryReader, root: string, unseen: string[]): Histories {
-  const out: Histories = { sections: [], shown: [], empty: [], cut: [] };
-  for (const [i, rel] of unseen.entries()) {
-    const lines = memory.fileHistory(rel, HISTORY_LINES);
-    if (lines.length === 0) {
-      out.empty.push(rel);
-      continue;
-    }
-    const tag = changedSince(path.join(root, rel), lines[0]!.createdAtMs)
-      ? " [file changed since]"
-      : "";
-    const section =
-      `History of ${rel} (open one: \`crank-mem get <id>\`):${tag}\n` +
-      lines.map(formatLine).join("\n");
-    if (Buffer.byteLength([...out.sections, section].join(SEP)) > MAX_BYTES) {
-      out.cut = unseen.slice(i);
-      break;
-    }
-    out.sections.push(section);
-    out.shown.push({ path: rel, ids: lines.map((l) => l.id) });
+const tallyOf = (owner: string): Tally => ({
+  owner,
+  sections: [],
+  shown: [],
+  empty: [],
+  seen: [],
+  cut: [],
+});
+
+/** `handle` is "" for the start project's store, else the owner's name, so ids print as `<name>#<id>`. */
+function section(read: Read, lines: ObservationLine[], handle: string): string {
+  const tag = changedSince(path.join(read.tree, read.rel), lines[0]!.createdAtMs)
+    ? " [file changed since]"
+    : "";
+  const body = lines.map((l) => handle + formatLine(l));
+  return `History of ${read.rel} (open one: \`crank-mem get <id>\`):${tag}\n${body.join("\n")}`;
+}
+
+type Assembled = { sections: string[]; tallies: Map<string, Tally>; marked: Read[]; full: boolean };
+
+/** Adds `read`'s section unless it would pass MAX_BYTES, which cuts it and every unseen read after. */
+function show(out: Assembled, tally: Tally, read: Read, lines: ObservationLine[], handle: string) {
+  const text = section(read, lines, handle);
+  if (Buffer.byteLength([...out.sections, text].join(SEP)) > MAX_BYTES) {
+    out.full = true;
+    tally.cut.push(read.rel);
+    return;
+  }
+  out.sections.push(text);
+  tally.sections.push(text);
+  tally.shown.push({ path: read.rel, ids: lines.map((l) => l.id) });
+  out.marked.push(read);
+}
+
+/** Sections in read order until the next would pass MAX_BYTES; every read of an open store lands in its tally. */
+function assemble(
+  startStore: string,
+  reads: Read[],
+  found: Map<string, Map<string, ObservationLine[]>>,
+  isSeen: (r: Read) => boolean,
+): Assembled {
+  const out: Assembled = { sections: [], tallies: new Map(), marked: [], full: false };
+  for (const read of reads) {
+    const history = found.get(read.store);
+    if (!history) continue;
+    const tally = out.tallies.get(read.store) ?? tallyOf(read.owner);
+    out.tallies.set(read.store, tally);
+    const lines = history.get(read.rel) ?? [];
+    if (isSeen(read)) tally.seen.push(read.rel);
+    else if (out.full) tally.cut.push(read.rel);
+    else if (lines.length === 0) tally.empty.push(read.rel);
+    else show(out, tally, read, lines, read.store === startStore ? "" : projectName(read.owner));
   }
   return out;
+}
+
+/** One usage line per store, each with its own paths, bare ids and bytes; the start project always gets one. */
+function recordTallies(
+  payload: HookPayload,
+  start: { root: string; store: string },
+  tallies: Map<string, Tally>,
+): void {
+  if (!tallies.has(start.store)) tallies.set(start.store, tallyOf(start.root));
+  for (const t of tallies.values()) {
+    recordUsage(t.owner, hookActor(payload), {
+      channel: "file-history",
+      tool: payload.tool_name!,
+      shown: t.shown,
+      empty: t.empty,
+      seen: t.seen,
+      cut: t.cut,
+      bytes: Buffer.byteLength(t.sections.join(SEP), "utf-8"),
+    });
+  }
 }
 
 /** Appends, so parallel hooks on one transcript each keep their marks. */
@@ -108,48 +208,31 @@ async function main(): Promise<void> {
 
   const ctx = projectContext(payload);
   if (!ctx) return;
-  const { cwd, root } = ctx;
 
   const stem = transcriptStem(payload.transcript_path);
   if (!stem) return;
-  const agent = agentOf(payload);
 
-  const rels = memoryPaths(root, cwd, paths).filter((r) => isProjectFile(root, r));
-  if (rels.length === 0) return;
+  const reads = resolveReads(ctx.cwd, paths, hookActor(payload).session);
+  if (reads.length === 0) return;
 
-  const file = memoryPath(root);
-  if (!fs.existsSync(file)) return;
+  const seenFile = path.join(crankHome(), SEEN_DIR, `${stem}-${agentOf(payload)}.seen`);
+  const seenPaths = readSeen(seenFile);
+  const isSeen = (r: Read) => seenPaths.includes(r.abs);
+  const found = await fetchHistories(reads, isSeen);
+  if (found.size === 0) return;
 
-  const seenFile = path.join(crankHome(), SEEN_DIR, `${stem}-${agent}.seen`);
-  const seen = readSeen(seenFile);
-  const opened = openMemory(file, "read");
-  if (opened.status !== "open") return;
-
-  const unseen = rels.filter((r) => !seen.includes(r));
-  let found: Histories;
-  try {
-    found = histories(opened.memory, root, unseen);
-  } finally {
-    opened.memory.close();
-  }
-  const { sections, shown, empty, cut } = found;
-
+  const startStore = memoryPath(ctx.root);
+  const { sections, tallies, marked } = assemble(startStore, reads, found, isSeen);
   const context = sections.join(SEP);
   if (sections.length > 0) {
-    const marked = shown.map((s) => s.path);
-    markSeen(seenFile, marked);
+    markSeen(
+      seenFile,
+      marked.map((r) => r.abs),
+    );
     emitAdditionalContext("PostToolUse", context);
-    debugEvent("file-history", { paths: marked.map(safePath) });
+    debugEvent("file-history", { paths: marked.map((r) => safePath(r.rel)) });
   }
-  recordUsage(root, hookActor(payload), {
-    channel: "file-history",
-    tool: payload.tool_name!,
-    shown,
-    empty,
-    seen: rels.filter((r) => seen.includes(r)),
-    cut,
-    bytes: Buffer.byteLength(context, "utf-8"),
-  });
+  recordTallies(payload, { root: ctx.root, store: startStore }, tallies);
 }
 
 await runAdvisoryHook("post-read", main);
