@@ -100,9 +100,13 @@ async function digest(
   if (r.kind === "rejected") return rejected(memory, session, entry);
   const routed = route(stored(r.output), entry, shown, ownerOf);
   const base = { session, next: d.next, model: r.model };
-  const written = writeShares(routed.others, { ...base, origin: projectName(entry.projectRoot) });
+  const { written, held } = writeShares(routed.others, {
+    ...base,
+    origin: projectName(entry.projectRoot),
+  });
+  const own = keptFallbacks(routed.entry, held);
   try {
-    if (appendEntry(memory, routed.entry, { ...base, expected: pos, costUsd: r.costUsd })) {
+    if (appendEntry(memory, own, { ...base, expected: pos, costUsd: r.costUsd })) {
       if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
       written.push({ root: entry.projectRoot, memory });
     }
@@ -111,6 +115,12 @@ async function digest(
     for (const store of written) if (store.memory !== memory) store.memory.close();
   }
   return 0;
+}
+
+/** The entry's share with each fallback no owning store holds added to its observations. */
+function keptFallbacks(share: EntryShare, held: Set<string>): EntryShare {
+  const lost = share.fallbacks.filter((f) => !f.owners.some((o) => held.has(o)));
+  return { ...share, observations: [...share.observations, ...lost.map((f) => f.observation)] };
 }
 
 /** Record a rejection: exit 1 asks for a retry, and the entry parks at the limit. */
@@ -285,20 +295,30 @@ const EMPTY_SUMMARY: DigestInput["summary"] = {
 /**
  * Write each other project's share to its store, in order. A project with digests off, or a store that reads as
  * newer, gets none silently; a store that will not open or write gets none with one stderr line. The stores written
- * stay open, in that order, for the caller to close.
+ * stay open, in that order, for the caller to close; `held` names every root that now holds its share, including
+ * one that already did.
  */
-function writeShares(shares: Share[], base: ShareBase): { root: string; memory: Memory }[] {
+function writeShares(
+  shares: Share[],
+  base: ShareBase,
+): { written: { root: string; memory: Memory }[]; held: Set<string> } {
   const written: { root: string; memory: Memory }[] = [];
+  const held = new Set<string>();
   for (const share of shares) {
     if (!loadConfig(path.join(share.root, CRANK_DIR)).digest) continue;
-    const memory = openAndWrite(share, base);
-    if (memory) written.push({ root: share.root, memory });
+    const result = openAndWrite(share, base);
+    if (result === null) continue;
+    held.add(share.root);
+    if (result !== "held") written.push({ root: share.root, memory: result });
   }
-  return written;
+  return { written, held };
 }
 
-/** The store holding `share`, left open, or null when nothing was written and the store is closed. */
-function openAndWrite(share: Share, base: ShareBase): Memory | null {
+/**
+ * The store holding `share`, left open; "held", the store closed, when it already held the share; or null when
+ * nothing was written and the store is closed.
+ */
+function openAndWrite(share: Share, base: ShareBase): Memory | "held" | null {
   let memory: Memory | undefined;
   let kept = false;
   try {
@@ -309,8 +329,9 @@ function openAndWrite(share: Share, base: ShareBase): Memory | null {
       return null;
     }
     memory = opened.memory;
-    kept = writeShare(memory, share, base);
-    return kept ? memory : null;
+    const result = writeShare(memory, share, base);
+    kept = result === "appended";
+    return kept ? memory : result === "held" ? "held" : null;
   } catch (err) {
     shareSkipped(share.root, errorCode(err));
     return null;
@@ -329,22 +350,20 @@ function shareSkipped(root: string, reason: string): void {
   console.error(`crank-mem: share for ${projectName(root)} skipped (${reason}).`);
 }
 
-/** One share as a digest row at cost 0 with an empty summary; false when the store already holds `next`. */
-function writeShare(memory: Memory, share: Share, base: ShareBase): boolean {
+/** One share as a digest row at cost 0 with an empty summary; "held" when the store already holds `next`. */
+function writeShare(memory: Memory, share: Share, base: ShareBase): "appended" | "held" | "stale" {
   const expected = memory.position(base.session.id);
-  if (samePosition(expected, base.next)) return false;
-  return (
-    memory.appendDigest({
-      ...base,
-      expected,
-      costUsd: 0,
-      summary: EMPTY_SUMMARY,
-      observations: share.observations,
-      proposals: share.proposals,
-      stale: share.stale,
-      links: [],
-    }) === "appended"
-  );
+  if (samePosition(expected, base.next)) return "held";
+  return memory.appendDigest({
+    ...base,
+    expected,
+    costUsd: 0,
+    summary: EMPTY_SUMMARY,
+    observations: share.observations,
+    proposals: share.proposals,
+    stale: share.stale,
+    links: [],
+  });
 }
 
 /** The model's output with every string redacted and only the proposals with a non-blank bullet. */

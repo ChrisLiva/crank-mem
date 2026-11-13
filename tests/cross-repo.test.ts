@@ -648,6 +648,32 @@ describe("cross-repo memory", () => {
     expect([readOnly.hits(readOnly.ws.H), readOnly.hits(readOnly.ws.payments)]).toEqual([1, 1]);
   }, 90_000);
 
+  test("an observation only a skipped project's files cite stays in the entry store", () => {
+    const run = (setUp: (ws: Ws, last: { uuid: string; timestamp: string }) => void) => {
+      const ws = workspace();
+      const { transcript, last } = crossTranscript(ws);
+      setUp(ws, last);
+      const output = digestOf([observation("Front fix", [path.join(ws.storefront, "src/a.ts")])]);
+      const { job } = journey(ws.H, [{ lines: okStream(output) }], {
+        home: ws.home,
+        cwd: ws.H,
+        transcript,
+      });
+      expect(job.status).toBe(0);
+      return searchIds(ws, ws.H, "Front fix").length;
+    };
+    const off = run((ws) => fs.rmSync(path.join(ws.storefront, ".crank/config.local.json")));
+    const unreadable = run((ws) => plantMemory(ws.storefront, "unreadable"));
+    const written = run(() => {});
+    const held = run((ws, last) => seedMemory(ws.storefront, [], { session: "s1", next: last }));
+    expect({ off, unreadable, written, held }).toEqual({
+      off: 1,
+      unreadable: 1,
+      written: 0,
+      held: 0,
+    });
+  }, 90_000);
+
   test("search --project still gives the current project its line when the named store will not open", () => {
     const states = ["missing", "unreadable", "newer"] as const;
     for (const state of states) {

@@ -18,7 +18,9 @@ export type Share = {
   proposals: DigestInput["proposals"];
   stale: DigestInput["stale"];
 };
-export type EntryShare = Share & { summary: DigestSummary; links: string[] };
+/** An observation no entry-owned file cites: its copy for the entry store, kept when no `owners` store holds it. */
+type Fallback = { owners: string[]; observation: NewObservation };
+export type EntryShare = Share & { summary: DigestSummary; links: string[]; fallbacks: Fallback[] };
 
 type Files = { read: Set<string>; modified: Set<string> };
 
@@ -74,21 +76,30 @@ function shownRow(
   return s?.ids.includes(h.id) ? { root: s.root, id: h.id } : null;
 }
 
-/** Each owning root's observation copies, the entry's first, and the names of the other projects an observation modifies. */
+/**
+ * Each owning root's observation copies, the entry's first, the names of the other projects an observation
+ * modifies, and a fallback for each observation that only other projects' files cite.
+ */
 function copiesByOwner(
   output: Digest,
   entry: { projectRoot: string; cwd: string },
   ownerOf: (p: string) => Owner,
   nameOf: (root: string) => string,
-): { copies: Map<string, NewObservation[]>; links: Set<string> } {
+): { copies: Map<string, NewObservation[]>; links: Set<string>; fallbacks: Fallback[] } {
   const root = entry.projectRoot;
   const copies = new Map<string, NewObservation[]>([[root, []]]);
   const links = new Set<string>();
+  const fallbacks: Fallback[] = [];
   for (const o of output.observations) {
     const base = { type: o.type, title: o.title, narrative: o.narrative, facts: o.facts };
     const files = ownedFiles(o, entry.cwd, ownerOf);
-    if (files.size === 0)
-      copies.get(root)!.push({ ...base, filesRead: [], filesModified: [], refs: [] });
+    const unowned = { ...base, filesRead: [], filesModified: [] };
+    if (files.size === 0) copies.get(root)!.push({ ...unowned, refs: [] });
+    else if (!files.has(root))
+      fallbacks.push({
+        owners: [...files.keys()],
+        observation: { ...unowned, refs: refsBeside(files, root, nameOf) },
+      });
     for (const [owner, own] of files) {
       if (owner !== root && own.modified.size > 0) links.add(nameOf(owner));
       const copy = { ...base, filesRead: [...own.read], filesModified: [...own.modified] };
@@ -98,12 +109,13 @@ function copiesByOwner(
       ]);
     }
   }
-  return { copies, links };
+  return { copies, links, fallbacks };
 }
 
 /**
  * The entry project's share (summary, its observations, including those without an owned file, its proposals and
- * stale flags, and links to each other project an observation modifies) and one share per other project that gets
+ * stale flags, links to each other project an observation modifies, and fallbacks for the observations only other
+ * projects' files cite) and one share per other project that gets
  * an observation copy, a proposal or a stale flag, by project name. A proposal goes to the listed project its
  * `project` names, else to the entry; a stale flag goes to the store whose shown row its handle names.
  */
@@ -116,7 +128,7 @@ export function route(
   const root = entry.projectRoot;
   const names = new Map<string, string>();
   const nameOf = (r: string) => names.get(r) ?? names.set(r, projectName(r)).get(r)!;
-  const { copies, links } = copiesByOwner(output, entry, ownerOf, nameOf);
+  const { copies, links, fallbacks } = copiesByOwner(output, entry, ownerOf, nameOf);
   const shares = new Map<string, Share>();
   const shareOf = (r: string) =>
     shares.get(r) ?? shares.set(r, { root: r, observations: [], proposals: [], stale: [] }).get(r)!;
@@ -128,7 +140,7 @@ export function route(
     if (row !== null) shareOf(row.root).stale.push({ id: row.id, reason: f.reason });
   }
   return {
-    entry: { ...shareOf(root), summary: output.summary, links: [...links].sort() },
+    entry: { ...shareOf(root), summary: output.summary, links: [...links].sort(), fallbacks },
     others: [...shares.values()]
       .filter((s) => s.root !== root)
       .sort((a, b) => (nameOf(a.root) < nameOf(b.root) ? -1 : 1)),
