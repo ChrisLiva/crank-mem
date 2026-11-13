@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { parseArgs, positive } from "../cli/args.ts";
 import { COMMANDS } from "../cli/commands.ts";
 import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
-import { CRANK_DIR, errorMessage } from "../hooks/lib/config.ts";
+import { CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
 import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import {
   memoryPath,
@@ -281,23 +281,50 @@ const EMPTY_SUMMARY: DigestInput["summary"] = {
 };
 
 /**
- * Write each other project's share to its store, in order; a store that does not open as "open" gets none. The
- * stores written stay open, in that order, for the caller to close.
+ * Write each other project's share to its store, in order. A project with digests off, or a store that reads as
+ * newer, gets none silently; a store that will not open or write gets none with one stderr line. The stores written
+ * stay open, in that order, for the caller to close.
  */
 function writeShares(shares: Share[], base: ShareBase): { root: string; memory: Memory }[] {
   const written: { root: string; memory: Memory }[] = [];
   for (const share of shares) {
-    const opened = openMemory(memoryPath(share.root), "write");
-    if (opened.status !== "open") continue;
-    let kept = false;
-    try {
-      kept = writeShare(opened.memory, share, base);
-    } finally {
-      if (kept) written.push({ root: share.root, memory: opened.memory });
-      else opened.memory.close();
-    }
+    if (!loadConfig(path.join(share.root, CRANK_DIR)).digest) continue;
+    const memory = openAndWrite(share, base);
+    if (memory) written.push({ root: share.root, memory });
   }
   return written;
+}
+
+/** The store holding `share`, left open, or null when nothing was written and the store is closed. */
+function openAndWrite(share: Share, base: ShareBase): Memory | null {
+  let memory: Memory | undefined;
+  let kept = false;
+  try {
+    const opened = openMemory(memoryPath(share.root), "write");
+    if (opened.status === "newer") return null;
+    if (opened.status !== "open") {
+      shareSkipped(share.root, opened.status);
+      return null;
+    }
+    memory = opened.memory;
+    kept = writeShare(memory, share, base);
+    return kept ? memory : null;
+  } catch (err) {
+    shareSkipped(share.root, errorCode(err));
+    return null;
+  } finally {
+    if (!kept) memory?.close();
+  }
+}
+
+/** A thrown error's `code`, such as ERR_SQLITE_ERROR or EACCES, or its message when it has none. */
+function errorCode(err: unknown): string {
+  return (err as NodeJS.ErrnoException | null)?.code ?? errorMessage(err);
+}
+
+/** The one stderr line for a share that was not written. */
+function shareSkipped(root: string, reason: string): void {
+  console.error(`crank-mem: share for ${projectName(root)} skipped (${reason}).`);
 }
 
 /** One share as a digest row at cost 0 with an empty summary; false when the store already holds `next`. */

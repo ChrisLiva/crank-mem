@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type * as sqlite from "node:sqlite";
 import {
   claudePostBash,
   claudePostRead,
@@ -26,6 +27,8 @@ import {
   userRecord,
   withEnv,
 } from "./helpers.ts";
+import { V1_DDL } from "./fixtures/schema-v1.ts";
+import { V2_DDL } from "./fixtures/schema-v2.ts";
 import { workspace } from "./workspace.ts";
 
 const SESSION = "a46b6073-1111-2222-3333-444455556666";
@@ -413,6 +416,94 @@ describe("cross-repo memory", () => {
     expect(readOnly.job.status).not.toBe(0);
     expect(readOnly.search.stdout.split("\n").filter((l) => l.startsWith("#"))).toHaveLength(1);
   }, 30_000);
+
+  test("a share is skipped for a project with digests off, a newer store, or a store that will not open", () => {
+    const run = (setUp: (ws: Ws) => () => void) => {
+      const ws = workspace();
+      const { transcript } = crossTranscript(ws);
+      const output = digestOf([
+        observation(
+          "Cross fix",
+          [path.join(ws.storefront, "src/a.ts"), path.join(ws.payments, "src/a.ts")],
+          [path.join(ws.H, "src/h.ts")],
+        ),
+      ]);
+      const restore = setUp(ws);
+      try {
+        const { job } = journey(ws.H, [{ lines: okStream(output) }], {
+          home: ws.home,
+          cwd: ws.H,
+          transcript,
+        });
+        const search = (root: string) =>
+          runCli(root, ["search", "Cross fix"], { CRANK_HOME: ws.home });
+        const hits = (root: string) =>
+          search(root)
+            .stdout.split("\n")
+            .filter((l) => l.includes("Cross fix")).length;
+        return { ws, job, search, hits };
+      } finally {
+        restore();
+      }
+    };
+
+    const off = run((ws) => {
+      fs.rmSync(path.join(ws.storefront, ".crank/config.local.json"));
+      return () => {};
+    });
+    expect(off.job.status).toBe(0);
+    expect(off.search(off.ws.storefront).stdout).not.toContain("Cross fix");
+    expect(off.search(off.ws.storefront).stdout).toContain("crank-mem: no memory exists yet.");
+    expect([off.hits(off.ws.H), off.hits(off.ws.payments)]).toEqual([1, 1]);
+    expect(off.job.stderr).not.toContain("share for storefront");
+
+    const newer = run((ws) => {
+      plantMemory(ws.storefront, "newer");
+      return () => {};
+    });
+    expect(newer.job.status).toBe(0);
+    expect(newer.job.stderr).not.toContain("storefront");
+    const newerSearch = newer.search(newer.ws.storefront);
+    expect([newerSearch.status, newerSearch.stdout]).toEqual([1, ""]);
+
+    const older = run((ws) => {
+      const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
+      const db = new mod.DatabaseSync(memoryPath(ws.storefront));
+      db.exec(V1_DDL);
+      db.exec(V2_DDL);
+      db.exec("PRAGMA user_version = 2");
+      db.close();
+      return () => {};
+    });
+    expect(older.job.status).toBe(0);
+    const snapshots = fs.readdirSync(path.join(older.ws.storefront, ".crank/backups/memory"));
+    expect(snapshots.filter((f) => f.endsWith("-v2.db"))).toHaveLength(1);
+    expect(older.hits(older.ws.storefront)).toBe(1);
+
+    const skipLine = (stderr: string, reason: string) =>
+      stderr
+        .split("\n")
+        .filter((l) => l === `crank-mem: share for storefront skipped (${reason}).`);
+    const unreadable = run((ws) => {
+      plantMemory(ws.storefront, "unreadable");
+      return () => {};
+    });
+    expect(unreadable.job.status).toBe(0);
+    expect(skipLine(unreadable.job.stderr, "unreadable")).toHaveLength(1);
+    expect([unreadable.hits(unreadable.ws.H), unreadable.hits(unreadable.ws.payments)]).toEqual([
+      1, 1,
+    ]);
+
+    const readOnly = run((ws) => {
+      seedMemory(ws.storefront, []);
+      const db = memoryPath(ws.storefront);
+      fs.chmodSync(db, 0o444);
+      return () => fs.chmodSync(db, 0o644);
+    });
+    expect(readOnly.job.status).toBe(0);
+    expect(skipLine(readOnly.job.stderr, "ERR_SQLITE_ERROR")).toHaveLength(1);
+    expect([readOnly.hits(readOnly.ws.H), readOnly.hits(readOnly.ws.payments)]).toEqual([1, 1]);
+  }, 90_000);
 
   test("journey 2: recall from the other side", () => {
     const ws = workspace();
