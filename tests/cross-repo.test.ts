@@ -649,6 +649,25 @@ describe("cross-repo memory", () => {
     expect([readOnly.hits(readOnly.ws.H), readOnly.hits(readOnly.ws.payments)]).toEqual([1, 1]);
   }, 90_000);
 
+  test("search --project still gives the current project its line when the named store will not open", () => {
+    const states = ["missing", "unreadable", "newer"] as const;
+    for (const state of states) {
+      const ws = workspace();
+      seedMemory(ws.H, [{ title: "Home only note", filesRead: ["src/h.ts"] }]);
+      if (state !== "missing") plantMemory(ws.payments, state);
+      const run = runCli(
+        ws.H,
+        ["search", "Pay fact", "--project", "payments-api"],
+        sessionless(ws),
+      );
+      expect([state, run.status]).toEqual([state, state === "missing" ? 0 : 1]);
+      expect([state, lastLine(ws.H)]).toEqual([
+        state,
+        expect.objectContaining({ channel: "search", query: "Pay fact", ids: [] }),
+      ]);
+    }
+  }, 30_000);
+
   test("journey 2: recall from the other side", () => {
     const ws = workspace();
     const read = (file: string) =>

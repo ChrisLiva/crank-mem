@@ -18,7 +18,12 @@ import { linkedProjects, rootOfName } from "../hooks/lib/registry.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
 import { cliActor, recordUsage, type UsageEvent } from "../hooks/lib/usage.ts";
-import { isObservationType, type Observation, type ObservationLine } from "../hooks/lib/wire.ts";
+import {
+  isObservationType,
+  type Observation,
+  type ObservationLine,
+  type ObservationType,
+} from "../hooks/lib/wire.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
 import { openNearestProject } from "./project.ts";
@@ -89,39 +94,68 @@ export async function search(args: string[]): Promise<number> {
   if (!project) return 1;
   const scope = searchScope(project.root, named, file);
   if (typeof scope === "number") return scope;
-  const host = stringFlag(flags["model-host"]) ?? undefined;
-  // `--project` searches the named store alone, so the current store need not open.
-  const searched = scope.only?.root ?? project.root;
-  return withMemory(searched, true, async (memory) => {
+  return runSearch(project.root, scope, {
+    text,
+    host: flags["model-host"],
+    limit,
+    type,
+    since,
+    sinceMs,
+    stale: flags.stale === true,
+    started,
+  });
+}
+
+/** A checked search request: the flags as typed, `--since` as local midnight, and when the command started. */
+type SearchRequest = {
+  text: string;
+  host: string | boolean | undefined;
+  limit: string | undefined;
+  type: ObservationType | undefined;
+  since: string | undefined;
+  sinceMs: number | null;
+  stale: boolean;
+  started: number;
+};
+
+/**
+ * Run the search on the scope's store and print its hits. `--project` searches the named store alone,
+ * so the current store need not open; the current project always gets its usage line, even when the
+ * named store will not open.
+ */
+async function runSearch(current: string, scope: Scope, req: SearchRequest): Promise<number> {
+  const { text, sinceMs, stale } = req;
+  const host = stringFlag(req.host) ?? undefined;
+  const limit = req.limit === undefined ? DEFAULT_LIMIT : Math.min(Number(req.limit), MAX_LIMIT);
+  const type = req.type ?? null;
+  const searched = scope.only?.root ?? current;
+  const event = (mode: SearchEvent["mode"]): SearchEvent => ({
+    channel: "search",
+    query: redact(text).slice(0, QUERY_CHARS),
+    limit,
+    type,
+    since: req.since ?? null,
+    file: scope.file?.rel ?? null,
+    stale,
+    mode,
+    ms: Date.now() - req.started,
+  });
+  let recorded = false;
+  const status = await withMemory(searched, true, async (memory) => {
     const embeddable = memory.hasVectors(EMBED_MODEL);
     const vector = await queryVector(memory, text, host);
     if ((!embeddable && !modelPresent()) || (embeddable && vector === null)) {
       console.error(KEYWORD_ONLY_NOTE);
     }
-    const applied = limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT);
-    const stale = flags.stale === true;
-    const hits = await federatedSearch(memory, searched, scope, {
-      text,
-      vector,
-      limit: applied,
-      type: type ?? null,
-      sinceMs,
-      stale,
-    });
+    const query = { text, vector, limit, type, sinceMs, stale };
+    const hits = await federatedSearch(memory, searched, scope, query);
     for (const hit of hits) console.log(hit.name + formatLine(hit.line));
-    recordSearch(project.root, hits, {
-      channel: "search",
-      query: redact(text).slice(0, QUERY_CHARS),
-      limit: applied,
-      type: type ?? null,
-      since: since ?? null,
-      file: scope.file?.rel ?? null,
-      stale,
-      mode: vector === null ? "keyword" : "hybrid",
-      ms: Date.now() - started,
-    });
+    recordSearch(current, hits, event(vector === null ? "keyword" : "hybrid"));
+    recorded = true;
     return 0;
   });
+  if (!recorded && searched !== current) recordSearch(current, [], event("keyword"));
+  return status;
 }
 
 /** One store's search hit: `name` prefixes its line (`""` for the current project), `hash` is its dedupe key. */
