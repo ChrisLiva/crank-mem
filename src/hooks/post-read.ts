@@ -103,15 +103,21 @@ function resolveReads(cwd: string, paths: string[], session: string | null): Rea
 }
 
 type Pair = { project: string; path: string };
-/** A file's lines, the other projects' files they cite, and the lines' dedupe keys. */
-type History = { lines: ObservationLine[]; pairs: Pair[]; hashes: Set<string> };
+/** A stored line with its dedupe key. */
+type PairLine = { line: ObservationLine; hash: string | undefined };
+/** A file's lines and the other projects' files they cite. */
+type History = { lines: PairLine[]; pairs: Pair[] };
 type Histories = Map<string, Map<string, History>>;
 
-function historyOf(m: MemoryReader, rel: string): History {
+function linesOf(m: MemoryReader, rel: string): PairLine[] {
   const lines = m.fileHistory(rel, HISTORY_LINES);
-  if (lines.length === 0) return { lines, pairs: [], hashes: new Set() };
-  const hashes = new Set(m.contentHashes(lines.map((l) => l.id)).values());
-  return { lines, pairs: m.pairedPaths(rel, PAIRED_FILES), hashes };
+  const hashes = m.contentHashes(lines.map((l) => l.id));
+  return lines.map((line) => ({ line, hash: hashes.get(line.id) }));
+}
+
+function historyOf(m: MemoryReader, rel: string): History {
+  const lines = linesOf(m, rel);
+  return { lines, pairs: lines.length === 0 ? [] : m.pairedPaths(rel, PAIRED_FILES) };
 }
 
 /** Each store's history for its unseen reads; a store that does not open as "open" is absent. */
@@ -128,16 +134,8 @@ async function fetchHistories(reads: Read[], isSeen: (r: Read) => boolean): Prom
   return out;
 }
 
-/** A paired file's lines, each with its dedupe key. */
-type PairLine = { line: ObservationLine; hash: string | undefined };
 /** A paired project's store: its root and its paired files' lines; absent when its name or store does not resolve. */
 type PairStore = { root: string; store: string; files: Map<string, PairLine[]> };
-
-function pairLinesOf(m: MemoryReader, p: string): PairLine[] {
-  const lines = m.fileHistory(p, HISTORY_LINES);
-  const hashes = m.contentHashes(lines.map((l) => l.id));
-  return lines.map((line) => ({ line, hash: hashes.get(line.id) }));
-}
 
 /** Each paired project's store that resolves and opens as "open", keyed by project name. */
 async function fetchPairs(found: Histories): Promise<Map<string, PairStore>> {
@@ -153,7 +151,7 @@ async function fetchPairs(found: Histories): Promise<Map<string, PairStore>> {
     const store = memoryPath(root);
     const files = await withReader(
       store,
-      (m) => new Map([...paths].map((p) => [p, pairLinesOf(m, p)])),
+      (m) => new Map([...paths].map((p) => [p, linesOf(m, p)])),
     );
     if (files instanceof Map) out.set(project, { root, store, files });
   }
@@ -221,10 +219,11 @@ function showPairs(
   own: History,
   pairStores: Map<string, PairStore>,
 ) {
+  const ownHashes = new Set(own.lines.map((l) => l.hash));
   for (const pair of own.pairs) {
     const ps = pairStores.get(pair.project);
     const lines = (ps?.files.get(pair.path) ?? [])
-      .filter((l) => l.hash === undefined || !own.hashes.has(l.hash))
+      .filter((l) => l.hash === undefined || !ownHashes.has(l.hash))
       .map((l) => l.line);
     if (!ps || lines.length === 0) continue;
     const handle = ps.store === startStore ? "" : pair.project;
@@ -261,7 +260,13 @@ function assemble(
     if (out.full) tally.cut.push(read.rel);
     else if (own.lines.length === 0) tally.empty.push(read.rel);
     else
-      show(out, tally, read, own.lines, read.store === startStore ? "" : projectName(read.owner));
+      show(
+        out,
+        tally,
+        read,
+        own.lines.map((l) => l.line),
+        read.store === startStore ? "" : projectName(read.owner),
+      );
     showPairs(out, startStore, read, own, pairStores);
   }
   return out;
