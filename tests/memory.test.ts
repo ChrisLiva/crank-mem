@@ -253,12 +253,25 @@ describe("store by root", () => {
     storeStatus(root);
     noSidecars();
 
+    // An installed project before its first digest has .crank/ and no store.
     const missing = emptyRoot();
-    readStoreSync(missing, () => null);
-    await readStore(missing, () => null);
-    storeStatus(missing);
-    storeVersion(missing);
+    const installed = emptyRoot();
+    fs.mkdirSync(path.join(installed, ".crank"));
+    for (const r of [missing, installed]) {
+      readStoreSync(r, () => null);
+      await readStore(r, () => null);
+      storeStatus(r);
+      expect(storeVersion(r)).toBeNull();
+    }
     expect(fs.existsSync(path.join(missing, ".crank"))).toBe(false);
+    expect(fs.readdirSync(path.join(installed, ".crank"))).toEqual([]);
+
+    // storeVersion reads any version, even from a WAL store closed with no -shm.
+    const newer = plantedRoot("newer");
+    expect(fs.existsSync(path.join(newer, ".crank", `${MEMORY_FILE}-shm`))).toBe(false);
+    expect(storeVersion(newer)).toBe(SCHEMA_VERSION + 1);
+    expect(storeVersion(plantedRoot("unreadable"))).toBeNull();
+    expect(storeVersion(root)).toBe(SCHEMA_VERSION);
 
     const boom = new Error("boom");
     const saved: MemoryReader[] = [];
@@ -289,23 +302,6 @@ describe("store by root", () => {
     expect(await readStore(root, (m) => m.recent(5).length)).toEqual({ status: "open", value: 1 });
     release();
     expect(await first).toEqual({ status: "open", value: 1 });
-  });
-
-  test("storeVersion", () => {
-    expect(storeVersion(emptyRoot())).toBeNull();
-    expect(storeVersion(plantedRoot("unreadable"))).toBeNull();
-    const root = openRoot();
-    const original = process.getBuiltinModule;
-    process.getBuiltinModule = () => undefined;
-    try {
-      expect(storeVersion(root)).toBeNull();
-    } finally {
-      process.getBuiltinModule = original;
-    }
-    expect(storeVersion(root)).toBe(SCHEMA_VERSION);
-    const newer = plantedRoot("newer");
-    expect(fs.existsSync(path.join(newer, ".crank", `${MEMORY_FILE}-shm`))).toBe(false);
-    expect(storeVersion(newer)).toBe(SCHEMA_VERSION + 1);
   });
 
   test("openStoreForWrite", () => {

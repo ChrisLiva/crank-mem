@@ -612,23 +612,20 @@ describe("digests running (black-box)", () => {
       expect(ctx).not.toContain(absent);
   });
 
-  test("a store that is not a database injects without recall", () => {
+  test("a store that is not a database, or whose queries throw after it opens, injects without recall", () => {
     const { root, home } = memoryProject(true);
     plantMemory(root, "unreadable");
-    const ctx = injectIn(root, home);
-    for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
-      expect(ctx).not.toContain(absent);
-  });
-
-  test("a store whose queries throw after it opens injects without recall", () => {
-    const { root, home } = memoryProject(true);
+    const notADatabase = injectIn(root, home);
+    const store = path.join(root, ".crank/memory.db");
+    fs.rmSync(store);
     const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
-    const db = new mod.DatabaseSync(path.join(root, ".crank/memory.db"));
+    const db = new mod.DatabaseSync(store);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.close();
-    const ctx = injectIn(root, home);
-    for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
-      expect(ctx).not.toContain(absent);
+    const queriesThrow = injectIn(root, home);
+    for (const ctx of [notADatabase, queriesThrow])
+      for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
+        expect(ctx).not.toContain(absent);
   });
 
   test("a session waiting over 2 hours for its digest is noted, for this project only", () => {
