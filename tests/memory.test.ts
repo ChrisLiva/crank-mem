@@ -13,6 +13,7 @@ import {
   type Position,
   type SearchQuery,
 } from "../src/hooks/lib/memory.ts";
+import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
 import { V1_DDL } from "./fixtures/schema-v1.ts";
 
 const open: { close(): void }[] = [];
@@ -109,7 +110,7 @@ describe("openMemory", () => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const sqlite = process.getBuiltinModule("node:sqlite");
     const raw = new sqlite.DatabaseSync(file);
-    raw.exec("PRAGMA user_version=3");
+    raw.exec(`PRAGMA user_version=${SCHEMA_VERSION + 1}`);
     raw.close();
     expect(openMemory(file, "read").status).toBe("newer");
     expect(openMemory(file, "write").status).toBe("newer");

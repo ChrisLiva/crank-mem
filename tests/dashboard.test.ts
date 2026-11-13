@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { cliVersion } from "../src/cli/version.ts";
 import { loadConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
 import type { UpdateStatus } from "../src/hooks/lib/wire.ts";
 import {
   MEMORY_NEWER_NOTE,
@@ -737,7 +738,7 @@ describe("memory view", () => {
     const root = registeredCopy(home);
     const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
     const db = new mod.DatabaseSync(path.join(root, ".crank/memory.db"));
-    db.exec("PRAGMA user_version = 2");
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.close();
     const dash = await startDashboard(home, ["--port", "0"]);
     expect(((await projects(dash)) as { projects: { memory: string }[] }).projects).toEqual([

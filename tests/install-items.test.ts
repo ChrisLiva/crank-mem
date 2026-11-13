@@ -688,7 +688,7 @@ test("a corrupt Claude settings file costs only the Claude item", () => {
   expect(up.stderr).toContain("crank-mem: could not re-wire Claude Code hooks (");
   expect(fs.readFileSync(settings, "utf-8")).toBe("{ broken");
   expect(up.stdout).toContain("  wrote the allowlist .crank/.gitignore\n");
-  expect(up.stdout).toContain("  migrated memory.db v1 → v2\n");
+  expect(up.stdout).toContain("  migrated memory.db v1 → v3\n");
   expect(fs.readFileSync(codexHooks).equals(codexHooksBefore)).toBe(true);
   expect(up.stdout).toContain(
     "  Codex trust: open codex once in this project and accept the hooks review\n  (or headless: codex --dangerously-bypass-hook-trust)\n",

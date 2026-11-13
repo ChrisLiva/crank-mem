@@ -33,11 +33,12 @@ import { okStream, okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import { claudePostRead, claudeSessionStart, claudeSubagentStart } from "./fixtures/payloads.ts";
 import { V1_DDL } from "./fixtures/schema-v1.ts";
+import { V2_DDL } from "./fixtures/schema-v2.ts";
 
 afterEach(cleanup);
 
 const UTC = { TZ: "UTC" };
-const MIGRATED_LINE = "  migrated memory.db v1 → v2";
+const MIGRATED_LINE = "  migrated memory.db v1 → v3";
 /** `get 1 2` on the two rows writeV1Store seeds. */
 const V1_GET =
   "#1 2026-01-02 discovery Lock retry is two seconds\n" +
@@ -68,11 +69,21 @@ function project(): string {
 
 /** Writes .crank/memory.db from the frozen version-1 schema, in WAL mode, with two observations. */
 function writeV1Store(root: string): void {
+  writeOldStore(root, [V1_DDL], 1);
+}
+
+/** Writes .crank/memory.db as writeV1Store does, with the frozen version-2 step applied. */
+function writeV2Store(root: string): void {
+  writeOldStore(root, [V1_DDL, V2_DDL], 2);
+}
+
+/** Writes .crank/memory.db from frozen schema steps, in WAL mode, with writeV1Store's rows. */
+function writeOldStore(root: string, ddl: readonly string[], version: number): void {
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
   const db = new mod.DatabaseSync(memoryPath(root));
   db.exec("PRAGMA journal_mode=WAL");
-  db.exec(V1_DDL);
-  db.exec("PRAGMA user_version = 1");
+  for (const step of ddl) db.exec(step);
+  db.exec(`PRAGMA user_version = ${version}`);
   db.prepare("INSERT INTO sessions (id, agent, transcript_path) VALUES (?, ?, ?)").run(
     "v1-session",
     "claude",
@@ -140,6 +151,20 @@ describe("migration", () => {
     const stats = runCli(root, ["stats"]).stdout.split("\n");
     expect(stats).toContain("  observations:     2");
     expect(stats).toContain("  unembedded:       1");
+  });
+
+  test("upgrade migrates a version-2 store and keeps every row", () => {
+    const root = project();
+    writeV2Store(root);
+
+    const up = runCli(root, ["upgrade"]);
+    expect(up.status).toBe(0);
+    expect(up.stdout.split("\n")).toContain("  migrated memory.db v2 → v3");
+
+    expect(runCli(root, ["get", "1", "2"], UTC).stdout).toBe(V1_GET);
+    expect(runCli(root, ["search", "symlinks"], UTC).stdout).toBe(
+      "#2 2026-01-03 bugfix Scanner skips symlinks\n",
+    );
   });
 
   test("a failed pre-migration snapshot leaves the store at version 1", () => {
@@ -374,7 +399,7 @@ describe("restore-memory", () => {
 
     for (const [file, ending] of [
       [text, "file is not a database\n"],
-      [memoryPath(newer), "user_version 3 is not 1 to 2\n"],
+      [memoryPath(newer), "user_version 4 is not 1 to 3\n"],
       [half, "\n"],
     ] as const) {
       const run = runCli(root, ["restore-memory", file]);
@@ -491,6 +516,22 @@ db.close();
     } finally {
       fs.chmodSync(dir, 0o755);
     }
+  });
+
+  test("a version-2 snapshot is migrated after the restore", () => {
+    const root = project();
+    writeV2Store(root);
+    expect(runCli(root, ["upgrade"]).status).toBe(0);
+    const v2 = snapshots(root);
+    expect(v2).toHaveLength(1);
+    expect(v2[0]).toMatch(/-v2\.db$/);
+
+    const run = runCli(root, ["restore-memory", `.crank/backups/memory/${v2[0]}`]);
+    expect(run.status).toBe(0);
+    expect(run.stdout.endsWith("  migrated memory.db v2 → v3\n")).toBe(true);
+    expect(runCli(root, ["search", "symlinks"], UTC).stdout).toBe(
+      "#2 2026-01-03 bugfix Scanner skips symlinks\n",
+    );
   });
 
   test("a damaged store is moved aside, then restored over", () => {

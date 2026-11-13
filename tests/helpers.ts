@@ -12,6 +12,7 @@ import {
   type DigestInput,
   type NewObservation,
 } from "../src/hooks/lib/memory.ts";
+import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
 import { DAEMON_FILE, type DaemonState, type SpoolEntry } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
@@ -402,7 +403,7 @@ export function plantMemory(root: string, state: "newer" | "unreadable"): void {
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
   const db = new mod.DatabaseSync(file);
   db.exec("PRAGMA journal_mode=WAL");
-  db.exec("PRAGMA user_version = 3");
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
   db.close();
 }
 
