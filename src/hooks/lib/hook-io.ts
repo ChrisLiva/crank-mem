@@ -8,6 +8,7 @@ import {
   type CrankConfig,
 } from "./config.ts";
 import { enableDebug, flushDebug } from "./debug.ts";
+import { ownerOf } from "./owner.ts";
 
 // Hook I/O helpers. Hooks are advisory-only: they must never fail the tool
 // call, so payload parsing degrades to null and callers exit 0.
@@ -51,17 +52,12 @@ export function isCodexPayload(payload: HookPayload): boolean {
 }
 
 /**
- * Locate the project root, the dir holding `.crank/config.json`, by walking up from
- * `cwd`. Returns null when crank-mem isn't installed here.
+ * The installed project `cwd` belongs to by the ownership walk (`owner.ts`): its own root, or
+ * a linked worktree's main checkout. Null when the walk reaches a repo that is not installed, or none.
  */
 export function findProjectRoot(cwd: string): string | null {
-  let dir = path.resolve(cwd);
-  while (true) {
-    if (fs.existsSync(path.join(dir, CRANK_DIR, "config.json"))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
+  const owner = ownerOf(path.resolve(cwd));
+  return owner.kind === "unowned" ? null : owner.root;
 }
 
 /**
@@ -89,12 +85,17 @@ export function repoRelative(root: string, cwd: string, p: string): string | nul
   return r.split(path.sep).join("/");
 }
 
-/** The paths memory may record: repo-relative, never sensitive, deduped in input order. */
+/**
+ * The paths memory may record: those the ownership walk gives to `root` (not the root itself),
+ * `/`-separated, never sensitive, deduped in input order.
+ */
 export function memoryPaths(root: string, cwd: string, paths: string[]): string[] {
   const kept = new Set<string>();
   for (const p of paths) {
-    const r = repoRelative(root, cwd, p);
-    if (r !== null && !isSensitiveFile(path.posix.basename(r))) kept.add(r);
+    const owner = ownerOf(path.resolve(cwd, p));
+    if (owner.kind === "unowned" || owner.root !== root || !owner.rel) continue;
+    const r = owner.rel.split(path.sep).join("/");
+    if (!isSensitiveFile(path.posix.basename(r))) kept.add(r);
   }
   return [...kept];
 }

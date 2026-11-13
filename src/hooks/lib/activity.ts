@@ -15,7 +15,7 @@ const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 500;
 
 /** Run git in rootDir; on failure, the error code or exit status instead of stdout. Never throws. */
-export function runGit(
+function runGit(
   rootDir: string,
   args: string[],
   timeoutMs: number,

@@ -7,6 +7,7 @@ import {
   git,
   gitCommit,
   initedCopy,
+  makeCrankProject,
   plantMemory,
   runCli,
   seedMemory,
@@ -22,10 +23,22 @@ import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
 
 describe("memoryPaths", () => {
   test("keeps repo-relative, non-sensitive paths inside the root, deduped in input order", () => {
+    const r = makeCrankProject({
+      "src/a.ts": "export const a = 1;\n",
+      "clones/u/y.ts": "export const y = 1;\n",
+    });
+    fs.mkdirSync(path.join(r, "clones/u/.git"));
     expect(
-      memoryPaths("/r", "/r/src", ["a.ts", "/r/src/a.ts", "/elsewhere/x.ts", ".env", "/r"]),
+      memoryPaths(r, path.join(r, "src"), [
+        "a.ts",
+        path.join(r, "src/a.ts"),
+        "/elsewhere/x.ts",
+        ".env",
+        r,
+        path.join(r, "clones/u/y.ts"),
+      ]),
     ).toEqual(["src/a.ts"]);
-    expect(memoryPaths("/r", "/r", [])).toEqual([]);
+    expect(memoryPaths(r, r, [])).toEqual([]);
   });
 });
 
