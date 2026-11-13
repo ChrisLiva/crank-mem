@@ -813,7 +813,7 @@ describe("linked projects (black-box)", () => {
     expect(subCtx).toContain(RECALL_BULLET);
     expect(subCtx).not.toContain("Search also covers");
 
-    // A renamed project's link stops resolving; with none resolving, today's text.
+    // A renamed project's link stops resolving; once none resolves, the plain recall bullet.
     const rename = (root: string, name: string) =>
       saveConfig(path.join(root, ".crank"), { ...defaultConfig(), digest: true, name });
     rename(ws.storefront, "shop");

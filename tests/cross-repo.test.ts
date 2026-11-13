@@ -53,7 +53,6 @@ function additionalContext(stdout: string): string {
   return JSON.parse(stdout).hookSpecificOutput.additionalContext;
 }
 
-/** The `\n\n`-separated section of `ctx` that starts with `header`, or undefined. */
 function sectionOf(ctx: string, header: string): string | undefined {
   return ctx.split("\n\n").find((s) => s.startsWith(header));
 }
@@ -118,7 +117,6 @@ const crossDigest = (ws: Ws): Digest =>
 
 const BULLETS = ["Storefront bullet", "Payments bullet", "Cross bullet", "Lost bullet"];
 
-/** A consolidation that adds `bullet` for proposal 1 and accepts it. */
 const acceptFirst = (bullet: string) =>
   okStreamOf({
     edits: [{ op: "add", heading: "Memory", bullet, proposal: 1 }],
@@ -167,7 +165,6 @@ function proposalJourney(ws: Ws) {
   return { ...j, sid: sid!, hid: hid! };
 }
 
-/** The `#<id>` lines `search <query>` prints in `root`. */
 function searchIds(ws: Ws, root: string, query: string): number[] {
   return runCli(root, ["search", query], sessionless(ws))
     .stdout.split("\n")
@@ -178,7 +175,6 @@ function searchIds(ws: Ws, root: string, query: string): number[] {
 const getText = (ws: Ws, root: string, id: number) =>
   runCli(root, ["get", String(id)], sessionless(ws)).stdout;
 
-/** The `stale:` line `get <id>` prints in `root`, or undefined. */
 const staleLine = (ws: Ws, root: string, id: number) =>
   getText(ws, root, id)
     .split("\n")

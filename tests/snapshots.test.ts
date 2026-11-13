@@ -72,12 +72,12 @@ function writeV1Store(root: string): void {
   writeOldStore(root, [V1_DDL], 1);
 }
 
-/** Writes .crank/memory.db as writeV1Store does, with the frozen version-2 step applied. */
+/** Writes .crank/memory.db at version 2, with two observations. */
 function writeV2Store(root: string): void {
   writeOldStore(root, [V1_DDL, V2_DDL], 2);
 }
 
-/** Writes .crank/memory.db from frozen schema steps, in WAL mode, with writeV1Store's rows. */
+/** Writes .crank/memory.db from frozen schema steps, in WAL mode, with two observations. */
 function writeOldStore(root: string, ddl: readonly string[], version: number): void {
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
   const db = new mod.DatabaseSync(memoryPath(root));
