@@ -75,6 +75,15 @@ export function ownerOf(absPath: string): Owner {
   }
 }
 
+/** True when the walk up from `absPath` reaches `root` before any other boundary, read from disk on every call. */
+export function ownedBy(root: string, absPath: string): boolean {
+  const top = path.resolve(root);
+  for (let dir = path.resolve(absPath); ; dir = path.dirname(dir)) {
+    if (dir === top) return true;
+    if (stopAt(dir) !== null || path.dirname(dir) === dir) return false;
+  }
+}
+
 /** The installed main checkout of the linked worktree at `top`, read from disk on every call; else null. */
 export function worktreeMain(top: string): string | null {
   const entry = gitEntry(top);
