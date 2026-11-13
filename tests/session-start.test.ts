@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type * as sqlite from "node:sqlite";
 import { spawnSync } from "node:child_process";
 import {
   REPO_ROOT,
@@ -21,6 +22,7 @@ import {
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
+import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
 import { claudeSessionStart, claudeSubagentStart, codexSessionStart } from "./fixtures/payloads.ts";
 import { workspace } from "./workspace.ts";
 
@@ -609,6 +611,17 @@ describe("digests running (black-box)", () => {
   test("a store that is not a database injects without recall", () => {
     const { root, home } = memoryProject(true);
     plantMemory(root, "unreadable");
+    const ctx = injectIn(root, home);
+    for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
+      expect(ctx).not.toContain(absent);
+  });
+
+  test("a store whose queries throw after it opens injects without recall", () => {
+    const { root, home } = memoryProject(true);
+    const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
+    const db = new mod.DatabaseSync(path.join(root, ".crank/memory.db"));
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.close();
     const ctx = injectIn(root, home);
     for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
       expect(ctx).not.toContain(absent);

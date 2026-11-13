@@ -14,7 +14,7 @@ import { CEREBRUM_FILE } from "./lib/cerebrum-files.ts";
 import { CRANK_DIR } from "./lib/config.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
 import { citationSources, excerptOf, readCerebrum } from "./lib/injection.ts";
-import { formatLine, memoryPath, withReader, type MemoryReader } from "./lib/memory.ts";
+import { formatLine, memoryPath, readStore, type MemoryReader } from "./lib/memory.ts";
 import { ownerOf, projectName } from "./lib/owner.ts";
 import { rootOfName } from "./lib/registry.ts";
 import { recordUntouched } from "./lib/untouched.ts";
@@ -125,11 +125,9 @@ async function fetchHistories(reads: Read[], isSeen: (r: Read) => boolean): Prom
   const out: Histories = new Map();
   for (const store of new Set(reads.map((r) => r.store))) {
     const rels = reads.filter((r) => r.store === store && !isSeen(r)).map((r) => r.rel);
-    const got = await withReader(
-      store,
-      (m) => new Map(rels.map((rel) => [rel, historyOf(m, rel)])),
-    );
-    if (got instanceof Map) out.set(store, got);
+    const owner = reads.find((r) => r.store === store)!.owner;
+    const got = await readStore(owner, (m) => new Map(rels.map((rel) => [rel, historyOf(m, rel)])));
+    if (got.status === "open") out.set(store, got.value);
   }
   return out;
 }
@@ -149,11 +147,8 @@ async function fetchPairs(found: Histories): Promise<Map<string, PairStore>> {
     const root = rootOfName(project);
     if (root === null) continue;
     const store = memoryPath(root);
-    const files = await withReader(
-      store,
-      (m) => new Map([...paths].map((p) => [p, linesOf(m, p)])),
-    );
-    if (files instanceof Map) out.set(project, { root, store, files });
+    const files = await readStore(root, (m) => new Map([...paths].map((p) => [p, linesOf(m, p)])));
+    if (files.status === "open") out.set(project, { root, store, files: files.value });
   }
   return out;
 }

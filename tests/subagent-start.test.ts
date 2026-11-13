@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type * as sqlite from "node:sqlite";
 import { makeCrankHome, makeCrankProject, runHook, seedMemory } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, INJECTION_HEADING, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
+import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
 import { claudeSessionStart, claudeSubagentStart } from "./fixtures/payloads.ts";
 import { workspace } from "./workspace.ts";
 
@@ -154,5 +156,18 @@ describe("subagent-start hook (black-box)", () => {
       `${bullet} [cited file modified after this note; check: payments-api/src/a.ts]`,
     );
     expect(ctx).not.toContain("[cited file missing");
+  });
+
+  test("a store whose queries throw after it opens still prints the excerpt, its citations read at home", () => {
+    const root = makeCrankProject({ "src/app.ts": "export const app = 1;\n" });
+    const bullet = "- **Linked**: see `payments-api/src/a.ts`.";
+    writeCerebrum(root, [], [bullet]);
+    const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
+    const db = new mod.DatabaseSync(path.join(root, ".crank/memory.db"));
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.close();
+    expect(context(root).split("\n")).toContain(
+      `${bullet} [cited file missing: payments-api/src/a.ts]`,
+    );
   });
 });
