@@ -78,10 +78,10 @@ function agentOf(payload: HookPayload): string {
 type Read = { abs: string; rel: string; tree: string; owner: string; store: string };
 
 /** The read `p` names, or null when no installed project owns it or it is not a file now. */
-function resolveRead(cwd: string, p: string, session: string | null): Read | null {
+function resolveRead(cwd: string, p: string, unowned: Set<string>): Read | null {
   const owner = ownerOf(path.resolve(cwd, p));
   if (owner.kind === "unowned") {
-    if (owner.repo !== null) recordUntouched(owner.repo, session);
+    if (owner.repo !== null) unowned.add(owner.repo);
     return null;
   }
   const rel = memoryPaths(owner.root, cwd, [p])[0];
@@ -90,13 +90,15 @@ function resolveRead(cwd: string, p: string, session: string | null): Read | nul
   return { abs: path.join(tree, rel), rel, tree, owner: owner.root, store: memoryPath(owner.root) };
 }
 
-/** Each read once, in order. */
+/** Each read once, in order; the unowned repos among them are recorded once. */
 function resolveReads(cwd: string, paths: string[], session: string | null): Read[] {
   const reads = new Map<string, Read>();
+  const unowned = new Set<string>();
   for (const p of paths) {
-    const r = resolveRead(cwd, p, session);
+    const r = resolveRead(cwd, p, unowned);
     if (r && !reads.has(r.abs)) reads.set(r.abs, r);
   }
+  recordUntouched(unowned, session);
   return [...reads.values()];
 }
 

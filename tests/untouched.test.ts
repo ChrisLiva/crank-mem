@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { readUntouched, recordUntouched } from "../src/hooks/lib/untouched.ts";
-import { makeCrankHome, tempDir, withEnv } from "./helpers.ts";
+import { childEnv, makeCrankHome, REPO_ROOT, tempDir, withEnv } from "./helpers.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -11,7 +12,7 @@ describe("untouched repos", () => {
     withEnv({ CRANK_HOME: makeCrankHome() }, () => {
       const repos = Array.from({ length: 51 }, (_, i) => `/work/répo 空 ${i}`);
       for (const repo of repos) {
-        recordUntouched(repo, null);
+        recordUntouched([repo], null);
         Bun.sleepSync(1);
       }
       const kept = readUntouched().map((r) => r.root);
@@ -21,17 +22,17 @@ describe("untouched repos", () => {
 
       const repo = repos[50]!;
       const sessionsOf = () => readUntouched().find((r) => r.root === repo)!;
-      for (let i = 0; i <= 20; i++) recordUntouched(repo, `s${i}`);
+      for (let i = 0; i <= 20; i++) recordUntouched([repo], `s${i}`);
       expect(sessionsOf().sessions).toEqual(Array.from({ length: 20 }, (_, i) => `s${i + 1}`));
 
-      recordUntouched(repo, "s5");
+      recordUntouched([repo], "s5");
       const moved = sessionsOf();
       expect(moved.sessions).toHaveLength(20);
       expect(moved.sessions.at(-1)).toBe("s5");
       expect(moved.sessions.filter((s) => s === "s5")).toHaveLength(1);
 
       Bun.sleepSync(1);
-      recordUntouched(repo, null);
+      recordUntouched([repo], null);
       const touched = sessionsOf();
       expect(touched.sessions).toEqual(moved.sessions);
       expect(touched.lastSeenMs).toBeGreaterThan(moved.lastSeenMs);
@@ -60,5 +61,22 @@ describe("untouched repos", () => {
       );
       expect(readUntouched().map((r) => r.root)).toEqual(["/work/today", "/work/yesterday"]);
     });
+  });
+
+  test("concurrent sightings of unowned repos keep every repo", async () => {
+    const home = makeCrankHome();
+    const at = String(Date.now() + 1000);
+    const repos = Array.from({ length: 8 }, (_, n) => path.join(os.tmpdir(), `unowned-${n}`));
+    const writer = path.join(REPO_ROOT, "tests/fixtures/untouched-writer.ts");
+    const children = repos.map((repo) =>
+      Bun.spawn(["bun", writer, repo, at], {
+        env: childEnv({ CRANK_HOME: home }),
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    );
+    expect(await Promise.all(children.map((c) => c.exited))).toEqual(Array(8).fill(0));
+    const seen = withEnv({ CRANK_HOME: home }, () => readUntouched().map((r) => r.root));
+    expect(seen.sort()).toEqual([...repos].sort());
   });
 });

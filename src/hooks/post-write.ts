@@ -56,7 +56,7 @@ interface WriteScan {
 }
 
 /** Where the session runs: relative tool paths resolve against `cwd`. */
-type Session = { cwd: string; id: string | null };
+type Session = { cwd: string; id: string | null; unowned: Set<string> };
 
 type PathClass = Omit<WriteOp, "deleted"> | { skip: NonNullable<WriteScan["skip"]> };
 
@@ -66,7 +66,7 @@ function classifyPath(at: Session, p: string): PathClass {
   // A directory is enough to answer "why wasn't my file indexed?", and no
   // filename means no sensitive basename can reach the log.
   if (owner.kind === "unowned") {
-    if (owner.repo !== null) recordUntouched(owner.repo, at.id);
+    if (owner.repo !== null) at.unowned.add(owner.repo);
     return { skip: { reason: "outside-root", dir: path.dirname(abs) } };
   }
   // A linked worktree shares its main checkout's anatomy, which describes the main's files.
@@ -195,7 +195,9 @@ async function main(): Promise<void> {
   if (!ctx) return;
 
   const tool = typeof payload.tool_name === "string" ? payload.tool_name : null;
-  const { ops, skip } = toWriteOps(payload, { cwd: ctx.cwd, id: hookActor(payload).session });
+  const at = { cwd: ctx.cwd, id: hookActor(payload).session, unowned: new Set<string>() };
+  const { ops, skip } = toWriteOps(payload, at);
+  recordUntouched(at.unowned, at.id);
   if (ops.length === 0) {
     debugEvent("no-write-ops", { tool, ...skip });
     return;

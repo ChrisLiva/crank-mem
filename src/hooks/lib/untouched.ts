@@ -1,14 +1,16 @@
 import * as path from "node:path";
 import { readJsonObject } from "./config.ts";
+import { HOOK_LOCK_BUDGET_MS, withLock } from "./lock.ts";
 import { isInstalled } from "./owner.ts";
 import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 import type { UntouchedRepo } from "./wire.ts";
 
 // The per-user list of git repos agents read or wrote that crank-mem is not installed in, kept at
-// <crank home>/untouched.json. post-write and post-read add to it; stats and the dashboard read it.
+// <crank home>/untouched.json. post-write and post-read add to it, once per run; stats and the dashboard read it.
 // A list that cannot be read or written never changes a hook's outcome.
 
 export const UNTOUCHED_FILE = "untouched.json";
+const UNTOUCHED_LOCK_FILE = "untouched.lock";
 
 const MAX_REPOS = 50;
 const MAX_SESSIONS = 20;
@@ -32,19 +34,36 @@ function readRepos(): UntouchedRepo[] {
 
 const newestFirst = (a: UntouchedRepo, b: UntouchedRepo) => b.lastSeenMs - a.lastSeenMs;
 
-/** Note a write to `repo` now, from `session` when known; keeps the 50 newest repos and 20 sessions each. */
-export function recordUntouched(repo: string, session: string | null): void {
+/**
+ * Note a read or write of each of `seen` now, from `session` when known, in one write under the list's lock;
+ * keeps the 50 newest repos and 20 sessions each.
+ */
+export function recordUntouched(seen: Iterable<string>, session: string | null): void {
+  const sighted = new Set(seen);
+  if (sighted.size === 0) return;
   try {
-    const repos = readRepos();
-    const sessions = repos.find((r) => r.root === repo)?.sessions ?? [];
-    const next = session === null ? sessions : [...sessions.filter((s) => s !== session), session];
-    const entry = { root: repo, lastSeenMs: Date.now(), sessions: next.slice(-MAX_SESSIONS) };
-    const kept = [entry, ...repos.filter((r) => r.root !== repo)]
-      .sort(newestFirst)
-      .slice(0, MAX_REPOS);
-    writeJsonAtomic(path.join(ensureCrankHome(), UNTOUCHED_FILE), { repos: kept });
+    const home = ensureCrankHome();
+    withLock(
+      home,
+      HOOK_LOCK_BUDGET_MS,
+      () => {
+        const now = Date.now();
+        const repos = readRepos();
+        const entries = [...sighted].map((repo) => {
+          const sessions = repos.find((r) => r.root === repo)?.sessions ?? [];
+          const next =
+            session === null ? sessions : [...sessions.filter((s) => s !== session), session];
+          return { root: repo, lastSeenMs: now, sessions: next.slice(-MAX_SESSIONS) };
+        });
+        const kept = [...entries, ...repos.filter((r) => !sighted.has(r.root))]
+          .sort(newestFirst)
+          .slice(0, MAX_REPOS);
+        writeJsonAtomic(path.join(home, UNTOUCHED_FILE), { repos: kept });
+      },
+      UNTOUCHED_LOCK_FILE,
+    );
   } catch {
-    // An unwritable crank home loses the sighting; the next write to the repo records it.
+    // An unwritable crank home or a held lock loses the sightings; the next read or write of the repo records it.
   }
 }
 
