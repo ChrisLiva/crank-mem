@@ -829,6 +829,16 @@ export function projectId(root: string): string {
 // Zones on both sides of UTC make a UTC-midnight reading fail at any hour in one of them.
 export const ZONES = ["Pacific/Kiritimati", "Pacific/Pago_Pago"];
 
+/** Runs `fn` in `zone`, then restores the UTC `bun test` starts in; `delete` would fall back to the machine zone. */
+export function inZone<T>(zone: string, fn: () => T): T {
+  process.env.TZ = zone;
+  try {
+    return fn();
+  } finally {
+    process.env.TZ = "UTC";
+  }
+}
+
 const STARTUP_LINE = /^crank-mem dashboard: (http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]+))\n/;
 
 /**

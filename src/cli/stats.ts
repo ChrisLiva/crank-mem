@@ -4,12 +4,8 @@ import { openProject } from "./project.ts";
 import { loadIndex, INDEX_FILE, type AnatomyIndex } from "../hooks/lib/store.ts";
 import { walkProject } from "../hooks/lib/scanner.ts";
 import type { CrankConfig } from "../hooks/lib/config.ts";
-import {
-  fileCitations,
-  readCerebrum,
-  sessionStartInjection,
-  type Excerpt,
-} from "../hooks/lib/injection.ts";
+import { fileCitations } from "../hooks/lib/citations.ts";
+import { readCerebrum, sessionStartInjection, type Excerpt } from "../hooks/lib/injection.ts";
 import { auditSkillInstalled, installedAtMs, lastAuditMs } from "../hooks/lib/cerebrum-files.ts";
 import { hasCrankHooks } from "./settings.ts";
 import { installPaths } from "./install-support.ts";
