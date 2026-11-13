@@ -62,26 +62,26 @@ function refsBeside(
     ]);
 }
 
-/** The entry-project row id `handle` names when the input showed that row (`#5`, or `<entry name>#5`), else null. */
-function entryShownId(handle: string, root: string, shown: Map<string, Shown>): number | null {
+/** The store and row id a stale `handle` names when the input showed that row; the entry's own name counts as `#`. */
+function shownRow(
+  handle: string,
+  root: string,
+  shown: Map<string, Shown>,
+): { root: string; id: number } | null {
   const h = parseHandle(handle);
-  if (h === null || (h.project !== "" && h.project !== projectName(root))) return null;
-  return shown.get("")!.ids.includes(h.id) ? h.id : null;
+  if (h === null) return null;
+  const s = shown.get(h.project === projectName(root) ? "" : h.project);
+  return s?.ids.includes(h.id) ? { root: s.root, id: h.id } : null;
 }
 
-/**
- * The entry project's share (summary, every proposal, the stale flags on its shown rows, observations without an
- * owned file, and links to each other project an observation modifies) and one share per other owning project.
- */
-export function route(
+/** Each owning root's observation copies, the entry's first, and the names of the other projects an observation modifies. */
+function copiesByOwner(
   output: Digest,
   entry: { projectRoot: string; cwd: string },
-  shown: Map<string, Shown>,
   ownerOf: (p: string) => Owner,
-): { entry: EntryShare; others: Share[] } {
+  nameOf: (root: string) => string,
+): { copies: Map<string, NewObservation[]>; links: Set<string> } {
   const root = entry.projectRoot;
-  const names = new Map<string, string>();
-  const nameOf = (r: string) => names.get(r) ?? names.set(r, projectName(r)).get(r)!;
   const copies = new Map<string, NewObservation[]>([[root, []]]);
   const links = new Set<string>();
   for (const o of output.observations) {
@@ -98,20 +98,39 @@ export function route(
       ]);
     }
   }
+  return { copies, links };
+}
+
+/**
+ * The entry project's share (summary, its observations, including those without an owned file, its proposals and
+ * stale flags, and links to each other project an observation modifies) and one share per other project that gets
+ * an observation copy, a proposal or a stale flag, by project name. A proposal goes to the listed project its
+ * `project` names, else to the entry; a stale flag goes to the store whose shown row its handle names.
+ */
+export function route(
+  output: Digest,
+  entry: { projectRoot: string; cwd: string },
+  shown: Map<string, Shown>,
+  ownerOf: (p: string) => Owner,
+): { entry: EntryShare; others: Share[] } {
+  const root = entry.projectRoot;
+  const names = new Map<string, string>();
+  const nameOf = (r: string) => names.get(r) ?? names.set(r, projectName(r)).get(r)!;
+  const { copies, links } = copiesByOwner(output, entry, ownerOf, nameOf);
+  const shares = new Map<string, Share>();
+  const shareOf = (r: string) =>
+    shares.get(r) ?? shares.set(r, { root: r, observations: [], proposals: [], stale: [] }).get(r)!;
+  for (const [r, observations] of copies) shareOf(r).observations = observations;
+  for (const { kind, bullet, project } of output.proposals)
+    shareOf(shown.get(project)?.root ?? root).proposals.push({ kind, bullet });
+  for (const f of output.stale) {
+    const row = shownRow(f.id, root, shown);
+    if (row !== null) shareOf(row.root).stale.push({ id: row.id, reason: f.reason });
+  }
   return {
-    entry: {
-      root,
-      observations: copies.get(root)!,
-      proposals: output.proposals.map(({ kind, bullet }) => ({ kind, bullet })),
-      stale: output.stale.flatMap((f) => {
-        const id = entryShownId(f.id, root, shown);
-        return id === null ? [] : [{ id, reason: f.reason }];
-      }),
-      summary: output.summary,
-      links: [...links].sort(),
-    },
-    others: [...copies]
-      .filter(([r]) => r !== root)
-      .map(([r, observations]) => ({ root: r, observations, proposals: [], stale: [] })),
+    entry: { ...shareOf(root), summary: output.summary, links: [...links].sort() },
+    others: [...shares.values()]
+      .filter((s) => s.root !== root)
+      .sort((a, b) => (nameOf(a.root) < nameOf(b.root) ? -1 : 1)),
   };
 }

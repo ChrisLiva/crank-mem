@@ -19,7 +19,7 @@ import { readStopState } from "../hooks/lib/user-state.ts";
 import type { Observation } from "../hooks/lib/wire.ts";
 import { ownerOf, projectName } from "../hooks/lib/owner.ts";
 import { digestRequest, type Digest, type DigestContext, type Shown } from "./digest-prompt.ts";
-import { route, type Share } from "./digest-route.ts";
+import { route, type EntryShare, type Share } from "./digest-route.ts";
 import { EMBED_MODEL, embed } from "./embedder.ts";
 import { CONSOLIDATE_EVERY_MS, consolidate } from "./consolidate.ts";
 import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
@@ -95,41 +95,58 @@ async function digest(
   if (r.kind === "retry") return 1;
   if (r.kind === "stopped") return 0;
   const session: SessionKey = { id: stem, agent: "claude", transcriptPath: entry.transcriptPath };
-  if (r.kind === "rejected") {
-    if (memory.recordRejection(session) >= REJECTION_LIMIT) {
-      settleEntry(stem, entry.updatedAt, "park");
-      return 0;
-    }
-    return 1;
-  }
+  if (r.kind === "rejected") return rejected(memory, session, entry);
   const routed = route(stored(r.output), entry, shown, ownerOf);
-  const { summary, observations, proposals, stale, links } = routed.entry;
-  writeShares(routed.others, {
-    session,
-    next: d.next,
-    model: r.model,
-    origin: projectName(entry.projectRoot),
-  });
-  const outcome = memory.appendDigest({
-    session,
-    expected: pos,
-    next: d.next,
-    model: r.model,
-    costUsd: r.costUsd,
-    summary,
-    observations,
-    proposals,
-    stale,
-    origin: null,
-    links,
-  });
-  if (outcome === "appended") {
-    if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
-    await embedPending(memory);
-    maintainQuietly(memory);
-    await consolidateQuietly(entry.projectRoot, memory, opts);
+  const base = { session, next: d.next, model: r.model };
+  const written = writeShares(routed.others, { ...base, origin: projectName(entry.projectRoot) });
+  try {
+    if (appendEntry(memory, routed.entry, { ...base, expected: pos, costUsd: r.costUsd })) {
+      if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
+      written.push({ root: entry.projectRoot, memory });
+    }
+    for (const store of written) await upkeep(store.root, store.memory, opts);
+  } finally {
+    for (const store of written) if (store.memory !== memory) store.memory.close();
   }
   return 0;
+}
+
+/** Record a rejection: exit 1 asks for a retry, and the entry parks at the limit. */
+function rejected(memory: Memory, session: SessionKey, entry: SpoolEntry): number {
+  if (memory.recordRejection(session) < REJECTION_LIMIT) return 1;
+  settleEntry(session.id, entry.updatedAt, "park");
+  return 0;
+}
+
+/** The entry's share as the session's digest row; true when it was appended. */
+function appendEntry(
+  memory: Memory,
+  share: EntryShare,
+  base: Pick<DigestInput, "session" | "expected" | "next" | "model" | "costUsd">,
+): boolean {
+  const { summary, observations, proposals, stale, links } = share;
+  return (
+    memory.appendDigest({
+      ...base,
+      summary,
+      observations,
+      proposals,
+      stale,
+      origin: null,
+      links,
+    }) === "appended"
+  );
+}
+
+/** One written store's embedding, daily pass and consolidation, each failure quiet. */
+async function upkeep(
+  root: string,
+  memory: Memory,
+  opts: { timeoutMs: number; everyMs: number },
+): Promise<void> {
+  await embedPending(memory);
+  maintainQuietly(memory);
+  await consolidateQuietly(root, memory, opts);
 }
 
 /** The store's daily pass; a failure prints one line and never changes the exit code. */
@@ -263,33 +280,42 @@ const EMPTY_SUMMARY: DigestInput["summary"] = {
   next_steps: "",
 };
 
-/** Write each other project's share to its store, in order; a store that does not open as "open" gets none. */
-function writeShares(shares: Share[], base: ShareBase): void {
+/**
+ * Write each other project's share to its store, in order; a store that does not open as "open" gets none. The
+ * stores written stay open, in that order, for the caller to close.
+ */
+function writeShares(shares: Share[], base: ShareBase): { root: string; memory: Memory }[] {
+  const written: { root: string; memory: Memory }[] = [];
   for (const share of shares) {
     const opened = openMemory(memoryPath(share.root), "write");
     if (opened.status !== "open") continue;
+    let kept = false;
     try {
-      writeShare(opened.memory, share, base);
+      kept = writeShare(opened.memory, share, base);
     } finally {
-      opened.memory.close();
+      if (kept) written.push({ root: share.root, memory: opened.memory });
+      else opened.memory.close();
     }
   }
+  return written;
 }
 
-/** One share as a digest row at cost 0 with an empty summary; skipped when the store already holds `next`. */
-function writeShare(memory: Memory, share: Share, base: ShareBase): void {
+/** One share as a digest row at cost 0 with an empty summary; false when the store already holds `next`. */
+function writeShare(memory: Memory, share: Share, base: ShareBase): boolean {
   const expected = memory.position(base.session.id);
-  if (expected?.uuid === base.next.uuid && expected.timestamp === base.next.timestamp) return;
-  memory.appendDigest({
-    ...base,
-    expected,
-    costUsd: 0,
-    summary: EMPTY_SUMMARY,
-    observations: share.observations,
-    proposals: share.proposals,
-    stale: share.stale,
-    links: [],
-  });
+  if (expected?.uuid === base.next.uuid && expected.timestamp === base.next.timestamp) return false;
+  return (
+    memory.appendDigest({
+      ...base,
+      expected,
+      costUsd: 0,
+      summary: EMPTY_SUMMARY,
+      observations: share.observations,
+      proposals: share.proposals,
+      stale: share.stale,
+      links: [],
+    }) === "appended"
+  );
 }
 
 /** The model's output with every string redacted and only the proposals with a non-blank bullet. */

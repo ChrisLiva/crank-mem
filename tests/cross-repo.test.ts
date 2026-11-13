@@ -10,13 +10,14 @@ import {
 import { readUntouched } from "../src/hooks/lib/untouched.ts";
 import { localDate, memoryPath } from "../src/hooks/lib/memory.ts";
 import type { Digest } from "../src/daemon/digest-prompt.ts";
-import { okStream } from "./fixtures/claude-scenarios.ts";
+import { okStream, okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import {
   journey,
   makeCrankHome,
   plantMemory,
   readRecord,
+  realModelsDir,
   rerun,
   runCli,
   runHook,
@@ -103,6 +104,57 @@ const crossDigest = (ws: Ws): Digest =>
     observation("Clone note", [path.join(ws.H, "clones/u/x.ts")]),
   ]);
 
+const BULLETS = ["Storefront bullet", "Payments bullet", "Cross bullet", "Lost bullet"];
+
+/** A consolidation that adds `bullet` for proposal 1 and accepts it. */
+const acceptFirst = (bullet: string) =>
+  okStreamOf({
+    edits: [{ op: "add", heading: "Memory", bullet, proposal: 1 }],
+    proposals: [{ id: 1, verdict: "accepted", reason: "the code holds it" }],
+    stale: [],
+  });
+
+/**
+ * Journey 1's digest: storefront and H each seeded with one row the prompt shows, then `crossDigest` with one
+ * proposal per project name (`storefront`, `payments-api`, `cross-repo`, `nowhere`) and stale flags on
+ * storefront's row, an unshown storefront id and H's row by `hHandle(hid)`; consolidations scripted in name
+ * order, then H's.
+ */
+function proposalJourney(ws: Ws, hHandle: (hid: number) => string) {
+  const [sid] = seedMemory(ws.storefront, [
+    { title: "Front seed", narrative: "Seeded front words.", filesRead: ["src/a.ts"] },
+  ]);
+  const [hid] = seedMemory(ws.H, [
+    { title: "Home seed", narrative: "Seeded home words.", filesRead: ["src/h.ts"] },
+  ]);
+  const output: Digest = {
+    ...crossDigest(ws),
+    proposals: [
+      { kind: "memory", bullet: "Storefront bullet", project: "storefront" },
+      { kind: "memory", bullet: "Payments bullet", project: "payments-api" },
+      { kind: "memory", bullet: "Cross bullet", project: "cross-repo" },
+      { kind: "memory", bullet: "Lost bullet", project: "nowhere" },
+    ],
+    stale: [
+      { id: `storefront#${sid}`, reason: "outdated" },
+      { id: "storefront#999", reason: "unlisted" },
+      { id: hHandle(hid!), reason: "replaced" },
+    ],
+  };
+  const { transcript } = crossTranscript(ws);
+  const j = journey(
+    ws.H,
+    [
+      { lines: okStream(output) },
+      { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) },
+      { lines: acceptFirst("Storefront bullet") },
+      { lines: acceptFirst("Cross bullet") },
+    ],
+    { home: ws.home, cwd: ws.H, transcript },
+  );
+  return { ...j, sid: sid!, hid: hid! };
+}
+
 /** The `#<id>` lines `search <query>` prints in `root`. */
 function searchIds(ws: Ws, root: string, query: string): number[] {
   return runCli(root, ["search", query], { CRANK_HOME: ws.home })
@@ -113,6 +165,12 @@ function searchIds(ws: Ws, root: string, query: string): number[] {
 
 const getText = (ws: Ws, root: string, id: number) =>
   runCli(root, ["get", String(id)], { CRANK_HOME: ws.home }).stdout;
+
+/** The `stale:` line `get <id>` prints in `root`, or undefined. */
+const staleLine = (ws: Ws, root: string, id: number) =>
+  getText(ws, root, id)
+    .split("\n")
+    .find((l) => l.startsWith("stale: "));
 
 const sessionStart = (ws: Ws, root: string) =>
   additionalContext(
@@ -185,18 +243,37 @@ describe("cross-repo memory", () => {
     const absent = read(path.join(ws.payments, "src/none.ts"), "9c000005").stdout;
     expect(absent).not.toContain("Excerpt of");
 
-    fs.rmSync(path.join(ws.storefront, ".crank/cerebrum.md"));
+    const storefrontCerebrum = path.join(ws.storefront, ".crank/cerebrum.md");
+    const cerebrumText = fs.readFileSync(storefrontCerebrum, "utf-8");
+    fs.rmSync(storefrontCerebrum);
     const noCerebrum = read(storefrontFile, "9c000006");
     expect(noCerebrum.status).toBe(0);
     expect(noCerebrum.stdout).not.toContain("Excerpt of");
+    fs.writeFileSync(storefrontCerebrum, cerebrumText);
 
-    const { transcript } = crossTranscript(ws);
-    const { job } = journey(ws.H, [{ lines: okStream(crossDigest(ws)) }], {
-      home: ws.home,
-      cwd: ws.H,
-      transcript,
-    });
+    const { sid, hid, job, fake } = proposalJourney(ws, (hid) => `#${hid}`);
     expect(job.status).toBe(0);
+    const pCalls = fake.calls().filter((c) => c.argv.includes("-p"));
+    expect(pCalls.map((c) => c.cwd)).toEqual(
+      [path.join(ws.home, "run"), ws.payments, ws.storefront, ws.H].map((d) => fs.realpathSync(d)),
+    );
+    const bullets = (stdin: string) => BULLETS.filter((b) => stdin.includes(b));
+    expect(pCalls.slice(1).map((c) => bullets(c.stdin))).toEqual([
+      ["Payments bullet"],
+      ["Storefront bullet"],
+      ["Cross bullet", "Lost bullet"],
+    ]);
+    const sfCerebrum = fs.readFileSync(storefrontCerebrum, "utf-8");
+    expect(sfCerebrum).toContain("Storefront bullet");
+    expect(sfCerebrum).not.toContain("Cross bullet");
+    expect(fs.readFileSync(path.join(ws.H, ".crank/cerebrum.md"), "utf-8")).toContain(
+      "Cross bullet",
+    );
+    expect(staleLine(ws, ws.storefront, sid)).toContain("outdated");
+    expect(staleLine(ws, ws.H, hid)).toContain("replaced");
+    expect(runCli(ws.storefront, ["stats"], { CRANK_HOME: ws.home }).stdout).toContain(
+      "\n  stale:            1\n",
+    );
     for (const root of [ws.storefront, ws.payments]) {
       const ids = searchIds(ws, root, "Cross fix");
       expect(ids).toHaveLength(1);
@@ -218,11 +295,39 @@ describe("cross-repo memory", () => {
     expect(sessionStart(ws, ws.storefront)).not.toContain("Ship the storefront fix");
   }, 30_000);
 
+  test("a stale flag may name the session's project by name", () => {
+    const ws = workspace();
+    const { hid, job } = proposalJourney(ws, (hid) => `H#${hid}`);
+    expect(job.status).toBe(0);
+    expect(staleLine(ws, ws.H, hid)).toContain("replaced");
+  }, 30_000);
+
   test("a modified file in another project links it from the entry project", () => {
     const ws = workspace();
     const { transcript } = crossTranscript(ws);
     const output = digestOf([
       observation("Front edit", [], [path.join(ws.storefront, "src/a.ts")]),
+    ]);
+    const { job, fake } = journey(ws.H, [{ lines: okStream(output) }], {
+      home: ws.home,
+      cwd: ws.H,
+      transcript,
+    });
+    expect(job.status).toBe(0);
+    expect(fake.calls().filter((c) => c.argv.includes("-p"))).toHaveLength(1);
+    expect(sessionStart(ws, ws.H)).toContain("- Search also covers linked projects: storefront.");
+    expect(searchIds(ws, ws.H, "Front edit")).toEqual([]);
+    const stats = runCli(ws.storefront, ["stats"], { CRANK_HOME: ws.home }).stdout;
+    expect(stats).toContain("  month cost:       $0.00 (list price)");
+    expect(stats).toMatch(/ {2}last digest: {6}\d+s ago\n/);
+  }, 30_000);
+
+  test("each written store is embedded and snapshotted", () => {
+    const ws = workspace();
+    fs.symlinkSync(realModelsDir(), path.join(ws.home, "models"));
+    const { transcript } = crossTranscript(ws);
+    const output = digestOf([
+      observation("Both reads", [path.join(ws.storefront, "src/a.ts"), "../payments-api/src/a.ts"]),
     ]);
     const { job } = journey(ws.H, [{ lines: okStream(output) }], {
       home: ws.home,
@@ -230,11 +335,31 @@ describe("cross-repo memory", () => {
       transcript,
     });
     expect(job.status).toBe(0);
-    expect(sessionStart(ws, ws.H)).toContain("- Search also covers linked projects: storefront.");
-    expect(searchIds(ws, ws.H, "Front edit")).toEqual([]);
-    const stats = runCli(ws.storefront, ["stats"], { CRANK_HOME: ws.home }).stdout;
-    expect(stats).toContain("  month cost:       $0.00 (list price)");
-    expect(stats).toMatch(/ {2}last digest: {6}\d+s ago\n/);
+    for (const root of [ws.storefront, ws.payments]) {
+      const stats = runCli(root, ["stats"], { CRANK_HOME: ws.home }).stdout;
+      expect(stats).toContain("\n  unembedded:       0\n");
+      expect(fs.readdirSync(path.join(root, ".crank/backups/memory"))).toHaveLength(1);
+    }
+  }, 90_000);
+
+  test("a proposal alone gives its project a share", () => {
+    const ws = workspace();
+    const { transcript } = crossTranscript(ws);
+    const output: Digest = {
+      ...digestOf([observation("Home only", [path.join(ws.H, "src/h.ts")])]),
+      proposals: [{ kind: "memory", bullet: "Front only", project: "storefront" }],
+    };
+    const { job, fake } = journey(
+      ws.H,
+      [{ lines: okStream(output) }, { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) }],
+      { home: ws.home, cwd: ws.H, transcript },
+    );
+    expect(job.status).toBe(0);
+    const front = fake
+      .calls()
+      .filter((c) => c.argv.includes("-p") && c.cwd === fs.realpathSync(ws.storefront));
+    expect(front).toHaveLength(1);
+    expect(front[0]!.stdin).toContain("Front only");
   }, 30_000);
 
   test("a share already at the session's position is not written twice", () => {
