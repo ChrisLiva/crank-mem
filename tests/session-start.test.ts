@@ -852,4 +852,19 @@ describe("linked projects (black-box)", () => {
     expect(fresh).toEndWith(bullet);
     expect(fresh).not.toContain("[cited file");
   });
+
+  test("a citation under the project's own directory of a linked project's name stays home", () => {
+    const ws = workspace();
+    seedMemory(ws.H, [], { links: ["payments-api"] });
+    fs.mkdirSync(path.join(ws.H, "payments-api/lib"), { recursive: true });
+    fs.writeFileSync(path.join(ws.H, "payments-api/lib/x.ts"), "export const x = 1;\n");
+    const bullet = "- **Own**: see `payments-api/lib/x.ts` (2020-01-01).";
+    fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bullet}\n`);
+
+    const ctx = injectIn(ws.H, ws.home);
+    expect(ctx).toContain(
+      `${bullet} [cited file modified after this note; check: payments-api/lib/x.ts]`,
+    );
+    expect(ctx).not.toContain("[cited file missing");
+  });
 });

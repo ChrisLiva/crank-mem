@@ -75,20 +75,29 @@ export function installedStores(): Store[] {
   return [...byDir.values()];
 }
 
-/** The root of the store named `name` (`owner.ts` → `projectName`), the newest among several; else null. */
-export function rootOfName(name: string): string | null {
-  let best: Store | null = null;
+/** Each installed store's root by its name (`owner.ts` → `projectName`), the newest among several of one name. */
+function rootsByName(): Map<string, string> {
+  const best = new Map<string, Store>();
   for (const s of installedStores()) {
-    if (projectName(s.root) !== name) continue;
-    if (best === null || s.addedAtMs > best.addedAtMs) best = s;
+    const name = projectName(s.root);
+    const seen = best.get(name);
+    if (seen === undefined || s.addedAtMs > seen.addedAtMs) best.set(name, s);
   }
-  return best?.root ?? null;
+  return new Map([...best].map(([name, s]) => [name, s.root]));
+}
+
+/** The root of the store named `name`, the newest among several; else null. */
+export function rootOfName(name: string): string | null {
+  return rootsByName().get(name) ?? null;
 }
 
 /** The store's linked projects (`Memory` → `links`, sorted by name) that resolve to an installed root. */
 export function linkedProjects(memory: MemoryReader): { name: string; root: string }[] {
-  return memory.links().flatMap((name) => {
-    const root = rootOfName(name);
-    return root === null ? [] : [{ name, root }];
+  const names = memory.links();
+  if (names.length === 0) return [];
+  const roots = rootsByName();
+  return names.flatMap((name) => {
+    const root = roots.get(name);
+    return root === undefined ? [] : [{ name, root }];
   });
 }

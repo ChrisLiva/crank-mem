@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ARCHIVE_FILE, CEREBRUM_FILE, backupCerebrum } from "../hooks/lib/cerebrum-files.ts";
 import { CRANK_DIR } from "../hooks/lib/config.ts";
-import { basenameIndex, citationStatus } from "../hooks/lib/injection.ts";
+import { basenameIndex, citationStatus, linkedPrefix } from "../hooks/lib/injection.ts";
 import { localDate, type Memory, type PendingWork } from "../hooks/lib/memory.ts";
 import { linkedProjects } from "../hooks/lib/registry.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
@@ -155,7 +155,7 @@ function narrow(e: OutputEdit, sent: Set<number>): CerebrumEdit | null {
 
 /**
  * The ids of the bullets citing a file modified since the last ok run (or the bullet's date, before
- * one), or, before the first ok run, a missing file. A citation whose first segment names a linked
+ * one), or, before the first ok run, a missing file. A citation whose `linkedPrefix` names a linked
  * project never counts: the run cannot read outside the project (ADR 0016).
  */
 function dueBullets(
@@ -167,7 +167,7 @@ function dueBullets(
 ): Set<number> {
   const index = loadIndex(crankDir);
   const byName = basenameIndex(index);
-  const home = (rel: string) => !rel.includes("/") || !linked.has(rel.slice(0, rel.indexOf("/")));
+  const home = (rel: string) => linkedPrefix(rel, root, (name) => linked.has(name)) === null;
   const due = new Set<number>();
   for (const { id, text } of numberBullets(md).bullets) {
     const status = citationStatus(text, { index, root }, byName, sinceMs);

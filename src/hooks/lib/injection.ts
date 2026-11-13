@@ -355,13 +355,21 @@ export interface CitedFiles {
   linked?: LinkedAnatomies;
 }
 
-type LinkedAnatomies = Map<string, { index: AnatomyIndex; root: string }>;
+/** A linked project's anatomy by its name, or undefined when no linked project has that name. */
+type LinkedAnatomies = (name: string) => { index: AnatomyIndex; root: string } | undefined;
 
-/** Each linked project's anatomy, read and never written. */
-function linkedAnatomies(projects: { name: string; root: string }[]): LinkedAnatomies {
-  return new Map(
-    projects.map((p) => [p.name, { index: loadIndex(path.join(p.root, CRANK_DIR)), root: p.root }]),
-  );
+/** Linked projects' anatomies: `projects` listed on the first lookup, each anatomy read on its first, none written. */
+function linkedAnatomies(projects: () => { name: string; root: string }[]): LinkedAnatomies {
+  let roots: Map<string, string> | undefined;
+  const indexes = new Map<string, AnatomyIndex>();
+  return (name) => {
+    roots ??= new Map(projects().map((p) => [p.name, p.root]));
+    const root = roots.get(name);
+    if (root === undefined) return undefined;
+    let index = indexes.get(name);
+    if (!index) indexes.set(name, (index = loadIndex(path.join(root, CRANK_DIR))));
+    return { index, root };
+  };
 }
 
 /** Basename maps of linked anatomies, built once per index. */
@@ -419,8 +427,23 @@ function latestDateEnd(text: string): number | null {
 }
 
 /**
+ * The linked project a citation's first segment names, or null. An entry of that name in `root`
+ * keeps the citation in `root`.
+ */
+export function linkedPrefix(
+  rel: string,
+  root: string,
+  isLinked: (name: string) => boolean,
+): string | null {
+  const slash = rel.indexOf("/");
+  if (slash <= 0) return null;
+  const head = rel.slice(0, slash);
+  return !fs.existsSync(path.join(root, head)) && isLinked(head) ? head : null;
+}
+
+/**
  * One citation's status: modified past `cutoffMs`, missing, or null for neither. A citation whose
- * first segment names a linked project resolves in that project, the segment stripped.
+ * `linkedPrefix` names a linked project resolves in that project, the segment stripped.
  */
 function resolveCitation(
   rel: string,
@@ -428,12 +451,12 @@ function resolveCitation(
   byName: Map<string, string[]>,
   cutoffMs: number | null,
 ): "missing" | "modified" | null {
-  const slash = rel.indexOf("/");
-  const linked = slash > 0 ? cited.linked?.get(rel.slice(0, slash)) : undefined;
+  const head = linkedPrefix(rel, cited.root, (name) => cited.linked?.(name) !== undefined);
+  const linked = head === null ? undefined : cited.linked?.(head);
   if (!linked) return resolveIn(rel, cited, byName, cutoffMs);
   let names = linkedNames.get(linked.index);
   if (!names) linkedNames.set(linked.index, (names = basenameIndex(linked.index)));
-  return resolveIn(rel.slice(slash + 1), linked, names, cutoffMs);
+  return resolveIn(rel.slice(head!.length + 1), linked, names, cutoffMs);
 }
 
 function resolveIn(
@@ -674,9 +697,9 @@ export function subagentInjection(
   };
 }
 
-/** A project's own anatomy and its store's linked anatomies, every one read and never written. */
+/** A project's own anatomy and its store's linked anatomies, the links read only when a citation needs them. */
 export function citationSources(crankDir: string, root: string): CitedFiles {
-  return { index: loadIndex(crankDir), root, linked: linkedAnatomies(storeLinks(root)) };
+  return { index: loadIndex(crankDir), root, linked: linkedAnatomies(() => storeLinks(root)) };
 }
 
 /** The store's links that resolve to an installed project; none when the store cannot be read. */
@@ -728,7 +751,7 @@ export function sessionStartInjection(
     index,
     adrPath: config.adr_path,
     projectRoot: root,
-    linked: linkedAnatomies(recall.status === "open" ? recall.linked : []),
+    linked: linkedAnatomies(() => (recall.status === "open" ? recall.linked : [])),
     codex: opts.codex,
     recall,
     running: gate.running,
