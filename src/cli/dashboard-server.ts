@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { isProjectFile } from "../hooks/lib/hook-io.ts";
-import { memoryPath, memoryStatus, withReader } from "../hooks/lib/memory.ts";
+import { memoryPath, type MemoryReader, readStore, storeStatus } from "../hooks/lib/memory.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
 import { readUsage } from "../hooks/lib/usage.ts";
@@ -17,6 +17,7 @@ import {
   type ObservationLine,
   type ProposalRow,
   type StaleRow,
+  STORE_TEXT,
   type UpdateStatus,
 } from "../hooks/lib/wire.ts";
 import { EMBED_MODEL } from "../daemon/embedder.ts";
@@ -117,7 +118,7 @@ function projectById(id: string): Project | null {
 }
 
 function projectsBody(): string {
-  const projects = listProjects().map((p) => ({ ...p, memory: memoryStatus(memoryPath(p.root)) }));
+  const projects = listProjects().map((p) => ({ ...p, memory: storeStatus(p.root) }));
   return JSON.stringify({ projects });
 }
 
@@ -144,6 +145,15 @@ function parseId(s: string): number | null {
 const PAGE = 50;
 type Answer = { status: number; body?: unknown };
 
+/** `fn`'s answer over the project's store, or the store's note as the body when it does not open. */
+async function storeBody<T>(
+  root: string,
+  fn: (memory: MemoryReader) => T | Promise<T>,
+): Promise<T | { note: string }> {
+  const read = await readStore(root, fn);
+  return read.status === "open" ? read.value : { note: STORE_TEXT[read.status].note };
+}
+
 /** `GET …/observations`: one page of lines, newest first. */
 async function observations(root: string, params: URLSearchParams): Promise<Answer> {
   const beforeParam = params.get("before");
@@ -159,7 +169,7 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
     files: file === null ? null : [file],
     stale: params.get("stale") === "1",
   };
-  const body = await withReader(memoryPath(root), async (memory) => {
+  const body = await storeBody(root, async (memory) => {
     if (q !== null) {
       const vector = await queryVector(memory, q);
       const hits = memory.search({
@@ -194,7 +204,7 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
 async function observation(root: string, oid: string): Promise<Answer> {
   const id = parseId(oid);
   if (id === null) return { status: 400 };
-  const body = await withReader(memoryPath(root), (memory) => memory.get([id])[0] ?? null);
+  const body = await storeBody(root, (memory) => memory.get([id])[0] ?? null);
   return body === null ? { status: 404 } : { status: 200, body };
 }
 
@@ -205,7 +215,7 @@ async function proposals(root: string, params: URLSearchParams): Promise<Answer>
   const state = params.get("state");
   if (beforeParam !== null && beforeId === null) return { status: 400 };
   if (state !== null && !isProposalState(state)) return { status: 400 };
-  const body = await withReader(memoryPath(root), (memory) =>
+  const body = await storeBody(root, (memory) =>
     pageOf(memory.proposalRows({ state, beforeId, limit: PAGE + 1 }), PAGE, (row: ProposalRow) =>
       String(row.id),
     ),
@@ -218,7 +228,7 @@ async function stale(root: string, params: URLSearchParams): Promise<Answer> {
   const beforeParam = params.get("before");
   const before = beforeParam === null ? null : parseCursor(beforeParam);
   if (beforeParam !== null && before === null) return { status: 400 };
-  const body = await withReader(memoryPath(root), (memory) =>
+  const body = await storeBody(root, (memory) =>
     pageOf(
       memory.staleRows({
         before: before && { staleAtMs: before.ms, id: before.id },
@@ -236,7 +246,7 @@ async function consolidations(root: string, params: URLSearchParams): Promise<An
   const beforeParam = params.get("before");
   const beforeId = beforeParam === null ? null : parseId(beforeParam);
   if (beforeParam !== null && beforeId === null) return { status: 400 };
-  const body = await withReader(memoryPath(root), (memory) =>
+  const body = await storeBody(root, (memory) =>
     pageOf(memory.consolidationRows({ beforeId, limit: PAGE + 1 }), PAGE, (row: ConsolidationRow) =>
       String(row.id),
     ),
@@ -254,7 +264,7 @@ async function activity(root: string, params: URLSearchParams): Promise<Answer> 
   const days = ACTIVITY_DAYS.find((d) => String(d) === params.get("days"));
   if (days === undefined) return { status: 400 };
   const start = windowStart(Date.now(), days);
-  const body = await withReader(memoryPath(root), (memory) => ({
+  const body = await storeBody(root, (memory) => ({
     days: activityDays(memory.activity(start.getTime()), start, days),
   }));
   return { status: 200, body };
@@ -272,7 +282,7 @@ async function usage(root: string, params: URLSearchParams): Promise<Answer> {
       : line,
   );
   const opts = { nowMs: Date.now(), days, manual: manual === "1" };
-  const body = await withReader(memoryPath(root), (memory) =>
+  const body = await storeBody(root, (memory) =>
     usageMetrics(events, {
       ...opts,
       titles: (ids) => new Map(memory.get(ids).map((o) => [o.id, o.title])),

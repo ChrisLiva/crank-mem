@@ -320,20 +320,6 @@ export function openStoreForWrite(root: string): MemoryWrite {
   return openMemory(memoryPath(root), "write");
 }
 
-/** `fn`'s answer over the store, opened read-only and closed after; a store that does not open answers its note. */
-export async function withReader<T>(
-  file: string,
-  fn: (memory: MemoryReader) => T | Promise<T>,
-): Promise<T | { note: string }> {
-  const opened = openMemory(file, "read");
-  if (opened.status !== "open") return { note: STORE_TEXT[opened.status].note };
-  try {
-    return await fn(opened.memory);
-  } finally {
-    opened.memory.close();
-  }
-}
-
 /** Brings an existing store to the current schema (snapshotting a version-n store first); never creates a store. */
 export function migrateStore(root: string): StoreMigration {
   const storeFile = memoryPath(root);
@@ -354,12 +340,6 @@ export function migrateStore(root: string): StoreMigration {
     case "unreadable":
       return { status: "failed", detail: "unreadable" };
   }
-}
-
-export function memoryStatus(file: string): MemoryRead["status"] {
-  const result = openMemory(file, "read");
-  if (result.status === "open") result.memory.close();
-  return result.status;
 }
 
 /** A restore retries a locked store every RESTORE_RETRY_MS for RESTORE_WAIT_MS. */
