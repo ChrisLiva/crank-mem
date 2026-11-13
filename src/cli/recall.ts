@@ -89,7 +89,9 @@ export async function search(args: string[]): Promise<number> {
   const scope = searchScope(project.root, named, file);
   if (typeof scope === "number") return scope;
   const host = stringFlag(flags["model-host"]) ?? undefined;
-  return withMemory(project.root, true, async (memory) => {
+  // `--project` searches the named store alone, so the current store need not open.
+  const searched = scope.only?.root ?? project.root;
+  return withMemory(searched, true, async (memory) => {
     const embeddable = memory.hasVectors(EMBED_MODEL);
     const vector = await queryVector(memory, text, host);
     if ((!embeddable && !modelPresent()) || (embeddable && vector === null)) {
@@ -97,7 +99,7 @@ export async function search(args: string[]): Promise<number> {
     }
     const applied = limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT);
     const stale = flags.stale === true;
-    const hits = await federatedSearch(memory, project.root, scope, {
+    const hits = await federatedSearch(memory, searched, scope, {
       text,
       vector,
       limit: applied,
@@ -235,7 +237,8 @@ function targetFiles(
 /**
  * Each target store's hits (the current one's from `memory`, the others' that open), by fused score with
  * ties to the current project, one per content hash, cut to the query's limit. A target whose `--file`
- * filter holds no paths adds nothing.
+ * filter holds no paths adds nothing. `current` is the root `memory` reads: the `--project` store when
+ * `scope.only` names one.
  */
 async function federatedSearch(
   memory: MemoryReader,

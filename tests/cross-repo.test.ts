@@ -790,13 +790,19 @@ describe("cross-repo memory", () => {
       `Excerpt of \`${ws.payments}/.crank/cerebrum.md\`, project payments-api's memory;`,
     );
 
-    const [homeId] = seedMemory(ws.H, [{ title: "Home only note", filesRead: ["src/h.ts"] }], {
-      links: ["storefront"],
-    });
     const lines = (cwd: string, args: string[]) =>
       runCli(cwd, ["search", ...args], sessionless(ws))
         .stdout.split("\n")
         .filter(Boolean);
+    expect(fs.existsSync(memoryPath(ws.H))).toBe(false);
+    expect(lines(ws.H, ["Pay fact", "--project", "payments-api"])).toEqual([
+      expect.stringMatching(new RegExp(`^payments-api#${payFactId} .* Pay fact$`)),
+    ]);
+    expect(lastLine(ws.H)).toMatchObject({ channel: "search", query: "Pay fact", ids: [] });
+
+    const [homeId] = seedMemory(ws.H, [{ title: "Home only note", filesRead: ["src/h.ts"] }], {
+      links: ["storefront"],
+    });
     expect(lines(ws.H, ["Pay fact", "--project", "payments-api"])).toEqual([
       expect.stringMatching(new RegExp(`^payments-api#${payFactId} .* Pay fact$`)),
     ]);
