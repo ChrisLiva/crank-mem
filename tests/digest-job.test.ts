@@ -630,7 +630,7 @@ describe("digest context across projects", () => {
     expect(runCli(H, ["get", String(hid)]).stdout).toMatch(/^stale:.* named$/m);
     const stdin = fake.calls()[0]!.stdin;
     expect(stdin).toContain(
-      `\n\n[PROJECTS]\nH ${H} (session)\npayments-api ${payments}\nstorefront ${storefront}\n\n`,
+      `\n\n[PROJECTS]\nH ${H} (session)\npayments-api ${payments}\nstorefront ${storefront}\n\n[EXISTING OBSERVATIONS]\n`,
     );
     expect(stdin).toContain(`\n#${hid} discovery Home row: About home.\n`);
     expect(stdin).toContain(`\nstorefront#${sid} discovery Front row: About front.\n`);
