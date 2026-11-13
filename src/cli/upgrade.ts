@@ -18,6 +18,7 @@ import {
 } from "../hooks/lib/config.ts";
 import { CLI_LOCK_BUDGET_MS, withLock } from "../hooks/lib/lock.ts";
 import { memoryPath, migrateStore } from "../hooks/lib/memory.ts";
+import { projectName } from "../hooks/lib/owner.ts";
 import { registeredRoots } from "../hooks/lib/registry.ts";
 import { fullScan } from "../hooks/lib/scanner.ts";
 import { commitIndex, INDEX_FILE, INDEX_VERSION } from "../hooks/lib/store.ts";
@@ -26,9 +27,10 @@ import { scanCompleteLine } from "./scan.ts";
 // Non-interactive. Once per run it installs the tool's packages and, in a
 // clone, rebuilds a dashboard not built for this version. `--all` repairs every
 // registered project, each under its anatomy lock. Of config.json it updates
-// only vendored_version, clone_root and a missing codex; it scans an index that
-// is missing or not at INDEX_VERSION. Exits 1 when any repair failed, after
-// every step has run. src/cli/install.ts → ITEMS holds the per-item repair rules.
+// only vendored_version, clone_root, a missing codex and a missing name; it
+// scans an index that is missing or not at INDEX_VERSION. Exits 1 when any
+// repair failed, after every step has run. src/cli/install.ts → ITEMS holds
+// the per-item repair rules.
 
 export async function run(args: string[]): Promise<number> {
   printUpdateNotice();
@@ -134,7 +136,8 @@ function repairSync(root: string, crankDir: string): boolean {
   // Every repair runs at any version, so an install already at the current
   // version still converges.
 
-  const hadCodexKey = rawHasCodexKey(path.join(crankDir, CONFIG_FILE));
+  // Keys config.json holds as written; a read or parse failure counts as none.
+  const raw = readJsonObject(path.join(crankDir, CONFIG_FILE)) ?? {};
 
   // An install from before clone_root existed, or one whose clone has moved, is
   // at the current version but cannot report drift — so a same-version upgrade
@@ -145,9 +148,11 @@ function repairSync(root: string, crankDir: string): boolean {
     saveConfig(crankDir, config);
   }
 
-  // A config from before `codex` existed records the choice its wiring implies.
+  // A config from before `codex` and `name` existed records the choice its wiring
+  // implies and the default name; a name already written stays, valid or not.
+  if (!("name" in raw)) config.name = projectName(root);
   const stamped = { ...config, codex: resolveCodex(root, config) };
-  if (!hadCodexKey) saveConfig(crankDir, stamped);
+  if (!("codex" in raw && "name" in raw)) saveConfig(crankDir, stamped);
 
   // Created on first use, so an upgrade that changes nothing leaves no backup.
   let backupDir: string | null = null;
@@ -163,10 +168,4 @@ function repairSync(root: string, crankDir: string): boolean {
   else if (stamped.vendored_version === current)
     console.log(`crank-mem: upgraded vendored hooks ${prev} → ${current}`);
   return repaired.failed;
-}
-
-/** Whether config.json as written holds a `codex` key; a read or parse failure counts as none. */
-function rawHasCodexKey(file: string): boolean {
-  const parsed = readJsonObject(file);
-  return parsed !== null && "codex" in parsed;
 }

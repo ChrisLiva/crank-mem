@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CONFIG_FILE, CRANK_DIR } from "./config.ts";
+import { CONFIG_FILE, CRANK_DIR, readJsonObject } from "./config.ts";
 
 // Who owns a path: the nearest boundary above it, on path text alone (no symlinks, no git spawn).
 // An installed project, a linked worktree of one, or a git repo that is not installed.
@@ -81,4 +81,13 @@ export function worktreeMain(top: string): string | null {
   if (entry === null || entry === "dir") return null;
   const main = mainOfGitFile(top, entry.file);
   return main !== null && isInstalled(main) ? main : null;
+}
+
+const NAME = /^[A-Za-z0-9._-]+$/;
+
+/** The project's name: config.json → `name` when valid, else the root's basename with other characters as `-`. */
+export function projectName(root: string): string {
+  const name = readJsonObject(path.join(root, CRANK_DIR, CONFIG_FILE))?.name;
+  if (typeof name === "string" && NAME.test(name)) return name;
+  return path.basename(root).replace(/[^A-Za-z0-9._-]/g, "-");
 }

@@ -476,6 +476,8 @@ describe("project registry", () => {
     git(main, "worktree", "add", "-q", worktree);
     expect(runCli(worktree, ["upgrade"], { CRANK_HOME: home }).status).toBe(0);
     const standalone = registeredProject(home);
+    const standaloneDir = path.join(standalone, ".crank");
+    saveConfig(standaloneDir, { ...loadConfig(standaloneDir), name: "custom" });
     expect(registry(home).projects.map((p) => p.root)).toEqual([
       fs.realpathSync(main),
       fs.realpathSync(worktree),
@@ -483,9 +485,13 @@ describe("project registry", () => {
     ]);
 
     const dash = await startDashboard(home, ["--port", "0"]);
-    const roots = async () =>
-      ((await projects(dash)) as { projects: { root: string }[] }).projects.map((p) => p.root);
-    expect(await roots()).toEqual([standalone, fs.realpathSync(main)]);
+    const listed = async () =>
+      ((await projects(dash)) as { projects: { root: string; name: string }[] }).projects;
+    const roots = async () => (await listed()).map((p) => p.root);
+    expect((await listed()).map((p) => [p.name, p.root])).toEqual([
+      ["custom", standalone],
+      ["main", fs.realpathSync(main)],
+    ]);
     const before = fs.readFileSync(registryFile(home));
     fs.rmSync(path.join(standalone, ".crank/config.json"));
     expect(await roots()).toEqual([fs.realpathSync(main)]);
@@ -1188,7 +1194,7 @@ describe("updates", () => {
     );
     const root = registeredProject(home);
     const crankDir = path.join(root, ".crank");
-    saveConfig(crankDir, { ...loadConfig(crankDir), vendored_version: "0.0.1" });
+    saveConfig(crankDir, { ...loadConfig(crankDir), vendored_version: "0.0.1", name: "custom" });
     const dash = await startDashboard(home, ["--port", "0"], {
       env: { CRANK_RELEASE_URL: "http://example.test/r" },
     });
@@ -1210,7 +1216,7 @@ describe("updates", () => {
       error: null,
       auto: false,
       checkDaily: true,
-      behind: [{ root, name: path.basename(root), vendored: "0.0.1" }],
+      behind: [{ root, name: "custom", vendored: "0.0.1" }],
     });
     expect((await dash.get("/api/updates", { headers: { Cookie: "" } })).status).toBe(401);
   }, 20_000);

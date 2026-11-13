@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_FILE, CRANK_DIR, readJsonObject } from "./config.ts";
+import { memoryPath } from "./memory.ts";
+import { projectName } from "./owner.ts";
 import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 
 // The per-user list of project roots, kept at <crank home>/projects.json.
@@ -52,7 +54,38 @@ export function registeredRoots(): string[] {
   return readEntries().map((e) => e.root);
 }
 
+function isInstalled(root: string): boolean {
+  return fs.existsSync(path.join(root, CRANK_DIR, CONFIG_FILE));
+}
+
 /** The registered roots that still hold a crank-mem install (`.crank/config.json`). */
 export function installedRoots(): string[] {
-  return registeredRoots().filter((root) => fs.existsSync(path.join(root, CRANK_DIR, CONFIG_FILE)));
+  return registeredRoots().filter(isInstalled);
+}
+
+type Store = { root: string; storeDir: string; addedAtMs: number };
+
+/**
+ * One entry per distinct store over the installed roots: a linked worktree and its main checkout
+ * share one, listed under the main checkout and dated by the newest registration among them.
+ */
+export function installedStores(): Store[] {
+  const byDir = new Map<string, Store>();
+  for (const e of readEntries().filter((e) => isInstalled(e.root))) {
+    const storeDir = path.dirname(memoryPath(e.root));
+    const seen = byDir.get(storeDir);
+    const addedAtMs = Math.max(e.addedAtMs, seen?.addedAtMs ?? -Infinity);
+    byDir.set(storeDir, { root: path.dirname(storeDir), storeDir, addedAtMs });
+  }
+  return [...byDir.values()];
+}
+
+/** The root of the store named `name` (`owner.ts` → `projectName`), the newest among several; else null. */
+export function rootOfName(name: string): string | null {
+  let best: Store | null = null;
+  for (const s of installedStores()) {
+    if (projectName(s.root) !== name) continue;
+    if (best === null || s.addedAtMs > best.addedAtMs) best = s;
+  }
+  return best?.root ?? null;
 }

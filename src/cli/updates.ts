@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { CRANK_DIR, errorMessage, isObj, loadConfig, readJsonObject } from "../hooks/lib/config.ts";
+import { projectName } from "../hooks/lib/owner.ts";
 import { installedRoots } from "../hooks/lib/registry.ts";
 import { crankHome, writeJsonAtomic } from "../hooks/lib/user-state.ts";
 import { cliVersion, currentVersion, installedCopy, newer, releaseBase } from "./version.ts";
@@ -96,7 +97,7 @@ export function laggingProjects(
 ): Array<{ root: string; name: string; vendored: string }> {
   return installedRoots().flatMap((root) => {
     const vendored = loadConfig(path.join(root, CRANK_DIR)).vendored_version;
-    return newer(version, vendored) ? [{ root, name: path.basename(root), vendored }] : [];
+    return newer(version, vendored) ? [{ root, name: projectName(root), vendored }] : [];
   });
 }
 

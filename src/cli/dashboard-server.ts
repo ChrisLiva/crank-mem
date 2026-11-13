@@ -21,7 +21,8 @@ import {
 } from "../hooks/lib/wire.ts";
 import { EMBED_MODEL } from "../daemon/embedder.ts";
 import { queryVector } from "./recall.ts";
-import { installedRoots } from "../hooks/lib/registry.ts";
+import { projectName } from "../hooks/lib/owner.ts";
+import { installedStores } from "../hooks/lib/registry.ts";
 import { captureSummary } from "./stats.ts";
 import {
   checkDue,
@@ -98,14 +99,12 @@ type Project = { id: string; name: string; root: string };
  * listed under the root that holds the store, ordered by name and then root.
  */
 function listProjects(): Project[] {
-  const byStore = new Map<string, Project>();
-  for (const registered of installedRoots()) {
-    const storeDir = path.dirname(memoryPath(registered));
-    const root = path.dirname(storeDir);
-    const id = crypto.createHash("sha256").update(storeDir).digest("hex").slice(0, 12);
-    byStore.set(storeDir, { id, name: path.basename(root), root });
-  }
-  return [...byStore.values()].sort(
+  const projects = installedStores().map(({ root, storeDir }) => ({
+    id: crypto.createHash("sha256").update(storeDir).digest("hex").slice(0, 12),
+    name: projectName(root),
+    root,
+  }));
+  return projects.sort(
     (a, b) =>
       (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) ||
       (a.root < b.root ? -1 : a.root > b.root ? 1 : 0),

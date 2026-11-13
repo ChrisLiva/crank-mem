@@ -3,7 +3,17 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { claudeSessionStart } from "./fixtures/payloads.ts";
 import { CRANK_DIR, defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
-import { runCli, runHook, seedMemory, tempDir } from "./helpers.ts";
+import { projectName } from "../src/hooks/lib/owner.ts";
+import { installedStores, registerProject, rootOfName } from "../src/hooks/lib/registry.ts";
+import {
+  makeCrankHome,
+  makeCrankProject,
+  runCli,
+  runHook,
+  seedMemory,
+  tempDir,
+  withEnv,
+} from "./helpers.ts";
 import { workspace } from "./workspace.ts";
 
 const HOOK = "src/hooks/session-start.ts";
@@ -56,5 +66,51 @@ describe("ownership", () => {
       PATH: `${bin}:${process.env.PATH}`,
     });
     expect(run.stdout).toContain("Main store fact");
+  });
+
+  test("project names come from config, else the sanitized basename", () => {
+    const root = path.join(tempDir("crank-name-"), "My App!");
+    const crankDir = path.join(root, CRANK_DIR);
+    fs.mkdirSync(crankDir, { recursive: true });
+    expect(projectName(root)).toBe("My-App-");
+    saveConfig(crankDir, defaultConfig());
+    expect(projectName(root)).toBe("My-App-");
+    saveConfig(crankDir, { ...defaultConfig(), name: "storefront" });
+    expect(projectName(root)).toBe("storefront");
+    saveConfig(crankDir, { ...defaultConfig(), name: "bad name" });
+    expect(projectName(root)).toBe("My-App-");
+  });
+
+  test("a name maps to the newest root among distinct stores", () => {
+    const named = (root: string, name: string) =>
+      saveConfig(path.join(root, CRANK_DIR), { ...defaultConfig(), name });
+    const a = makeCrankProject();
+    const b = makeCrankProject();
+    named(a, "dup");
+    named(b, "dup");
+    withEnv({ CRANK_HOME: makeCrankHome() }, () => {
+      registerProject(a);
+      Bun.sleepSync(2);
+      registerProject(b);
+      expect(rootOfName("dup")).toBe(b);
+      named(b, "other");
+      expect(rootOfName("dup")).toBe(a);
+      expect(rootOfName("other")).toBe(b);
+      expect(rootOfName("missing")).toBeNull();
+    });
+
+    const ws = workspace();
+    fs.mkdirSync(path.join(ws.worktree, CRANK_DIR));
+    named(ws.worktree, "payments-api");
+    withEnv({ CRANK_HOME: ws.home }, () => {
+      registerProject(ws.worktree);
+      expect(rootOfName("payments-api")).toBe(ws.payments);
+      const main = installedStores().filter(
+        (s) => s.storeDir === path.join(ws.payments, CRANK_DIR),
+      );
+      expect(main).toHaveLength(1);
+      expect(main[0]!.root).toBe(ws.payments);
+      expect(installedStores()).toHaveLength(3);
+    });
   });
 });
