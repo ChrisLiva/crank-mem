@@ -446,6 +446,12 @@ describe("project registry", () => {
     const ties = ["p2", "p1"]
       .map((p) => registeredProject(home, path.join(tieParent, p, "same")))
       .reverse();
+    // init names the second `same-2`; a name set by hand can still tie.
+    for (const root of ties) {
+      const file = path.join(root, ".crank/config.json");
+      const config = JSON.parse(fs.readFileSync(file, "utf-8"));
+      fs.writeFileSync(file, JSON.stringify({ ...config, name: "same" }));
+    }
     const dash = await startDashboard(home, ["--port", "0"]);
     const entry = (root: string, memory: string) => ({
       id: projectId(root),

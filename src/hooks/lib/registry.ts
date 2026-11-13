@@ -75,20 +75,36 @@ export function installedStores(): Store[] {
   return [...byDir.values()];
 }
 
-/** Each installed store's root by its name (`owner.ts` → `projectName`), the newest among several of one name. */
-function rootsByName(): Map<string, string> {
-  const best = new Map<string, Store>();
-  for (const s of installedStores()) {
+/** Each installed store's roots by its name (`owner.ts` → `projectName`), newest first. */
+function rootsByName(): Map<string, string[]> {
+  const byName = new Map<string, string[]>();
+  const newestFirst = installedStores().sort((a, b) => b.addedAtMs - a.addedAtMs);
+  for (const s of newestFirst) {
     const name = projectName(s.root);
-    const seen = best.get(name);
-    if (seen === undefined || s.addedAtMs > seen.addedAtMs) best.set(name, s);
+    byName.set(name, [...(byName.get(name) ?? []), s.root]);
   }
-  return new Map([...best].map(([name, s]) => [name, s.root]));
+  return byName;
+}
+
+/** The roots of the stores named `name`, newest first. */
+export function rootsOfName(name: string): string[] {
+  return rootsByName().get(name) ?? [];
 }
 
 /** The root of the store named `name`, the newest among several; else null. */
 export function rootOfName(name: string): string | null {
-  return rootsByName().get(name) ?? null;
+  return rootsOfName(name)[0] ?? null;
+}
+
+/** `root`'s name (`owner.ts` → `projectName`), or the first `<name>-2`, `<name>-3`, … no other installed store has. */
+export function unusedName(root: string): string {
+  const name = projectName(root);
+  const others = installedStores().filter((s) => s.root !== root);
+  const taken = new Set(others.map((s) => projectName(s.root)));
+  if (!taken.has(name)) return name;
+  let n = 2;
+  while (taken.has(`${name}-${n}`)) n++;
+  return `${name}-${n}`;
 }
 
 /** The store's linked projects (`Memory` → `links`, sorted by name) that resolve to an installed root. */
@@ -97,7 +113,7 @@ export function linkedProjects(memory: MemoryReader): { name: string; root: stri
   if (names.length === 0) return [];
   const roots = rootsByName();
   return names.flatMap((name) => {
-    const root = roots.get(name);
+    const root = roots.get(name)?.[0];
     return root === undefined ? [] : [{ name, root }];
   });
 }

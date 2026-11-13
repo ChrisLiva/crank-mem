@@ -14,7 +14,7 @@ import {
 } from "../hooks/lib/memory.ts";
 import { toPosix } from "../hooks/lib/indexable.ts";
 import { ownerOf, projectName } from "../hooks/lib/owner.ts";
-import { linkedProjects, rootOfName } from "../hooks/lib/registry.ts";
+import { linkedProjects, rootsOfName } from "../hooks/lib/registry.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
 import { cliActor, recordUsage, type UsageEvent } from "../hooks/lib/usage.ts";
@@ -214,14 +214,25 @@ function searchScope(
   return { only, file: { root: owner.root, rel: toPosix(owner.rel) } };
 }
 
-/** The store `name` names, the current project as `""`; null once the unknown name is printed. */
+/**
+ * The store `name` names, the current project as `""`; null once the unknown name is printed. Among
+ * several stores of that name the newest wins, after a line naming them all.
+ */
 function namedStore(name: string, current: string): Target | null {
-  const root = name === projectName(current) ? current : rootOfName(name);
-  if (root === null) {
+  if (name === projectName(current)) return { name: "", root: current };
+  const roots = rootsOfName(name);
+  const root = roots[0];
+  if (root === undefined) {
     console.error(`crank-mem: no project ${name}.`);
     return null;
   }
-  return { name: root === current ? "" : name, root };
+  if (roots.length > 1) {
+    console.error(
+      `crank-mem: ${roots.length} projects are named ${name} (${roots.join(", ")}); reading ${root}, ` +
+        'the newest. Give one a distinct "name" in its .crank/config.json.',
+    );
+  }
+  return { name, root };
 }
 
 /** Each store the scope reads, with its graph list: its own anatomy's, or a linked store's pairs with the current seeds. */
@@ -347,8 +358,10 @@ function parseHandles(args: string[]): Handle[] | null {
  */
 function routeHandles(handles: Handle[], current: string): HandleStore[] | null {
   const stores = new Map<string, HandleStore>();
+  const targets = new Map<string, Target | null>([["", { name: "", root: current }]]);
   for (const h of handles) {
-    const target = h.project === "" ? { name: "", root: current } : namedStore(h.project, current);
+    if (!targets.has(h.project)) targets.set(h.project, namedStore(h.project, current));
+    const target = targets.get(h.project)!;
     if (target === null) return null;
     const store = stores.get(target.root) ?? { ...target, ids: [] };
     store.ids.push(h.id);

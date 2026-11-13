@@ -87,7 +87,7 @@ Requires bun, or node >= 23.6 (runs TypeScript directly).
 
 ### Commands
 
-- `crank-mem init` — wire hooks into `.claude`/`.codex`, add the `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`, `Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the Claude settings file so agents run the recall and code-reading commands without a prompt, seed `.crank/`, first scan; removes crank hooks from the other Claude settings file
+- `crank-mem init` — wire hooks into `.claude`/`.codex`, add the `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`, `Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the Claude settings file so agents run the recall and code-reading commands without a prompt, seed `.crank/` with the project named after its folder (`-2`, `-3`, … added when another installed project has that name; set `name` in `.crank/config.json` to change it), first scan; removes crank hooks from the other Claude settings file
 - `crank-mem scan` — full index rebuild
 - `crank-mem digest on|off|resume` — turn background digests on or off for this checkout, a switch kept in the gitignored `.crank/config.local.json`; `resume` clears a stop and restarts the daemon
 - `crank-mem search <query>` — search stored memory by meaning or keyword (`--limit`, `--type`, `--since YYYY-MM-DD`, `--file`, `--project <name>` to search only that project's store, and `--stale` to include observations flagged stale, marked `[stale]`); keyword only until `setup` has run

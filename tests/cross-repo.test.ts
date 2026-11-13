@@ -9,6 +9,8 @@ import {
   claudePostWrite,
   claudeSessionStart,
 } from "./fixtures/payloads.ts";
+import { CRANK_DIR, defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import { registerProject } from "../src/hooks/lib/registry.ts";
 import { readUntouched } from "../src/hooks/lib/untouched.ts";
 import { localDate, MEMORY_NEWER_NOTE, memoryPath } from "../src/hooks/lib/memory.ts";
 import type { Digest } from "../src/daemon/digest-prompt.ts";
@@ -23,6 +25,7 @@ import {
   realModelsDir,
   rerun,
   runCli,
+  tempDir,
   runHook,
   seedMemory,
   setMtime,
@@ -691,6 +694,44 @@ describe("cross-repo memory", () => {
         expect.objectContaining({ channel: "search", query: "Pay fact", ids: [] }),
       ]);
     }
+  }, 30_000);
+
+  test("init names a project whose name another installed project has", () => {
+    const ws = workspace();
+    const initIn = (parent: string) => {
+      const root = path.join(parent, "storefront");
+      fs.mkdirSync(root);
+      const run = runCli(root, ["init", "--yes", "--codex", "skip"], { CRANK_HOME: ws.home });
+      expect(run.status).toBe(0);
+      return JSON.parse(fs.readFileSync(path.join(root, ".crank/config.json"), "utf-8")).name;
+    };
+    expect(initIn(tempDir("crank-dup-"))).toBe("storefront-2");
+    expect(initIn(tempDir("crank-dup-"))).toBe("storefront-3");
+    expect(initIn(tempDir("crank-dup-"))).toBe("storefront-4");
+  }, 30_000);
+
+  test("a lookup by a name two projects share reads the newest and names both", () => {
+    const ws = workspace();
+    const twin = path.join(fs.realpathSync(tempDir("crank-twin-")), "shop");
+    fs.mkdirSync(path.join(twin, CRANK_DIR), { recursive: true });
+    saveConfig(path.join(twin, CRANK_DIR), { ...defaultConfig(), name: "storefront" });
+    Bun.sleepSync(2);
+    withEnv({ CRANK_HOME: ws.home }, () => registerProject(twin));
+    seedMemory(ws.storefront, [{ title: "Old fact", filesRead: ["src/a.ts"] }]);
+    const [twinId] = seedMemory(twin, [{ title: "Twin fact", filesRead: ["src/a.ts"] }]);
+    const warning =
+      `crank-mem: 2 projects are named storefront (${twin}, ${ws.storefront}); reading ${twin}, ` +
+      'the newest. Give one a distinct "name" in its .crank/config.json.\n';
+
+    const search = runCli(ws.H, ["search", "fact", "--project", "storefront"], sessionless(ws));
+    expect(search.stderr.split("\n").filter((l) => `${l}\n` === warning)).toHaveLength(1);
+    expect(search.stdout).toMatch(new RegExp(`^storefront#${twinId} .* Twin fact\n$`));
+    const get = runCli(
+      ws.H,
+      ["get", `storefront#${twinId}`, `storefront#${twinId}`],
+      sessionless(ws),
+    );
+    expect([get.status, get.stderr]).toEqual([0, warning]);
   }, 30_000);
 
   test("journey 2: recall from the other side", () => {
