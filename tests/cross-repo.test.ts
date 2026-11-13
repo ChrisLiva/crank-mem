@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { claudePostRead, claudePostWrite, claudeSessionStart } from "./fixtures/payloads.ts";
+import {
+  claudePostBash,
+  claudePostRead,
+  claudePostWrite,
+  claudeSessionStart,
+} from "./fixtures/payloads.ts";
 import { readUntouched } from "../src/hooks/lib/untouched.ts";
 import { localDate, memoryPath } from "../src/hooks/lib/memory.ts";
 import {
@@ -67,6 +72,45 @@ describe("cross-repo memory", () => {
     expect(stats.stdout).toContain(
       `  not installed:    1\n    ${ws.scratch}  last seen ${localDate(r.lastSeenMs)}\n`,
     );
+
+    const read = (file: string, stem: string, agentId?: string) =>
+      hook(
+        "post-read",
+        claudePostRead(ws.H, file, `/u/.claude/projects/-h/${stem}.jsonl`, agentId),
+      );
+    const payFile = path.join(ws.payments, "src/a.ts");
+    const first = read(payFile, "9c000001");
+    expect(first.status).toBe(0);
+    const block = additionalContext(first.stdout);
+    expect(block).toStartWith(
+      `Excerpt of \`${ws.payments}/.crank/cerebrum.md\`, project payments-api's memory; grep it for more.\n` +
+        "Recall there: `crank-mem search --project payments-api <query>`; its ids show as `payments-api#<id>`.\n\n",
+    );
+    expect(block).toContain("project payments-api.");
+    expect(block).not.toContain("History of");
+    const marker = fs.readFileSync(path.join(ws.home, "seen/9c000001-main.seen"), "utf-8");
+    expect(marker.split("\n")).toContain(`cerebrum:${ws.payments}`);
+    expect(read(payFile, "9c000001").stdout).not.toContain("Excerpt of");
+    expect(additionalContext(read(payFile, "9c000001", "sub1").stdout)).toStartWith(
+      `Excerpt of \`${ws.payments}/.crank/cerebrum.md\``,
+    );
+
+    expect(read(path.join(ws.H, "src/h.ts"), "9c000002").stdout).not.toContain("Excerpt of");
+    const untouchedFile = path.join(ws.home, "untouched.json");
+    const untouchedBefore = fs.readFileSync(untouchedFile, "utf-8");
+    const rootRead = read(ws.storefront, "9c000003");
+    expect([rootRead.status, rootRead.stdout]).toEqual([0, ""]);
+    expect(fs.readFileSync(untouchedFile, "utf-8")).toBe(untouchedBefore);
+
+    fs.writeFileSync(path.join(ws.payments, ".env"), "SECRET=1\n");
+    expect(read(path.join(ws.payments, ".env"), "9c000004").stdout).not.toContain("Excerpt of");
+    const absent = read(path.join(ws.payments, "src/none.ts"), "9c000005").stdout;
+    expect(absent).not.toContain("Excerpt of");
+
+    fs.rmSync(path.join(ws.storefront, ".crank/cerebrum.md"));
+    const noCerebrum = read(storefrontFile, "9c000006");
+    expect(noCerebrum.status).toBe(0);
+    expect(noCerebrum.stdout).not.toContain("Excerpt of");
   });
 
   test("journey 2: recall from the other side", () => {
@@ -196,6 +240,27 @@ describe("cross-repo memory", () => {
       "History of storefront/src/a.ts, paired with src/pay.ts:\n",
     );
     expect(backPair).toMatch(/^#\d+ .* Front fact$/m);
+
+    const fresh = "/u/.claude/projects/-h/9d000001.jsonl";
+    const paymentsFile = path.join(ws.payments, "src/a.ts");
+    const both = runHook(
+      "src/hooks/post-read.ts",
+      JSON.stringify(claudePostBash(ws.H, `cat ${storefrontFile} ${paymentsFile}`, fresh)),
+      ws.H,
+      { CRANK_HOME: ws.home },
+    );
+    const bothCtx = additionalContext(both.stdout);
+    expect(bothCtx.split(`Excerpt of \`${ws.storefront}/.crank/cerebrum.md\``)).toHaveLength(2);
+    expect(bothCtx).not.toContain("payments-api's memory");
+    const next = runHook(
+      "src/hooks/post-read.ts",
+      JSON.stringify(claudePostRead(ws.H, paymentsFile, fresh)),
+      ws.H,
+      { CRANK_HOME: ws.home },
+    );
+    expect(additionalContext(next.stdout)).toStartWith(
+      `Excerpt of \`${ws.payments}/.crank/cerebrum.md\`, project payments-api's memory;`,
+    );
   });
 
   test("pair-reached history keeps 3 files and 5 lines each", () => {
@@ -315,6 +380,38 @@ describe("cross-repo memory", () => {
     expect(payLines).toEqual([
       expect.objectContaining({ shown: [], cut: ["src/new.ts", "src/old.ts"] }),
     ]);
+  });
+
+  test("history plus an excerpt stays under 4,096 bytes", () => {
+    const ws = workspace();
+    const cerebrum = path.join(ws.payments, ".crank/cerebrum.md");
+    const pad = Array.from(
+      { length: 10 },
+      (_, i) => `- **Pad ${i}**: ${"y".repeat(600)} (2026-11-12)\n`,
+    ).join("");
+    fs.appendFileSync(cerebrum, pad);
+    expect(fs.statSync(cerebrum).size).toBeGreaterThan(4096);
+    const payFile = path.join(ws.payments, "src/a.ts");
+    seedMemory(
+      ws.payments,
+      Array.from({ length: 7 }, (_, i) => ({
+        title: `t${i} `.padEnd(200, "x"),
+        filesRead: ["src/a.ts"],
+      })),
+    );
+    const run = runHook(
+      "src/hooks/post-read.ts",
+      JSON.stringify(claudePostRead(ws.H, payFile, TRANSCRIPT)),
+      ws.H,
+      { CRANK_HOME: ws.home },
+    );
+    const ctx = additionalContext(run.stdout);
+    expect(Buffer.byteLength(ctx)).toBeLessThan(4096);
+    const [history, ...rest] = ctx.split(`\n\nExcerpt of \`${ws.payments}/.crank/cerebrum.md\``);
+    expect(history).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n");
+    expect(Buffer.byteLength(history!)).toBeGreaterThan(1000);
+    expect(rest).toHaveLength(1);
+    expect(rest[0]).toContain("**Pad 9**");
   });
 
   test("post-read stays silent when another project's store cannot be read", () => {

@@ -103,6 +103,15 @@ first word after the subcommand that is not a flag and not the value of `--from`
 call gets the same file history as a Read. `uninstall` removes all six rules: the five in
 `CRANK_ALLOW_RULES` and the legacy `Bash(crank-mem *)`.
 
+Amended 2026-11-12: the cross-repo memory spec raises a PostToolUse call's whole
+`additionalContext` to under 4,096 bytes, to make room for the pair-reached history sections
+and one cerebrum excerpt. File history itself keeps its limits of 5 lines per file and
+1,536 bytes for all history sections together. After the history, `post-read.ts` adds at most
+one excerpt block, the 2,048-byte balanced excerpt of the first project in the call's read order
+that owns a read file, is not the start project, and has not had its excerpt shown to this agent
+in this session. The hook records the shown excerpt as a `cerebrum:<root>` line in the same seen
+marker it uses for file paths.
+
 ## Re-probe method (~10 min when `claude --version` changes minor version)
 
 1. In a scratch project outside any repo, write a hook script per event that discards stdin

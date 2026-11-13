@@ -10,13 +10,17 @@ import {
   isProjectFile,
   type HookPayload,
 } from "./lib/hook-io.ts";
+import { CEREBRUM_FILE } from "./lib/cerebrum-files.ts";
+import { CRANK_DIR } from "./lib/config.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
+import { excerptOf, readCerebrum } from "./lib/injection.ts";
 import { formatLine, memoryPath, withReader, type MemoryReader } from "./lib/memory.ts";
 import { ownerOf, projectName } from "./lib/owner.ts";
 import { rootOfName } from "./lib/registry.ts";
 import { recordUntouched } from "./lib/untouched.ts";
 import { shellReadPaths } from "./lib/shell-reads.ts";
 import { transcriptStem } from "./lib/spool.ts";
+import { loadIndex } from "./lib/store.ts";
 import { SEEN_DIR, crankHome } from "./lib/user-state.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
 import type { ObservationLine } from "./lib/wire.ts";
@@ -26,12 +30,18 @@ import type { ObservationLine } from "./lib/wire.ts";
 // newest lines from the store of the project that owns it, once per file per
 // agent per session. After a file's own section come up to 3 sections for the
 // other projects' files its observations cite, read from those projects' stores
-// and never marked seen. Every path exits 0.
+// and never marked seen. Last, once per project per agent per session, comes
+// the cerebrum excerpt of the first read's owner other than the start project.
+// Every path exits 0.
 
 const HISTORY_LINES = 5;
 const PAIRED_FILES = 3;
 const MAX_BYTES = 1536;
 const SEP = "\n\n";
+const EXCERPT_BYTES = 2048;
+const MAX_CALL_BYTES = 4096;
+/** Marker line prefix for a project whose excerpt was shown; never a path, which is absolute. */
+const CEREBRUM_MARK = "cerebrum:";
 
 function readPaths(payload: HookPayload): string[] {
   const input = payload.tool_input ?? {};
@@ -276,6 +286,37 @@ function recordTallies(
   }
 }
 
+/** An excerpt block for one project's cerebrum, and the marker line that records it shown. */
+type Block = { text: string; mark: string };
+
+/**
+ * The excerpt of the first read's owner that is not the start project and not yet shown,
+ * sized so the call's whole context stays under MAX_CALL_BYTES; null when there is none
+ * or its cerebrum does not read.
+ */
+function excerptBlock(
+  startRoot: string,
+  reads: Read[],
+  seen: string[],
+  sections: string[],
+): Block | null {
+  const root = reads
+    .map((r) => r.owner)
+    .find((o) => o !== startRoot && !seen.includes(CEREBRUM_MARK + o));
+  if (root === undefined) return null;
+  const crankDir = path.join(root, CRANK_DIR);
+  const md = readCerebrum(crankDir);
+  if (!md) return null;
+  const name = projectName(root);
+  const head =
+    `Excerpt of \`${path.join(crankDir, CEREBRUM_FILE)}\`, project ${name}'s memory; grep it for more.\n` +
+    `Recall there: \`crank-mem search --project ${name} <query>\`; its ids show as \`${name}#<id>\`.`;
+  const used = Buffer.byteLength([...sections, head].join(SEP)) + SEP.length;
+  const budget = Math.min(EXCERPT_BYTES, MAX_CALL_BYTES - 1 - used);
+  const text = excerptOf(md, budget, { index: loadIndex(crankDir), root }, true).text;
+  return text ? { text: head + SEP + text, mark: CEREBRUM_MARK + root } : null;
+}
+
 /** Appends, so parallel hooks on one transcript each keep their marks. */
 function markSeen(seenFile: string, marked: string[]): void {
   try {
@@ -303,24 +344,21 @@ async function main(): Promise<void> {
   if (reads.length === 0) return;
 
   const seenFile = path.join(crankHome(), SEEN_DIR, `${stem}-${agentOf(payload)}.seen`);
-  const seenPaths = readSeen(seenFile);
-  const isSeen = (r: Read) => seenPaths.includes(r.abs);
+  const seen = readSeen(seenFile);
+  const isSeen = (r: Read) => seen.includes(r.abs);
   const found = await fetchHistories(reads, isSeen);
-  if (found.size === 0) return;
 
   const startStore = memoryPath(ctx.root);
   const pairStores = await fetchPairs(found);
   const { sections, tallies, marked } = assemble(startStore, reads, found, pairStores, isSeen);
-  const context = sections.join(SEP);
-  if (sections.length > 0) {
-    markSeen(
-      seenFile,
-      marked.map((r) => r.abs),
-    );
-    emitAdditionalContext("PostToolUse", context);
+  const block = excerptBlock(ctx.root, reads, seen, sections);
+  const shown = block ? [...sections, block.text] : sections;
+  if (shown.length > 0) {
+    markSeen(seenFile, [...marked.map((r) => r.abs), ...(block ? [block.mark] : [])]);
+    emitAdditionalContext("PostToolUse", shown.join(SEP));
     debugEvent("file-history", { paths: marked.map((r) => safePath(r.rel)) });
   }
-  recordTallies(payload, { root: ctx.root, store: startStore }, tallies);
+  if (found.size > 0) recordTallies(payload, { root: ctx.root, store: startStore }, tallies);
 }
 
 await runAdvisoryHook("post-read", main);
