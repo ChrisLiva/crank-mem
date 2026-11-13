@@ -76,13 +76,23 @@ export function ownerOf(absPath: string): Owner {
   }
 }
 
-/** True when the walk up from `absPath` reaches `root` before any other boundary, read from disk on every call. */
-export function ownedBy(root: string, absPath: string): boolean {
+/**
+ * A check of whether the walk up from a path reaches `root` before any other boundary. Each checker
+ * reads each directory from disk once, so a fresh checker sees installs made since the last one.
+ */
+export function ownedBy(root: string): (absPath: string) => boolean {
   const top = path.resolve(root);
-  for (let dir = path.resolve(absPath); ; dir = path.dirname(dir)) {
-    if (dir === top) return true;
-    if (stopAt(dir) !== null || path.dirname(dir) === dir) return false;
-  }
+  const known = new Map<string, boolean>();
+  const owned = (dir: string): boolean => {
+    let answer = known.get(dir);
+    if (answer !== undefined) return answer;
+    if (dir === top) answer = true;
+    else if (stopAt(dir) !== null || path.dirname(dir) === dir) answer = false;
+    else answer = owned(path.dirname(dir));
+    known.set(dir, answer);
+    return answer;
+  };
+  return (absPath) => owned(path.resolve(absPath));
 }
 
 /** The installed main checkout of the linked worktree at `top`, read from disk on every call; else null. */

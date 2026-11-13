@@ -138,7 +138,8 @@ function isWalkableFile(rootDir: string, rel: string, config: CrankConfig): bool
  * walk skips another project's or repo's files and never enters their directories.
  */
 export function walkProject(rootDir: string, config: CrankConfig, seeds: string[] = []): Walk {
-  const owned = (rel: string): boolean => ownedBy(rootDir, path.join(rootDir, rel));
+  const ownedPath = ownedBy(rootDir);
+  const owned = (rel: string): boolean => ownedPath(path.join(rootDir, rel));
   const listed = gitListing(rootDir);
   const ownedSeeds = seeds.filter(owned);
   return listed
