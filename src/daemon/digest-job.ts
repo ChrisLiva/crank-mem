@@ -8,8 +8,8 @@ import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import {
   memoryPath,
   openMemory,
-  parseHandle,
   withReader,
+  type DigestInput,
   type Memory,
   type MemoryReader,
   type SessionKey,
@@ -19,6 +19,7 @@ import { readStopState } from "../hooks/lib/user-state.ts";
 import type { Observation } from "../hooks/lib/wire.ts";
 import { ownerOf, projectName } from "../hooks/lib/owner.ts";
 import { digestRequest, type Digest, type DigestContext, type Shown } from "./digest-prompt.ts";
+import { route, type Share } from "./digest-route.ts";
 import { EMBED_MODEL, embed } from "./embedder.ts";
 import { CONSOLIDATE_EVERY_MS, consolidate } from "./consolidate.ts";
 import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
@@ -101,13 +102,26 @@ async function digest(
     }
     return 1;
   }
+  const routed = route(stored(r.output), entry, shown, ownerOf);
+  const { summary, observations, proposals, stale, links } = routed.entry;
+  writeShares(routed.others, {
+    session,
+    next: d.next,
+    model: r.model,
+    origin: projectName(entry.projectRoot),
+  });
   const outcome = memory.appendDigest({
     session,
     expected: pos,
     next: d.next,
     model: r.model,
     costUsd: r.costUsd,
-    ...stored(r.output, entry.projectRoot, entry.cwd, shown),
+    summary,
+    observations,
+    proposals,
+    stale,
+    origin: null,
+    links,
   });
   if (outcome === "appended") {
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
@@ -220,13 +234,6 @@ function storeHistory(reader: MemoryReader, files: string[], limit: number): His
   return reader.get([...ids]);
 }
 
-/** The session-project row id `handle` names when the input showed that row, else null. */
-function ownShownId(handle: string, root: string, shown: Map<string, Shown>): number | null {
-  const h = parseHandle(handle);
-  if (h === null || (h.project !== "" && h.project !== projectName(root))) return null;
-  return shown.get("")!.ids.includes(h.id) ? h.id : null;
-}
-
 /** Store vectors for rows that lack one; a failure leaves them for the next digest and never changes the exit code. */
 async function embedPending(memory: Memory): Promise<void> {
   try {
@@ -245,14 +252,49 @@ async function embedPending(memory: Memory): Promise<void> {
   }
 }
 
-/**
- * The model's output as the store takes it: every string redacted, paths repo-relative and deduped.
- * Relative paths resolve against the session's cwd. A stale flag stands only for a session-project row the
- * input showed (`#5`, or `<session name>#5`), and a proposal only with a non-blank bullet.
- */
-function stored(output: Digest, root: string, cwd: string, shown: Map<string, Shown>) {
+/** The share fields every share of one session carries; each store adds its own position. */
+type ShareBase = Pick<DigestInput, "session" | "next" | "model" | "origin">;
+
+const EMPTY_SUMMARY: DigestInput["summary"] = {
+  request: "",
+  investigated: "",
+  learned: "",
+  completed: "",
+  next_steps: "",
+};
+
+/** Write each other project's share to its store, in order; a store that does not open as "open" gets none. */
+function writeShares(shares: Share[], base: ShareBase): void {
+  for (const share of shares) {
+    const opened = openMemory(memoryPath(share.root), "write");
+    if (opened.status !== "open") continue;
+    try {
+      writeShare(opened.memory, share, base);
+    } finally {
+      opened.memory.close();
+    }
+  }
+}
+
+/** One share as a digest row at cost 0 with an empty summary; skipped when the store already holds `next`. */
+function writeShare(memory: Memory, share: Share, base: ShareBase): void {
+  const expected = memory.position(base.session.id);
+  if (expected?.uuid === base.next.uuid && expected.timestamp === base.next.timestamp) return;
+  memory.appendDigest({
+    ...base,
+    expected,
+    costUsd: 0,
+    summary: EMPTY_SUMMARY,
+    observations: share.observations,
+    proposals: share.proposals,
+    stale: share.stale,
+    links: [],
+  });
+}
+
+/** The model's output with every string redacted and only the proposals with a non-blank bullet. */
+function stored(output: Digest): Digest {
   const s = output.summary;
-  const files = (paths: string[]) => memoryPaths(root, cwd, paths.map(redact));
   return {
     summary: {
       request: redact(s.request),
@@ -266,18 +308,12 @@ function stored(output: Digest, root: string, cwd: string, shown: Map<string, Sh
       title: redact(o.title),
       narrative: redact(o.narrative),
       facts: o.facts.map(redact),
-      filesRead: files(o.files_read),
-      filesModified: files(o.files_modified),
-      refs: [],
+      files_read: o.files_read.map(redact),
+      files_modified: o.files_modified.map(redact),
     })),
     proposals: output.proposals
-      .map((p) => ({ kind: p.kind, bullet: redact(p.bullet).trim() }))
+      .map((p) => ({ kind: p.kind, bullet: redact(p.bullet).trim(), project: p.project }))
       .filter((p) => p.bullet !== ""),
-    stale: output.stale.flatMap((f) => {
-      const id = ownShownId(f.id, root, shown);
-      return id === null ? [] : [{ id, reason: redact(f.reason) }];
-    }),
-    origin: null,
-    links: [],
+    stale: output.stale.map((f) => ({ id: f.id, reason: redact(f.reason) })),
   };
 }

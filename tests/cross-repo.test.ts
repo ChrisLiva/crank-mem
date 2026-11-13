@@ -9,13 +9,20 @@ import {
 } from "./fixtures/payloads.ts";
 import { readUntouched } from "../src/hooks/lib/untouched.ts";
 import { localDate, memoryPath } from "../src/hooks/lib/memory.ts";
+import type { Digest } from "../src/daemon/digest-prompt.ts";
+import { okStream } from "./fixtures/claude-scenarios.ts";
+import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import {
+  journey,
   makeCrankHome,
   plantMemory,
+  readRecord,
+  rerun,
   runCli,
   runHook,
   seedMemory,
   setMtime,
+  userRecord,
   withEnv,
 } from "./helpers.ts";
 import { workspace } from "./workspace.ts";
@@ -42,6 +49,77 @@ function sectionOf(ctx: string, header: string): string | undefined {
 }
 
 const lastLine = (root: string) => usageLines(root).at(-1);
+
+type Ws = ReturnType<typeof workspace>;
+
+/** A transcript past MIN_DELTA_CHARS that reads `<H>/src/h.ts`, `<storefront>/src/a.ts` and `<payments>/src/a.ts`. */
+function crossTranscript(ws: Ws): {
+  transcript: string;
+  last: { uuid: string; timestamp: string };
+} {
+  const files = [
+    path.join(ws.H, "src/h.ts"),
+    path.join(ws.storefront, "src/a.ts"),
+    path.join(ws.payments, "src/a.ts"),
+  ];
+  const at = (i: number) => `2026-01-02T00:00:0${i}.000Z`;
+  const records = [
+    userRecord("x-0", at(0), "read these files ".repeat(150)),
+    ...files.map((f, i) => readRecord(`x-${i + 1}`, at(i + 1), f)),
+  ];
+  return {
+    transcript: records.join("\n") + "\n",
+    last: { uuid: `x-${files.length}`, timestamp: at(files.length) },
+  };
+}
+
+const observation = (
+  title: string,
+  files_read: string[],
+  files_modified: string[] = [],
+): Digest["observations"][number] => ({
+  type: "discovery",
+  title,
+  narrative: `${title}, in words.`,
+  facts: [],
+  files_read,
+  files_modified,
+});
+
+const digestOf = (observations: Digest["observations"]): Digest => ({
+  ...SAMPLE_DIGEST,
+  observations,
+  summary: { ...SAMPLE_DIGEST.summary, next_steps: "Ship the storefront fix" },
+});
+
+/** The digest journey 1 scripts: `Cross fix` across all three projects, `Clone note` on an unowned clone. */
+const crossDigest = (ws: Ws): Digest =>
+  digestOf([
+    observation(
+      "Cross fix",
+      [path.join(ws.storefront, "src/a.ts"), "../payments-api/src/a.ts"],
+      [path.join(ws.H, "src/h.ts")],
+    ),
+    observation("Clone note", [path.join(ws.H, "clones/u/x.ts")]),
+  ]);
+
+/** The `#<id>` lines `search <query>` prints in `root`. */
+function searchIds(ws: Ws, root: string, query: string): number[] {
+  return runCli(root, ["search", query], { CRANK_HOME: ws.home })
+    .stdout.split("\n")
+    .filter((l) => l.startsWith("#"))
+    .map((l) => Number(/^#(\d+)/.exec(l)![1]));
+}
+
+const getText = (ws: Ws, root: string, id: number) =>
+  runCli(root, ["get", String(id)], { CRANK_HOME: ws.home }).stdout;
+
+const sessionStart = (ws: Ws, root: string) =>
+  additionalContext(
+    runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root)), root, {
+      CRANK_HOME: ws.home,
+    }).stdout,
+  );
 
 describe("cross-repo memory", () => {
   test("journey 1: a session started in H captures across projects", () => {
@@ -111,7 +189,105 @@ describe("cross-repo memory", () => {
     const noCerebrum = read(storefrontFile, "9c000006");
     expect(noCerebrum.status).toBe(0);
     expect(noCerebrum.stdout).not.toContain("Excerpt of");
-  });
+
+    const { transcript } = crossTranscript(ws);
+    const { job } = journey(ws.H, [{ lines: okStream(crossDigest(ws)) }], {
+      home: ws.home,
+      cwd: ws.H,
+      transcript,
+    });
+    expect(job.status).toBe(0);
+    for (const root of [ws.storefront, ws.payments]) {
+      const ids = searchIds(ws, root, "Cross fix");
+      expect(ids).toHaveLength(1);
+      const got = getText(ws, root, ids[0]!);
+      expect(got).toContain("\nfiles read: src/a.ts\n");
+      expect(got).toContain("\nfiles modified: (none)");
+    }
+    const [hCross] = searchIds(ws, ws.H, "Cross fix");
+    const hGot = getText(ws, ws.H, hCross!);
+    expect(hGot).toContain("\nfiles read: (none)\n");
+    expect(hGot).toContain("\nfiles modified: src/h.ts");
+    const clone = searchIds(ws, ws.H, "Clone note");
+    expect(clone).toHaveLength(1);
+    expect(getText(ws, ws.H, clone[0]!)).toContain("\nfiles read: (none)\n");
+
+    const hStart = sessionStart(ws, ws.H);
+    expect(hStart).toContain("- Search also covers linked projects: payments-api, storefront.");
+    expect(hStart).toContain("Ship the storefront fix");
+    expect(sessionStart(ws, ws.storefront)).not.toContain("Ship the storefront fix");
+  }, 30_000);
+
+  test("a modified file in another project links it from the entry project", () => {
+    const ws = workspace();
+    const { transcript } = crossTranscript(ws);
+    const output = digestOf([
+      observation("Front edit", [], [path.join(ws.storefront, "src/a.ts")]),
+    ]);
+    const { job } = journey(ws.H, [{ lines: okStream(output) }], {
+      home: ws.home,
+      cwd: ws.H,
+      transcript,
+    });
+    expect(job.status).toBe(0);
+    expect(sessionStart(ws, ws.H)).toContain("- Search also covers linked projects: storefront.");
+    expect(searchIds(ws, ws.H, "Front edit")).toEqual([]);
+    const stats = runCli(ws.storefront, ["stats"], { CRANK_HOME: ws.home }).stdout;
+    expect(stats).toContain("  month cost:       $0.00 (list price)");
+    expect(stats).toMatch(/ {2}last digest: {6}\d+s ago\n/);
+  }, 30_000);
+
+  test("a share already at the session's position is not written twice", () => {
+    const ws = workspace();
+    const { transcript, last } = crossTranscript(ws);
+    seedMemory(ws.storefront, [], { session: "s1", next: last });
+    const { job } = journey(ws.H, [{ lines: okStream(crossDigest(ws)) }], {
+      home: ws.home,
+      cwd: ws.H,
+      transcript,
+    });
+    expect(job.status).toBe(0);
+    expect(searchIds(ws, ws.storefront, "Cross fix")).toEqual([]);
+    expect(searchIds(ws, ws.H, "Cross fix")).toHaveLength(1);
+    expect(searchIds(ws, ws.payments, "Cross fix")).toHaveLength(1);
+  }, 30_000);
+
+  test("an entry store that will not open writes no share", () => {
+    const run = (setUp: (ws: Ws) => () => void) => {
+      const ws = workspace();
+      const { transcript } = crossTranscript(ws);
+      const j = journey(ws.H, [{ lines: okStream(crossDigest(ws)) }], {
+        home: ws.home,
+        cwd: ws.H,
+        transcript,
+        skipJob: true,
+      });
+      const restore = setUp(ws);
+      try {
+        const job = rerun(j);
+        const search = runCli(ws.storefront, ["search", "Cross fix"], { CRANK_HOME: ws.home });
+        return { job, search };
+      } finally {
+        restore();
+      }
+    };
+
+    const unreadable = run((ws) => {
+      plantMemory(ws.H, "unreadable");
+      return () => {};
+    });
+    expect(unreadable.job.status).toBe(1);
+    expect(unreadable.search.stdout).not.toContain("Cross fix");
+
+    const readOnly = run((ws) => {
+      seedMemory(ws.H, []);
+      const db = memoryPath(ws.H);
+      fs.chmodSync(db, 0o444);
+      return () => fs.chmodSync(db, 0o644);
+    });
+    expect(readOnly.job.status).not.toBe(0);
+    expect(readOnly.search.stdout.split("\n").filter((l) => l.startsWith("#"))).toHaveLength(1);
+  }, 30_000);
 
   test("journey 2: recall from the other side", () => {
     const ws = workspace();

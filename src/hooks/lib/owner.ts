@@ -5,7 +5,7 @@ import { CONFIG_FILE, CRANK_DIR, readJsonObject } from "./config.ts";
 // Who owns a path: the nearest boundary above it, on path text alone (no symlinks, no git spawn).
 // An installed project, a linked worktree of one, or a git repo that is not installed.
 
-type Owner =
+export type Owner =
   | { kind: "project"; root: string; rel: string }
   | { kind: "worktree"; root: string; top: string; rel: string } // root = main checkout; top = worktree top
   | { kind: "unowned"; repo: string | null };

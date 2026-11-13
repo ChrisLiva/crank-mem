@@ -8,7 +8,7 @@ import {
   type CrankConfig,
 } from "./config.ts";
 import { enableDebug, flushDebug } from "./debug.ts";
-import { ownerOf } from "./owner.ts";
+import { ownerOf, type Owner } from "./owner.ts";
 
 // Hook I/O helpers. Hooks are advisory-only: they must never fail the tool
 // call, so payload parsing degrades to null and callers exit 0.
@@ -92,12 +92,20 @@ export function repoRelative(root: string, cwd: string, p: string): string | nul
 export function memoryPaths(root: string, cwd: string, paths: string[]): string[] {
   const kept = new Set<string>();
   for (const p of paths) {
-    const owner = ownerOf(path.resolve(cwd, p));
-    if (owner.kind === "unowned" || owner.root !== root || !owner.rel) continue;
-    const r = owner.rel.split(path.sep).join("/");
-    if (!isSensitiveFile(path.posix.basename(r))) kept.add(r);
+    const owned = ownedPath(ownerOf(path.resolve(cwd, p)));
+    if (owned !== null && owned.root === root) kept.add(owned.rel);
   }
   return [...kept];
+}
+
+/**
+ * Where memory may record a path `owner` owns: the owning project's root (a worktree's main checkout) and the
+ * `/`-separated path under it; null for an unowned path, the root itself or a sensitive basename.
+ */
+export function ownedPath(owner: Owner): { root: string; rel: string } | null {
+  if (owner.kind === "unowned" || !owner.rel) return null;
+  const rel = owner.rel.split(path.sep).join("/");
+  return isSensitiveFile(path.posix.basename(rel)) ? null : { root: owner.root, rel };
 }
 
 /** Whether `rel` under `root` is a regular file now, following symlinks; false on any error. */
