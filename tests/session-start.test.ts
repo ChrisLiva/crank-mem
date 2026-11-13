@@ -835,4 +835,28 @@ describe("linked projects (black-box)", () => {
     });
     expect(injectIn(renamed.H, renamed.home)).not.toContain("Search also covers");
   });
+
+  test("a bullet citing a linked project's file reads that project's anatomy", () => {
+    const ws = workspace();
+    seedMemory(ws.H, [], { links: ["payments-api"] });
+    injectIn(ws.payments, ws.home);
+    const bullet = "- **Pay**: see `payments-api/src/a.ts` (2020-01-01).";
+    fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bullet}\n`);
+    const linkedIndex = path.join(ws.payments, ".crank/anatomy-index.json");
+    const before = fs.readFileSync(linkedIndex);
+
+    const ctx = injectIn(ws.H, ws.home);
+    expect(ctx).toContain(
+      `${bullet} [cited file modified after this note; check: payments-api/src/a.ts]`,
+    );
+    expect(ctx).not.toContain("[cited file missing");
+    expect(fs.readFileSync(linkedIndex).equals(before)).toBe(true);
+
+    const old = new Date("2019-06-01T12:00:00");
+    fs.utimesSync(path.join(ws.payments, "src/a.ts"), old, old);
+    injectIn(ws.payments, ws.home);
+    const fresh = injectIn(ws.H, ws.home);
+    expect(fresh).toEndWith(bullet);
+    expect(fresh).not.toContain("[cited file");
+  });
 });

@@ -17,7 +17,7 @@ import {
 } from "./memory.ts";
 import { linkedProjects } from "./registry.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
-import type { CrankConfig } from "./config.ts";
+import { CRANK_DIR, type CrankConfig } from "./config.ts";
 import { loadIndex, type AnatomyIndex } from "./store.ts";
 import type { UsageEvent } from "./usage.ts";
 import type { ObservationLine } from "./wire.ts";
@@ -156,6 +156,8 @@ export interface InjectionSources {
   codex?: boolean;
   /** Project root; when set, the excerpt tags cited files that vanished or changed. */
   projectRoot?: string;
+  /** Linked projects' anatomies, by name, for citations that start with a linked project's name. */
+  linked?: LinkedAnatomies;
   /** Digests run for this session, so recall applies with no store yet. Absent: false. */
   running?: boolean;
   /** What the memory store offers this session. Absent: no recall section or pointer. */
@@ -349,7 +351,21 @@ function shedOne(state: ExcerptState, balanced: boolean): void {
 export interface CitedFiles {
   index: AnatomyIndex;
   root: string;
+  /** Linked projects by name: a citation whose first segment names one resolves in it. */
+  linked?: LinkedAnatomies;
 }
+
+type LinkedAnatomies = Map<string, { index: AnatomyIndex; root: string }>;
+
+/** Each linked project's anatomy, read and never written. */
+function linkedAnatomies(projects: { name: string; root: string }[]): LinkedAnatomies {
+  return new Map(
+    projects.map((p) => [p.name, { index: loadIndex(path.join(p.root, CRANK_DIR)), root: p.root }]),
+  );
+}
+
+/** Basename maps of linked anatomies, built once per index. */
+const linkedNames = new WeakMap<AnatomyIndex, Map<string, string[]>>();
 
 /** A backticked file citation: a path or basename with an extension, then an optional `:line`. */
 const FILE_CITATION = /^([^\s*=:]+\.[A-Za-z]\w*)(?::\d+(?:-\d+)?)?$/;
@@ -402,10 +418,27 @@ function latestDateEnd(text: string): number | null {
   return latest;
 }
 
-/** One citation's status: modified past `cutoffMs`, missing, or null for neither. */
+/**
+ * One citation's status: modified past `cutoffMs`, missing, or null for neither. A citation whose
+ * first segment names a linked project resolves in that project, the segment stripped.
+ */
 function resolveCitation(
   rel: string,
   cited: CitedFiles,
+  byName: Map<string, string[]>,
+  cutoffMs: number | null,
+): "missing" | "modified" | null {
+  const slash = rel.indexOf("/");
+  const linked = slash > 0 ? cited.linked?.get(rel.slice(0, slash)) : undefined;
+  if (!linked) return resolveIn(rel, cited, byName, cutoffMs);
+  let names = linkedNames.get(linked.index);
+  if (!names) linkedNames.set(linked.index, (names = basenameIndex(linked.index)));
+  return resolveIn(rel.slice(slash + 1), linked, names, cutoffMs);
+}
+
+function resolveIn(
+  rel: string,
+  cited: { index: AnatomyIndex; root: string },
   byName: Map<string, string[]>,
   cutoffMs: number | null,
 ): "missing" | "modified" | null {
@@ -535,7 +568,9 @@ export function composeInjection(
     excerpt = excerptOf(
       sources.cerebrumMd,
       budgetBytes - used - adrReserve - bytes(SEP),
-      sources.projectRoot ? { index: sources.index, root: sources.projectRoot } : undefined,
+      sources.projectRoot
+        ? { index: sources.index, root: sources.projectRoot, linked: sources.linked }
+        : undefined,
     );
     if (excerpt.text) shown.cerebrum = fit(excerpt.text);
   }
@@ -620,7 +655,12 @@ export function subagentInjection(
   const md = readCerebrum(crankDir);
   // Balanced: at this budget the session-start order leaves no room for memory.
   const excerpt = md
-    ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, { index: loadIndex(crankDir), root }, true).text
+    ? excerptOf(
+        md,
+        SUBAGENT_EXCERPT_BYTES,
+        { index: loadIndex(crankDir), root, linked: linkedAnatomies(storeLinks(root)) },
+        true,
+      ).text
     : "";
 
   const lines = [INJECTION_HEADING];
@@ -637,6 +677,19 @@ export function subagentInjection(
       recallPointer: recall,
     },
   };
+}
+
+/** The store's links that resolve to an installed project; none when the store cannot be read. */
+function storeLinks(root: string): { name: string; root: string }[] {
+  const opened = openMemory(memoryPath(root), "read");
+  if (opened.status !== "open") return [];
+  try {
+    return linkedProjects(opened.memory);
+  } catch {
+    return [];
+  } finally {
+    opened.memory.close();
+  }
 }
 
 /** The one read of cerebrum.md; any read error reads as absent. */
@@ -675,6 +728,7 @@ export function sessionStartInjection(
     index,
     adrPath: config.adr_path,
     projectRoot: root,
+    linked: linkedAnatomies(recall.status === "open" ? recall.linked : []),
     codex: opts.codex,
     recall,
     running: gate.running,

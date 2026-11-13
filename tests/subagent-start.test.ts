@@ -3,9 +3,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { makeCrankHome, makeCrankProject, runHook, seedMemory } from "./helpers.ts";
-import { claudeSubagentStart } from "./fixtures/payloads.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, INJECTION_HEADING, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
+import { claudeSessionStart, claudeSubagentStart } from "./fixtures/payloads.ts";
+import { workspace } from "./workspace.ts";
 
 const HOOK = "src/hooks/subagent-start.ts";
 
@@ -130,5 +131,26 @@ describe("subagent-start hook (black-box)", () => {
     // No excerpt, but recall applies: the heading and the two pointers alone.
     seedMemory(noCerebrum, [{ title: "a stored observation" }]);
     expect(context(noCerebrum)).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}\n${RECALL_BULLET}`);
+  });
+
+  test("a bullet citing a linked project's file reads that project's anatomy", () => {
+    const ws = workspace();
+    seedMemory(ws.H, [], { links: ["payments-api"] });
+    const env = { CRANK_HOME: ws.home };
+    const start = runHook(
+      "src/hooks/session-start.ts",
+      JSON.stringify(claudeSessionStart(ws.payments)),
+      ws.payments,
+      env,
+    );
+    expect(start.status).toBe(0);
+    const bullet = "- **Pay**: see `payments-api/src/a.ts` (2020-01-01).";
+    fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bullet}\n`);
+
+    const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(ws.H, "Explore")), ws.H, env);
+    expect(run.status).toBe(0);
+    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    expect(ctx).toContain(bullet);
+    expect(ctx).not.toContain("[cited file missing");
   });
 });
