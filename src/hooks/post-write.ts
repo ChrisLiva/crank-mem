@@ -38,8 +38,15 @@ interface WriteOp {
 
 // Why a write produced nothing to index. Only `no-path` and `unhandled-tool`
 // mean something is wrong (a payload or matcher mismatch — ADR 0003); the
-// others are the everyday shape of editing outside any index.
-type SkipReason = "no-path" | "unhandled-tool" | "outside-root" | "crank-internal" | "worktree";
+// others (`outside-root`, `crank-internal`, `worktree`, `owner-root`) are the
+// everyday shape of editing outside any index.
+type SkipReason =
+  | "no-path"
+  | "unhandled-tool"
+  | "outside-root"
+  | "crank-internal"
+  | "worktree"
+  | "owner-root";
 
 interface WriteScan {
   ops: WriteOp[];
@@ -64,7 +71,7 @@ function classifyPath(at: Session, p: string): PathClass {
   // A linked worktree shares its main checkout's anatomy, which describes the main's files.
   if (owner.kind === "worktree") return { skip: { reason: "worktree", dir: path.dirname(abs) } };
   const r = owner.rel.split(path.sep).join("/");
-  if (!r) return { skip: { reason: "no-path" } };
+  if (!r) return { skip: { reason: "owner-root", dir: owner.root } };
   // Writes under .crank/ (cerebrum.md above all) are never indexable, so
   // resolving them costs an index lock to learn nothing. Answer here instead.
   if (r === CRANK_DIR || r.startsWith(`${CRANK_DIR}/`)) {
