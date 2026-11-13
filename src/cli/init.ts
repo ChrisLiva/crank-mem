@@ -17,6 +17,7 @@ import {
   type CodexChoice,
   type CrankConfig,
 } from "../hooks/lib/config.ts";
+import { unusedName } from "../hooks/lib/registry.ts";
 import { fullScan } from "../hooks/lib/scanner.ts";
 import { commitIndex } from "../hooks/lib/store.ts";
 import { CLI_LOCK_BUDGET_MS } from "../hooks/lib/lock.ts";
@@ -156,6 +157,7 @@ export async function run(args: string[]): Promise<number> {
     vendored_version: cliVersion(),
     clone_root: toolRoot(),
     codex: codexChoiceFor(codexMode, codexTrust),
+    name: unusedName(root),
   };
 
   const result = installAll(root, crankDir, config);

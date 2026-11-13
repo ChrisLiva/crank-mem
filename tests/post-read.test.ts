@@ -131,6 +131,17 @@ describe("post-read once per agent per session", () => {
     );
   });
 
+  test("a marker from before absolute paths is read as empty", () => {
+    const { root } = seeded();
+    const home = makeCrankHome();
+    fs.mkdirSync(path.join(home, "seen"));
+    fs.writeFileSync(path.join(home, "seen/551be959-main.seen"), "src/a.ts\n");
+    const r = run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT), {
+      CRANK_HOME: home,
+    });
+    expect(context(r)).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n#");
+  });
+
   test("parallel reads of different files each mark their file", async () => {
     const names = Array.from({ length: 8 }, (_, i) => `src/f${i}.ts`);
     const root = makeCrankProject(Object.fromEntries(names.map((n) => [n, "export {};\n"])));

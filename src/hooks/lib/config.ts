@@ -68,6 +68,8 @@ export interface CrankConfig {
   clone_root: string;
   /** The Codex choice init recorded; null on an install that recorded none. */
   codex: CodexChoice | null;
+  /** The project's name (`owner.ts` → `projectName`); null on an install that recorded none. */
+  name: string | null;
   /** Write a per-run JSONL trace to .crank/debug.log (off by default). */
   debug: boolean;
   /**
@@ -91,6 +93,7 @@ export function defaultConfig(): CrankConfig {
     vendored_version: "0.0.0",
     clone_root: "",
     codex: null,
+    name: null,
     debug: false,
     digest: false,
   };
@@ -119,10 +122,11 @@ export function loadConfig(crankDir: string): CrankConfig {
   if (raw === null) return config;
   for (const key of Object.keys(config) as (keyof CrankConfig)[]) {
     const value = raw[key];
-    if (value === undefined || key === "digest" || key === "codex") continue;
+    if (value === undefined || key === "digest" || key === "codex" || key === "name") continue;
     if (acceptedValue(key, value, config)) Object.assign(config, { [key]: value });
   }
   config.codex = codexChoice(raw);
+  if (typeof raw.name === "string") config.name = raw.name;
   carryUnknown(config, raw);
   return config;
 }
@@ -171,6 +175,7 @@ export function saveConfig(crankDir: string, config: CrankConfig): void {
   const { digest, ...rest } = config;
   const shared: Record<string, unknown> = { ...rest };
   if (shared.codex === null) delete shared.codex;
+  if (shared.name === null) delete shared.name;
   fs.writeFileSync(path.join(crankDir, CONFIG_FILE), JSON.stringify(shared, null, 2) + "\n");
   const local = path.join(crankDir, LOCAL_CONFIG_FILE);
   if (digest) fs.writeFileSync(local, JSON.stringify({ digest: true }, null, 2) + "\n");

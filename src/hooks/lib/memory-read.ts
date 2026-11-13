@@ -39,7 +39,7 @@ export function toLine(row: Row): ObservationLine {
 }
 
 /** The terms (on observations `o`) and their bind values that `search` and `list` narrow by. */
-export function lineFilters(q: Pick<SearchQuery, "type" | "sinceMs" | "file" | "stale">): {
+export function lineFilters(q: Pick<SearchQuery, "type" | "sinceMs" | "files" | "stale">): {
   filters: string[];
   params: sqlite.SQLInputValue[];
 } {
@@ -53,9 +53,10 @@ export function lineFilters(q: Pick<SearchQuery, "type" | "sinceMs" | "file" | "
     filters.push("o.created_at >= ?");
     params.push(q.sinceMs);
   }
-  if (q.file !== null) {
-    filters.push("o.id IN (SELECT observation_id FROM observation_files WHERE path = ?)");
-    params.push(q.file);
+  if (q.files !== null) {
+    const marks = q.files.map(() => "?").join(", ");
+    filters.push(`o.id IN (SELECT observation_id FROM observation_files WHERE path IN (${marks}))`);
+    params.push(...q.files);
   }
   return { filters, params };
 }
@@ -97,7 +98,7 @@ export function latestSummary(db: sqlite.DatabaseSync, sessionId: string): Diges
   const row = one(
     db,
     `SELECT request, investigated, learned, completed, next_steps FROM digests
-       WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+       WHERE session_id = ? AND origin IS NULL ORDER BY created_at DESC, id DESC LIMIT 1`,
     sessionId,
   );
   if (!row) return null;
@@ -185,11 +186,14 @@ export function get(db: sqlite.DatabaseSync, ids: number[]): Observation[] {
 }
 
 export function recent(db: sqlite.DatabaseSync, limit: number): ObservationLine[] {
-  return list(db, { limit, type: null, file: null, stale: false, before: null });
+  return list(db, { limit, type: null, files: null, stale: false, before: null });
 }
 
 export function latestNextSteps(db: sqlite.DatabaseSync): string | null {
-  const row = one(db, "SELECT next_steps FROM digests ORDER BY created_at DESC, id DESC LIMIT 1");
+  const row = one(
+    db,
+    "SELECT next_steps FROM digests WHERE origin IS NULL ORDER BY created_at DESC, id DESC LIMIT 1",
+  );
   if (!row) return null;
   const text = String(row.next_steps).trim();
   return text.toLowerCase().replace(/\.$/, "") === "none" ? null : text;
@@ -200,7 +204,39 @@ export function fileHistory(
   relPath: string,
   limit: number,
 ): ObservationLine[] {
-  return list(db, { limit, type: null, file: relPath, stale: false, before: null });
+  return list(db, { limit, type: null, files: [relPath], stale: false, before: null });
+}
+
+export function contentHashes(db: sqlite.DatabaseSync, ids: number[]): Map<number, string> {
+  const hashes = new Map<number, string>();
+  const read = db.prepare("SELECT content_hash FROM observations WHERE id = ?");
+  for (const id of ids) {
+    const row = read.get(id) as Row | undefined;
+    if (row) hashes.set(id, String(row.content_hash));
+  }
+  return hashes;
+}
+
+export function links(db: sqlite.DatabaseSync): string[] {
+  return all(
+    db,
+    `SELECT project FROM project_links UNION SELECT project FROM observation_refs ORDER BY project`,
+  ).map((row) => String(row.project));
+}
+
+export function pairedPaths(
+  db: sqlite.DatabaseSync,
+  relPath: string,
+  limit: number,
+): ReturnType<Memory["pairedPaths"]> {
+  return all(
+    db,
+    `SELECT r.project, r.path FROM observation_refs r JOIN observations o ON o.id = r.observation_id
+       WHERE o.id IN (SELECT observation_id FROM observation_files WHERE path = ?)
+       GROUP BY r.project, r.path ORDER BY MAX(o.created_at) DESC, r.project, r.path LIMIT ?`,
+    relPath,
+    limit,
+  ).map((row) => ({ project: String(row.project), path: String(row.path) }));
 }
 
 export function stats(

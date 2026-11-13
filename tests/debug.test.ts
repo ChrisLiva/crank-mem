@@ -217,6 +217,15 @@ describe("debug logging (black-box)", () => {
       expect(noOps(root)).toMatchObject({ tool: "Write", reason: "no-path" });
     });
 
+    test("a write to the project root itself: owner-root, with the root", () => {
+      const root = makeCrankProject({ "a.ts": "const a = 1;" });
+      enableDebugConfig(root);
+
+      const run = runHook(POST_WRITE, JSON.stringify(claudePostWrite(root, root)));
+      expect(run.status).toBe(0);
+      expect(noOps(root)).toMatchObject({ tool: "Write", reason: "owner-root", dir: root });
+    });
+
     test("an apply_patch whose every path is unindexable reports its first skip", () => {
       const root = makeCrankProject({ "a.ts": "const a = 1;" });
       enableDebugConfig(root);

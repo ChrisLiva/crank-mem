@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { errorMessage } from "../hooks/lib/config.ts";
 import { installedRoots, REGISTRY_FILE } from "../hooks/lib/registry.ts";
+import { UNTOUCHED_FILE } from "../hooks/lib/untouched.ts";
 import { DAEMON_FILE, daemonAlive, readDaemonState, spoolDir } from "../hooks/lib/spool.ts";
 import { crankHome, SEEN_DIR, STOP_FILE } from "../hooks/lib/user-state.ts";
 import { modelsDir } from "../daemon/embedder.ts";
@@ -29,9 +30,15 @@ function ownedEntries(): string[] {
   const home = crankHome();
   return [
     versionsDir(),
-    ...[CURRENT_LINK, TOOL_LOCK, UPDATE_FILE, REGISTRY_FILE, TOKEN_FILE, RUN_DIR].map((name) =>
-      path.join(home, name),
-    ),
+    ...[
+      CURRENT_LINK,
+      TOOL_LOCK,
+      UPDATE_FILE,
+      REGISTRY_FILE,
+      UNTOUCHED_FILE,
+      TOKEN_FILE,
+      RUN_DIR,
+    ].map((name) => path.join(home, name)),
     spoolDir(),
     path.join(home, SEEN_DIR),
     modelsDir(),

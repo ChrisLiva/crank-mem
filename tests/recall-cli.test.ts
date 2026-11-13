@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { memoryPaths } from "../src/hooks/lib/hook-io.ts";
 import {
   git,
   gitCommit,
@@ -19,15 +18,6 @@ import {
   NO_MEMORY_NOTE,
 } from "../src/hooks/lib/memory.ts";
 import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
-
-describe("memoryPaths", () => {
-  test("keeps repo-relative, non-sensitive paths inside the root, deduped in input order", () => {
-    expect(
-      memoryPaths("/r", "/r/src", ["a.ts", "/r/src/a.ts", "/elsewhere/x.ts", ".env", "/r"]),
-    ).toEqual(["src/a.ts"]);
-    expect(memoryPaths("/r", "/r", [])).toEqual([]);
-  });
-});
 
 describe("search", () => {
   test("each hit is dated in the local zone", () => {
@@ -203,7 +193,7 @@ describe("stale rows", () => {
       stderr: `${CLI_COMMANDS.search.usage}\n`,
     });
     expect(runCli(root, ["search", "--help"], { TZ }).stdout.split("\n")[0]).toBe(
-      "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path] [--stale]",
+      "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path] [--project name] [--stale]",
     );
   });
 
@@ -389,6 +379,34 @@ describe("get", () => {
       expect(run.stderr).toContain("Usage: crank-mem get <id...>");
     }
   });
+
+  test("an unknown project name exits 1", () => {
+    const root = initedCopy();
+    seedMemory(root, [{}]);
+    for (const command of ["get", "timeline"]) {
+      expect(runCli(root, [command, "nowhere#1"]), command).toMatchObject({
+        status: 1,
+        stdout: "",
+        stderr: "crank-mem: no project nowhere.\n",
+      });
+    }
+    const run = runCli(root, ["get", "#x"]);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("Usage: crank-mem get <id...>");
+  });
+
+  test("ids may carry a # prefix", () => {
+    const root = initedCopy();
+    const [id] = seedMemory(root, [{}]);
+    for (const command of ["get", "timeline"]) {
+      const bare = runCli(root, [command, String(id)]);
+      expect(bare.status, command).toBe(0);
+      expect(runCli(root, [command, `#${id}`]), command).toMatchObject({
+        status: 0,
+        stdout: bare.stdout,
+      });
+    }
+  });
 });
 
 describe("where the commands run", () => {
@@ -421,13 +439,7 @@ describe("where the commands run", () => {
 
   test("outside any project each command prints the init hint and exits 1", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-recall-bare-"));
-    for (const args of [
-      ...COMMANDS,
-      ["outline", "a.ts"],
-      ["unfold", "a.ts", "f"],
-      ["digest", "on"],
-      ["digest", "off"],
-    ]) {
+    for (const args of [...COMMANDS, ["digest", "on"], ["digest", "off"]]) {
       const run = runCli(bare, args);
       expect(run.status, args[0]).toBe(1);
       expect(run.stderr).toContain("not initialized here");

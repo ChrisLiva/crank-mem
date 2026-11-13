@@ -21,7 +21,9 @@ import {
 } from "../hooks/lib/wire.ts";
 import { EMBED_MODEL } from "../daemon/embedder.ts";
 import { queryVector } from "./recall.ts";
-import { installedRoots } from "../hooks/lib/registry.ts";
+import { projectName } from "../hooks/lib/owner.ts";
+import { installedStores } from "../hooks/lib/registry.ts";
+import { readUntouched } from "../hooks/lib/untouched.ts";
 import { captureSummary } from "./stats.ts";
 import {
   checkDue,
@@ -98,14 +100,12 @@ type Project = { id: string; name: string; root: string };
  * listed under the root that holds the store, ordered by name and then root.
  */
 function listProjects(): Project[] {
-  const byStore = new Map<string, Project>();
-  for (const registered of installedRoots()) {
-    const storeDir = path.dirname(memoryPath(registered));
-    const root = path.dirname(storeDir);
-    const id = crypto.createHash("sha256").update(storeDir).digest("hex").slice(0, 12);
-    byStore.set(storeDir, { id, name: path.basename(root), root });
-  }
-  return [...byStore.values()].sort(
+  const projects = installedStores().map(({ root, storeDir }) => ({
+    id: crypto.createHash("sha256").update(storeDir).digest("hex").slice(0, 12),
+    name: projectName(root),
+    root,
+  }));
+  return projects.sort(
     (a, b) =>
       (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) ||
       (a.root < b.root ? -1 : a.root > b.root ? 1 : 0),
@@ -153,15 +153,16 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
   if (beforeParam !== null && before === null) return { status: 400 };
   if (type !== null && !isObservationType(type)) return { status: 400 };
   if (q !== null && q.trim() === "") return { status: 400 };
+  const file = params.get("file");
   const filters = {
     type,
-    file: params.get("file"),
+    files: file === null ? null : [file],
     stale: params.get("stale") === "1",
   };
   const body = await withReader(memoryPath(root), async (memory) => {
     if (q !== null) {
       const vector = await queryVector(memory, q);
-      const lines = memory.search({
+      const hits = memory.search({
         ...filters,
         text: q,
         vector,
@@ -169,7 +170,11 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
         limit: PAGE,
         related: relatedFiles(loadIndex(path.join(root, CRANK_DIR)), q),
       });
-      return { rows: lines, next: null, mode: vector !== null ? "hybrid" : "keyword" };
+      return {
+        rows: hits.map((hit) => hit.line),
+        next: null,
+        mode: vector !== null ? "hybrid" : "keyword",
+      };
     }
     const page = pageOf(
       memory.list({
@@ -385,6 +390,12 @@ function serveUpdates(res: http.ServerResponse, url: URL): boolean {
   return true;
 }
 
+function serveUntouched(res: http.ServerResponse, url: URL): boolean {
+  if (url.pathname !== "/api/untouched") return false;
+  sendAnswer(res, { status: 200, body: { repos: readUntouched() } });
+  return true;
+}
+
 function serveProjectRoute(res: http.ServerResponse, url: URL): boolean {
   const scoped = /^\/api\/projects\/([^/]+)(\/.*)$/.exec(url.pathname);
   if (!scoped) return false;
@@ -432,6 +443,7 @@ export async function serveDashboard(opts: {
     if (refuseCookie(req, res, opts.token)) return;
     if (serveProjects(res, url)) return;
     if (serveUpdates(res, url)) return;
+    if (serveUntouched(res, url)) return;
     if (serveProjectRoute(res, url)) return;
     serveStatic(res, url, opts.distDir);
   });

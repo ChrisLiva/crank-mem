@@ -8,6 +8,8 @@ import {
   type CrankConfig,
 } from "./config.ts";
 import { enableDebug, flushDebug } from "./debug.ts";
+import { toPosix } from "./indexable.ts";
+import { ownerOf, type Owner } from "./owner.ts";
 
 // Hook I/O helpers. Hooks are advisory-only: they must never fail the tool
 // call, so payload parsing degrades to null and callers exit 0.
@@ -51,17 +53,12 @@ export function isCodexPayload(payload: HookPayload): boolean {
 }
 
 /**
- * Locate the project root, the dir holding `.crank/config.json`, by walking up from
- * `cwd`. Returns null when crank-mem isn't installed here.
+ * The installed project `cwd` belongs to by the ownership walk (`owner.ts`): its own root, or
+ * a linked worktree's main checkout. Null when the walk reaches a repo that is not installed, or none.
  */
 export function findProjectRoot(cwd: string): string | null {
-  let dir = path.resolve(cwd);
-  while (true) {
-    if (fs.existsSync(path.join(dir, CRANK_DIR, "config.json"))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
+  const owner = ownerOf(path.resolve(cwd));
+  return owner.kind === "unowned" ? null : owner.root;
 }
 
 /**
@@ -89,14 +86,27 @@ export function repoRelative(root: string, cwd: string, p: string): string | nul
   return r.split(path.sep).join("/");
 }
 
-/** The paths memory may record: repo-relative, never sensitive, deduped in input order. */
-export function memoryPaths(root: string, cwd: string, paths: string[]): string[] {
-  const kept = new Set<string>();
+/** The paths `ownedPath` gives each owning root, roots and paths in first-cited order, each path once. */
+export function ownedPaths(cwd: string, paths: string[]): Map<string, string[]> {
+  const byRoot = new Map<string, string[]>();
   for (const p of paths) {
-    const r = repoRelative(root, cwd, p);
-    if (r !== null && !isSensitiveFile(path.posix.basename(r))) kept.add(r);
+    const owned = ownedPath(ownerOf(path.resolve(cwd, p)));
+    if (owned === null) continue;
+    const rels = byRoot.get(owned.root);
+    if (rels === undefined) byRoot.set(owned.root, [owned.rel]);
+    else if (!rels.includes(owned.rel)) rels.push(owned.rel);
   }
-  return [...kept];
+  return byRoot;
+}
+
+/**
+ * Where memory may record a path `owner` owns: the owning project's root (a worktree's main checkout) and the
+ * `/`-separated path under it; null for an unowned path, the root itself or a sensitive basename.
+ */
+export function ownedPath(owner: Owner): { root: string; rel: string } | null {
+  if (owner.kind === "unowned" || !owner.rel) return null;
+  const rel = toPosix(owner.rel);
+  return isSensitiveFile(path.posix.basename(rel)) ? null : { root: owner.root, rel };
 }
 
 /** Whether `rel` under `root` is a regular file now, following symlinks; false on any error. */

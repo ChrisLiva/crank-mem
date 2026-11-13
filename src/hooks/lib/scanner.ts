@@ -8,6 +8,7 @@ import { emptyIndex, type AnatomyIndex, type FileEntry } from "./store.ts";
 import { BINARY_SNIFF_BYTES, isIndexableName, TEST_PATH, toPosix } from "./indexable.ts";
 import { gitListing, keepPin, updateActivity } from "./activity.ts";
 import { fileLinks } from "./imports.ts";
+import { ownedBy } from "./owner.ts";
 
 // Project walk + full scan + incremental refresh. Reads the filesystem and,
 // in a git repo, `git ls-files`; locking and persistence are the caller's job.
@@ -133,11 +134,17 @@ function isWalkableFile(rootDir: string, rel: string, config: CrankConfig): bool
  * first-party code first, elsewhere a sorted directory walk. Both stop at
  * config.max_files and report whether they had to. In a git repo a seed must
  * be in git's listing, so writes that post-write indexes under a gitignored
- * path drop out again at the next refresh.
+ * path drop out again at the next refresh. Only paths `rootDir` owns count: the
+ * walk skips another project's or repo's files and never enters their directories.
  */
 export function walkProject(rootDir: string, config: CrankConfig, seeds: string[] = []): Walk {
+  const ownedPath = ownedBy(rootDir);
+  const owned = (rel: string): boolean => ownedPath(path.join(rootDir, rel));
   const listed = gitListing(rootDir);
-  return listed ? walkListing(rootDir, listed, config, seeds) : walkTree(rootDir, config, seeds);
+  const ownedSeeds = seeds.filter(owned);
+  return listed
+    ? walkListing(rootDir, listed.filter(owned), config, ownedSeeds)
+    : walkTree(rootDir, config, ownedSeeds, owned);
 }
 
 function walkListing(
@@ -165,13 +172,19 @@ function walkListing(
   return { files, truncated: false, candidateCount: candidates.length };
 }
 
-function walkTree(rootDir: string, config: CrankConfig, seeds: string[]): Walk {
+function walkTree(
+  rootDir: string,
+  config: CrankConfig,
+  seeds: string[],
+  owned: (rel: string) => boolean,
+): Walk {
   // Collects one past the cap, the cheapest proof that the cap cut something.
   const limit = config.max_files + 1;
   const out = seeds
     .filter((rel) => isIndexableName(rel, config) && isWalkableFile(rootDir, rel, config))
     .slice(0, limit);
   const seeded = new Set(out);
+  const enters = (rel: string): boolean => !isExcluded(rel, config.excludes) && owned(rel);
   const walk = (dir: string): void => {
     if (out.length >= limit) return;
     let items: fs.Dirent[];
@@ -186,7 +199,7 @@ function walkTree(rootDir: string, config: CrankConfig, seeds: string[]): Walk {
       const full = path.join(dir, item.name);
       const rel = toPosix(path.relative(rootDir, full));
       if (item.isDirectory()) {
-        if (!isExcluded(rel, config.excludes)) walk(full);
+        if (enters(rel)) walk(full);
       } else if (item.isFile()) {
         if (!seeded.has(rel) && isIndexableName(rel, config)) out.push(rel);
       }

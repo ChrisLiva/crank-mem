@@ -727,7 +727,6 @@ describe("usage capture: the outline and unfold lines", () => {
         outcome: "no-reader",
       },
       { channel: "outline", path: null, from: null, matches: 0, capped: false, outcome: "refused" },
-      { channel: "outline", path: null, from: null, matches: 0, capped: false, outcome: "refused" },
       {
         channel: "outline",
         path: "src/x.ts",

@@ -13,6 +13,7 @@ import {
   type Position,
   type SearchQuery,
 } from "../src/hooks/lib/memory.ts";
+import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
 import { V1_DDL } from "./fixtures/schema-v1.ts";
 
 const open: { close(): void }[] = [];
@@ -33,7 +34,7 @@ function writable(file = tmpFile()): Memory {
 }
 
 function obs(over: Partial<NewObservation> & { title: string; narrative: string }): NewObservation {
-  return { type: "discovery", facts: [], filesRead: [], filesModified: [], ...over };
+  return { type: "discovery", facts: [], filesRead: [], filesModified: [], refs: [], ...over };
 }
 
 function digest(
@@ -52,6 +53,8 @@ function digest(
     observations: [],
     proposals: [],
     stale: [],
+    origin: null,
+    links: [],
     ...over,
   };
 }
@@ -109,7 +112,7 @@ describe("openMemory", () => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const sqlite = process.getBuiltinModule("node:sqlite");
     const raw = new sqlite.DatabaseSync(file);
-    raw.exec("PRAGMA user_version=3");
+    raw.exec(`PRAGMA user_version=${SCHEMA_VERSION + 1}`);
     raw.close();
     expect(openMemory(file, "read").status).toBe("newer");
     expect(openMemory(file, "write").status).toBe("newer");
@@ -280,6 +283,121 @@ describe("appendDigest", () => {
   });
 });
 
+describe("refs and links", () => {
+  const P1 = { uuid: "u-1", timestamp: "2026-11-02T10:00:00.123Z" };
+  const P2 = { uuid: "u-2", timestamp: "2026-11-02T10:05:00.456Z" };
+
+  test("refs pair a file with other projects' files, newest first", () => {
+    const memory = writable();
+    memory.appendDigest(
+      digest("s", null, P1, {
+        observations: [
+          obs({
+            title: "Pay call",
+            narrative: "a calls pay",
+            filesRead: ["src/a.ts"],
+            refs: [{ project: "payments-api", path: "src/pay.ts", kind: "read" }],
+          }),
+        ],
+      }),
+    );
+    Bun.sleepSync(2);
+    memory.appendDigest(
+      digest("s", P1, P2, {
+        observations: [
+          obs({
+            title: "Store call",
+            narrative: "a calls b",
+            filesModified: ["src/a.ts"],
+            refs: [{ project: "storefront", path: "src/b.ts", kind: "modified" }],
+          }),
+          obs({
+            title: "pay call",
+            narrative: "A calls pay",
+            filesRead: ["src/a.ts"],
+            refs: [{ project: "zzz-dup", path: "src/dup.ts", kind: "read" }],
+          }),
+        ],
+      }),
+    );
+    const paired = [
+      { project: "storefront", path: "src/b.ts" },
+      { project: "payments-api", path: "src/pay.ts" },
+    ];
+    expect(memory.pairedPaths("src/a.ts", 3)).toEqual(paired);
+    expect(memory.pairedPaths("src/a.ts", 1)).toEqual([paired[0]!]);
+    expect(memory.pairedPaths("src/none.ts", 3)).toEqual([]);
+  });
+
+  test("links are the stored links plus the ref projects", () => {
+    const memory = writable();
+    expect(memory.links()).toEqual([]);
+    memory.appendDigest(digest("s", null, P1, { links: ["storefront"] }));
+    memory.appendDigest(
+      digest("s", P1, P2, {
+        links: ["storefront"],
+        observations: [
+          obs({
+            title: "Pay call",
+            narrative: "a calls pay",
+            refs: [{ project: "payments-api", path: "src/pay.ts", kind: "read" }],
+          }),
+        ],
+      }),
+    );
+    expect(memory.links()).toEqual(["payments-api", "storefront"]);
+  });
+
+  test("share rows are never the latest summary", () => {
+    const memory = writable();
+    const summary = (next_steps: string) => ({
+      request: "r",
+      investigated: "i",
+      learned: "l",
+      completed: "c",
+      next_steps,
+    });
+    expect(
+      memory.appendDigest(digest("s", null, P1, { origin: null, summary: summary("Ship it") })),
+    ).toBe("appended");
+    expect(
+      memory.appendDigest(
+        digest("s", P1, P2, { origin: "H", costUsd: 0, summary: summary("Share row") }),
+      ),
+    ).toBe("appended");
+    expect(memory.latestNextSteps()).toBe("Ship it");
+    expect(memory.latestSummary("s")!.next_steps).toBe("Ship it");
+    expect(
+      memory
+        .activity(0)
+        .digests.map((d) => d.costUsd)
+        .sort(),
+    ).toEqual([0, 0.01]);
+  });
+
+  test("the daily pass deletes an expired observation's refs", () => {
+    const DAY_MS = 24 * 3_600_000;
+    const memory = writable();
+    memory.appendDigest(
+      digest("s", null, P1, {
+        observations: [
+          obs({
+            title: "Pay call",
+            narrative: "a calls pay",
+            filesRead: ["src/a.ts"],
+            refs: [{ project: "payments-api", path: "src/pay.ts", kind: "read" }],
+          }),
+        ],
+      }),
+    );
+    const id = memory.recent(1)[0]!.id;
+    memory.appendDigest(digest("s", P1, P2, { stale: [{ id, reason: "gone" }] }));
+    const t = memory.get([id])[0]!.staleFlag!.atMs;
+    expect(memory.maintain(t + 91 * DAY_MS)?.deleted).toBe(1);
+    expect(memory.pairedPaths("src/a.ts", 3)).toEqual([]);
+  });
+});
+
 describe("proposals and stale flags", () => {
   const P1 = { uuid: "u-1", timestamp: "2026-11-02T10:00:00.123Z" };
   const P2 = { uuid: "u-2", timestamp: "2026-11-02T10:05:00.456Z" };
@@ -443,11 +561,11 @@ describe("consolidation work", () => {
       limit: 5,
       type: null,
       sinceMs: null,
-      file: null,
+      files: null,
       stale: false,
       related: { seeds: [], neighbours: [] },
     };
-    expect(memory.search(query).map((hit) => hit.id)).toEqual([s2]);
+    expect(memory.search(query).map((hit) => hit.line.id)).toEqual([s2]);
     expect(work.lastOkStartMs).toBe(t);
     expect(work.lastStartMs).toBe(t);
   });
@@ -705,7 +823,7 @@ describe("search", () => {
       limit: 10,
       type: null,
       sinceMs: null,
-      file: null,
+      files: null,
       stale: false,
       related: { seeds: [], neighbours: [] },
       ...over,
@@ -713,7 +831,7 @@ describe("search", () => {
   }
 
   const vec = (...values: number[]) => new Float32Array(values);
-  const ids = (hits: { id: number }[]) => hits.map((h) => h.id);
+  const ids = (hits: { line: { id: number } }[]) => hits.map((h) => h.line.id);
 
   function abc(memory: Memory) {
     const [a, b, c] = seed(memory, [
@@ -736,7 +854,7 @@ describe("search", () => {
       query({ text: "zebra", vector: { model: "m1", values: vec(1, 0, 0) } }),
     );
     expect(ids(hits)).toEqual([b, a, c]);
-    expect(hits[0]).toEqual(memory.recent(10).find((r) => r.id === b)!);
+    expect(hits[0]!.line).toEqual(memory.recent(10).find((r) => r.id === b)!);
   });
 
   test("an equal fused score goes to the newest row", () => {
@@ -807,10 +925,21 @@ describe("search", () => {
     expect(hybrid({ type: "bugfix" })).toEqual([r1, r3].sort());
     expect(hybrid({ type: "feature" })).toEqual([r2]);
     expect(hybrid({ sinceMs: t2 })).toEqual([r2, r3].sort());
-    expect(hybrid({ file: "src/b.ts" })).toEqual([r2, r3].sort());
-    expect(hybrid({ file: "src/a.ts" })).toEqual([r1]);
+    expect(hybrid({ files: ["src/b.ts"] })).toEqual([r2, r3].sort());
+    expect(hybrid({ files: ["src/a.ts"] })).toEqual([r1]);
     expect(hybrid({ limit: 2 }).length).toBe(2);
     expect(ids(memory.search(query({ text: "kiwi", type: "feature" })))).toEqual([r2]);
+  });
+
+  test("a file filter matches a row on any of its files", () => {
+    const memory = writable();
+    const [a, b] = seed(memory, [
+      obs({ title: "mango one", narrative: "first", filesRead: ["src/a.ts"] }),
+      obs({ title: "mango two", narrative: "second", filesModified: ["src/b.ts"] }),
+      obs({ title: "mango three", narrative: "third", filesRead: ["src/c.ts"] }),
+    ]) as [number, number, number];
+    const found = ids(memory.search(query({ text: "mango", files: ["src/a.ts", "src/b.ts"] })));
+    expect(found.sort()).toEqual([a, b].sort());
   });
 
   test("a graph list of rows linked to seed files, then neighbour files, fuses with the others", () => {
@@ -832,7 +961,7 @@ describe("search", () => {
     expect(found({ text: "walrus", related: R })).toEqual([k1, g3, g1, g2]);
     expect(found({ text: "walrus zzzz", related: R })).toEqual([k1, g3, g1, g2]);
     expect(found({ text: "walrus", related: R, type: "discovery" })).toEqual([k1, g3, g2]);
-    expect(found({ text: "walrus", related: R, file: "src/near.ts" })).toEqual([g3, g2]);
+    expect(found({ text: "walrus", related: R, files: ["src/near.ts"] })).toEqual([g3, g2]);
     expect(found({ text: "walrus" })).toEqual([k1]);
     memory.putVectors("m1", [{ id: g1, vector: vec(1, 0, 0) }]);
     const near = { model: "m1", values: vec(1, 0, 0) };

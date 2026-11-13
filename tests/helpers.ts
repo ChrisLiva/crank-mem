@@ -11,7 +11,9 @@ import {
   openMemory,
   type DigestInput,
   type NewObservation,
+  type Position,
 } from "../src/hooks/lib/memory.ts";
+import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
 import { DAEMON_FILE, type DaemonState, type SpoolEntry } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
@@ -333,18 +335,22 @@ export function seedMemory(
     proposals?: DigestInput["proposals"];
     stale?: DigestInput["stale"];
     request?: string;
+    links?: string[];
+    session?: string;
+    next?: Position;
   } = {},
 ): number[] {
   const n = ++seedCount;
+  const sessionId = opts.session ?? `seed-${n}`;
   const opened = openMemory(memoryPath(root), "write");
   if (opened.status !== "open") throw new Error(`seedMemory: store is ${opened.status}`);
   const memory = opened.memory;
   try {
     const before = memory.stats("seed", 0).observations;
     memory.appendDigest({
-      session: { id: `seed-${n}`, agent: "claude", transcriptPath: `/seed/seed-${n}.jsonl` },
-      expected: null,
-      next: { uuid: `seed-${n}`, timestamp: new Date().toISOString() },
+      session: { id: sessionId, agent: "claude", transcriptPath: `/seed/${sessionId}.jsonl` },
+      expected: memory.position(sessionId),
+      next: opts.next ?? { uuid: `seed-${n}`, timestamp: new Date().toISOString() },
       model: "seed",
       costUsd: opts.costUsd ?? 0,
       summary: {
@@ -361,9 +367,12 @@ export function seedMemory(
         facts: o.facts ?? [],
         filesRead: o.filesRead ?? [],
         filesModified: o.filesModified ?? [],
+        refs: o.refs ?? [],
       })),
       proposals: opts.proposals ?? [],
       stale: opts.stale ?? [],
+      origin: null,
+      links: opts.links ?? [],
     });
     const after = memory.stats("seed", 0).observations;
     if (after - before !== observations.length) {
@@ -402,7 +411,7 @@ export function plantMemory(root: string, state: "newer" | "unreadable"): void {
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
   const db = new mod.DatabaseSync(file);
   db.exec("PRAGMA journal_mode=WAL");
-  db.exec("PRAGMA user_version = 3");
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
   db.close();
 }
 

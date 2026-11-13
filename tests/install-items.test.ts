@@ -7,6 +7,7 @@ import {
   makeProject,
   runCli,
   snapshot,
+  tempDir,
   withEnv,
   type CliRun,
 } from "./helpers.ts";
@@ -578,6 +579,56 @@ for (const c of repairCases) {
   });
 }
 
+/** A `makeProject` moved to `<tmp>/my app`, a basename the project name must sanitize. */
+function spacedProject(): { root: string; codexHome: string } {
+  const made = makeProject();
+  const root = path.join(fs.realpathSync(tempDir("crank-name-")), "my app");
+  fs.renameSync(made.root, root);
+  return { root, codexHome: made.codexHome };
+}
+
+test("init writes the project name", () => {
+  const { root, codexHome } = spacedProject();
+  expect(cli(root, codexHome, makeCrankHome(), "init", "--yes", "--codex", "skip").status).toBe(0);
+  const raw = readConfig(root);
+  expect(raw.name).toBe("my-app");
+  expect(Object.keys(raw).sort()).toEqual([
+    "adr_path",
+    "clone_root",
+    "codex",
+    "debug",
+    "excludes",
+    "git",
+    "injection_budget_bytes",
+    "max_file_size_bytes",
+    "max_files",
+    "name",
+    "runtime",
+    "vendored_version",
+    "version",
+  ]);
+}, 20_000);
+
+test("upgrade adds a missing project name and keeps an existing one", () => {
+  const { root, codexHome } = spacedProject();
+  const home = makeCrankHome();
+  expect(cli(root, codexHome, home, "init", "--yes", "--codex", "skip").status).toBe(0);
+  const { name: _name, ...unnamed } = readConfig(root);
+  const { codex: _codex, ...bare } = unnamed;
+  const cases: { config: Record<string, unknown>; name: string }[] = [
+    { config: unnamed, name: "my-app" },
+    { config: { ...unnamed, name: "custom" }, name: "custom" },
+    { config: { ...unnamed, name: "bad name" }, name: "bad name" },
+    { config: bare, name: "my-app" },
+    { config: { ...bare, name: "bad name" }, name: "bad name" },
+  ];
+  for (const c of cases) {
+    writeConfig(root, c.config);
+    expect(cli(root, codexHome, home, "upgrade").status).toBe(0);
+    expect(readConfig(root)).toEqual({ ...unnamed, name: c.name });
+  }
+}, 30_000);
+
 const legacyStampCases: { choice: Choice; set: Record<string, unknown> }[] = [
   { choice: "trust", set: { codex_trust_written: true } },
   { choice: "review", set: {} },
@@ -637,7 +688,7 @@ test("a corrupt Claude settings file costs only the Claude item", () => {
   expect(up.stderr).toContain("crank-mem: could not re-wire Claude Code hooks (");
   expect(fs.readFileSync(settings, "utf-8")).toBe("{ broken");
   expect(up.stdout).toContain("  wrote the allowlist .crank/.gitignore\n");
-  expect(up.stdout).toContain("  migrated memory.db v1 → v2\n");
+  expect(up.stdout).toContain("  migrated memory.db v1 → v3\n");
   expect(fs.readFileSync(codexHooks).equals(codexHooksBefore)).toBe(true);
   expect(up.stdout).toContain(
     "  Codex trust: open codex once in this project and accept the hooks review\n  (or headless: codex --dangerously-bypass-hook-trust)\n",

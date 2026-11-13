@@ -21,6 +21,7 @@ import {
   CODEX_REVIEW_HINT,
 } from "./codex-trust.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
+import { readUntouched } from "../hooks/lib/untouched.ts";
 import { daemonAlive, readParked, readSpool, type SpoolItem } from "../hooks/lib/spool.ts";
 import { formatUsd, projectStatus, type HealthSummary } from "../hooks/lib/wire.ts";
 import { localDate, memoryPath, openMemory } from "../hooks/lib/memory.ts";
@@ -241,6 +242,16 @@ function indexLines(
   ];
 }
 
+/** The `not installed` row and one line per repo agents read or wrote that has no crank-mem install. */
+function untouchedLines(): string[] {
+  const repos = readUntouched();
+  if (repos.length === 0) return [row("not installed", "none")];
+  return [
+    row("not installed", String(repos.length)),
+    ...repos.map((r) => `    ${r.root}  last seen ${localDate(r.lastSeenMs)}`),
+  ];
+}
+
 /** The codex rows: wiring, whether root threads got the injection, and hook and project trust. */
 function codexLines(root: string, crankDir: string, codexHooks: string): string[] {
   if (!hasCrankHooks(codexHooks)) return [`  codex:            not wired`];
@@ -282,6 +293,7 @@ export async function run(_args: string[]): Promise<number> {
   if (installedCopy()) console.log(row("update", updateValue()));
   for (const line of memoryLines(root, crankDir, config, index)) console.log(line);
   for (const [label, value] of await captureRows(root, config)) console.log(row(label, value));
+  for (const line of untouchedLines()) console.log(line);
   for (const line of codexLines(root, crankDir, installPaths(root).codexHooks)) console.log(line);
   return 0;
 }

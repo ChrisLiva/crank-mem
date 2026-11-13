@@ -21,7 +21,8 @@ import {
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
-import { claudeSessionStart, codexSessionStart } from "./fixtures/payloads.ts";
+import { claudeSessionStart, claudeSubagentStart, codexSessionStart } from "./fixtures/payloads.ts";
+import { workspace } from "./workspace.ts";
 
 const HOOK = "src/hooks/session-start.ts";
 
@@ -786,5 +787,88 @@ describe("project registry (black-box)", () => {
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)), root, { CRANK_HOME: home });
     expect(run.status).toBe(0);
     expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("crank-mem");
+  });
+});
+
+describe("linked projects (black-box)", () => {
+  test("linked projects are named after the recall pointer", () => {
+    const ws = workspace();
+    seedMemory(ws.H, [], { links: ["storefront", "ghost", "payments-api"] });
+    const ctx = injectIn(ws.H, ws.home);
+    expect(
+      count(
+        ctx,
+        `${RECALL_BULLET}\n- Search also covers linked projects: payments-api, storefront.\n- Memory is not proof`,
+      ),
+    ).toBe(1);
+    // SubagentStart does not gain the line.
+    const sub = runHook(
+      "src/hooks/subagent-start.ts",
+      JSON.stringify(claudeSubagentStart(ws.H, "Explore")),
+      ws.H,
+      { CRANK_HOME: ws.home },
+    );
+    expect(sub.status).toBe(0);
+    const subCtx: string = JSON.parse(sub.stdout).hookSpecificOutput.additionalContext;
+    expect(subCtx).toContain(RECALL_BULLET);
+    expect(subCtx).not.toContain("Search also covers");
+
+    // A renamed project's link stops resolving; once none resolves, the plain recall bullet.
+    const rename = (root: string, name: string) =>
+      saveConfig(path.join(root, ".crank"), { ...defaultConfig(), digest: true, name });
+    rename(ws.storefront, "shop");
+    expect(
+      count(
+        injectIn(ws.H, ws.home),
+        `${RECALL_BULLET}\n- Search also covers linked projects: payments-api.\n- Memory is not proof`,
+      ),
+    ).toBe(1);
+    rename(ws.payments, "pay");
+    const plain = injectIn(ws.H, ws.home);
+    expect(count(plain, `${RECALL_BULLET}\n- Memory is not proof`)).toBe(1);
+    expect(plain).not.toContain("Search also covers");
+  });
+
+  test("a bullet citing a linked project's file reads that project's anatomy", () => {
+    const ws = workspace();
+    seedMemory(ws.H, [], { links: ["payments-api"] });
+    injectIn(ws.payments, ws.home);
+    const bySuffix = "- **Pay suffix**: see `payments-api/a.ts` (2020-01-01).";
+    const bullet = "- **Pay**: see `payments-api/src/a.ts` (2020-01-01).";
+    fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bySuffix}\n${bullet}\n`);
+    const linkedIndex = path.join(ws.payments, ".crank/anatomy-index.json");
+    const before = fs.readFileSync(linkedIndex);
+
+    const ctx = injectIn(ws.H, ws.home);
+    expect(ctx).toContain(
+      `${bullet} [cited file modified after this note; check: payments-api/src/a.ts]`,
+    );
+    expect(ctx).toContain(
+      `${bySuffix} [cited file modified after this note; check: payments-api/a.ts]`,
+    );
+    expect(ctx).not.toContain("[cited file missing");
+    expect(fs.readFileSync(linkedIndex).equals(before)).toBe(true);
+
+    const old = new Date("2019-06-01T12:00:00");
+    fs.utimesSync(path.join(ws.payments, "src/a.ts"), old, old);
+    injectIn(ws.payments, ws.home);
+    const fresh = injectIn(ws.H, ws.home);
+    expect(fresh).toEndWith(bullet);
+    expect(fresh).not.toContain("[cited file");
+  });
+
+  test("a citation under the project's own directory of a linked project's name stays home", () => {
+    const ws = workspace();
+    seedMemory(ws.H, [], { links: ["payments-api"] });
+    fs.mkdirSync(path.join(ws.H, "payments-api/lib"), { recursive: true });
+    fs.writeFileSync(path.join(ws.H, "payments-api/lib/x.ts"), "export const x = 1;\n");
+    const bullet = "- **Own**: see `payments-api/lib/x.ts` (2020-01-01).";
+    fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bullet}\n`);
+
+    const ctx = injectIn(ws.H, ws.home);
+    expect(ctx).toContain(
+      `${bullet} [cited file modified after this note; check: payments-api/lib/x.ts]`,
+    );
+    expect(ctx).not.toContain("[cited file missing");
   });
 });

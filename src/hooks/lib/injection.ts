@@ -15,8 +15,9 @@ import {
   memoryStatus,
   openMemory,
 } from "./memory.ts";
+import { linkedProjects } from "./registry.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
-import type { CrankConfig } from "./config.ts";
+import { CRANK_DIR, type CrankConfig } from "./config.ts";
 import { loadIndex, type AnatomyIndex } from "./store.ts";
 import type { UsageEvent } from "./usage.ts";
 import type { ObservationLine } from "./wire.ts";
@@ -114,13 +115,24 @@ const RECENT_MEMORY_MAX_BYTES = 1536;
 /** Observations read for the recent memory section, before the byte cap. */
 const RECENT_MEMORY_ROWS = 50;
 
-function instructions(index: AnatomyIndex, codex: boolean, recall: boolean): string {
+function recallBullets(linked: string[]): string[] {
+  return linked.length
+    ? [RECALL_BULLET, `- Search also covers linked projects: ${linked.join(", ")}.`]
+    : [RECALL_BULLET];
+}
+
+function instructions(
+  index: AnatomyIndex,
+  codex: boolean,
+  recall: boolean,
+  linked: string[],
+): string {
   const lead =
     "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`.";
   const bullets = [
     anatomyPointer(index, codex),
     CODE_BULLET,
-    ...(recall ? [RECALL_BULLET] : []),
+    ...(recall ? recallBullets(linked) : []),
     PROOF_AND_ADR_BULLETS,
   ];
   return `${INJECTION_HEADING}\n\n${lead}\n\n${bullets.join("\n")}`;
@@ -143,6 +155,7 @@ export interface InjectionSources {
   codex?: boolean;
   /** Project root; when set, the excerpt tags cited files that vanished or changed. */
   projectRoot?: string;
+  linked?: LinkedAnatomies;
   /** Digests run for this session, so recall applies with no store yet. Absent: false. */
   running?: boolean;
   /** What the memory store offers this session. Absent: no recall section or pointer. */
@@ -150,7 +163,12 @@ export interface InjectionSources {
 }
 
 type Recall =
-  | { status: "open"; nextSteps: string | null; recent: ObservationLine[] }
+  | {
+      status: "open";
+      nextSteps: string | null;
+      recent: ObservationLine[];
+      linked: { name: string; root: string }[];
+    }
   | { status: "missing" | "older" | "newer" | "unreadable" };
 
 /** The recall bullet shows with a readable store, and while digests run with none yet, since they will fill it. */
@@ -330,6 +348,35 @@ function shedOne(state: ExcerptState, balanced: boolean): void {
 export interface CitedFiles {
   index: AnatomyIndex;
   root: string;
+  linked?: LinkedAnatomies;
+}
+
+/**
+ * A linked project's anatomy by its name, or undefined when no linked project has that name; a
+ * citation whose first segment names one resolves in it.
+ */
+type LinkedAnatomies = (
+  name: string,
+) => { index: AnatomyIndex; root: string; byName: Map<string, string[]> } | undefined;
+
+/**
+ * Linked projects' anatomies: `projects` listed on the first lookup, each anatomy read and its
+ * basename map built on its first, none written.
+ */
+function linkedAnatomies(projects: () => { name: string; root: string }[]): LinkedAnatomies {
+  let roots: Map<string, string> | undefined;
+  const indexes = new Map<string, NonNullable<ReturnType<LinkedAnatomies>>>();
+  return (name) => {
+    roots ??= new Map(projects().map((p) => [p.name, p.root]));
+    const root = roots.get(name);
+    if (root === undefined) return undefined;
+    let linked = indexes.get(name);
+    if (!linked) {
+      const index = loadIndex(path.join(root, CRANK_DIR));
+      indexes.set(name, (linked = { index, root, byName: basenameIndex(index) }));
+    }
+    return linked;
+  };
 }
 
 /** A backticked file citation: a path or basename with an extension, then an optional `:line`. */
@@ -383,10 +430,40 @@ function latestDateEnd(text: string): number | null {
   return latest;
 }
 
-/** One citation's status: modified past `cutoffMs`, missing, or null for neither. */
+/**
+ * The linked project a citation's first segment names, or null. An entry of that name in `root`
+ * keeps the citation in `root`.
+ */
+export function linkedPrefix(
+  rel: string,
+  root: string,
+  isLinked: (name: string) => boolean,
+): string | null {
+  const slash = rel.indexOf("/");
+  if (slash <= 0) return null;
+  const head = rel.slice(0, slash);
+  return !fs.existsSync(path.join(root, head)) && isLinked(head) ? head : null;
+}
+
+/**
+ * One citation's status: modified past `cutoffMs`, missing, or null for neither. A citation whose
+ * `linkedPrefix` names a linked project resolves in that project, the segment stripped.
+ */
 function resolveCitation(
   rel: string,
   cited: CitedFiles,
+  byName: Map<string, string[]>,
+  cutoffMs: number | null,
+): "missing" | "modified" | null {
+  const head = linkedPrefix(rel, cited.root, (name) => cited.linked?.(name) !== undefined);
+  const linked = head === null ? undefined : cited.linked?.(head);
+  if (head === null || !linked) return resolveIn(rel, cited, byName, cutoffMs);
+  return resolveIn(rel.slice(head.length + 1), linked, linked.byName, cutoffMs);
+}
+
+function resolveIn(
+  rel: string,
+  cited: { index: AnatomyIndex; root: string },
   byName: Map<string, string[]>,
   cutoffMs: number | null,
 ): "missing" | "modified" | null {
@@ -478,7 +555,10 @@ export function composeInjection(
   const running = sources.running ?? false;
   const recall = sources.recall;
   const recallPointer = recall ? recallApplies(running, recall.status) : false;
-  const parts: string[] = [instructions(sources.index, sources.codex ?? false, recallPointer)];
+  const linked = recall?.status === "open" ? recall.linked.map((p) => p.name) : [];
+  const parts: string[] = [
+    instructions(sources.index, sources.codex ?? false, recallPointer, linked),
+  ];
   const shown: Shown = {
     recentIds: [],
     nextSteps: false,
@@ -513,7 +593,9 @@ export function composeInjection(
     excerpt = excerptOf(
       sources.cerebrumMd,
       budgetBytes - used - adrReserve - bytes(SEP),
-      sources.projectRoot ? { index: sources.index, root: sources.projectRoot } : undefined,
+      sources.projectRoot
+        ? { index: sources.index, root: sources.projectRoot, linked: sources.linked }
+        : undefined,
     );
     if (excerpt.text) shown.cerebrum = fit(excerpt.text);
   }
@@ -598,7 +680,7 @@ export function subagentInjection(
   const md = readCerebrum(crankDir);
   // Balanced: at this budget the session-start order leaves no room for memory.
   const excerpt = md
-    ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, { index: loadIndex(crankDir), root }, true).text
+    ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, citationSources(crankDir, root), true).text
     : "";
 
   const lines = [INJECTION_HEADING];
@@ -615,6 +697,24 @@ export function subagentInjection(
       recallPointer: recall,
     },
   };
+}
+
+/** A project's own anatomy and its store's linked anatomies, the links read only when a citation needs them. */
+export function citationSources(crankDir: string, root: string): CitedFiles {
+  return { index: loadIndex(crankDir), root, linked: linkedAnatomies(() => storeLinks(root)) };
+}
+
+/** `registry.ts` → `linkedProjects` of the store; none when the store cannot be read. */
+function storeLinks(root: string): { name: string; root: string }[] {
+  const opened = openMemory(memoryPath(root), "read");
+  if (opened.status !== "open") return [];
+  try {
+    return linkedProjects(opened.memory);
+  } catch {
+    return [];
+  } finally {
+    opened.memory.close();
+  }
 }
 
 /** The one read of cerebrum.md; any read error reads as absent. */
@@ -653,6 +753,7 @@ export function sessionStartInjection(
     index,
     adrPath: config.adr_path,
     projectRoot: root,
+    linked: linkedAnatomies(() => (recall.status === "open" ? recall.linked : [])),
     codex: opts.codex,
     recall,
     running: gate.running,
@@ -699,6 +800,7 @@ function readRecall(root: string, gate: DigestGate): Recall {
       status: "open",
       nextSteps: gate.running && gate.drained ? memory.latestNextSteps() : null,
       recent: memory.recent(RECENT_MEMORY_ROWS),
+      linked: linkedProjects(memory),
     };
   } catch {
     return { status: "unreadable" };

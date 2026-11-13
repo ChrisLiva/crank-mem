@@ -260,6 +260,7 @@ describe("stats: capture health", () => {
     expect(run.stdout).toContain("  proposals:        0\n");
     expect(run.stdout).toContain("  stale:            0\n");
     expect(run.stdout).toContain("  embedder:         not ready (run crank-mem setup)\n");
+    expect(run.stdout).toContain("  not installed:    none\n");
 
     fs.writeFileSync(
       path.join(home, "daemon.json"),
@@ -478,7 +479,9 @@ describe("stats: codex wiring", () => {
     const run = cli(initedCopy(ALPHA), "stats");
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("codex:            not wired");
-    expect(run.stdout).toMatch(/\n {2}embedder: .*\n {2}codex: {12}not wired/);
+    expect(run.stdout).toMatch(
+      /\n {2}embedder: .*\n {2}not installed: {4}none\n {2}codex: {12}not wired/,
+    );
     expect(run.stdout).not.toContain("codex sessions:");
   });
 });

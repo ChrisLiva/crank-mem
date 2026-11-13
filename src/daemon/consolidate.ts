@@ -2,8 +2,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ARCHIVE_FILE, CEREBRUM_FILE, backupCerebrum } from "../hooks/lib/cerebrum-files.ts";
 import { CRANK_DIR } from "../hooks/lib/config.ts";
-import { basenameIndex, citationStatus } from "../hooks/lib/injection.ts";
+import { basenameIndex, citationStatus, linkedPrefix } from "../hooks/lib/injection.ts";
 import { localDate, type Memory, type PendingWork } from "../hooks/lib/memory.ts";
+import { linkedProjects } from "../hooks/lib/registry.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
 import { writeTextAtomic } from "../hooks/lib/user-state.ts";
 import type { ConsolidationOutcome } from "../hooks/lib/wire.ts";
@@ -154,19 +155,24 @@ function narrow(e: OutputEdit, sent: Set<number>): CerebrumEdit | null {
 
 /**
  * The ids of the bullets citing a file modified since the last ok run (or the bullet's date, before
- * one), or, before the first ok run, a missing file.
+ * one), or, before the first ok run, a missing file. A citation whose `linkedPrefix` names a linked
+ * project never counts: the run cannot read outside the project (ADR 0016).
  */
 function dueBullets(
   root: string,
   crankDir: string,
   md: string,
   sinceMs: number | null,
+  linked: Set<string>,
 ): Set<number> {
   const index = loadIndex(crankDir);
   const byName = basenameIndex(index);
+  const home = (rel: string) => linkedPrefix(rel, root, (name) => linked.has(name)) === null;
   const due = new Set<number>();
   for (const { id, text } of numberBullets(md).bullets) {
-    const { missing, modified } = citationStatus(text, { index, root }, byName, sinceMs);
+    const status = citationStatus(text, { index, root }, byName, sinceMs);
+    const missing = status.missing.filter(home);
+    const modified = status.modified.filter(home);
     if (modified.length > 0 || (missing.length > 0 && sinceMs === null)) due.add(id);
   }
   return due;
@@ -228,7 +234,8 @@ export async function consolidate(
   if (!fs.existsSync(file)) return "not-due";
   const md = fs.readFileSync(file, "utf8");
   const work = memory.pending(PENDING_LIMIT);
-  const due = dueBullets(root, crankDir, md, work.lastOkStartMs);
+  const linked = new Set(linkedProjects(memory).map((p) => p.name));
+  const due = dueBullets(root, crankDir, md, work.lastOkStartMs, linked);
   if (work.proposals.length === 0 && work.stale.length === 0 && due.size === 0) return "not-due";
   if (work.lastStartMs !== null && Date.now() - work.lastStartMs < opts.everyMs) return "not-due";
 

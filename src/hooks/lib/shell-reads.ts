@@ -1,5 +1,5 @@
 // The files a Bash command reads with a plain read tool or `crank-mem outline`/`unfold`. A best-effort
-// lexer, not a shell parser: callers filter the candidates through memoryPaths, so a stray word
+// lexer, not a shell parser: callers filter the candidates through ownedPath, so a stray word
 // such as a `head -n` count costs nothing.
 
 const READERS = new Set(["cat", "sed", "head", "tail", "awk", "nl"]);

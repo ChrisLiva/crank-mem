@@ -226,6 +226,73 @@ describe("walk metadata", () => {
   });
 });
 
+describe("ownership", () => {
+  /** P: a git repo holding a nested project, a nested clone and a submodule. */
+  function makeOwnersRepo(): string {
+    const root = makeProject({
+      "src/a.ts": "export const a = 1;",
+      "pkg/.crank/config.json": "{}",
+      "pkg/x.ts": "export const x = 1;",
+      "clones/u/y.ts": "export const y = 1;",
+      "vendor/m/.git": "gitdir: ../../.git/modules/m\n",
+      "vendor/m/x.ts": "export const m = 1;",
+    });
+    git(root, "init", "-q");
+    git(path.join(root, "clones/u"), "init", "-q");
+    fs.mkdirSync(path.join(root, ".git/modules/m"), { recursive: true });
+    return root;
+  }
+
+  /** Q: no git, no install, holding a nested project and a nested repo. */
+  function makeOwnersTree(extra: Record<string, string>): string {
+    return makeProject({
+      "q1.ts": "export const q1 = 1;",
+      "q2.ts": "export const q2 = 1;",
+      "child/.crank/config.json": "{}",
+      "child/c.ts": "export const c = 1;",
+      "repo/.git/HEAD": "ref: refs/heads/main\n",
+      "repo/r.ts": "export const r = 1;",
+      ...extra,
+    });
+  }
+
+  test("a scan leaves out files another project or repo owns, and the walk stops there", () => {
+    const p = makeOwnersRepo();
+    const index = fullScan(p, defaultConfig());
+    expect(Object.keys(index.files).sort()).toEqual(["src/a.ts", "vendor/m/x.ts"]);
+    expect(index.meta.candidateCount).toBe(2);
+
+    // Outside git the walk itself stops, so the child's files never count toward max_files.
+    const extra: Record<string, string> = {};
+    for (let i = 1; i <= 5; i++) extra[`child/f${i}.ts`] = `export const f${i} = 1;`;
+    const q = makeOwnersTree(extra);
+    const walked = fullScan(q, { ...defaultConfig(), max_files: 2 });
+    expect(Object.keys(walked.files).sort()).toEqual(["q1.ts", "q2.ts"]);
+    expect(walked.meta.truncated).toBeUndefined();
+    expect(walked.meta.candidateCount).toBe(2);
+  });
+
+  test("a refresh drops a file once a nested project claims it", () => {
+    const p = makeProject({ "src/a.ts": "export const a = 1;", "pkg/x.ts": "export const x = 1;" });
+    git(p, "init", "-q");
+    const config = defaultConfig();
+    const index = fullScan(p, config);
+    expect(Object.keys(index.files)).toContain("pkg/x.ts");
+    fs.mkdirSync(path.join(p, "pkg/.crank"));
+    fs.writeFileSync(path.join(p, "pkg/.crank/config.json"), "{}");
+    const result = refreshIndex(p, config, index, 2_000);
+    expect(Object.keys(result.index.files)).not.toContain("pkg/x.ts");
+
+    // Outside git, a write-pinned file seeds the walk; the claim still drops it.
+    const q = makeProject({ "q1.ts": "export const q1 = 1;", "child/c.ts": "export const c = 1;" });
+    const pinned = fullScan(q, config);
+    pinned.files["child/c.ts"]!.writeCount = 1;
+    fs.mkdirSync(path.join(q, "child/.crank"));
+    fs.writeFileSync(path.join(q, "child/.crank/config.json"), "{}");
+    expect(Object.keys(refreshIndex(q, config, pinned, 2_000).index.files)).toEqual(["q1.ts"]);
+  });
+});
+
 describe("refreshIndex", () => {
   test("detects changed, added, deleted", () => {
     const root = makeProject({ "a.ts": "const a = 1;", "b.ts": "const b = 1;" });

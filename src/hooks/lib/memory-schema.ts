@@ -2,7 +2,7 @@ import type * as sqlite from "node:sqlite";
 
 // memory.db's schema: one forward step per version, applied by `migrate`.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA_V1 = `
 CREATE TABLE sessions (
@@ -55,8 +55,19 @@ CREATE TABLE consolidations (
   model TEXT, cost_usd REAL NOT NULL DEFAULT 0);
 `;
 
+const SCHEMA_V3 = `
+ALTER TABLE digests ADD COLUMN origin TEXT;
+CREATE TABLE observation_refs (
+  observation_id INTEGER NOT NULL REFERENCES observations(id),
+  project TEXT NOT NULL, path TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('read','modified')),
+  PRIMARY KEY (observation_id, project, path, kind)) WITHOUT ROWID;
+CREATE INDEX observation_refs_project_path ON observation_refs(project, path);
+CREATE TABLE project_links (project TEXT PRIMARY KEY, last_ms INTEGER NOT NULL);
+`;
+
 /** STEPS[v] migrates a store at user_version v to v + 1. */
-const STEPS: readonly string[] = [SCHEMA_V1, SCHEMA_V2];
+const STEPS: readonly string[] = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3];
 
 export function userVersion(db: sqlite.DatabaseSync): number {
   return Number((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);

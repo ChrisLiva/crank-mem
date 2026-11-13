@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { CRANK_DIR, errorMessage } from "./config.ts";
-import { runGit } from "./activity.ts";
 import * as queries from "./memory-read.ts";
+import { worktreeMain } from "./owner.ts";
 import { migrate, SCHEMA_VERSION, userVersion } from "./memory-schema.ts";
 import * as searching from "./memory-search.ts";
 import * as writes from "./memory-write.ts";
@@ -24,6 +24,8 @@ import type {
 // holding digests and their observations. node:sqlite loads through
 // process.getBuiltinModule on each open, so a runtime without it degrades to
 // "unreadable" instead of failing at import time.
+
+export { samePosition } from "./memory-write.ts";
 
 export const MEMORY_FILE = "memory.db";
 export const MEMORY_OLDER_NOTE =
@@ -65,6 +67,8 @@ export type NewObservation = {
   facts: string[];
   filesRead: string[];
   filesModified: string[];
+  /** Files of other projects this observation cites, by project name. */
+  refs: { project: string; path: string; kind: "read" | "modified" }[];
 };
 export type DigestInput = {
   session: SessionKey;
@@ -76,15 +80,21 @@ export type DigestInput = {
   observations: NewObservation[];
   proposals: { kind: ProposalKind; bullet: string }[];
   stale: { id: number; reason: string }[];
+  /** The project whose digest this row shares, null for the store's own digest. */
+  origin: string | null;
+  /** Names of the projects this digest's session also worked in. */
+  links: string[];
 };
-type SearchHit = ObservationLine;
+/** A search result with its fused reciprocal-rank score, above 0. */
+type SearchHit = { line: ObservationLine; score: number };
 export type SearchQuery = {
   text: string;
   vector: { model: string; values: Float32Array } | null;
   limit: number;
   type: ObservationType | null;
   sinceMs: number | null;
-  file: string | null;
+  /** Rows linked to any of these paths; null means no file filter. */
+  files: string[] | null;
   stale: boolean;
   /** Files whose linked rows form the graph list: seeds' rows first, then neighbours'; both empty means no graph list. */
   related: { seeds: string[]; neighbours: string[] };
@@ -134,7 +144,7 @@ export interface Memory {
   search(query: SearchQuery): SearchHit[];
   /** Lines newest first by `(created_at, id)`, strictly older than `before` when it is set. */
   list(
-    q: Pick<SearchQuery, "limit" | "type" | "file" | "stale"> & {
+    q: Pick<SearchQuery, "limit" | "type" | "files" | "stale"> & {
       before: { createdAtMs: number; id: number } | null;
     },
   ): ObservationLine[];
@@ -143,6 +153,12 @@ export interface Memory {
   recent(limit: number): ObservationLine[];
   latestNextSteps(): string | null;
   fileHistory(relPath: string, limit: number): ObservationLine[];
+  /** Each existing id's dedupe key (normalized title and narrative), equal across stores for equal text. */
+  contentHashes(ids: number[]): Map<number, string>;
+  /** Distinct project names in the stored links and the observations' refs, sorted. */
+  links(): string[];
+  /** Other projects' files cited by observations on `relPath`, by the newest citing observation first. */
+  pairedPaths(relPath: string, limit: number): { project: string; path: string }[];
   stats(model: string, sinceMs: number): MemoryStats;
   /** Pending proposals and unreviewed stale rows, oldest first; `limit` caps each list. */
   pending(limit: number): PendingWork;
@@ -167,22 +183,11 @@ export interface Memory {
 }
 
 /**
- * The store for the project at `root`. A linked worktree (`.git` is a file)
- * shares its main checkout's store when that checkout is initialized.
+ * The store for the project at `root`. A linked worktree shares its main checkout's store
+ * when that checkout is installed (`owner.ts` → `worktreeMain`).
  */
 export function memoryPath(root: string): string {
-  const own = path.join(root, CRANK_DIR, MEMORY_FILE);
-  try {
-    if (!fs.statSync(path.join(root, ".git")).isFile()) return own;
-  } catch {
-    return own;
-  }
-  const r = runGit(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], 500);
-  if ("error" in r) return own;
-  const main = path.dirname(r.stdout.trim());
-  return fs.existsSync(path.join(main, CRANK_DIR, "config.json"))
-    ? path.join(main, CRANK_DIR, MEMORY_FILE)
-    : own;
+  return path.join(worktreeMain(root) ?? root, CRANK_DIR, MEMORY_FILE);
 }
 
 /**
@@ -377,6 +382,15 @@ export function formatLine(line: ObservationLine): string {
   return `#${line.id} ${localDate(line.createdAtMs)} ${line.type} ${line.stale ? "[stale] " : ""}${line.title}`;
 }
 
+const HANDLE = /^(?:(?<project>[A-Za-z0-9._-]+)?#)?(?<id>\d+)$/;
+
+/** The one parser of a row handle: `209` and `#209` name the current project (`""`), `<name>#209` names `<name>`; else null. */
+export function parseHandle(text: string): { project: string; id: number } | null {
+  const m = HANDLE.exec(text);
+  if (!m?.groups) return null;
+  return { project: m.groups.project ?? "", id: Number(m.groups.id) };
+}
+
 /** `YYYY-MM-DD` of an epoch time in the local zone. */
 export function localDate(ms: number): string {
   const d = new Date(ms);
@@ -400,6 +414,9 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     recent: (limit) => queries.recent(db, limit),
     latestNextSteps: () => queries.latestNextSteps(db),
     fileHistory: (relPath, limit) => queries.fileHistory(db, relPath, limit),
+    contentHashes: (ids) => queries.contentHashes(db, ids),
+    links: () => queries.links(db),
+    pairedPaths: (relPath, limit) => queries.pairedPaths(db, relPath, limit),
     stats: (model, sinceMs) => queries.stats(db, model, sinceMs),
     pending: (limit) => queries.pending(db, limit),
     proposalRows: (q) => queries.proposalRows(db, q),

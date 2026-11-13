@@ -2,21 +2,35 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs, positive } from "../cli/args.ts";
 import { COMMANDS } from "../cli/commands.ts";
-import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
-import { CRANK_DIR, errorMessage } from "../hooks/lib/config.ts";
-import { memoryPaths } from "../hooks/lib/hook-io.ts";
-import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
+import { splitPreamble } from "../hooks/lib/cerebrum-files.ts";
+import { CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
+import { ownedPaths } from "../hooks/lib/hook-io.ts";
+import { readCerebrum } from "../hooks/lib/injection.ts";
+import {
+  memoryPath,
+  openMemory,
+  samePosition,
+  withReader,
+  type DigestInput,
+  type Memory,
+  type MemoryReader,
+  type SessionKey,
+} from "../hooks/lib/memory.ts";
 import { deleteEntry, readSpool, settleEntry, type SpoolEntry } from "../hooks/lib/spool.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
-import { digestRequest, type Digest, type DigestContext } from "./digest-prompt.ts";
+import type { Observation } from "../hooks/lib/wire.ts";
+import { ownerOf, projectName } from "../hooks/lib/owner.ts";
+import { digestRequest, type Digest, type DigestContext, type Shown } from "./digest-prompt.ts";
+import { route, type EntryShare, type Share } from "./digest-route.ts";
 import { EMBED_MODEL, embed } from "./embedder.ts";
 import { CONSOLIDATE_EVERY_MS, consolidate } from "./consolidate.ts";
 import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
 import { redact } from "./redact.ts";
 import { distill } from "./transcript.ts";
 
-// `crank-mem job <stem>`: digest one spool entry's new transcript records into
-// its project's store. Exit 0 settles the entry for this sweep; exit 1 asks
+// `crank-mem job <stem>`: digest one spool entry's new transcript records,
+// split across every owning store: a share to each other project's store
+// first, the entry project's digest last. Exit 0 settles the entry for this sweep; exit 1 asks
 // for a retry after the daemon's backoff, and a rejection short of the limit
 // takes that path too.
 
@@ -77,40 +91,75 @@ async function digest(
     settleEntry(stem, entry.updatedAt, "delete");
     return 0;
   }
-  const context = digestContext(memory, entry, d.paths);
+  const { context, shown } = await digestContext(memory, entry, d.paths);
   const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem), context), {
     timeoutMs,
   });
   if (r.kind === "retry") return 1;
   if (r.kind === "stopped") return 0;
   const session: SessionKey = { id: stem, agent: "claude", transcriptPath: entry.transcriptPath };
-  if (r.kind === "rejected") {
-    if (memory.recordRejection(session) >= REJECTION_LIMIT) {
-      settleEntry(stem, entry.updatedAt, "park");
-      return 0;
-    }
-    return 1;
-  }
-  const outcome = memory.appendDigest({
-    session,
-    expected: pos,
-    next: d.next,
-    model: r.model,
-    costUsd: r.costUsd,
-    ...stored(
-      r.output,
-      entry.projectRoot,
-      entry.cwd,
-      context.existing.map((o) => o.id),
-    ),
+  if (r.kind === "rejected") return rejected(memory, session, entry);
+  const routed = route(stored(r.output), entry, shown, ownerOf);
+  const base = { session, next: d.next, model: r.model };
+  const { written, held } = writeShares(routed.others, {
+    ...base,
+    origin: projectName(entry.projectRoot),
   });
-  if (outcome === "appended") {
-    if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
-    await embedPending(memory);
-    maintainQuietly(memory);
-    await consolidateQuietly(entry.projectRoot, memory, opts);
+  const own = keptFallbacks(routed.entry, held);
+  try {
+    if (appendEntry(memory, own, { ...base, expected: pos, costUsd: r.costUsd })) {
+      if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
+      written.push({ root: entry.projectRoot, memory });
+    }
+    for (const store of written) await upkeep(store.root, store.memory, opts);
+  } finally {
+    for (const store of written) if (store.memory !== memory) store.memory.close();
   }
   return 0;
+}
+
+/** The entry's share with each fallback no owning store holds added to its observations. */
+function keptFallbacks(share: EntryShare, held: Set<string>): EntryShare {
+  const lost = share.fallbacks.filter((f) => !f.owners.some((o) => held.has(o)));
+  return { ...share, observations: [...share.observations, ...lost.map((f) => f.observation)] };
+}
+
+/** Record a rejection: exit 1 asks for a retry, and the entry parks at the limit. */
+function rejected(memory: Memory, session: SessionKey, entry: SpoolEntry): number {
+  if (memory.recordRejection(session) < REJECTION_LIMIT) return 1;
+  settleEntry(session.id, entry.updatedAt, "park");
+  return 0;
+}
+
+/** The entry's share as the session's digest row; true when it was appended. */
+function appendEntry(
+  memory: Memory,
+  share: EntryShare,
+  base: Pick<DigestInput, "session" | "expected" | "next" | "model" | "costUsd">,
+): boolean {
+  const { summary, observations, proposals, stale, links } = share;
+  return (
+    memory.appendDigest({
+      ...base,
+      summary,
+      observations,
+      proposals,
+      stale,
+      origin: null,
+      links,
+    }) === "appended"
+  );
+}
+
+/** One written store's embedding, daily pass and consolidation, each failure quiet. */
+async function upkeep(
+  root: string,
+  memory: Memory,
+  opts: { timeoutMs: number; everyMs: number },
+): Promise<void> {
+  await embedPending(memory);
+  maintainQuietly(memory);
+  await consolidateQuietly(root, memory, opts);
 }
 
 /** The store's daily pass; a failure prints one line and never changes the exit code. */
@@ -135,32 +184,70 @@ async function consolidateQuietly(
   }
 }
 
+/** The installed projects other than the session's that own a kept path of the delta, by name. */
+function otherProjects(
+  entry: SpoolEntry,
+  owned: Map<string, string[]>,
+): { name: string; root: string }[] {
+  return [...owned.keys()]
+    .filter((root) => root !== entry.projectRoot)
+    .map((root) => ({ name: projectName(root), root }))
+    .sort((a, b) => (a.name < b.name ? -1 : 1));
+}
+
 /**
- * Cerebrum's body (null when the file is missing or has no `## ` heading), and the newest non-stale rows
- * about the delta's files: HISTORY_PER_FILE per file in first-touched order, each row once, HISTORY_TOTAL in all.
+ * Cerebrum's body, the touched projects (session's first, the rest by name; null when no other project is touched),
+ * and each project's `storeHistory` rows in that order, HISTORY_TOTAL across all stores. `shown` holds one entry
+ * per listed project ("" for the session's), or only "" without [PROJECTS].
  */
-function digestContext(memory: Memory, entry: SpoolEntry, paths: string[]): DigestContext {
-  let cerebrum: string | null = null;
-  try {
-    cerebrum =
-      splitPreamble(
-        fs.readFileSync(path.join(entry.projectRoot, CRANK_DIR, CEREBRUM_FILE), "utf8"),
-      ).body?.trimEnd() ?? null;
-  } catch {
-    // no cerebrum: the digest runs on the transcript and history alone
+async function digestContext(
+  memory: Memory,
+  entry: SpoolEntry,
+  paths: string[],
+): Promise<{ context: DigestContext; shown: Map<string, Shown> }> {
+  const md = readCerebrum(path.join(entry.projectRoot, CRANK_DIR));
+  const cerebrum = md === null ? null : (splitPreamble(md).body?.trimEnd() ?? null);
+  const owned = ownedPaths(entry.cwd, paths);
+  const others = otherProjects(entry, owned);
+  const projects =
+    others.length === 0
+      ? null
+      : [
+          { name: projectName(entry.projectRoot), root: entry.projectRoot, session: true },
+          ...others.map((o) => ({ ...o, session: false })),
+        ];
+  const existing: DigestContext["existing"] = [];
+  const shown = new Map<string, Shown>();
+  const show = (key: string, root: string, rows: HistoryRow[]) => {
+    shown.set(key, { root, ids: rows.map((o) => o.id) });
+    for (const { id, type, title, narrative } of rows)
+      existing.push({ handle: `${key}#${id}`, type, title, narrative });
+  };
+  const files = (root: string) => owned.get(root) ?? [];
+  show("", entry.projectRoot, storeHistory(memory, files(entry.projectRoot), HISTORY_TOTAL));
+  for (const { name, root } of others) {
+    const left = HISTORY_TOTAL - existing.length;
+    const rows = await withReader(memoryPath(root), (reader) =>
+      storeHistory(reader, files(root), left),
+    );
+    show(name, root, Array.isArray(rows) ? rows : []);
   }
+  return { context: { cerebrum, projects, existing }, shown };
+}
+
+type HistoryRow = Pick<Observation, "id" | "type" | "title" | "narrative">;
+
+/** One store's newest non-stale rows about `files`: HISTORY_PER_FILE per file in order, each row once, `limit` in all. */
+function storeHistory(reader: MemoryReader, files: string[], limit: number): HistoryRow[] {
   const ids = new Set<number>();
-  for (const file of memoryPaths(entry.projectRoot, entry.cwd, paths)) {
-    for (const line of memory.fileHistory(file, HISTORY_PER_FILE)) {
-      if (ids.size === HISTORY_TOTAL) break;
+  for (const file of files) {
+    for (const line of reader.fileHistory(file, HISTORY_PER_FILE)) {
+      if (ids.size >= limit) break;
       ids.add(line.id);
     }
-    if (ids.size === HISTORY_TOTAL) break;
+    if (ids.size >= limit) break;
   }
-  const existing = memory
-    .get([...ids])
-    .map(({ id, type, title, narrative }) => ({ id, type, title, narrative }));
-  return { cerebrum, existing };
+  return reader.get([...ids]);
 }
 
 /** Store vectors for rows that lack one; a failure leaves them for the next digest and never changes the exit code. */
@@ -181,14 +268,92 @@ async function embedPending(memory: Memory): Promise<void> {
   }
 }
 
+/** The share fields every share of one session carries; each store adds its own position. */
+type ShareBase = Pick<DigestInput, "session" | "next" | "model" | "origin">;
+
+const EMPTY_SUMMARY: DigestInput["summary"] = {
+  request: "",
+  investigated: "",
+  learned: "",
+  completed: "",
+  next_steps: "",
+};
+
 /**
- * The model's output as the store takes it: every string redacted, paths repo-relative and deduped.
- * Relative paths resolve against the session's cwd. A stale flag stands only for a row the input showed,
- * and a proposal only with a non-blank bullet.
+ * Write each other project's share to its store, in order. A project with digests off, or a store that reads as
+ * newer, gets none silently; a store that will not open or write gets none with one stderr line. The stores written
+ * stay open, in that order, for the caller to close; `held` names every root that now holds its share, including
+ * one that already did.
  */
-function stored(output: Digest, root: string, cwd: string, shownIds: number[]) {
+function writeShares(
+  shares: Share[],
+  base: ShareBase,
+): { written: { root: string; memory: Memory }[]; held: Set<string> } {
+  const written: { root: string; memory: Memory }[] = [];
+  const held = new Set<string>();
+  for (const share of shares) {
+    if (!loadConfig(path.join(share.root, CRANK_DIR)).digest) continue;
+    const result = openAndWrite(share, base);
+    if (result === null) continue;
+    held.add(share.root);
+    if (result !== "held") written.push({ root: share.root, memory: result });
+  }
+  return { written, held };
+}
+
+/**
+ * The store holding `share`, left open; "held", the store closed, when it already held the share; or null when
+ * nothing was written and the store is closed.
+ */
+function openAndWrite(share: Share, base: ShareBase): Memory | "held" | null {
+  let memory: Memory | undefined;
+  let kept = false;
+  try {
+    const opened = openMemory(memoryPath(share.root), "write");
+    if (opened.status === "newer") return null;
+    if (opened.status !== "open") {
+      shareSkipped(share.root, opened.status);
+      return null;
+    }
+    memory = opened.memory;
+    const result = writeShare(memory, share, base);
+    kept = result === "appended";
+    return kept ? memory : result === "held" ? "held" : null;
+  } catch (err) {
+    shareSkipped(share.root, errorCode(err));
+    return null;
+  } finally {
+    if (!kept) memory?.close();
+  }
+}
+
+function errorCode(err: unknown): string {
+  return (err as NodeJS.ErrnoException | null)?.code ?? errorMessage(err);
+}
+
+function shareSkipped(root: string, reason: string): void {
+  console.error(`crank-mem: share for ${projectName(root)} skipped (${reason}).`);
+}
+
+/** One share as a digest row at cost 0 with an empty summary; "held" when the store already holds `next`. */
+function writeShare(memory: Memory, share: Share, base: ShareBase): "appended" | "held" | "stale" {
+  const expected = memory.position(base.session.id);
+  if (samePosition(expected, base.next)) return "held";
+  return memory.appendDigest({
+    ...base,
+    expected,
+    costUsd: 0,
+    summary: EMPTY_SUMMARY,
+    observations: share.observations,
+    proposals: share.proposals,
+    stale: share.stale,
+    links: [],
+  });
+}
+
+/** The model's output with every string redacted and only the proposals with a non-blank bullet. */
+function stored(output: Digest): Digest {
   const s = output.summary;
-  const files = (paths: string[]) => memoryPaths(root, cwd, paths.map(redact));
   return {
     summary: {
       request: redact(s.request),
@@ -202,14 +367,12 @@ function stored(output: Digest, root: string, cwd: string, shownIds: number[]) {
       title: redact(o.title),
       narrative: redact(o.narrative),
       facts: o.facts.map(redact),
-      filesRead: files(o.files_read),
-      filesModified: files(o.files_modified),
+      files_read: o.files_read.map(redact),
+      files_modified: o.files_modified.map(redact),
     })),
     proposals: output.proposals
-      .map((p) => ({ kind: p.kind, bullet: redact(p.bullet).trim() }))
+      .map((p) => ({ kind: p.kind, bullet: redact(p.bullet).trim(), project: p.project }))
       .filter((p) => p.bullet !== ""),
-    stale: output.stale
-      .filter((f) => shownIds.includes(f.id))
-      .map((f) => ({ id: f.id, reason: redact(f.reason) })),
+    stale: output.stale.map((f) => ({ id: f.id, reason: redact(f.reason) })),
   };
 }

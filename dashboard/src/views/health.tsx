@@ -29,6 +29,7 @@ import {
   TONE_TEXT,
   WINDOWS,
 } from "./shared";
+import { UntouchedSection } from "./untouched";
 import { UpdatesSection } from "./updates";
 
 const TREND_DAYS = 30;
@@ -94,6 +95,7 @@ export function HealthView({
           <ProjectsTable lines={lines} />
         </section>
         <UpdatesSection />
+        <UntouchedSection />
         <ProjectDetail
           key={focused.id}
           project={focused}

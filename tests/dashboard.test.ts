@@ -5,6 +5,8 @@ import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { cliVersion } from "../src/cli/version.ts";
 import { loadConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
+import { UNTOUCHED_FILE } from "../src/hooks/lib/untouched.ts";
 import type { UpdateStatus } from "../src/hooks/lib/wire.ts";
 import {
   MEMORY_NEWER_NOTE,
@@ -444,6 +446,12 @@ describe("project registry", () => {
     const ties = ["p2", "p1"]
       .map((p) => registeredProject(home, path.join(tieParent, p, "same")))
       .reverse();
+    // init names the second `same-2`; a name set by hand can still tie.
+    for (const root of ties) {
+      const file = path.join(root, ".crank/config.json");
+      const config = JSON.parse(fs.readFileSync(file, "utf-8"));
+      fs.writeFileSync(file, JSON.stringify({ ...config, name: "same" }));
+    }
     const dash = await startDashboard(home, ["--port", "0"]);
     const entry = (root: string, memory: string) => ({
       id: projectId(root),
@@ -476,6 +484,8 @@ describe("project registry", () => {
     git(main, "worktree", "add", "-q", worktree);
     expect(runCli(worktree, ["upgrade"], { CRANK_HOME: home }).status).toBe(0);
     const standalone = registeredProject(home);
+    const standaloneDir = path.join(standalone, ".crank");
+    saveConfig(standaloneDir, { ...loadConfig(standaloneDir), name: "custom" });
     expect(registry(home).projects.map((p) => p.root)).toEqual([
       fs.realpathSync(main),
       fs.realpathSync(worktree),
@@ -483,9 +493,13 @@ describe("project registry", () => {
     ]);
 
     const dash = await startDashboard(home, ["--port", "0"]);
-    const roots = async () =>
-      ((await projects(dash)) as { projects: { root: string }[] }).projects.map((p) => p.root);
-    expect(await roots()).toEqual([standalone, fs.realpathSync(main)]);
+    const listed = async () =>
+      ((await projects(dash)) as { projects: { root: string; name: string }[] }).projects;
+    const roots = async () => (await listed()).map((p) => p.root);
+    expect((await listed()).map((p) => [p.name, p.root])).toEqual([
+      ["custom", standalone],
+      ["main", fs.realpathSync(main)],
+    ]);
     const before = fs.readFileSync(registryFile(home));
     fs.rmSync(path.join(standalone, ".crank/config.json"));
     expect(await roots()).toEqual([fs.realpathSync(main)]);
@@ -731,7 +745,7 @@ describe("memory view", () => {
     const root = registeredCopy(home);
     const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
     const db = new mod.DatabaseSync(path.join(root, ".crank/memory.db"));
-    db.exec("PRAGMA user_version = 2");
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.close();
     const dash = await startDashboard(home, ["--port", "0"]);
     expect(((await projects(dash)) as { projects: { memory: string }[] }).projects).toEqual([
@@ -1188,7 +1202,7 @@ describe("updates", () => {
     );
     const root = registeredProject(home);
     const crankDir = path.join(root, ".crank");
-    saveConfig(crankDir, { ...loadConfig(crankDir), vendored_version: "0.0.1" });
+    saveConfig(crankDir, { ...loadConfig(crankDir), vendored_version: "0.0.1", name: "custom" });
     const dash = await startDashboard(home, ["--port", "0"], {
       env: { CRANK_RELEASE_URL: "http://example.test/r" },
     });
@@ -1210,9 +1224,29 @@ describe("updates", () => {
       error: null,
       auto: false,
       checkDaily: true,
-      behind: [{ root, name: path.basename(root), vendored: "0.0.1" }],
+      behind: [{ root, name: "custom", vendored: "0.0.1" }],
     });
     expect((await dash.get("/api/updates", { headers: { Cookie: "" } })).status).toBe(401);
+  }, 20_000);
+
+  test("GET /api/untouched answers the not-installed repos, behind every guard", async () => {
+    const home = makeCrankHome();
+    const day = 24 * 60 * 60 * 1000;
+    const older = {
+      root: tempDir("crank-older-"),
+      lastSeenMs: Date.now() - 2 * day,
+      sessions: ["s1"],
+    };
+    const newer = { root: tempDir("crank-newer-"), lastSeenMs: Date.now() - day, sessions: [] };
+    fs.writeFileSync(path.join(home, UNTOUCHED_FILE), JSON.stringify({ repos: [older, newer] }));
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const res = await dash.get("/api/untouched");
+    expect([res.status, res.headers.get("content-type")]).toEqual([
+      200,
+      "application/json; charset=utf-8",
+    ]);
+    expect(await res.json()).toEqual({ repos: [newer, older] });
+    expect((await dash.get("/api/untouched", { headers: { Cookie: "" } })).status).toBe(401);
   }, 20_000);
 
   test("the server checks at start only when due and only in an installed copy", async () => {

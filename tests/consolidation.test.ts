@@ -17,6 +17,7 @@ import {
   readRecord,
   rerun,
   runCli,
+  runHook,
   search,
   seedMemory,
   setMtime,
@@ -28,8 +29,15 @@ import {
   type FakeScenario,
   type Journey,
 } from "./helpers.ts";
-import { okStreamOf, status401Stream, status500Stream } from "./fixtures/claude-scenarios.ts";
+import {
+  okStream,
+  okStreamOf,
+  status401Stream,
+  status500Stream,
+} from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
+import { claudeSessionStart } from "./fixtures/payloads.ts";
+import { workspace } from "./workspace.ts";
 
 afterEach(cleanup);
 
@@ -95,7 +103,12 @@ const FILTER_NAMES = [
 const digestOf = (
   proposals: { kind: string; bullet: string }[],
   stale: { id: number; reason: string }[] = [],
-) => ({ observations: [], summary: SAMPLE_DIGEST.summary, proposals, stale });
+) => ({
+  observations: [],
+  summary: SAMPLE_DIGEST.summary,
+  proposals: proposals.map((p) => ({ ...p, project: "session" })),
+  stale: stale.map((f) => ({ id: `#${f.id}`, reason: f.reason })),
+});
 
 /** The value after `flag` in a recorded argv. */
 const flagValue = (argv: string[], flag: string): string => argv[argv.indexOf(flag) + 1]!;
@@ -412,6 +425,56 @@ describe("bullets whose cited files changed", () => {
     stop(j);
     expect(rerun(j, 10_000, {}, ["--consolidate-every-ms", "1"]).status).toBe(0);
     expect(j.fake.calls().length).toBe(3);
+  }, 30_000);
+});
+
+describe("bullets citing linked projects", () => {
+  const linkedWorkspace = (bullet: string) => {
+    const ws = workspace();
+    seedMemory(ws.H, [], { links: ["payments-api"] });
+    fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bullet}\n`);
+    return ws;
+  };
+  const scenarios = () => [
+    { lines: okStream(SAMPLE_DIGEST) },
+    { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) },
+  ];
+
+  test("a bullet citing only linked projects is never due", () => {
+    const ws = linkedWorkspace("- **Pay**: see `payments-api/src/a.ts` (2020-01-01).");
+    const j = journey(ws.H, scenarios(), { home: ws.home });
+    expect(j.job.status).toBe(0);
+    expect(j.fake.calls().length).toBe(1);
+
+    const mixed = linkedWorkspace(
+      "- **Mixed**: `src/h.ts` and `payments-api/src/a.ts` (2020-01-01).",
+    );
+    const start = runHook(
+      "src/hooks/session-start.ts",
+      JSON.stringify(claudeSessionStart(mixed.H)),
+      mixed.H,
+      { CRANK_HOME: mixed.home },
+    );
+    expect(start.status).toBe(0);
+    const k = journey(mixed.H, scenarios(), { home: mixed.home });
+    expect(k.job.status).toBe(0);
+    expect(k.fake.calls().length).toBe(2);
+  }, 30_000);
+
+  test("a bullet citing the project's own directory of a linked project's name is due", () => {
+    const ws = linkedWorkspace("- **Own**: see `payments-api/lib/x.ts` (2020-01-01).");
+    fs.mkdirSync(path.join(ws.H, "payments-api/lib"), { recursive: true });
+    fs.writeFileSync(path.join(ws.H, "payments-api/lib/x.ts"), "export const x = 1;\n");
+    const start = runHook(
+      "src/hooks/session-start.ts",
+      JSON.stringify(claudeSessionStart(ws.H)),
+      ws.H,
+      { CRANK_HOME: ws.home },
+    );
+    expect(start.status).toBe(0);
+    const j = journey(ws.H, scenarios(), { home: ws.home });
+    expect(j.job.status).toBe(0);
+    expect(j.fake.calls().length).toBe(2);
   }, 30_000);
 });
 

@@ -490,7 +490,7 @@ describe("refusals", () => {
         {
           status: 1,
           stdout: "",
-          stderr: "crank-mem: not initialized here — run `crank-mem init` first.\n",
+          stderr: "crank-mem: a.ts is outside every installed project.\n",
         },
       ]);
     }
@@ -523,8 +523,11 @@ describe("refusals", () => {
       ]);
       expect(tree()).toEqual(before);
     };
-    refuses(outside, `${outside} is outside this project.`);
-    refuses("/nonexistent-crank-dir/a.ts", "/nonexistent-crank-dir/a.ts is outside this project.");
+    refuses(outside, `${outside} is outside every installed project.`);
+    refuses(
+      "/nonexistent-crank-dir/a.ts",
+      "/nonexistent-crank-dir/a.ts is outside every installed project.",
+    );
     refuses("src/link.ts", "src/link.ts is outside this project.");
     refuses(
       "src/credentials.ts",

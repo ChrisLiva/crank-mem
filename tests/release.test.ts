@@ -596,7 +596,7 @@ describe("self-uninstall", () => {
     fs.writeFileSync(path.join(t.H, "bin/askpass"), "");
     fs.writeFileSync(path.join(t.H, "crank.db"), "");
     for (const dir of ["spool", "seen"]) fs.mkdirSync(path.join(t.H, dir), { recursive: true });
-    for (const file of ["projects.json", "dashboard.json", "update.json"]) {
+    for (const file of ["projects.json", "dashboard.json", "update.json", "untouched.json"]) {
       if (!fs.existsSync(path.join(t.H, file))) fs.writeFileSync(path.join(t.H, file), "{}");
     }
     const result = t.uninstall(["--yes", "--purge"]);
