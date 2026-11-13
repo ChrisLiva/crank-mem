@@ -153,9 +153,10 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
   if (beforeParam !== null && before === null) return { status: 400 };
   if (type !== null && !isObservationType(type)) return { status: 400 };
   if (q !== null && q.trim() === "") return { status: 400 };
+  const file = params.get("file");
   const filters = {
     type,
-    file: params.get("file"),
+    files: file === null ? null : [file],
     stale: params.get("stale") === "1",
   };
   const body = await withReader(memoryPath(root), async (memory) => {

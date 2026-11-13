@@ -76,7 +76,7 @@ async function evaluate(root: string, memory: MemoryReader): Promise<string[]> {
           limit: 10,
           type: null,
           sinceMs: null,
-          file: null,
+          files: null,
           stale: false,
           related,
         })

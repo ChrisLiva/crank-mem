@@ -586,7 +586,7 @@ describe("consolidation work", () => {
       limit: 5,
       type: null,
       sinceMs: null,
-      file: null,
+      files: null,
       stale: false,
       related: { seeds: [], neighbours: [] },
     };
@@ -848,7 +848,7 @@ describe("search", () => {
       limit: 10,
       type: null,
       sinceMs: null,
-      file: null,
+      files: null,
       stale: false,
       related: { seeds: [], neighbours: [] },
       ...over,
@@ -954,10 +954,21 @@ describe("search", () => {
     expect(hybrid({ type: "bugfix" })).toEqual([r1, r3].sort());
     expect(hybrid({ type: "feature" })).toEqual([r2]);
     expect(hybrid({ sinceMs: t2 })).toEqual([r2, r3].sort());
-    expect(hybrid({ file: "src/b.ts" })).toEqual([r2, r3].sort());
-    expect(hybrid({ file: "src/a.ts" })).toEqual([r1]);
+    expect(hybrid({ files: ["src/b.ts"] })).toEqual([r2, r3].sort());
+    expect(hybrid({ files: ["src/a.ts"] })).toEqual([r1]);
     expect(hybrid({ limit: 2 }).length).toBe(2);
     expect(ids(memory.search(query({ text: "kiwi", type: "feature" })))).toEqual([r2]);
+  });
+
+  test("a file filter matches a row on any of its files", () => {
+    const memory = writable();
+    const [a, b] = seed(memory, [
+      obs({ title: "mango one", narrative: "first", filesRead: ["src/a.ts"] }),
+      obs({ title: "mango two", narrative: "second", filesModified: ["src/b.ts"] }),
+      obs({ title: "mango three", narrative: "third", filesRead: ["src/c.ts"] }),
+    ]) as [number, number, number];
+    const found = ids(memory.search(query({ text: "mango", files: ["src/a.ts", "src/b.ts"] })));
+    expect(found.sort()).toEqual([a, b].sort());
   });
 
   test("a graph list of rows linked to seed files, then neighbour files, fuses with the others", () => {
@@ -979,7 +990,7 @@ describe("search", () => {
     expect(found({ text: "walrus", related: R })).toEqual([k1, g3, g1, g2]);
     expect(found({ text: "walrus zzzz", related: R })).toEqual([k1, g3, g1, g2]);
     expect(found({ text: "walrus", related: R, type: "discovery" })).toEqual([k1, g3, g2]);
-    expect(found({ text: "walrus", related: R, file: "src/near.ts" })).toEqual([g3, g2]);
+    expect(found({ text: "walrus", related: R, files: ["src/near.ts"] })).toEqual([g3, g2]);
     expect(found({ text: "walrus" })).toEqual([k1]);
     memory.putVectors("m1", [{ id: g1, vector: vec(1, 0, 0) }]);
     const near = { model: "m1", values: vec(1, 0, 0) };

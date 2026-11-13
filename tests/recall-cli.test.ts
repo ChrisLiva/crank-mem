@@ -216,7 +216,7 @@ describe("stale rows", () => {
       stderr: `${CLI_COMMANDS.search.usage}\n`,
     });
     expect(runCli(root, ["search", "--help"], { TZ }).stdout.split("\n")[0]).toBe(
-      "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path] [--stale]",
+      "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path] [--project name] [--stale]",
     );
   });
 

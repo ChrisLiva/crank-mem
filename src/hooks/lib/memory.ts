@@ -91,7 +91,8 @@ export type SearchQuery = {
   limit: number;
   type: ObservationType | null;
   sinceMs: number | null;
-  file: string | null;
+  /** Rows linked to any of these paths; null means no file filter. */
+  files: string[] | null;
   stale: boolean;
   /** Files whose linked rows form the graph list: seeds' rows first, then neighbours'; both empty means no graph list. */
   related: { seeds: string[]; neighbours: string[] };
@@ -141,7 +142,7 @@ export interface Memory {
   search(query: SearchQuery): SearchHit[];
   /** Lines newest first by `(created_at, id)`, strictly older than `before` when it is set. */
   list(
-    q: Pick<SearchQuery, "limit" | "type" | "file" | "stale"> & {
+    q: Pick<SearchQuery, "limit" | "type" | "files" | "stale"> & {
       before: { createdAtMs: number; id: number } | null;
     },
   ): ObservationLine[];

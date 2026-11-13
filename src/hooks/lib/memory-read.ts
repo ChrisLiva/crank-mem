@@ -39,7 +39,7 @@ export function toLine(row: Row): ObservationLine {
 }
 
 /** The terms (on observations `o`) and their bind values that `search` and `list` narrow by. */
-export function lineFilters(q: Pick<SearchQuery, "type" | "sinceMs" | "file" | "stale">): {
+export function lineFilters(q: Pick<SearchQuery, "type" | "sinceMs" | "files" | "stale">): {
   filters: string[];
   params: sqlite.SQLInputValue[];
 } {
@@ -53,9 +53,10 @@ export function lineFilters(q: Pick<SearchQuery, "type" | "sinceMs" | "file" | "
     filters.push("o.created_at >= ?");
     params.push(q.sinceMs);
   }
-  if (q.file !== null) {
-    filters.push("o.id IN (SELECT observation_id FROM observation_files WHERE path = ?)");
-    params.push(q.file);
+  if (q.files !== null) {
+    const marks = q.files.map(() => "?").join(", ");
+    filters.push(`o.id IN (SELECT observation_id FROM observation_files WHERE path IN (${marks}))`);
+    params.push(...q.files);
   }
   return { filters, params };
 }
@@ -185,7 +186,7 @@ export function get(db: sqlite.DatabaseSync, ids: number[]): Observation[] {
 }
 
 export function recent(db: sqlite.DatabaseSync, limit: number): ObservationLine[] {
-  return list(db, { limit, type: null, file: null, stale: false, before: null });
+  return list(db, { limit, type: null, files: null, stale: false, before: null });
 }
 
 export function latestNextSteps(db: sqlite.DatabaseSync): string | null {
@@ -203,7 +204,7 @@ export function fileHistory(
   relPath: string,
   limit: number,
 ): ObservationLine[] {
-  return list(db, { limit, type: null, file: relPath, stale: false, before: null });
+  return list(db, { limit, type: null, files: [relPath], stale: false, before: null });
 }
 
 export function contentHashes(db: sqlite.DatabaseSync, ids: number[]): Map<number, string> {

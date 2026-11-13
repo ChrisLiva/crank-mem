@@ -1,6 +1,7 @@
+import * as path from "node:path";
 import { EMBED_MODEL, embed, modelPresent } from "../daemon/embedder.ts";
 import { redact } from "../daemon/redact.ts";
-import { repoRelative } from "../hooks/lib/hook-io.ts";
+import { CRANK_DIR } from "../hooks/lib/config.ts";
 import {
   formatLine,
   localDate,
@@ -11,7 +12,7 @@ import {
   type MemoryReader,
   type SearchQuery,
 } from "../hooks/lib/memory.ts";
-import { projectName } from "../hooks/lib/owner.ts";
+import { ownerOf, projectName } from "../hooks/lib/owner.ts";
 import { linkedProjects, rootOfName } from "../hooks/lib/registry.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
@@ -69,19 +70,24 @@ export async function search(args: string[]): Promise<number> {
     console.error(COMMANDS.search.usage);
     return 1;
   };
-  const [limit, type, since, file] = [flags.limit, flags.type, flags.since, flags.file].map(
-    stringFlag,
-  );
+  const [limit, type, since, file, named] = [
+    flags.limit,
+    flags.type,
+    flags.since,
+    flags.file,
+    flags.project,
+  ].map(stringFlag);
   if (!text.trim()) return usage();
-  if (limit === null || type === null || since === null || file === null) return usage();
+  if (limit === null || type === null || since === null || file === null || named === null)
+    return usage();
   if (limit !== undefined && !/^[1-9]\d*$/.test(limit)) return usage();
   if (type !== undefined && !isObservationType(type)) return usage();
   const sinceMs = since === undefined ? null : localMidnight(since);
   if (since !== undefined && sinceMs === null) return usage();
   const project = openNearestProject();
   if (!project) return 1;
-  const relFile = file === undefined ? null : repoRelative(project.root, process.cwd(), file);
-  if (file !== undefined && relFile === null) return 0;
+  const scope = searchScope(project.root, named, file);
+  if (typeof scope === "number") return scope;
   const host = stringFlag(flags["model-host"]) ?? undefined;
   return withMemory(project.root, true, async (memory) => {
     const embeddable = memory.hasVectors(EMBED_MODEL);
@@ -91,15 +97,13 @@ export async function search(args: string[]): Promise<number> {
     }
     const applied = limit === undefined ? DEFAULT_LIMIT : Math.min(Number(limit), MAX_LIMIT);
     const stale = flags.stale === true;
-    const hits = await federatedSearch(memory, project.root, {
+    const hits = await federatedSearch(memory, project.root, scope, {
       text,
       vector,
       limit: applied,
       type: type ?? null,
       sinceMs,
-      file: relFile,
       stale,
-      related: relatedFiles(loadIndex(project.crankDir), text),
     });
     for (const hit of hits) console.log(hit.name + formatLine(hit.line));
     recordSearch(project.root, hits, {
@@ -108,7 +112,7 @@ export async function search(args: string[]): Promise<number> {
       limit: applied,
       type: type ?? null,
       since: since ?? null,
-      file: relFile,
+      file: scope.file?.rel ?? null,
       stale,
       mode: vector === null ? "keyword" : "hybrid",
       ms: Date.now() - started,
@@ -149,30 +153,114 @@ function pairedSeeds(memory: MemoryReader, seeds: string[], project: string): st
   return [...paths];
 }
 
+/** A store a search reads: `name` prefixes its lines (`""` for the current project). */
+type Target = { name: string; root: string };
+
+/** Which stores a search reads (`only`, or the current and its linked ones) and the `--file` path's owner. */
+type Scope = { only: Target | null; file: { root: string; rel: string } | null };
+
 /**
- * The current store's hits and each linked store's that opens, by fused score with ties to the current
- * project, one per content hash, cut to the query's limit. A linked store's graph list holds only the
- * paths its pairs with the current seeds give.
+ * The scope `--project` and `--file` give; 1 once an unknown project name is printed, 0 when the file has
+ * no owner (an empty result).
+ */
+function searchScope(
+  current: string,
+  named: string | undefined,
+  file: string | undefined,
+): Scope | number {
+  const only = named === undefined ? null : namedStore(named, current);
+  if (only === null && named !== undefined) return 1;
+  if (file === undefined) return { only, file: null };
+  // A sensitive path still searches: the store holds none, and its usage line records it as null.
+  const owner = ownerOf(path.resolve(process.cwd(), file));
+  if (owner.kind === "unowned" || !owner.rel) return 0;
+  return { only, file: { root: owner.root, rel: owner.rel.split(path.sep).join("/") } };
+}
+
+/** The store `name` names, the current project as `""`; null once the unknown name is printed. */
+function namedStore(name: string, current: string): Target | null {
+  const root = name === projectName(current) ? current : rootOfName(name);
+  if (root === null) {
+    console.error(`crank-mem: no project ${name}.`);
+    return null;
+  }
+  return { name: root === current ? "" : name, root };
+}
+
+/** Each store the scope reads, with its graph list: its own anatomy's, or a linked store's pairs with the current seeds. */
+function searchTargets(
+  memory: MemoryReader,
+  current: string,
+  only: Target | null,
+  text: string,
+): (Target & { related: SearchQuery["related"] })[] {
+  const own = (t: Target) => ({
+    ...t,
+    related: relatedFiles(loadIndex(path.join(t.root, CRANK_DIR)), text),
+  });
+  if (only !== null) return [own(only)];
+  const home = own({ name: "", root: current });
+  const linked = linkedProjects(memory)
+    .filter((l) => l.root !== current)
+    .map((l) => ({
+      ...l,
+      related: { seeds: pairedSeeds(memory, home.related.seeds, l.name), neighbours: [] },
+    }));
+  return [home, ...linked];
+}
+
+/** The owner's `pairedPaths` for the `--file` path, read from the current store or the owner's; [] when it will not open. */
+async function ownerPairs(
+  memory: MemoryReader,
+  current: string,
+  file: { root: string; rel: string },
+): Promise<{ project: string; path: string }[]> {
+  if (file.root === current) return memory.pairedPaths(file.rel, PAIRED_PATHS);
+  const r = await withReader(memoryPath(file.root), (m) => m.pairedPaths(file.rel, PAIRED_PATHS));
+  return Array.isArray(r) ? r : [];
+}
+
+/** A target's `--file` filter: the owner-relative path in the owner's store, else the paired paths in its project. */
+function targetFiles(
+  target: Target,
+  file: Scope["file"],
+  pairs: { project: string; path: string }[],
+): string[] | null {
+  if (file === null) return null;
+  if (target.root === file.root) return [file.rel];
+  const project = projectName(target.root);
+  return pairs.filter((p) => p.project === project).map((p) => p.path);
+}
+
+/**
+ * Each target store's hits (the current one's from `memory`, the others' that open), by fused score with
+ * ties to the current project, one per content hash, cut to the query's limit. A target whose `--file`
+ * filter holds no paths adds nothing.
  */
 async function federatedSearch(
   memory: MemoryReader,
-  root: string,
-  query: SearchQuery,
+  current: string,
+  scope: Scope,
+  base: Omit<SearchQuery, "files" | "related">,
 ): Promise<StoreHit[]> {
-  const hits = storeHits(memory, "", root, query);
-  for (const linked of linkedProjects(memory)) {
-    if (linked.root === root) continue;
-    const seeds = pairedSeeds(memory, query.related.seeds, linked.name);
-    const linkedQuery = { ...query, related: { seeds, neighbours: [] } };
-    const r = await withReader(memoryPath(linked.root), (m) =>
-      storeHits(m, linked.name, linked.root, linkedQuery),
-    );
+  const pairs = scope.file === null ? [] : await ownerPairs(memory, current, scope.file);
+  const hits: StoreHit[] = [];
+  for (const target of searchTargets(memory, current, scope.only, base.text)) {
+    const files = targetFiles(target, scope.file, pairs);
+    if (files?.length === 0) continue;
+    const query = { ...base, files, related: target.related };
+    const r =
+      target.root === current
+        ? storeHits(memory, target.name, target.root, query)
+        : await withReader(memoryPath(target.root), (m) =>
+            storeHits(m, target.name, target.root, query),
+          );
     if (Array.isArray(r)) hits.push(...r);
   }
   // A stable sort keeps the current store's hits, listed first, ahead of equal scores.
   hits.sort((a, b) => b.score - a.score);
   const seen = new Set<string>();
-  return hits.filter((hit) => !seen.has(hit.hash) && seen.add(hit.hash)).slice(0, query.limit);
+  return hits.filter((hit) => !seen.has(hit.hash) && seen.add(hit.hash)).slice(0, base.limit);
 }
 
 type SearchEvent = Omit<Extract<UsageEvent, { channel: "search" }>, "ids">;
@@ -220,18 +308,13 @@ function parseHandles(args: string[]): Handle[] | null {
  * a handle naming the current project counts as `#<id>`. Null once an unknown name is printed.
  */
 function routeHandles(handles: Handle[], current: string): HandleStore[] | null {
-  const self = projectName(current);
   const stores = new Map<string, HandleStore>();
   for (const h of handles) {
-    const name = h.project === self ? "" : h.project;
-    const root = name === "" ? current : rootOfName(name);
-    if (root === null) {
-      console.error(`crank-mem: no project ${name}.`);
-      return null;
-    }
-    const store = stores.get(root) ?? { name, root, ids: [] };
+    const target = h.project === "" ? { name: "", root: current } : namedStore(h.project, current);
+    if (target === null) return null;
+    const store = stores.get(target.root) ?? { ...target, ids: [] };
     store.ids.push(h.id);
-    stores.set(root, store);
+    stores.set(target.root, store);
   }
   if (!stores.has(current)) stores.set(current, { name: "", root: current, ids: [] });
   return [...stores.values()];

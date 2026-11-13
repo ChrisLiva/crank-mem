@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import {
@@ -760,7 +761,7 @@ describe("cross-repo memory", () => {
         refs: [{ project: "storefront", path: "src/a.ts", kind: "modified" }],
       },
     ]);
-    seedMemory(ws.storefront, [{ title: "Front fact", filesRead: ["src/a.ts"] }]);
+    const [frontId] = seedMemory(ws.storefront, [{ title: "Front fact", filesRead: ["src/a.ts"] }]);
     const back = fromStorefront(payFile, "/u/.claude/projects/-sf/7a0c0002.jsonl");
     const backPair = sectionOf(
       additionalContext(back.stdout),
@@ -788,7 +789,64 @@ describe("cross-repo memory", () => {
     expect(additionalContext(next.stdout)).toStartWith(
       `Excerpt of \`${ws.payments}/.crank/cerebrum.md\`, project payments-api's memory;`,
     );
-  });
+
+    const [homeId] = seedMemory(ws.H, [{ title: "Home only note", filesRead: ["src/h.ts"] }], {
+      links: ["storefront"],
+    });
+    const lines = (cwd: string, args: string[]) =>
+      runCli(cwd, ["search", ...args], sessionless(ws))
+        .stdout.split("\n")
+        .filter(Boolean);
+    expect(lines(ws.H, ["Pay fact", "--project", "payments-api"])).toEqual([
+      expect.stringMatching(new RegExp(`^payments-api#${payFactId} .* Pay fact$`)),
+    ]);
+    expect(lines(ws.H, ["Home only note", "--project", "H"])).toEqual([
+      expect.stringMatching(new RegExp(`^#${homeId} .* Home only note$`)),
+    ]);
+    const nowhere = runCli(ws.H, ["search", "x", "--project", "nowhere"], sessionless(ws));
+    expect(nowhere).toMatchObject({
+      status: 1,
+      stdout: "",
+      stderr: "crank-mem: no project nowhere.\n",
+    });
+    const outside = runCli(os.tmpdir(), ["search", "x", "--project", "payments-api"], {
+      CRANK_HOME: ws.home,
+    });
+    expect([outside.status, outside.stderr]).toEqual([
+      1,
+      "crank-mem: not initialized here — run `crank-mem init` first.\n",
+    ]);
+
+    const line = (prefix: string, id: number | undefined, title: string) =>
+      expect.stringMatching(new RegExp(`^${prefix}#${id} .* ${title}$`));
+    const fromStore = lines(ws.storefront, ["fact", "--file", "src/a.ts"]);
+    expect(fromStore).toHaveLength(3);
+    expect(fromStore).toEqual(
+      expect.arrayContaining([
+        line("", storefrontId, "Storefront fact"),
+        line("", frontId, "Front fact"),
+        line("payments-api", payFactId, "Pay fact"),
+      ]),
+    );
+    const fromHome = lines(ws.H, ["fact", "--file", payFile]);
+    expect(fromHome).toContainEqual(line("storefront", storefrontId, "Storefront fact"));
+    expect(fromHome.filter((l) => l.startsWith("payments-api#"))).toEqual([]);
+    expect(lastLine(ws.H)).toMatchObject({ channel: "search", file: "src/pay.ts" });
+    const unowned = runCli(
+      ws.H,
+      ["search", "fact", "--file", path.join(ws.scratch, "a.ts")],
+      sessionless(ws),
+    );
+    expect([unowned.status, unowned.stdout]).toEqual([0, ""]);
+
+    const sessioned = { CRANK_HOME: ws.home, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "sess-2" };
+    expect(
+      runCli(ws.H, ["search", "Pay fact", "--project", "payments-api"], sessioned).status,
+    ).toBe(0);
+    const asked = { session: "sess-2", channel: "search", query: "Pay fact", file: null };
+    expect(lastLine(ws.payments)).toMatchObject({ ...asked, ids: [payFactId] });
+    expect(lastLine(ws.H)).toMatchObject({ ...asked, ids: [] });
+  }, 30_000);
 
   test("pair-reached history keeps 3 files and 5 lines each", () => {
     const ws = workspace();
