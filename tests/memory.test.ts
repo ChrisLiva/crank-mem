@@ -1030,4 +1030,74 @@ describe("search", () => {
     ]) as [number, number, number];
     expect(ids(memory.search(query({ text: "beta" })))).toEqual([strong, newer, older]);
   });
+
+  test("a hybrid query with no AND match keeps observations that match at least two content terms", async () => {
+    const memory = writable();
+    const [v, w, r, x, y, b, z] = seed(memory, [
+      obs({ title: "anchor row", narrative: "plain" }),
+      obs({ title: "walrus tusk", narrative: "plain" }),
+      obs({ title: "harbor retry", narrative: "plain" }),
+      obs({ title: "ivory comb", narrative: "carved" }),
+      obs({ title: "ivory comb", narrative: "plain" }),
+      obs({ type: "bugfix", title: "narwhal horn", narrative: "plain", filesRead: ["src/b.ts"] }),
+      obs({ title: "narwhal horn", narrative: "stale" }),
+    ]) as [number, number, number, number, number, number, number];
+    memory.appendDigest(digest("flag-z", null, P, { stale: [{ id: z, reason: "gone" }] }));
+    memory.putVectors("m1", [{ id: v, vector: vec(1, 0, 0) }]);
+    const hybrid = (text: string, over: Partial<SearchQuery> = {}) =>
+      ids(memory.search(query({ text, vector: { model: "m1", values: vec(1, 0, 0) }, ...over })));
+    expect(hybrid("walrus tusk zzzz")).toEqual([w, v]);
+    expect(hybrid("ivory comb carved")).toEqual([x, v]);
+    expect(hybrid("ivory comb carved zzzz")).toEqual([x, v, y]);
+    expect(hybrid("walrus zzzz")).toEqual([v]);
+    expect(hybrid("retry retries zzzz")).toEqual([r, v]);
+    expect(hybrid("the walrus")).toEqual([w, v]);
+    expect(hybrid("The? walrus")).toEqual([w, v]);
+    expect(hybrid("the -- walrus")).toEqual([w, v]);
+    expect(hybrid("Walrus walrus, zzzz")).toEqual([v]);
+    expect(hybrid("éwalrus walrus tusk")).toEqual([v]);
+    expect(hybrid("(walrus) tusk? zzzz")).toEqual([w, v]);
+    expect(hybrid("the of and")).toEqual([v]);
+    expect(hybrid("narwhal horn zzzz")).toEqual([b, v]);
+    expect(hybrid("narwhal horn zzzz", { type: "discovery" })).toEqual([v]);
+    expect(hybrid("narwhal horn zzzz", { files: ["src/b.ts"], stale: true })).toEqual([b]);
+    expect(hybrid("narwhal horn zzzz", { stale: true })).toEqual([z, v, b]);
+
+    await sleep(2);
+    const t2 = Date.now();
+    const [n] = seed(memory, [obs({ title: "newer anchor", narrative: "plain" })]) as [number];
+    memory.putVectors("m1", [{ id: n, vector: vec(0, 1, 0) }]);
+    expect(
+      ids(
+        memory.search(
+          query({ text: "walrus tusk zzzz", vector: { model: "m1", values: vec(0, 1, 0) } }),
+        ),
+      ),
+    ).toEqual([n, w, v]);
+    expect(hybrid("walrus tusk zzzz", { sinceMs: t2 })).toEqual([n]);
+
+    seed(
+      memory,
+      Array.from({ length: 55 }, (_, i) => obs({ title: `bulk pair ${i}`, narrative: "plain" })),
+    );
+    expect(hybrid("bulk pair zzzz", { limit: 100 }).length).toBe(52);
+  });
+
+  test("a hybrid partial match counts only the first 32 content terms", () => {
+    const memory = writable();
+    const [v, c] = seed(memory, [
+      obs({ title: "anchor row", narrative: "plain" }),
+      obs({ title: "omega kiwi", narrative: "plain" }),
+    ]) as [number, number];
+    memory.putVectors("m1", [{ id: v, vector: vec(1, 0, 0) }]);
+    const hybrid = (text: string) =>
+      ids(memory.search(query({ text, vector: { model: "m1", values: vec(1, 0, 0) } })));
+    const fill = (k: number) =>
+      Array.from({ length: k }, (_, i) => `f${String(i + 2).padStart(2, "0")}`).join(" ");
+    expect(hybrid(`kiwi ${fill(31)} omega`)).toEqual([v]);
+    expect(hybrid(`kiwi ${fill(30)} omega`)).toEqual([c, v]);
+    expect(hybrid(`the kiwi ${fill(30)} omega`)).toEqual([c, v]);
+    const words = Array.from({ length: 600 }, (_, i) => `g${String(i + 1).padStart(3, "0")}`);
+    expect(hybrid(words.join(" "))).toEqual([v]);
+  });
 });

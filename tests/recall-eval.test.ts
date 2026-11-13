@@ -18,8 +18,22 @@ function evalRun(cwd: string, args: string[]) {
   });
 }
 
+/** Every path under `root`, each file's bytes, so a run that writes, adds or removes a file changes it. */
+function snapshot(root: string): Record<string, Buffer | null> {
+  return Object.fromEntries(
+    fs
+      .readdirSync(root, { recursive: true })
+      .map(String)
+      .sort()
+      .map((name) => {
+        const file = path.join(root, name);
+        return [name, fs.statSync(file).isFile() ? fs.readFileSync(file) : null];
+      }),
+  );
+}
+
 describe("recall-eval", () => {
-  test("prints each query's recall@10 with and without the graph, then the means", () => {
+  test("prints each query's recall@10 with and without the graph, then the means, and writes nothing", () => {
     const root = initedCopy(FILES);
     seedMemory(root, [{ title: "kiwi fruit", narrative: "plain" }], { request: "kiwi" });
     seedMemory(
@@ -40,13 +54,15 @@ describe("recall-eval", () => {
       { request: "papaya" },
     );
     const expected =
+      "mode keyword\n" +
       "1 base@10 1.00 graph@10 1.00\n" +
       "2 base@10 0.00 graph@10 1.00\n" +
       "4 base@10 1.00 graph@10 1.00\n" +
       "5 base@10 1.00 graph@10 1.00\n" +
-      "base recall@5 0.75 recall@10 0.75\n" +
-      "graph recall@5 1.00 recall@10 1.00\n" +
+      "base recall@5 0.75 recall@10 0.75 mrr 0.75\n" +
+      "graph recall@5 1.00 recall@10 1.00 mrr 1.00\n" +
       "lost 0 of 4 queries\n";
+    const before = snapshot(root);
     for (const [cwd, args] of [
       [root, ["--root", root]],
       [path.join(root, "src"), []],
@@ -54,6 +70,7 @@ describe("recall-eval", () => {
       const run = evalRun(cwd, [...args]);
       expect({ status: run.status, stdout: run.stdout }).toEqual({ status: 0, stdout: expected });
     }
+    expect(snapshot(root)).toEqual(before);
   });
 
   test("lost counts the queries whose graph top 10 drops a relevant id the baseline holds", () => {
@@ -71,29 +88,70 @@ describe("recall-eval", () => {
     expect({ status: run.status, stdout: run.stdout }).toEqual({
       status: 0,
       stdout:
+        "mode keyword\n" +
         "1 base@10 0.00 graph@10 0.00\n" +
         "2 base@10 0.00 graph@10 0.00\n" +
         "3 base@10 1.00 graph@10 0.00\n" +
-        "base recall@5 0.00 recall@10 0.33\n" +
-        "graph recall@5 0.00 recall@10 0.00\n" +
+        "base recall@5 0.00 recall@10 0.33 mrr 0.03\n" +
+        "graph recall@5 0.00 recall@10 0.00 mrr 0.00\n" +
         "lost 1 of 3 queries\n",
     });
   });
 
-  test("writes nothing to the store, the anatomy or the usage log", () => {
+  test("replays a labelled set's questions, skipping stale and unknown ids, and writes nothing", () => {
     const root = initedCopy(FILES);
-    seedMemory(root, [{ title: "kiwi fruit", narrative: "plain" }], { request: "kiwi" });
-    const crank = path.join(root, ".crank");
-    const read = (name: string) => {
-      const file = path.join(crank, name);
-      return fs.existsSync(file) ? fs.readFileSync(file) : null;
-    };
-    const names = ["memory.db", "anatomy-index.json", "usage.jsonl"];
-    const before = names.map(read);
-    expect(before[0]).not.toBeNull();
-    expect(before[1]).not.toBeNull();
-    expect(evalRun(root, ["--root", root]).status).toBe(0);
-    expect(names.map(read)).toEqual(before);
+    seedMemory(
+      root,
+      [
+        { title: "kiwi fruit", narrative: "plain" },
+        { title: "kiwi jam", narrative: "plain" },
+      ],
+      { request: "r1" },
+    );
+    const [zebra] = seedMemory(root, [{ title: "zebra stripe", narrative: "plain" }], {
+      request: "r2",
+    });
+    seedMemory(root, [{ title: "mango ripe", narrative: "plain" }], {
+      request: "r3",
+      stale: [{ id: zebra!, reason: "gone" }],
+    });
+    fs.writeFileSync(
+      path.join(root, "set.jsonl"),
+      [
+        '{"id": 1, "query": "kiwi"}',
+        "   ",
+        '{"id": 2, "query": "kiwi"}',
+        '{"id": 2, "query": "melon"}',
+        '{"id": 3, "query": "zebra"}',
+        '{"id": 99, "query": "kiwi"}',
+        '{"id": 1, "query": "kiwi fruit", "note": "other keys are ignored"}',
+        '{"id": 2, "query": "kiwi jam"}',
+      ].join("\n") + "\n",
+    );
+    const expected =
+      "mode keyword\n" +
+      "1 base@10 1.00 graph@10 1.00\n" +
+      "2 base@10 1.00 graph@10 1.00\n" +
+      "2 base@10 0.00 graph@10 0.00\n" +
+      "1 base@10 1.00 graph@10 1.00\n" +
+      "2 base@10 1.00 graph@10 1.00\n" +
+      "base recall@5 0.80 recall@10 0.80 mrr 0.70\n" +
+      "graph recall@5 0.80 recall@10 0.80 mrr 0.70\n" +
+      "lost 0 of 5 queries\n" +
+      "skipped 2 of 7 questions\n";
+    const before = snapshot(root);
+    for (const [cwd, args] of [
+      [root, ["--root", root, "--set", "set.jsonl"]],
+      [path.join(root, "src"), ["--set", "../set.jsonl"]],
+    ] as const) {
+      const run = evalRun(cwd, [...args]);
+      expect({ status: run.status, stdout: run.stdout, stderr: run.stderr }).toEqual({
+        status: 0,
+        stdout: expected,
+        stderr: "",
+      });
+    }
+    expect(snapshot(root)).toEqual(before);
   });
 
   test("answers each store state and a bad root", () => {
@@ -134,10 +192,83 @@ describe("recall-eval", () => {
       stderr: "crank-mem: not initialized here — run `crank-mem init` first.\n",
     });
 
-    expect(outcome(evalRun(empty, ["--root"]))).toEqual({
+    const usage = {
       status: 1,
       stdout: "",
-      stderr: "recall-eval: usage: recall-eval.ts [--root <dir>]\n",
+      stderr: "recall-eval: usage: recall-eval.ts [--root <dir>] [--set <file>]\n",
+    };
+    expect(outcome(evalRun(empty, ["--root"]))).toEqual(usage);
+    expect(outcome(evalRun(empty, ["--set"]))).toEqual(usage);
+    expect(outcome(evalRun(tempDir("crank-noproj-"), ["--set"]))).toEqual(usage);
+
+    expect(outcome(evalRun(empty, ["--root", empty, "--set", "nope.jsonl"]))).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "recall-eval: cannot read nope.jsonl\n",
+    });
+    expect(outcome(evalRun(empty, ["--root", empty, "--set", empty]))).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: `recall-eval: cannot read ${empty}\n`,
+    });
+
+    const dir = tempDir("crank-bad-");
+    for (const line of [
+      "not json",
+      "[1]",
+      "null",
+      '"text"',
+      '{"id": 0, "query": "x"}',
+      '{"id": -1, "query": "x"}',
+      '{"id": 1.5, "query": "x"}',
+      '{"id": "1", "query": "x"}',
+      '{"query": "x"}',
+      '{"id": 1}',
+      '{"id": 1, "query": 7}',
+      '{"id": 1, "query": "   "}',
+    ]) {
+      fs.writeFileSync(path.join(dir, "bad.jsonl"), `\n${line}\n`);
+      expect(outcome(evalRun(dir, ["--root", empty, "--set", "bad.jsonl"]))).toEqual({
+        status: 1,
+        stdout: "",
+        stderr: "recall-eval: bad.jsonl:2: not a question\n",
+      });
+    }
+
+    const good = path.join(tempDir("crank-good-"), "good.jsonl");
+    fs.writeFileSync(good, '{"id": 1, "query": "x"}\n');
+    expect(outcome(evalRun(tempDir("crank-noproj-"), ["--set", "nope.jsonl"]))).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "crank-mem: not initialized here — run `crank-mem init` first.\n",
+    });
+    expect(outcome(evalRun(missing, ["--root", missing, "--set", "nope.jsonl"]))).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "recall-eval: cannot read nope.jsonl\n",
+    });
+    expect(outcome(evalRun(missing, ["--root", missing, "--set", good]))).toEqual({
+      status: 0,
+      stdout: "crank-mem: no memory exists yet.\n",
+      stderr: "",
+    });
+    expect(outcome(evalRun(unreadable, ["--root", unreadable, "--set", good]))).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "crank-mem: .crank/memory.db is not a readable database.\n",
+    });
+
+    expect(outcome(evalRun(empty, ["--root", empty, "--set", good]))).toEqual({
+      status: 0,
+      stdout: "no queries\nskipped 1 of 1 questions\n",
+      stderr: "",
+    });
+    const blank = path.join(tempDir("crank-blank-"), "blank.jsonl");
+    fs.writeFileSync(blank, "\n");
+    expect(outcome(evalRun(empty, ["--root", empty, "--set", blank]))).toEqual({
+      status: 0,
+      stdout: "no queries\nskipped 0 of 0 questions\n",
+      stderr: "",
     });
   });
 });

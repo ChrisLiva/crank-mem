@@ -6,10 +6,21 @@ import type { ObservationLine } from "./wire.ts";
 // Search fuses a keyword list, a vector list and a graph list by weighted reciprocal rank,
 // weight / (RRF_K + rank): 1 for the keyword and vector lists, GRAPH_WEIGHT for the graph list,
 // so a row only the graph list holds ranks below every row of the other two. Each list is cut
-// at LIST_DEPTH rows; equal scores go to the newest row.
+// at LIST_DEPTH rows; equal scores go to the newest row. The keyword list is the AND match of
+// every term. In hybrid mode, when no observation matches every term, it keeps observations
+// matching at least OR_MIN_TERMS of the query's first OR_MAX_TERMS content terms (stop words
+// and punctuation-only terms dropped, duplicates counted once); keyword-only mode falls back to
+// OR over every term.
 const RRF_K = 60;
 const GRAPH_WEIGHT = 0.3;
 const LIST_DEPTH = 50;
+const OR_MIN_TERMS = 2;
+const OR_MAX_TERMS = 32;
+const STOP_WORDS = new Set(
+  "a an and are as at be but by can did do does for from had has have how i if in into is it its me my not of on or our so that the their them then there these this to us was we were what when where which who why will with would you your".split(
+    " ",
+  ),
+);
 
 function newestFirst(a: ObservationLine, b: ObservationLine): number {
   return b.createdAtMs - a.createdAtMs || b.id - a.id;
@@ -24,6 +35,19 @@ function ftsQuery(text: string, joiner: " " | " OR "): string {
     .join(joiner);
 }
 
+/** The first spelling of each distinct content term (normal form not empty, not a stop word), at most OR_MAX_TERMS. */
+function contentTerms(text: string): string[] {
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const term of text.split(/\s+/)) {
+    const normal = term.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
+    if (!normal || STOP_WORDS.has(normal) || seen.has(normal)) continue;
+    seen.add(normal);
+    terms.push(term);
+  }
+  return terms.slice(0, OR_MAX_TERMS);
+}
+
 function dot(a: Float32Array, b: Float32Array): number {
   let sum = 0;
   for (let i = 0; i < Math.min(a.length, b.length); i++) sum += a[i]! * b[i]!;
@@ -36,18 +60,32 @@ export function search(
 ): ReturnType<Memory["search"]> {
   const { filters, params } = lineFilters(query);
   const where = filters.map((f) => ` AND ${f}`).join("");
-  const keyword = (joiner: " " | " OR "): ObservationLine[] => {
-    const match = ftsQuery(query.text, joiner);
+  const keyword = (
+    match: string,
+    restrict = { clause: "", params: [] as sqlite.SQLInputValue[] },
+  ): ObservationLine[] => {
     if (!match) return [];
     return all(
       db,
       `SELECT ${LINE_COLUMNS} FROM observations_fts JOIN observations o ON o.id = observations_fts.rowid
-         WHERE observations_fts MATCH ?${where}
+         WHERE observations_fts MATCH ?${restrict.clause}${where}
          ORDER BY bm25(observations_fts), o.created_at DESC, o.id DESC LIMIT ?`,
       match,
+      ...restrict.params,
       ...params,
       LIST_DEPTH,
     ).map(toLine);
+  };
+  // Rows matching at least `need` distinct content terms, one FTS arm per term, ranked by bm25 over their OR.
+  const partial = (): ObservationLine[] => {
+    const terms = contentTerms(query.text);
+    const arms = terms
+      .map(() => "SELECT rowid FROM observations_fts WHERE observations_fts MATCH ?")
+      .join(" UNION ALL ");
+    return keyword(ftsQuery(terms.join(" "), " OR "), {
+      clause: ` AND o.id IN (SELECT rowid FROM (${arms}) GROUP BY rowid HAVING count(*) >= ?)`,
+      params: [...terms.map((t) => ftsQuery(t, " ")), Math.min(OR_MIN_TERMS, terms.length)],
+    });
   };
   const linkedTo = (paths: string[]): string =>
     `o.id IN (SELECT observation_id FROM observation_files WHERE path IN (${paths.map(() => "?").join(", ")}))`;
@@ -66,11 +104,11 @@ export function search(
   };
   const lists: { rows: ObservationLine[]; weight: number }[] = [];
   const vector = query.vector;
+  const and = keyword(ftsQuery(query.text, " "));
   if (!vector || !hasVectors(db, vector.model)) {
-    const and = keyword(" ");
-    lists.push({ rows: and.length > 0 ? and : keyword(" OR "), weight: 1 });
+    lists.push({ rows: and.length > 0 ? and : keyword(ftsQuery(query.text, " OR ")), weight: 1 });
   } else {
-    lists.push({ rows: keyword(" "), weight: 1 });
+    lists.push({ rows: and.length > 0 ? and : partial(), weight: 1 });
     lists.push({
       rows: all(
         db,
