@@ -11,8 +11,9 @@ import {
   type HookPayload,
 } from "./lib/hook-io.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
-import { formatLine, memoryPath, withReader } from "./lib/memory.ts";
+import { formatLine, memoryPath, withReader, type MemoryReader } from "./lib/memory.ts";
 import { ownerOf, projectName } from "./lib/owner.ts";
+import { rootOfName } from "./lib/registry.ts";
 import { recordUntouched } from "./lib/untouched.ts";
 import { shellReadPaths } from "./lib/shell-reads.ts";
 import { transcriptStem } from "./lib/spool.ts";
@@ -23,9 +24,12 @@ import type { ObservationLine } from "./lib/wire.ts";
 // PostToolUse hook for Claude's Read and Bash, Claude Code only (ADR 0009).
 // When the agent reads a file memory has observations on, it adds that file's
 // newest lines from the store of the project that owns it, once per file per
-// agent per session. Every path exits 0.
+// agent per session. After a file's own section come up to 3 sections for the
+// other projects' files its observations cite, read from those projects' stores
+// and never marked seen. Every path exits 0.
 
 const HISTORY_LINES = 5;
+const PAIRED_FILES = 3;
 const MAX_BYTES = 1536;
 const SEP = "\n\n";
 
@@ -87,19 +91,60 @@ function resolveReads(cwd: string, paths: string[], session: string | null): Rea
   return [...reads.values()];
 }
 
+type Pair = { project: string; path: string };
+/** A file's lines, the other projects' files they cite, and the lines' dedupe keys. */
+type History = { lines: ObservationLine[]; pairs: Pair[]; hashes: Set<string> };
+type Histories = Map<string, Map<string, History>>;
+
+function historyOf(m: MemoryReader, rel: string): History {
+  const lines = m.fileHistory(rel, HISTORY_LINES);
+  if (lines.length === 0) return { lines, pairs: [], hashes: new Set() };
+  const hashes = new Set(m.contentHashes(lines.map((l) => l.id)).values());
+  return { lines, pairs: m.pairedPaths(rel, PAIRED_FILES), hashes };
+}
+
 /** Each store's history for its unseen reads; a store that does not open as "open" is absent. */
-async function fetchHistories(
-  reads: Read[],
-  isSeen: (r: Read) => boolean,
-): Promise<Map<string, Map<string, ObservationLine[]>>> {
-  const out = new Map<string, Map<string, ObservationLine[]>>();
+async function fetchHistories(reads: Read[], isSeen: (r: Read) => boolean): Promise<Histories> {
+  const out: Histories = new Map();
   for (const store of new Set(reads.map((r) => r.store))) {
     const rels = reads.filter((r) => r.store === store && !isSeen(r)).map((r) => r.rel);
     const got = await withReader(
       store,
-      (m) => new Map(rels.map((rel) => [rel, m.fileHistory(rel, HISTORY_LINES)])),
+      (m) => new Map(rels.map((rel) => [rel, historyOf(m, rel)])),
     );
     if (got instanceof Map) out.set(store, got);
+  }
+  return out;
+}
+
+/** A paired file's lines, each with its dedupe key. */
+type PairLine = { line: ObservationLine; hash: string | undefined };
+/** A paired project's store: its root and its paired files' lines; absent when its name or store does not resolve. */
+type PairStore = { root: string; store: string; files: Map<string, PairLine[]> };
+
+function pairLinesOf(m: MemoryReader, p: string): PairLine[] {
+  const lines = m.fileHistory(p, HISTORY_LINES);
+  const hashes = m.contentHashes(lines.map((l) => l.id));
+  return lines.map((line) => ({ line, hash: hashes.get(line.id) }));
+}
+
+/** Each paired project's store that resolves and opens as "open", keyed by project name. */
+async function fetchPairs(found: Histories): Promise<Map<string, PairStore>> {
+  const wanted = new Map<string, Set<string>>();
+  for (const history of found.values())
+    for (const h of history.values())
+      for (const p of h.pairs)
+        wanted.set(p.project, (wanted.get(p.project) ?? new Set()).add(p.path));
+  const out = new Map<string, PairStore>();
+  for (const [project, paths] of wanted) {
+    const root = rootOfName(project);
+    if (root === null) continue;
+    const store = memoryPath(root);
+    const files = await withReader(
+      store,
+      (m) => new Map([...paths].map((p) => [p, pairLinesOf(m, p)])),
+    );
+    if (files instanceof Map) out.set(project, { root, store, files });
   }
   return out;
 }
@@ -133,38 +178,80 @@ function section(read: Read, lines: ObservationLine[], handle: string): string {
 
 type Assembled = { sections: string[]; tallies: Map<string, Tally>; marked: Read[]; full: boolean };
 
-/** Adds `read`'s section unless it would pass MAX_BYTES, which cuts it and every unseen read after. */
-function show(out: Assembled, tally: Tally, read: Read, lines: ObservationLine[], handle: string) {
-  const text = section(read, lines, handle);
-  if (Buffer.byteLength([...out.sections, text].join(SEP)) > MAX_BYTES) {
+function tallyFor(out: Assembled, store: string, owner: string): Tally {
+  const tally = out.tallies.get(store) ?? tallyOf(owner);
+  out.tallies.set(store, tally);
+  return tally;
+}
+
+/** Adds `text` unless it would pass MAX_BYTES, which cuts it and every section after; true when added. */
+function place(out: Assembled, tally: Tally, rel: string, text: string, ids: number[]): boolean {
+  if (out.full || Buffer.byteLength([...out.sections, text].join(SEP)) > MAX_BYTES) {
     out.full = true;
-    tally.cut.push(read.rel);
-    return;
+    tally.cut.push(rel);
+    return false;
   }
   out.sections.push(text);
   tally.sections.push(text);
-  tally.shown.push({ path: read.rel, ids: lines.map((l) => l.id) });
-  out.marked.push(read);
+  tally.shown.push({ path: rel, ids });
+  return true;
+}
+
+function show(out: Assembled, tally: Tally, read: Read, lines: ObservationLine[], handle: string) {
+  const ids = lines.map((l) => l.id);
+  if (place(out, tally, read.rel, section(read, lines, handle), ids)) out.marked.push(read);
+}
+
+/** `read`'s paired files' sections, leaving out lines that repeat one of `read`'s; never marked seen. */
+function showPairs(
+  out: Assembled,
+  startStore: string,
+  read: Read,
+  own: History,
+  pairStores: Map<string, PairStore>,
+) {
+  for (const pair of own.pairs) {
+    const ps = pairStores.get(pair.project);
+    const lines = (ps?.files.get(pair.path) ?? [])
+      .filter((l) => l.hash === undefined || !own.hashes.has(l.hash))
+      .map((l) => l.line);
+    if (!ps || lines.length === 0) continue;
+    const handle = ps.store === startStore ? "" : pair.project;
+    const body = lines.map((l) => handle + formatLine(l)).join("\n");
+    const text = `History of ${pair.project}/${pair.path}, paired with ${read.rel}:\n${body}`;
+    place(
+      out,
+      tallyFor(out, ps.store, ps.root),
+      pair.path,
+      text,
+      lines.map((l) => l.id),
+    );
+  }
 }
 
 /** Sections in read order until the next would pass MAX_BYTES; every read of an open store lands in its tally. */
 function assemble(
   startStore: string,
   reads: Read[],
-  found: Map<string, Map<string, ObservationLine[]>>,
+  found: Histories,
+  pairStores: Map<string, PairStore>,
   isSeen: (r: Read) => boolean,
 ): Assembled {
   const out: Assembled = { sections: [], tallies: new Map(), marked: [], full: false };
   for (const read of reads) {
     const history = found.get(read.store);
     if (!history) continue;
-    const tally = out.tallies.get(read.store) ?? tallyOf(read.owner);
-    out.tallies.set(read.store, tally);
-    const lines = history.get(read.rel) ?? [];
-    if (isSeen(read)) tally.seen.push(read.rel);
-    else if (out.full) tally.cut.push(read.rel);
-    else if (lines.length === 0) tally.empty.push(read.rel);
-    else show(out, tally, read, lines, read.store === startStore ? "" : projectName(read.owner));
+    const tally = tallyFor(out, read.store, read.owner);
+    const own = history.get(read.rel);
+    if (isSeen(read) || !own) {
+      tally.seen.push(read.rel);
+      continue;
+    }
+    if (out.full) tally.cut.push(read.rel);
+    else if (own.lines.length === 0) tally.empty.push(read.rel);
+    else
+      show(out, tally, read, own.lines, read.store === startStore ? "" : projectName(read.owner));
+    showPairs(out, startStore, read, own, pairStores);
   }
   return out;
 }
@@ -222,7 +309,8 @@ async function main(): Promise<void> {
   if (found.size === 0) return;
 
   const startStore = memoryPath(ctx.root);
-  const { sections, tallies, marked } = assemble(startStore, reads, found, isSeen);
+  const pairStores = await fetchPairs(found);
+  const { sections, tallies, marked } = assemble(startStore, reads, found, pairStores, isSeen);
   const context = sections.join(SEP);
   if (sections.length > 0) {
     markSeen(
