@@ -9,7 +9,7 @@ import {
   claudeSessionStart,
 } from "./fixtures/payloads.ts";
 import { readUntouched } from "../src/hooks/lib/untouched.ts";
-import { localDate, memoryPath } from "../src/hooks/lib/memory.ts";
+import { localDate, MEMORY_NEWER_NOTE, memoryPath } from "../src/hooks/lib/memory.ts";
 import type { Digest } from "../src/daemon/digest-prompt.ts";
 import { okStream, okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
@@ -296,6 +296,62 @@ describe("cross-repo memory", () => {
     expect(hStart).toContain("- Search also covers linked projects: payments-api, storefront.");
     expect(hStart).toContain("Ship the storefront fix");
     expect(sessionStart(ws, ws.storefront)).not.toContain("Ship the storefront fix");
+
+    const cli = (args: string[]) => runCli(ws.H, args, { CRANK_HOME: ws.home });
+    const [cid] = searchIds(ws, ws.storefront, "Cross fix");
+    const cross = cli(["get", `storefront#${cid}`]);
+    expect(cross.status).toBe(0);
+    expect(lastLine(ws.storefront)).toMatchObject({
+      channel: "get",
+      requested: [cid],
+      found: [cid],
+    });
+    expect(lastLine(ws.H)).toMatchObject({ channel: "get", requested: [], found: [] });
+    expect(cross.stdout.split("\n")[0]).toMatch(
+      new RegExp(`^storefront#${cid} \\d{4}-\\d\\d-\\d\\d discovery Cross fix$`),
+    );
+    expect(cross.stdout).toContain("\nfiles read: src/a.ts\n");
+    expect(cli(["get", `#${hid}`, `storefront#${cid}`])).toMatchObject({
+      status: 0,
+      stdout: `${getText(ws, ws.H, hid)}\n${cross.stdout}`,
+    });
+    expect(cli(["get", `H#${hid}`]).stdout).toStartWith(`#${hid} `);
+
+    const around = cli(["timeline", `storefront#${cid}`]);
+    expect(around.status).toBe(0);
+    const aroundLines = around.stdout.split("\n").filter(Boolean);
+    expect(aroundLines.length).toBeGreaterThan(1);
+    for (const line of aroundLines) expect(line).toMatch(/^storefront#\d+ /);
+    expect(lastLine(ws.H)).toMatchObject({ channel: "timeline", anchor: cid, depth: 5, ids: [] });
+    expect(cli(["timeline", "storefront#999999"])).toMatchObject({
+      status: 1,
+      stderr: "crank-mem: no observation storefront#999999.\n",
+    });
+    expect(cli(["timeline", "H#99999"])).toMatchObject({
+      status: 1,
+      stderr: "crank-mem: no observation #99999.\n",
+    });
+
+    plantMemory(ws.payments, "newer");
+    const paymentsUsage = usageLines(ws.payments).length;
+    const hUsage = usageLines(ws.H).length;
+    expect(cli(["get", "payments-api#1"])).toMatchObject({
+      status: 1,
+      stdout: "",
+      stderr: "crank-mem: no observation found.\n",
+    });
+    expect(usageLines(ws.payments)).toHaveLength(paymentsUsage);
+    expect(usageLines(ws.H)).toHaveLength(hUsage + 1);
+    expect(lastLine(ws.H)).toMatchObject({ channel: "get", requested: [], found: [] });
+    expect(cli(["get", `#${hid}`, "payments-api#1"])).toMatchObject({
+      status: 0,
+      stdout: getText(ws, ws.H, hid),
+    });
+    expect(cli(["timeline", "payments-api#1"])).toMatchObject({
+      status: 1,
+      stdout: "",
+      stderr: MEMORY_NEWER_NOTE + "\n",
+    });
   }, 30_000);
 
   test("a stale flag may name the session's project by name", () => {

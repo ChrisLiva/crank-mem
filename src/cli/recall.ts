@@ -6,10 +6,13 @@ import {
   localDate,
   memoryPath,
   NO_MEMORY_NOTE,
+  parseHandle,
   withReader,
   type MemoryReader,
   type SearchQuery,
 } from "../hooks/lib/memory.ts";
+import { projectName } from "../hooks/lib/owner.ts";
+import { rootOfName } from "../hooks/lib/registry.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
 import { loadIndex } from "../hooks/lib/store.ts";
 import { cliActor, recordUsage } from "../hooks/lib/usage.ts";
@@ -133,32 +136,71 @@ export async function queryVector(
   }
 }
 
+type Handle = NonNullable<ReturnType<typeof parseHandle>>;
+
+/** A store the handles name: `name` prefixes its lines (`""` for the current project), `ids` in handle order. */
+type HandleStore = { name: string; root: string; ids: number[] };
+
+/** Every arg as a handle, or null when one is not a handle. */
+function parseHandles(args: string[]): Handle[] | null {
+  const handles = args.map(parseHandle);
+  return handles.every((h) => h !== null) ? (handles as Handle[]) : null;
+}
+
+/**
+ * The stores the handles name, in the order they first appear, then the current project when no handle names it;
+ * a handle naming the current project counts as `#<id>`. Null once an unknown name is printed.
+ */
+function routeHandles(handles: Handle[], current: string): HandleStore[] | null {
+  const self = projectName(current);
+  const stores = new Map<string, HandleStore>();
+  for (const h of handles) {
+    const name = h.project === self ? "" : h.project;
+    const root = name === "" ? current : rootOfName(name);
+    if (root === null) {
+      console.error(`crank-mem: no project ${name}.`);
+      return null;
+    }
+    const store = stores.get(root) ?? { name, root, ids: [] };
+    store.ids.push(h.id);
+    stores.set(root, store);
+  }
+  if (!stores.has(current)) stores.set(current, { name: "", root: current, ids: [] });
+  return [...stores.values()];
+}
+
 const DEFAULT_DEPTH = 5;
 const NUMBER = /^\d+$/;
 
 export async function timeline(args: string[]): Promise<number> {
   const { flags, rest } = parseArgs(args, COMMANDS.timeline.value);
-  const [id] = rest;
+  const handle = rest.length === 1 ? parseHandle(rest[0]!) : null;
   const depth = flags.depth ?? String(DEFAULT_DEPTH);
-  if (rest.length !== 1 || !NUMBER.test(id!) || typeof depth !== "string" || !NUMBER.test(depth)) {
+  if (handle === null || typeof depth !== "string" || !NUMBER.test(depth)) {
     console.error(COMMANDS.timeline.usage);
     return 1;
   }
   const project = openNearestProject();
   if (!project) return 1;
-  return withMemory(project.root, false, (memory) => {
-    const lines = memory.timeline(Number(id), Number(depth));
-    recordUsage(project.root, cliActor(), {
+  const [store] = routeHandles([handle], project.root) ?? [];
+  if (store === undefined) return 1;
+  const [anchor, span] = [handle.id, Number(depth)];
+  if (store.root !== project.root) {
+    recordUsage(project.root, cliActor(), { channel: "timeline", anchor, depth: span, ids: [] });
+  }
+  return withMemory(store.root, false, (memory) => {
+    const lines = memory.timeline(anchor, span);
+    recordUsage(store.root, cliActor(), {
       channel: "timeline",
-      anchor: Number(id),
-      depth: Number(depth),
+      anchor,
+      depth: span,
       ids: lines === null ? null : lines.map((line) => line.id),
     });
     if (lines === null) {
-      console.error(`crank-mem: no observation #${id}.`);
+      console.error(`crank-mem: no observation ${store.name}#${anchor}.`);
       return 1;
     }
-    for (const line of lines) console.log(formatLine(line));
+    for (const line of lines) console.log(store.name + formatLine(line));
     return 0;
   });
 }
@@ -181,25 +223,44 @@ function formatObservation(o: Observation): string {
 }
 
 export async function get(args: string[]): Promise<number> {
-  if (args.length === 0 || !args.every((arg) => NUMBER.test(arg))) {
+  const handles = parseHandles(args);
+  if (handles === null || handles.length === 0) {
     console.error(COMMANDS.get.usage);
     return 1;
   }
   const project = openNearestProject();
   if (!project) return 1;
-  return withMemory(project.root, false, (memory) => {
-    const requested = args.slice(0, MAX_GET).map(Number);
-    const found = memory.get(requested);
-    recordUsage(project.root, cliActor(), {
-      channel: "get",
-      requested,
-      found: found.map((o) => o.id),
-    });
-    if (found.length === 0) {
-      console.error("crank-mem: no observation found.");
-      return 1;
-    }
-    console.log(found.map(formatObservation).join("\n\n"));
-    return 0;
+  const stores = routeHandles(handles.slice(0, MAX_GET), project.root);
+  if (stores === null) return 1;
+  const blocks: string[] = [];
+  for (const store of stores) {
+    const found = await getFrom(store, project.root);
+    if (found === null) return 1;
+    blocks.push(...found.map((o) => store.name + formatObservation(o)));
+  }
+  if (blocks.length === 0) {
+    console.error("crank-mem: no observation found.");
+    return 1;
+  }
+  console.log(blocks.join("\n\n"));
+  return 0;
+}
+
+/** `store`'s observations of its ids, after its usage line; null once the current store's note is printed. */
+async function getFrom(store: HandleStore, current: string): Promise<Observation[] | null> {
+  const r =
+    store.ids.length === 0
+      ? []
+      : await withReader(memoryPath(store.root), (memory) => memory.get(store.ids));
+  if (!Array.isArray(r)) {
+    if (store.root !== current) return [];
+    console.error(r.note);
+    return null;
+  }
+  recordUsage(store.root, cliActor(), {
+    channel: "get",
+    requested: store.ids,
+    found: r.map((o) => o.id),
   });
+  return r;
 }

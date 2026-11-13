@@ -402,6 +402,34 @@ describe("get", () => {
       expect(run.stderr).toContain("Usage: crank-mem get <id...>");
     }
   });
+
+  test("an unknown project name exits 1", () => {
+    const root = initedCopy();
+    seedMemory(root, [{}]);
+    for (const command of ["get", "timeline"]) {
+      expect(runCli(root, [command, "nowhere#1"]), command).toMatchObject({
+        status: 1,
+        stdout: "",
+        stderr: "crank-mem: no project nowhere.\n",
+      });
+    }
+    const run = runCli(root, ["get", "#x"]);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("Usage: crank-mem get <id...>");
+  });
+
+  test("ids may carry a # prefix", () => {
+    const root = initedCopy();
+    const [id] = seedMemory(root, [{}]);
+    for (const command of ["get", "timeline"]) {
+      const bare = runCli(root, [command, String(id)]);
+      expect(bare.status, command).toBe(0);
+      expect(runCli(root, [command, `#${id}`]), command).toMatchObject({
+        status: 0,
+        stdout: bare.stdout,
+      });
+    }
+  });
 });
 
 describe("where the commands run", () => {
