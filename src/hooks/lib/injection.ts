@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { estimateProseTokens } from "./tokens.ts";
 import { parseBullets } from "./bullets.ts";
-import { citationCheck, storeLinks, type CitationCheck } from "./citations.ts";
+import { citationCheck, type CitationCheck } from "./citations.ts";
 import { SOURCE_EXTENSIONS } from "./scanner.ts";
 import { symbolsSupported } from "./symbols.ts";
 import { CEREBRUM_FILE } from "./cerebrum-files.ts";
@@ -542,7 +542,7 @@ export function subagentInjection(
     ? excerptOf(
         md,
         SUBAGENT_EXCERPT_BYTES,
-        citationCheck({ root, index: loadIndex(crankDir) }, { resolve: () => storeLinks(root) }),
+        citationCheck({ root, index: loadIndex(crankDir) }),
         true,
       ).text
     : "";

@@ -94,10 +94,10 @@ The probe ran twice with cwd at S, and once with cwd at the common parent of S a
   project root holds an entry of that name, so a bullet citing only linked projects is never
   sent as RECHECK.
 - A cross-repo bullet changes only through a proposal from a digest or through an audit.
-- The session-start and SubagentStart excerpts still tag such a citation, from the linked
-  project's anatomy read without writing it (`src/hooks/lib/citations.ts` → `citationCheck`,
-  under the `resolve` link policy), so the agent sees a cross-repo bullet that may be out of
-  date.
+- The session-start and SubagentStart excerpts still tag such a citation by checking the file
+  on disk in the linked project, placed through that project's anatomy, which is read and never
+  written (`src/hooks/lib/citations.ts` → `citationCheck`, under the `resolve` link policy), so
+  the agent sees a cross-repo bullet that may be out of date.
 
 ## Consequences
 

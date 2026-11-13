@@ -5,20 +5,7 @@ import * as path from "node:path";
 import { citationCheck, fileCitations, storeLinks } from "../src/hooks/lib/citations.ts";
 import { projectName } from "../src/hooks/lib/owner.ts";
 import { registerProject } from "../src/hooks/lib/registry.ts";
-import { type AnatomyIndex, type FileEntry } from "../src/hooks/lib/store.ts";
-import { inZone, makeCrankProject, plantMemory, seedMemory, ZONES } from "./helpers.ts";
-
-function idx(files: Record<string, Partial<FileEntry>>): AnatomyIndex {
-  const entries: Record<string, FileEntry> = {};
-  for (const [p, f] of Object.entries(files)) {
-    entries[p] = { description: "", tokens: 1, size: 1, mtimeMs: 0, ...f };
-  }
-  return {
-    version: 2,
-    files: entries,
-    meta: { lastScanned: null, fileCount: Object.keys(entries).length },
-  };
-}
+import { idx, inZone, makeCrankProject, plantMemory, seedMemory, ZONES } from "./helpers.ts";
 
 /** Writes a file whose mtime on disk is 2000 ms past the epoch. */
 function write(root: string, rel: string, text = "x\n"): void {
@@ -37,7 +24,10 @@ const HOME_INDEX = {
   "vendored/x.ts": { mtimeMs: 2000 },
 };
 
-/** A home root, a linked `pay` with an anatomy, a linked `broken` without one, and a counted `links`. */
+/**
+ * A home root, a linked `pay` with an anatomy, a linked `broken` without one, a linked `vendored`
+ * that home also holds as a directory, and a counted `links`.
+ */
 function fixture() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "crank-citations-"));
   const home = path.join(tmp, "home");

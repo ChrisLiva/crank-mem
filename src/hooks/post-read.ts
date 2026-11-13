@@ -13,7 +13,7 @@ import {
 import { CEREBRUM_FILE } from "./lib/cerebrum-files.ts";
 import { CRANK_DIR } from "./lib/config.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
-import { citationCheck, storeLinks } from "./lib/citations.ts";
+import { citationCheck } from "./lib/citations.ts";
 import { excerptOf, readCerebrum } from "./lib/injection.ts";
 import { formatLine, memoryPath, withReader, type MemoryReader } from "./lib/memory.ts";
 import { ownerOf, projectName } from "./lib/owner.ts";
@@ -321,10 +321,7 @@ function excerptBlock(
     `Recall there: \`crank-mem search --project ${name} <query>\`; its ids show as \`${name}#<id>\`.`;
   const used = Buffer.byteLength([...sections, head].join(SEP)) + SEP.length;
   const budget = Math.min(EXCERPT_BYTES, MAX_CALL_BYTES - 1 - used);
-  const check = citationCheck(
-    { root, index: loadIndex(crankDir) },
-    { resolve: () => storeLinks(root) },
-  );
+  const check = citationCheck({ root, index: loadIndex(crankDir) });
   const text = excerptOf(md, budget, check, true).text;
   return text ? { text: head + SEP + text, mark: CEREBRUM_MARK + root } : null;
 }

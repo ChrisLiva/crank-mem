@@ -6,9 +6,7 @@ import { memoryPath, openMemory } from "./memory.ts";
 import { linkedProjects } from "./registry.ts";
 import { loadIndex, type AnatomyIndex } from "./store.ts";
 
-// Which files a text cites are missing or modified: at home, or in a linked project when the link policy resolves them.
-
-/** The linked projects a checker may consult, listed only when a citation needs them. */
+/** The linked projects a checker may consult. */
 type Links = () => { name: string; root: string }[];
 
 export interface CitationCheck {
@@ -16,7 +14,6 @@ export interface CitationCheck {
   status(text: string, sinceMs: number | null): { missing: string[]; modified: string[] };
 }
 
-/** A project's anatomy, its files grouped by basename on the first lookup that needs them. */
 interface Anatomy {
   root: string;
   index: AnatomyIndex;
@@ -33,22 +30,19 @@ function anatomy(root: string, index: AnatomyIndex): Anatomy {
  * citation that resolves in it, none written.
  */
 interface LinkedAnatomies {
-  has(name: string): boolean;
-  get(name: string): Anatomy;
+  rootOf(name: string): string | undefined;
+  at(root: string): Anatomy;
 }
 
 function linkedAnatomies(links: Links): LinkedAnatomies {
   let roots: Map<string, string> | undefined;
   const anatomies = new Map<string, Anatomy>();
-  const rootOf = (name: string) =>
-    (roots ??= new Map(links().map((p) => [p.name, p.root]))).get(name);
   return {
-    has: (name) => rootOf(name) !== undefined,
-    get: (name) => {
-      let linked = anatomies.get(name);
+    rootOf: (name) => (roots ??= new Map(links().map((p) => [p.name, p.root]))).get(name),
+    at: (root) => {
+      let linked = anatomies.get(root);
       if (!linked) {
-        const root = rootOf(name)!;
-        anatomies.set(name, (linked = anatomy(root, loadIndex(path.join(root, CRANK_DIR)))));
+        anatomies.set(root, (linked = anatomy(root, loadIndex(path.join(root, CRANK_DIR)))));
       }
       return linked;
     },
@@ -68,11 +62,11 @@ function linkedAnatomies(links: Links): LinkedAnatomies {
  *
  * A citation whose first segment names a linked project, where `home.root` holds no entry of that
  * name, resolves in that project with the segment stripped under `resolve`, and is skipped under
- * `ignore`.
+ * `ignore`. The policy defaults to resolving the home store's links.
  */
 export function citationCheck(
   home: { root: string; index: AnatomyIndex },
-  linked: { resolve: Links } | { ignore: Links },
+  linked: { resolve: Links } | { ignore: Links } = { resolve: () => storeLinks(home.root) },
 ): CitationCheck {
   const resolve = "resolve" in linked;
   const anatomies = linkedAnatomies(resolve ? linked.resolve : linked.ignore);
@@ -95,7 +89,6 @@ export function citationCheck(
 /** A backticked file citation: a path or basename with an extension, then an optional `:line`. */
 const FILE_CITATION = /^([^\s*=:]+\.[A-Za-z]\w*)(?::\d+(?:-\d+)?)?$/;
 
-/** The index's files grouped by basename, for resolving a cited basename. */
 function basenameIndex(index: AnatomyIndex): Map<string, string[]> {
   const byName = new Map<string, string[]>();
   for (const rel of Object.keys(index.files)) {
@@ -115,26 +108,7 @@ function latestDateEnd(text: string): number | null {
   return latest;
 }
 
-/**
- * The linked project a citation's first segment names, or null. An entry of that name in `root`
- * keeps the citation in `root`.
- */
-function linkedPrefix(
-  rel: string,
-  root: string,
-  isLinked: (name: string) => boolean,
-): string | null {
-  const slash = rel.indexOf("/");
-  if (slash <= 0) return null;
-  const head = rel.slice(0, slash);
-  return !fs.existsSync(path.join(root, head)) && isLinked(head) ? head : null;
-}
-
-/**
- * One citation's status: modified past `cutoffMs`, missing, or null for neither. A citation whose
- * `linkedPrefix` names a linked project resolves in that project, the segment stripped, or under
- * the `ignore` policy is null.
- */
+/** An entry in `home.root` named like a linked project keeps the citation at home. */
 function resolveCitation(
   rel: string,
   home: Anatomy,
@@ -142,9 +116,12 @@ function resolveCitation(
   resolve: boolean,
   cutoffMs: number | null,
 ): "missing" | "modified" | null {
-  const head = linkedPrefix(rel, home.root, anatomies.has);
-  if (head === null) return resolveIn(rel, home, cutoffMs);
-  return resolve ? resolveIn(rel.slice(head.length + 1), anatomies.get(head), cutoffMs) : null;
+  const slash = rel.indexOf("/");
+  const head = rel.slice(0, Math.max(slash, 0));
+  const root =
+    head && !fs.existsSync(path.join(home.root, head)) ? anatomies.rootOf(head) : undefined;
+  if (root === undefined) return resolveIn(rel, home, cutoffMs);
+  return resolve ? resolveIn(rel.slice(slash + 1), anatomies.at(root), cutoffMs) : null;
 }
 
 function resolveIn(
@@ -161,7 +138,6 @@ function resolveIn(
   return cutoffMs !== null && mtimeMs > cutoffMs ? "modified" : null;
 }
 
-/** A file's mtime on disk, or null when nothing is there. */
 function diskMtime(file: string): number | null {
   try {
     return fs.statSync(file).mtimeMs;

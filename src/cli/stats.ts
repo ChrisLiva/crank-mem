@@ -4,12 +4,7 @@ import { openProject } from "./project.ts";
 import { loadIndex, INDEX_FILE, type AnatomyIndex } from "../hooks/lib/store.ts";
 import { walkProject } from "../hooks/lib/scanner.ts";
 import type { CrankConfig } from "../hooks/lib/config.ts";
-import {
-  citationCheck,
-  fileCitations,
-  storeLinks,
-  type CitationCheck,
-} from "../hooks/lib/citations.ts";
+import { citationCheck, fileCitations, type CitationCheck } from "../hooks/lib/citations.ts";
 import { readCerebrum, sessionStartInjection, type Excerpt } from "../hooks/lib/injection.ts";
 import { auditSkillInstalled, installedAtMs, lastAuditMs } from "../hooks/lib/cerebrum-files.ts";
 import { hasCrankHooks } from "./settings.ts";
@@ -62,7 +57,7 @@ function memoryLines(
     source: null,
     stalenessNote: null,
   });
-  const check = citationCheck({ root, index }, { resolve: () => storeLinks(root) });
+  const check = citationCheck({ root, index });
   const lines = e
     ? excerptRows(cerebrumMd, e, check)
     : [row("cerebrum", cerebrumMd === null ? "missing" : "empty")];
@@ -70,7 +65,6 @@ function memoryLines(
   return lines;
 }
 
-/** The excerpt's rows: bullets shown, prefs dropped, the oldest hidden bullet and cited paths. */
 function excerptRows(cerebrumMd: string | null, e: Excerpt, check: CitationCheck): string[] {
   // Only paths with a directory: a bare basename may live anywhere.
   const cited = [...new Set(fileCitations(cerebrumMd ?? "").filter((rel) => rel.includes("/")))];
