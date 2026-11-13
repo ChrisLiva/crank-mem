@@ -4,7 +4,7 @@ import { parseArgs, positive } from "../cli/args.ts";
 import { COMMANDS } from "../cli/commands.ts";
 import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
 import { CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
-import { memoryPaths } from "../hooks/lib/hook-io.ts";
+import { ownedPaths } from "../hooks/lib/hook-io.ts";
 import {
   memoryPath,
   openMemory,
@@ -197,14 +197,12 @@ function readCerebrum(root: string): string | null {
 }
 
 /** The installed projects other than the session's that own a kept path of the delta, by name. */
-function otherProjects(entry: SpoolEntry, paths: string[]): { name: string; root: string }[] {
-  const roots = new Set<string>();
-  for (const p of paths) {
-    const owner = ownerOf(path.resolve(entry.cwd, p));
-    if (owner.kind !== "unowned" && owner.root !== entry.projectRoot) roots.add(owner.root);
-  }
-  return [...roots]
-    .filter((root) => memoryPaths(root, entry.cwd, paths).length > 0)
+function otherProjects(
+  entry: SpoolEntry,
+  owned: Map<string, string[]>,
+): { name: string; root: string }[] {
+  return [...owned.keys()]
+    .filter((root) => root !== entry.projectRoot)
     .map((root) => ({ name: projectName(root), root }))
     .sort((a, b) => (a.name < b.name ? -1 : 1));
 }
@@ -221,7 +219,8 @@ async function digestContext(
   paths: string[],
 ): Promise<{ context: DigestContext; shown: Map<string, Shown> }> {
   const cerebrum = readCerebrum(entry.projectRoot);
-  const others = otherProjects(entry, paths);
+  const owned = ownedPaths(entry.cwd, paths);
+  const others = otherProjects(entry, owned);
   const projects =
     others.length === 0
       ? null
@@ -236,7 +235,7 @@ async function digestContext(
     for (const { id, type, title, narrative } of rows)
       existing.push({ handle: `${key}#${id}`, type, title, narrative });
   };
-  const files = (root: string) => memoryPaths(root, entry.cwd, paths);
+  const files = (root: string) => owned.get(root) ?? [];
   show("", entry.projectRoot, storeHistory(memory, files(entry.projectRoot), HISTORY_TOTAL));
   for (const { name, root } of others) {
     const left = HISTORY_TOTAL - existing.length;

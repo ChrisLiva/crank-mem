@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { memoryPaths } from "../src/hooks/lib/hook-io.ts";
+import { ownedPaths } from "../src/hooks/lib/hook-io.ts";
 import {
   git,
   gitCommit,
@@ -21,15 +21,16 @@ import {
 } from "../src/hooks/lib/memory.ts";
 import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
 
-describe("memoryPaths", () => {
+describe("ownedPaths", () => {
   test("keeps repo-relative, non-sensitive paths inside the root, deduped in input order", () => {
     const r = makeCrankProject({
       "src/a.ts": "export const a = 1;\n",
+      "src/b.ts": "export const b = 1;\n",
       "clones/u/y.ts": "export const y = 1;\n",
     });
     fs.mkdirSync(path.join(r, "clones/u/.git"));
     expect(
-      memoryPaths(r, path.join(r, "src"), [
+      ownedPaths(path.join(r, "src"), [
         "a.ts",
         path.join(r, "src/a.ts"),
         "/elsewhere/x.ts",
@@ -37,8 +38,11 @@ describe("memoryPaths", () => {
         r,
         path.join(r, "clones/u/y.ts"),
       ]),
-    ).toEqual(["src/a.ts"]);
-    expect(memoryPaths(r, r, [])).toEqual([]);
+    ).toEqual(new Map([[r, ["src/a.ts"]]]));
+    expect(ownedPaths(r, [])).toEqual(new Map());
+    expect(ownedPaths(r, ["src/b.ts", "src/a.ts", "src/b.ts"])).toEqual(
+      new Map([[r, ["src/b.ts", "src/a.ts"]]]),
+    );
   });
 });
 

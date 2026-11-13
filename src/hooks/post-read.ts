@@ -6,7 +6,7 @@ import {
   projectContext,
   emitAdditionalContext,
   runAdvisoryHook,
-  memoryPaths,
+  ownedPath,
   isProjectFile,
   type HookPayload,
 } from "./lib/hook-io.ts";
@@ -84,7 +84,7 @@ function resolveRead(cwd: string, p: string, unowned: Set<string>): Read | null 
     if (owner.repo !== null) unowned.add(owner.repo);
     return null;
   }
-  const rel = memoryPaths(owner.root, cwd, [p])[0];
+  const rel = ownedPath(owner)?.rel;
   const tree = owner.kind === "worktree" ? owner.top : owner.root;
   if (rel === undefined || !isProjectFile(tree, rel)) return null;
   return { abs: path.join(tree, rel), rel, tree, owner: owner.root, store: memoryPath(owner.root) };

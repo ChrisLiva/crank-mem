@@ -86,17 +86,17 @@ export function repoRelative(root: string, cwd: string, p: string): string | nul
   return r.split(path.sep).join("/");
 }
 
-/**
- * The paths memory may record: those the ownership walk gives to `root` (not the root itself),
- * `/`-separated, never sensitive, deduped in input order.
- */
-export function memoryPaths(root: string, cwd: string, paths: string[]): string[] {
-  const kept = new Set<string>();
+/** The paths `ownedPath` gives each owning root, roots and paths in first-cited order, each path once. */
+export function ownedPaths(cwd: string, paths: string[]): Map<string, string[]> {
+  const byRoot = new Map<string, string[]>();
   for (const p of paths) {
     const owned = ownedPath(ownerOf(path.resolve(cwd, p)));
-    if (owned !== null && owned.root === root) kept.add(owned.rel);
+    if (owned === null) continue;
+    const rels = byRoot.get(owned.root);
+    if (rels === undefined) byRoot.set(owned.root, [owned.rel]);
+    else if (!rels.includes(owned.rel)) rels.push(owned.rel);
   }
-  return [...kept];
+  return byRoot;
 }
 
 /**

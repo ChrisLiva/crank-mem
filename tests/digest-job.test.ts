@@ -613,6 +613,7 @@ describe("digest context across projects", () => {
     ]);
     const [sid] = seedMemory(storefront, [
       { title: "Front row", narrative: "About front.", filesRead: ["src/a.ts"] },
+      { title: "Front h row", narrative: "About h.", filesRead: ["src/h.ts"] },
     ]);
     const transcript = readingTranscript([
       path.join(H, "src/h.ts"),
@@ -634,6 +635,7 @@ describe("digest context across projects", () => {
     );
     expect(stdin).toContain(`\n#${hid} discovery Home row: About home.\n`);
     expect(stdin).toContain(`\nstorefront#${sid} discovery Front row: About front.\n`);
+    expect(stdin).not.toContain("Front h row");
     const argv = fake.calls()[0]!.argv;
     const system = argv[argv.indexOf("--system-prompt") + 1]!;
     expect(system).toContain(
@@ -656,6 +658,19 @@ describe("digest context across projects", () => {
     });
     expect(alone.job.status).toBe(0);
     expect(alone.fake.calls()[0]!.stdin).not.toContain("[PROJECTS]");
+
+    const rootOnly = journey(H, [{ lines: okStream(SAMPLE_DIGEST) }], {
+      home: ws.home,
+      cwd: H,
+      stem: "s3",
+      transcript: readingTranscript([
+        path.join(H, "src/h.ts"),
+        storefront,
+        path.join(storefront, ".env"),
+      ]),
+    });
+    expect(rootOnly.job.status).toBe(0);
+    expect(rootOnly.fake.calls()[0]!.stdin).not.toContain("[PROJECTS]");
   }, 30_000);
 
   test("existing observations cap at 30 across stores", () => {
