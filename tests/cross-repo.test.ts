@@ -838,6 +838,17 @@ describe("cross-repo memory", () => {
       sessionless(ws),
     );
     expect([unowned.status, unowned.stdout]).toEqual([0, ""]);
+    expect(lines(ws.H, ["fact", "--project", "payments-api", "--file", storefrontFile])).toEqual([
+      line("payments-api", payFactId, "Pay fact"),
+    ]);
+    const ownerOnly = lines(ws.H, ["fact", "--project", "storefront", "--file", storefrontFile]);
+    expect(ownerOnly).toHaveLength(2);
+    expect(ownerOnly).toEqual(
+      expect.arrayContaining([
+        line("storefront", storefrontId, "Storefront fact"),
+        line("storefront", frontId, "Front fact"),
+      ]),
+    );
 
     const sessioned = { CRANK_HOME: ws.home, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "sess-2" };
     expect(
