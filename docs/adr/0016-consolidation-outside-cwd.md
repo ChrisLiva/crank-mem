@@ -88,14 +88,16 @@ The probe ran twice with cwd at S, and once with cwd at the common parent of S a
 ## Decision
 
 - Consolidation keeps cwd at the project root (ADR 0011) and never checks another project's
-  files. `src/daemon/consolidate.ts` → `dueBullets` drops every missing or modified citation
-  whose first path segment names a linked project, unless the project root holds an entry of
-  that name, before its due test, so a bullet citing only linked projects is never sent as
-  RECHECK.
+  files. `src/daemon/consolidate.ts` → `dueBullets` counts citations through a checker built
+  with the `ignore` link policy (`src/hooks/lib/citations.ts` → `citationCheck`), which
+  leaves out every citation whose first path segment names a linked project, unless the
+  project root holds an entry of that name, so a bullet citing only linked projects is never
+  sent as RECHECK.
 - A cross-repo bullet changes only through a proposal from a digest or through an audit.
 - The session-start and SubagentStart excerpts still tag such a citation, from the linked
-  project's anatomy read without writing it (`src/hooks/lib/injection.ts` →
-  `resolveCitation`), so the agent sees a cross-repo bullet that may be out of date.
+  project's anatomy read without writing it (`src/hooks/lib/citations.ts` → `citationCheck`,
+  under the `resolve` link policy), so the agent sees a cross-repo bullet that may be out of
+  date.
 
 ## Consequences
 

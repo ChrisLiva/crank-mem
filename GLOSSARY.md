@@ -18,6 +18,10 @@ _Avoid_: Target project, repo, workspace
 One working copy of a project, such as a teammate's copy or a linked worktree.
 _Avoid_: Clone, copy, worktree
 
+**Linked project**:
+Another installed project that this project's store names, so recall and citations reach it.
+_Avoid_: Linked repo, related project
+
 **Clone**:
 The copy of the crank-mem repository made by `git clone` and run from its own directory, used for development.
 _Avoid_: Install, source, checkout
@@ -127,6 +131,10 @@ _Avoid_: Memory (unqualified), fact, note
 **Excerpt**:
 The part of the cerebrum that an injection carries when the whole does not fit.
 _Avoid_: Summary, slice
+
+**Citation**:
+A file path or basename in backticks inside a bullet, which the excerpt checks against the anatomy.
+_Avoid_: Reference, file link
 
 **Cerebrum archive**:
 The record of bullets that consolidation removed or replaced, each with its reason.
