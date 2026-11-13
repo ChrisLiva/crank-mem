@@ -75,7 +75,6 @@ export function installedStores(): Store[] {
   return [...byDir.values()];
 }
 
-/** Each installed store's roots by its name (`owner.ts` → `projectName`), newest first. */
 function rootsByName(): Map<string, string[]> {
   const byName = new Map<string, string[]>();
   const newestFirst = installedStores().sort((a, b) => b.addedAtMs - a.addedAtMs);
@@ -91,7 +90,6 @@ export function rootsOfName(name: string): string[] {
   return rootsByName().get(name) ?? [];
 }
 
-/** The root of the store named `name`, the newest among several; else null. */
 export function rootOfName(name: string): string | null {
   return rootsOfName(name)[0] ?? null;
 }

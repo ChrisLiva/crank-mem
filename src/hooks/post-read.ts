@@ -27,10 +27,10 @@ import type { ObservationLine } from "./lib/wire.ts";
 // PostToolUse hook for Claude's Read and Bash, Claude Code only (ADR 0009).
 // When the agent reads a file memory has observations on, it adds that file's
 // newest lines from the store of the project that owns it, once per file per
-// agent per session. After a file's own section come up to 3 sections for the
-// other projects' files its observations cite, read from those projects' stores
-// and never marked seen. Last, once per project per agent per session, comes
-// the cerebrum excerpt of the first read's owner other than the start project.
+// agent per session. After a file's own section come up to PAIRED_FILES sections
+// for the other projects' files its observations cite, read from those projects'
+// stores and never marked seen. Last comes at most one other project's cerebrum
+// excerpt (`excerptBlock`), once per project per agent per session.
 // Every path exits 0.
 
 const HISTORY_LINES = 5;
@@ -134,7 +134,7 @@ async function fetchHistories(reads: Read[], isSeen: (r: Read) => boolean): Prom
   return out;
 }
 
-/** A paired project's store: its root and its paired files' lines; absent when its name or store does not resolve. */
+/** A paired project's store: its root and its paired files' lines. */
 type PairStore = { root: string; store: string; files: Map<string, PairLine[]> };
 
 /** Each paired project's store that resolves and opens as "open", keyed by project name. */

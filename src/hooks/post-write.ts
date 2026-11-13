@@ -31,16 +31,14 @@ import { hookActor } from "./lib/usage.ts";
 // Exit 0 on every path.
 
 interface WriteOp {
-  /** The owning project's root. */
   root: string;
   relPath: string;
   deleted: boolean;
 }
 
 // Why a write produced nothing to index. Only `no-path` and `unhandled-tool`
-// mean something is wrong (a payload or matcher mismatch — ADR 0003); the
-// others (`outside-root`, `crank-internal`, `worktree`, `owner-root`) are the
-// everyday shape of editing outside any index.
+// mean something is wrong (a payload or matcher mismatch — ADR 0003); every
+// other reason is the everyday shape of editing outside any index.
 type SkipReason =
   | "no-path"
   | "unhandled-tool"
@@ -113,7 +111,6 @@ function toWriteOps(payload: HookPayload, at: Session): WriteScan {
   return { ops: [], skip: { reason: "unhandled-tool" } };
 }
 
-/** Drop `rel`'s entry; true when there was one. */
 function dropEntry(index: AnatomyIndex, rel: string): boolean {
   if (!index.files[rel]) return false;
   delete index.files[rel];
@@ -161,8 +158,9 @@ type Start = { root: string; config: CrankConfig };
 
 /**
  * Commit `ops` into the anatomy of the project at `root` under its lock. The start project's
- * own anatomy is written as before; another is written only at an equal index version, so a
- * newer or older crank-mem's index is never rebuilt from nothing. A failure stays with its owner.
+ * own anatomy is written at any index version; another is written only at an equal index
+ * version, so a newer or older crank-mem's index is never rebuilt from nothing. A failure stays
+ * with its owner.
  */
 function commitOwner(start: Start, root: string, ops: WriteOp[], tool: string | null): void {
   const own = root === start.root;

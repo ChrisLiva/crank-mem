@@ -113,11 +113,9 @@ function copiesByOwner(
 }
 
 /**
- * The entry project's share (summary, its observations, including those without an owned file, its proposals and
- * stale flags, links to each other project an observation modifies, and fallbacks for the observations only other
- * projects' files cite) and one share per other project that gets
- * an observation copy, a proposal or a stale flag, by project name. A proposal goes to the listed project its
- * `project` names, else to the entry; a stale flag goes to the store whose shown row its handle names.
+ * The entry project's share and one share per other project that gets an observation copy, a proposal or a
+ * stale flag, by project name. A proposal goes to the listed project its `project` names, else to the entry; a
+ * stale flag goes to the store whose shown row its handle names.
  */
 export function route(
   output: Digest,

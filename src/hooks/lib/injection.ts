@@ -115,7 +115,6 @@ const RECENT_MEMORY_MAX_BYTES = 1536;
 /** Observations read for the recent memory section, before the byte cap. */
 const RECENT_MEMORY_ROWS = 50;
 
-/** The recall pointer, followed by the linked projects search also covers when there are any. */
 function recallBullets(linked: string[]): string[] {
   return linked.length
     ? [RECALL_BULLET, `- Search also covers linked projects: ${linked.join(", ")}.`]
@@ -156,7 +155,6 @@ export interface InjectionSources {
   codex?: boolean;
   /** Project root; when set, the excerpt tags cited files that vanished or changed. */
   projectRoot?: string;
-  /** Linked projects' anatomies, by name, for citations that start with a linked project's name. */
   linked?: LinkedAnatomies;
   /** Digests run for this session, so recall applies with no store yet. Absent: false. */
   running?: boolean;
@@ -169,7 +167,6 @@ type Recall =
       status: "open";
       nextSteps: string | null;
       recent: ObservationLine[];
-      /** The store's links that resolve to an installed project, sorted by name. */
       linked: { name: string; root: string }[];
     }
   | { status: "missing" | "older" | "newer" | "unreadable" };
@@ -351,11 +348,13 @@ function shedOne(state: ExcerptState, balanced: boolean): void {
 export interface CitedFiles {
   index: AnatomyIndex;
   root: string;
-  /** Linked projects by name: a citation whose first segment names one resolves in it. */
   linked?: LinkedAnatomies;
 }
 
-/** A linked project's anatomy by its name, or undefined when no linked project has that name. */
+/**
+ * A linked project's anatomy by its name, or undefined when no linked project has that name; a
+ * citation whose first segment names one resolves in it.
+ */
 type LinkedAnatomies = (
   name: string,
 ) => { index: AnatomyIndex; root: string; byName: Map<string, string[]> } | undefined;
@@ -705,7 +704,7 @@ export function citationSources(crankDir: string, root: string): CitedFiles {
   return { index: loadIndex(crankDir), root, linked: linkedAnatomies(() => storeLinks(root)) };
 }
 
-/** The store's links that resolve to an installed project; none when the store cannot be read. */
+/** `registry.ts` → `linkedProjects` of the store; none when the store cannot be read. */
 function storeLinks(root: string): { name: string; root: string }[] {
   const opened = openMemory(memoryPath(root), "read");
   if (opened.status !== "open") return [];

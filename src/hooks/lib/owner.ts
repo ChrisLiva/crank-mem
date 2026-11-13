@@ -3,7 +3,6 @@ import * as path from "node:path";
 import { CONFIG_FILE, CRANK_DIR, readJsonObject } from "./config.ts";
 
 // Who owns a path: the nearest boundary above it, on path text alone (no symlinks, no git spawn).
-// An installed project, a linked worktree of one, or a git repo that is not installed.
 
 export type Owner =
   | { kind: "project"; root: string; rel: string }
@@ -18,12 +17,10 @@ type Stop =
 
 const stops = new Map<string, Stop | null>();
 
-/** Whether `dir` holds a crank-mem install (`.crank/config.json`). */
 export function isInstalled(dir: string): boolean {
   return fs.existsSync(path.join(dir, CRANK_DIR, CONFIG_FILE));
 }
 
-/** The `.git` entry at `dir`: "dir", the text of a `.git` file, or null when absent or unreadable. */
 function gitEntry(dir: string): "dir" | { file: string } | null {
   const dotGit = path.join(dir, ".git");
   try {

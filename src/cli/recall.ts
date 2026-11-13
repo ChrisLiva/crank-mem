@@ -119,9 +119,9 @@ type SearchRequest = {
 };
 
 /**
- * Run the search on the scope's store and print its hits. `--project` searches the named store alone,
- * so the current store need not open; the current project always gets its usage line, even when the
- * named store will not open.
+ * Run the search on the scope's stores and print the fused hits. `--project` searches the named store
+ * alone, so the current store need not open; the current project always gets its usage line, even when
+ * the named store will not open.
  */
 async function runSearch(current: string, scope: Scope, req: SearchRequest): Promise<number> {
   const { text, sinceMs, stale } = req;
@@ -158,7 +158,7 @@ async function runSearch(current: string, scope: Scope, req: SearchRequest): Pro
   return status;
 }
 
-/** One store's search hit: `name` prefixes its line (`""` for the current project), `hash` is its dedupe key. */
+/** One store's search hit: `hash` is its dedupe key. */
 type StoreHit = { name: string; root: string; line: ObservationLine; score: number; hash: string };
 
 function storeHits(
@@ -179,7 +179,6 @@ function storeHits(
 
 const PAIRED_PATHS = 50;
 
-/** The paths in `project` that `pairedPaths` on the current store gives for each of its seeds, deduped. */
 function pairedSeeds(memory: MemoryReader, seeds: string[], project: string): string[] {
   const paths = new Set<string>();
   for (const seed of seeds) {
@@ -343,10 +342,9 @@ export async function queryVector(
 
 type Handle = NonNullable<ReturnType<typeof parseHandle>>;
 
-/** A store the handles name: `name` prefixes its lines (`""` for the current project), `ids` in handle order. */
+/** A store the handles name: `ids` in handle order. */
 type HandleStore = { name: string; root: string; ids: number[] };
 
-/** Every arg as a handle, or null when one is not a handle. */
 function parseHandles(args: string[]): Handle[] | null {
   const handles = args.map(parseHandle);
   return handles.every((h): h is Handle => h !== null) ? handles : null;

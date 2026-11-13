@@ -197,9 +197,8 @@ function otherProjects(
 
 /**
  * Cerebrum's body, the touched projects (session's first, the rest by name; null when no other project is touched),
- * and the newest non-stale rows about the delta's files from each project's store in that order: HISTORY_PER_FILE
- * per file in first-touched order, each row once, HISTORY_TOTAL across all stores. `shown` holds one entry per
- * listed project ("" for the session's), or only "" without [PROJECTS].
+ * and each project's `storeHistory` rows in that order, HISTORY_TOTAL across all stores. `shown` holds one entry
+ * per listed project ("" for the session's), or only "" without [PROJECTS].
  */
 async function digestContext(
   memory: Memory,
@@ -328,12 +327,10 @@ function openAndWrite(share: Share, base: ShareBase): Memory | "held" | null {
   }
 }
 
-/** A thrown error's `code`, such as ERR_SQLITE_ERROR or EACCES, or its message when it has none. */
 function errorCode(err: unknown): string {
   return (err as NodeJS.ErrnoException | null)?.code ?? errorMessage(err);
 }
 
-/** The one stderr line for a share that was not written. */
 function shareSkipped(root: string, reason: string): void {
   console.error(`crank-mem: share for ${projectName(root)} skipped (${reason}).`);
 }

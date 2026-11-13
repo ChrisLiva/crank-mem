@@ -36,7 +36,7 @@ const newestFirst = (a: UntouchedRepo, b: UntouchedRepo) => b.lastSeenMs - a.las
 
 /**
  * Note a read or write of each of `seen` now, from `session` when known, in one write under the list's lock;
- * keeps the 50 newest repos and 20 sessions each.
+ * keeps the MAX_REPOS newest repos and MAX_SESSIONS sessions each.
  */
 export function recordUntouched(seen: Iterable<string>, session: string | null): void {
   const sighted = new Set(seen);
@@ -63,11 +63,12 @@ export function recordUntouched(seen: Iterable<string>, session: string | null):
       UNTOUCHED_LOCK_FILE,
     );
   } catch {
-    // An unwritable crank home or a held lock loses the sightings; the next read or write of the repo records it.
+    // An unwritable crank home loses the sightings, as a held lock (withLock's null) does; the next
+    // read or write of the repo records it.
   }
 }
 
-/** The repos seen in the last 30 days that still have no install, newest first. */
+/** The repos seen within MAX_AGE_MS that still have no install, newest first. */
 export function readUntouched(): UntouchedRepo[] {
   const cutoff = Date.now() - MAX_AGE_MS;
   return readRepos()
