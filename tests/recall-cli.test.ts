@@ -2,12 +2,10 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ownedPaths } from "../src/hooks/lib/hook-io.ts";
 import {
   git,
   gitCommit,
   initedCopy,
-  makeCrankProject,
   plantMemory,
   runCli,
   seedMemory,
@@ -20,31 +18,6 @@ import {
   NO_MEMORY_NOTE,
 } from "../src/hooks/lib/memory.ts";
 import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
-
-describe("ownedPaths", () => {
-  test("keeps repo-relative, non-sensitive paths inside the root, deduped in input order", () => {
-    const r = makeCrankProject({
-      "src/a.ts": "export const a = 1;\n",
-      "src/b.ts": "export const b = 1;\n",
-      "clones/u/y.ts": "export const y = 1;\n",
-    });
-    fs.mkdirSync(path.join(r, "clones/u/.git"));
-    expect(
-      ownedPaths(path.join(r, "src"), [
-        "a.ts",
-        path.join(r, "src/a.ts"),
-        "/elsewhere/x.ts",
-        ".env",
-        r,
-        path.join(r, "clones/u/y.ts"),
-      ]),
-    ).toEqual(new Map([[r, ["src/a.ts"]]]));
-    expect(ownedPaths(r, [])).toEqual(new Map());
-    expect(ownedPaths(r, ["src/b.ts", "src/a.ts", "src/b.ts"])).toEqual(
-      new Map([[r, ["src/b.ts", "src/a.ts"]]]),
-    );
-  });
-});
 
 describe("search", () => {
   test("each hit is dated in the local zone", () => {

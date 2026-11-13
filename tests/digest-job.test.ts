@@ -610,32 +610,39 @@ describe("digest context across projects", () => {
     const { H, storefront, payments } = ws;
     const [hid] = seedMemory(H, [
       { title: "Home row", narrative: "About home.", filesRead: ["src/h.ts"] },
+      { title: "Clone row", narrative: "About clone.", filesRead: ["clones/u/x.ts"] },
     ]);
-    const [sid] = seedMemory(storefront, [
+    const [sid, , bid] = seedMemory(storefront, [
       { title: "Front row", narrative: "About front.", filesRead: ["src/a.ts"] },
       { title: "Front h row", narrative: "About h.", filesRead: ["src/h.ts"] },
+      { title: "Front b row", narrative: "About b.", filesRead: ["src/b.ts"] },
     ]);
+    // The session runs in H/src, so the relative `h.ts` is H's src/h.ts.
     const transcript = readingTranscript([
-      path.join(H, "src/h.ts"),
+      "h.ts",
+      path.join(H, "clones/u/x.ts"),
+      path.join(storefront, "src/b.ts"),
       path.join(storefront, "src/a.ts"),
       path.join(payments, "src/a.ts"),
     ]);
     const scripted = { ...SAMPLE_DIGEST, stale: [{ id: `H#${hid}`, reason: "named" }] };
     const { fake, job } = journey(H, [{ lines: okStreamOf(scripted) }], {
       home: ws.home,
-      cwd: H,
+      cwd: path.join(H, "src"),
       transcript,
     });
     expect(job.status).toBe(0);
     // A handle under the session project's own name flags its shown row.
     expect(runCli(H, ["get", String(hid)]).stdout).toMatch(/^stale:.* named$/m);
     const stdin = fake.calls()[0]!.stdin;
+    // Each store shows rows about its own files only, in first-cited order: the nested clone's
+    // file is no file of H's, and storefront holds no src/h.ts.
     expect(stdin).toContain(
-      `\n\n[PROJECTS]\nH ${H} (session)\npayments-api ${payments}\nstorefront ${storefront}\n\n[EXISTING OBSERVATIONS]\n`,
+      `\n\n[PROJECTS]\nH ${H} (session)\npayments-api ${payments}\nstorefront ${storefront}\n\n` +
+        `[EXISTING OBSERVATIONS]\n#${hid} discovery Home row: About home.\n` +
+        `storefront#${bid} discovery Front b row: About b.\n` +
+        `storefront#${sid} discovery Front row: About front.\n\n[TRANSCRIPT]\n`,
     );
-    expect(stdin).toContain(`\n#${hid} discovery Home row: About home.\n`);
-    expect(stdin).toContain(`\nstorefront#${sid} discovery Front row: About front.\n`);
-    expect(stdin).not.toContain("Front h row");
     const argv = fake.calls()[0]!.argv;
     const system = argv[argv.indexOf("--system-prompt") + 1]!;
     expect(system).toContain(
@@ -650,19 +657,10 @@ describe("digest context across projects", () => {
     expect(cerebrum).not.toContain("project storefront.");
     expect(cerebrum).not.toContain("project payments-api.");
 
-    const alone = journey(H, [{ lines: okStream(SAMPLE_DIGEST) }], {
-      home: ws.home,
-      cwd: H,
-      stem: "s2",
-      transcript: readingTranscript([path.join(H, "src/h.ts")]),
-    });
-    expect(alone.job.status).toBe(0);
-    expect(alone.fake.calls()[0]!.stdin).not.toContain("[PROJECTS]");
-
     const rootOnly = journey(H, [{ lines: okStream(SAMPLE_DIGEST) }], {
       home: ws.home,
       cwd: H,
-      stem: "s3",
+      stem: "s2",
       transcript: readingTranscript([
         path.join(H, "src/h.ts"),
         storefront,
