@@ -8,6 +8,7 @@ import {
   type CrankConfig,
 } from "./config.ts";
 import { enableDebug, flushDebug } from "./debug.ts";
+import { toPosix } from "./indexable.ts";
 import { ownerOf, type Owner } from "./owner.ts";
 
 // Hook I/O helpers. Hooks are advisory-only: they must never fail the tool
@@ -104,7 +105,7 @@ export function memoryPaths(root: string, cwd: string, paths: string[]): string[
  */
 export function ownedPath(owner: Owner): { root: string; rel: string } | null {
   if (owner.kind === "unowned" || !owner.rel) return null;
-  const rel = owner.rel.split(path.sep).join("/");
+  const rel = toPosix(owner.rel);
   return isSensitiveFile(path.posix.basename(rel)) ? null : { root: owner.root, rel };
 }
 

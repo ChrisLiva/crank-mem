@@ -12,6 +12,7 @@ import {
   type MemoryReader,
   type SearchQuery,
 } from "../hooks/lib/memory.ts";
+import { toPosix } from "../hooks/lib/indexable.ts";
 import { ownerOf, projectName } from "../hooks/lib/owner.ts";
 import { linkedProjects, rootOfName } from "../hooks/lib/registry.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
@@ -176,7 +177,7 @@ function searchScope(
   // A sensitive path still searches: the store holds none, and its usage line records it as null.
   const owner = ownerOf(path.resolve(process.cwd(), file));
   if (owner.kind === "unowned" || !owner.rel) return 0;
-  return { only, file: { root: owner.root, rel: owner.rel.split(path.sep).join("/") } };
+  return { only, file: { root: owner.root, rel: toPosix(owner.rel) } };
 }
 
 /** The store `name` names, the current project as `""`; null once the unknown name is printed. */

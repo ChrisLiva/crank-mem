@@ -19,6 +19,7 @@ import { indexFile } from "./lib/scanner.ts";
 import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { parseApplyPatch } from "./lib/apply-patch.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
+import { toPosix } from "./lib/indexable.ts";
 import { ownerOf } from "./lib/owner.ts";
 import { recordUntouched } from "./lib/untouched.ts";
 import { hookActor } from "./lib/usage.ts";
@@ -70,7 +71,7 @@ function classifyPath(at: Session, p: string): PathClass {
   }
   // A linked worktree shares its main checkout's anatomy, which describes the main's files.
   if (owner.kind === "worktree") return { skip: { reason: "worktree", dir: path.dirname(abs) } };
-  const r = owner.rel.split(path.sep).join("/");
+  const r = toPosix(owner.rel);
   if (!r) return { skip: { reason: "owner-root", dir: owner.root } };
   // Writes under .crank/ (cerebrum.md above all) are never indexable, so
   // resolving them costs an index lock to learn nothing. Answer here instead.

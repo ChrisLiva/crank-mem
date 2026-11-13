@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isSensitiveFile } from "../hooks/lib/config.ts";
+import { toPosix } from "../hooks/lib/indexable.ts";
 import { ownerOf } from "../hooks/lib/owner.ts";
 import { cliActor, recordUsage, type CodeOutcome } from "../hooks/lib/usage.ts";
 import { parseArgs, stringFlag } from "./args.ts";
@@ -254,7 +255,7 @@ async function readTarget(file: string): Promise<Target | null> {
     console.error(`crank-mem: ${file} is outside every installed project.`);
     return null;
   }
-  const at = { root: owner.root, path: owner.rel.split(path.sep).join("/") };
+  const at = { root: owner.root, path: toPosix(owner.rel) };
   const refuse = (reason: string, outcome: Exclude<CodeOutcome, "ok">): Target => {
     console.error(`crank-mem: ${reason}`);
     return { ...at, outcome };
