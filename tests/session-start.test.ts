@@ -833,14 +833,18 @@ describe("linked projects (black-box)", () => {
     const ws = workspace();
     seedMemory(ws.H, [], { links: ["payments-api"] });
     injectIn(ws.payments, ws.home);
+    const bySuffix = "- **Pay suffix**: see `payments-api/a.ts` (2020-01-01).";
     const bullet = "- **Pay**: see `payments-api/src/a.ts` (2020-01-01).";
-    fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bullet}\n`);
+    fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bySuffix}\n${bullet}\n`);
     const linkedIndex = path.join(ws.payments, ".crank/anatomy-index.json");
     const before = fs.readFileSync(linkedIndex);
 
     const ctx = injectIn(ws.H, ws.home);
     expect(ctx).toContain(
       `${bullet} [cited file modified after this note; check: payments-api/src/a.ts]`,
+    );
+    expect(ctx).toContain(
+      `${bySuffix} [cited file modified after this note; check: payments-api/a.ts]`,
     );
     expect(ctx).not.toContain("[cited file missing");
     expect(fs.readFileSync(linkedIndex).equals(before)).toBe(true);

@@ -356,24 +356,29 @@ export interface CitedFiles {
 }
 
 /** A linked project's anatomy by its name, or undefined when no linked project has that name. */
-type LinkedAnatomies = (name: string) => { index: AnatomyIndex; root: string } | undefined;
+type LinkedAnatomies = (
+  name: string,
+) => { index: AnatomyIndex; root: string; byName: Map<string, string[]> } | undefined;
 
-/** Linked projects' anatomies: `projects` listed on the first lookup, each anatomy read on its first, none written. */
+/**
+ * Linked projects' anatomies: `projects` listed on the first lookup, each anatomy read and its
+ * basename map built on its first, none written.
+ */
 function linkedAnatomies(projects: () => { name: string; root: string }[]): LinkedAnatomies {
   let roots: Map<string, string> | undefined;
-  const indexes = new Map<string, AnatomyIndex>();
+  const indexes = new Map<string, NonNullable<ReturnType<LinkedAnatomies>>>();
   return (name) => {
     roots ??= new Map(projects().map((p) => [p.name, p.root]));
     const root = roots.get(name);
     if (root === undefined) return undefined;
-    let index = indexes.get(name);
-    if (!index) indexes.set(name, (index = loadIndex(path.join(root, CRANK_DIR))));
-    return { index, root };
+    let linked = indexes.get(name);
+    if (!linked) {
+      const index = loadIndex(path.join(root, CRANK_DIR));
+      indexes.set(name, (linked = { index, root, byName: basenameIndex(index) }));
+    }
+    return linked;
   };
 }
-
-/** Basename maps of linked anatomies, built once per index. */
-const linkedNames = new WeakMap<AnatomyIndex, Map<string, string[]>>();
 
 /** A backticked file citation: a path or basename with an extension, then an optional `:line`. */
 const FILE_CITATION = /^([^\s*=:]+\.[A-Za-z]\w*)(?::\d+(?:-\d+)?)?$/;
@@ -454,9 +459,7 @@ function resolveCitation(
   const head = linkedPrefix(rel, cited.root, (name) => cited.linked?.(name) !== undefined);
   const linked = head === null ? undefined : cited.linked?.(head);
   if (!linked) return resolveIn(rel, cited, byName, cutoffMs);
-  let names = linkedNames.get(linked.index);
-  if (!names) linkedNames.set(linked.index, (names = basenameIndex(linked.index)));
-  return resolveIn(rel.slice(head!.length + 1), linked, names, cutoffMs);
+  return resolveIn(rel.slice(head!.length + 1), linked, linked.byName, cutoffMs);
 }
 
 function resolveIn(
