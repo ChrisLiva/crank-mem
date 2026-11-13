@@ -7,10 +7,9 @@ import { CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
 import { ownedPaths } from "../hooks/lib/hook-io.ts";
 import { readCerebrum } from "../hooks/lib/injection.ts";
 import {
-  memoryPath,
-  openMemory,
+  openStoreForWrite,
+  readStore,
   samePosition,
-  withReader,
   type DigestInput,
   type Memory,
   type MemoryReader,
@@ -64,7 +63,7 @@ export async function run(args: string[]): Promise<number> {
   const timeoutMs = positive(flags["run-timeout-ms"], RUN_TIMEOUT_MS);
   const everyMs = positive(flags["consolidate-every-ms"], CONSOLIDATE_EVERY_MS);
 
-  const opened = openMemory(memoryPath(entry.projectRoot), "write");
+  const opened = openStoreForWrite(entry.projectRoot);
   if (opened.status !== "open") return 1;
   const memory = opened.memory;
   try {
@@ -227,10 +226,8 @@ async function digestContext(
   show("", entry.projectRoot, storeHistory(memory, files(entry.projectRoot), HISTORY_TOTAL));
   for (const { name, root } of others) {
     const left = HISTORY_TOTAL - existing.length;
-    const rows = await withReader(memoryPath(root), (reader) =>
-      storeHistory(reader, files(root), left),
-    );
-    show(name, root, Array.isArray(rows) ? rows : []);
+    const rows = await readStore(root, (reader) => storeHistory(reader, files(root), left));
+    show(name, root, rows.status === "open" ? rows.value : []);
   }
   return { context: { cerebrum, projects, existing }, shown };
 }
@@ -309,7 +306,7 @@ function openAndWrite(share: Share, base: ShareBase): Memory | "held" | null {
   let memory: Memory | undefined;
   let kept = false;
   try {
-    const opened = openMemory(memoryPath(share.root), "write");
+    const opened = openStoreForWrite(share.root);
     if (opened.status === "newer") return null;
     if (opened.status !== "open") {
       shareSkipped(share.root, opened.status);
