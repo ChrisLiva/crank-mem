@@ -63,7 +63,7 @@ export type ConsolidationRow = {
 };
 
 /** Whether memory.db opened for reading, or why not. */
-type StoreStatus = "open" | "missing" | "older" | "newer" | "unreadable";
+export type StoreStatus = "open" | "missing" | "older" | "newer" | "unreadable";
 
 export type Tone = "ok" | "warn" | "bad" | "off";
 
@@ -121,13 +121,27 @@ export type UpdateStatus = {
   behind: Array<{ root: string; name: string; vendored: string }>;
 };
 
-const STORE_FIX = {
-  missing: { text: "The first digest creates it." },
-  older: { text: "memory.db predates this version.", command: "crank-mem upgrade" },
-  newer: { text: "memory.db is newer than this version.", command: "crank-mem upgrade" },
+/** What each store status that is not "open" reads as: `note` on the CLI, hooks and dashboard routes, `state` in the `stats` memory row, `fix` in `projectStatus`. */
+export const STORE_TEXT = {
+  missing: {
+    note: "crank-mem: no memory exists yet.",
+    state: "none yet",
+    fix: { text: "The first digest creates it." },
+  },
+  older: {
+    note: "crank-mem: memory.db predates this version; run `crank-mem upgrade`.",
+    state: "older than this version; run crank-mem upgrade",
+    fix: { text: "memory.db predates this version.", command: "crank-mem upgrade" },
+  },
+  newer: {
+    note: "crank-mem: memory.db is newer than this version; run `crank-mem upgrade`.",
+    state: "newer than this version; run crank-mem upgrade",
+    fix: { text: "memory.db is newer than this version.", command: "crank-mem upgrade" },
+  },
   unreadable: {
-    text: "memory.db is not a readable database.",
-    command: "crank-mem restore-memory",
+    note: "crank-mem: .crank/memory.db is not a readable database.",
+    state: "unreadable",
+    fix: { text: "memory.db is not a readable database.", command: "crank-mem restore-memory" },
   },
 } as const;
 
@@ -159,7 +173,7 @@ export function projectStatus(h: Omit<HealthSummary, "status">): Status {
     return {
       tone: h.store === "missing" ? "off" : "bad",
       label: h.store === "missing" ? "No memory yet" : "Store needs a look",
-      fix: STORE_FIX[h.store],
+      fix: STORE_TEXT[h.store].fix,
     };
   if (!h.daemonAlive && h.spool.waiting > 0)
     return {

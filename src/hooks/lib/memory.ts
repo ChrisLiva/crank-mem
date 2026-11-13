@@ -18,7 +18,9 @@ import type {
   ProposalRow,
   ProposalState,
   StaleRow,
+  StoreStatus,
 } from "./wire.ts";
+import { STORE_TEXT } from "./wire.ts";
 
 // The memory store: <project>/.crank/memory.db, one SQLite file per project
 // holding digests and their observations. node:sqlite loads through
@@ -28,19 +30,17 @@ import type {
 export { samePosition } from "./memory-write.ts";
 
 export const MEMORY_FILE = "memory.db";
-export const MEMORY_OLDER_NOTE =
-  "crank-mem: memory.db predates this version; run `crank-mem upgrade`.";
-export const MEMORY_NEWER_NOTE =
-  "crank-mem: memory.db is newer than this version; run `crank-mem upgrade`.";
-export const MEMORY_UNREADABLE_NOTE = "crank-mem: .crank/memory.db is not a readable database.";
-export const NO_MEMORY_NOTE = "crank-mem: no memory exists yet.";
+export const MEMORY_OLDER_NOTE = STORE_TEXT.older.note;
+export const MEMORY_NEWER_NOTE = STORE_TEXT.newer.note;
+export const MEMORY_UNREADABLE_NOTE = STORE_TEXT.unreadable.note;
+export const NO_MEMORY_NOTE = STORE_TEXT.missing.note;
 export type MemoryReader = Omit<
   Memory,
   "appendDigest" | "recordRejection" | "putVectors" | "recordConsolidation" | "maintain"
 >;
 export type MemoryRead =
   | { status: "open"; memory: MemoryReader }
-  | { status: "missing" | "older" | "newer" | "unreadable" };
+  | { status: Exclude<StoreStatus, "open"> };
 /** migratedFrom: the version the open migrated from (0 for a fresh store), null when it applied no step. */
 export type MemoryWrite =
   | { status: "open"; memory: Memory; migratedFrom: number | null }
@@ -266,20 +266,13 @@ function writerAt(db: sqlite.DatabaseSync, file: string, v: number): MemoryWrite
   return { status: "open", memory: createMemory(db, file), migratedFrom: from };
 }
 
-const READ_NOTES: Record<Exclude<MemoryRead["status"], "open">, string> = {
-  missing: NO_MEMORY_NOTE,
-  older: MEMORY_OLDER_NOTE,
-  newer: MEMORY_NEWER_NOTE,
-  unreadable: MEMORY_UNREADABLE_NOTE,
-};
-
 /** `fn`'s answer over the store, opened read-only and closed after; a store that does not open answers its note. */
 export async function withReader<T>(
   file: string,
   fn: (memory: MemoryReader) => T | Promise<T>,
 ): Promise<T | { note: string }> {
   const opened = openMemory(file, "read");
-  if (opened.status !== "open") return { note: READ_NOTES[opened.status] };
+  if (opened.status !== "open") return { note: STORE_TEXT[opened.status].note };
   try {
     return await fn(opened.memory);
   } finally {

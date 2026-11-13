@@ -20,7 +20,7 @@ import { digestGate, type DigestGate } from "./spool.ts";
 import { CRANK_DIR, type CrankConfig } from "./config.ts";
 import { loadIndex, type AnatomyIndex } from "./store.ts";
 import type { UsageEvent } from "./usage.ts";
-import type { ObservationLine } from "./wire.ts";
+import type { ObservationLine, StoreStatus } from "./wire.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
 // file map, the code pointer, and the recall pointer when recallApplies) → staleness/drift/
@@ -169,7 +169,7 @@ type Recall =
       recent: ObservationLine[];
       linked: { name: string; root: string }[];
     }
-  | { status: "missing" | "older" | "newer" | "unreadable" };
+  | { status: Exclude<StoreStatus, "open"> };
 
 /** The recall bullet shows with a readable store, and while digests run with none yet, since they will fill it. */
 function recallApplies(running: boolean, status: Recall["status"]): boolean {
