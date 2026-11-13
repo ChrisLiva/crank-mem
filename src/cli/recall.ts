@@ -304,7 +304,7 @@ type HandleStore = { name: string; root: string; ids: number[] };
 /** Every arg as a handle, or null when one is not a handle. */
 function parseHandles(args: string[]): Handle[] | null {
   const handles = args.map(parseHandle);
-  return handles.every((h) => h !== null) ? (handles as Handle[]) : null;
+  return handles.every((h): h is Handle => h !== null) ? handles : null;
 }
 
 /**
