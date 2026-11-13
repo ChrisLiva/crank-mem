@@ -857,6 +857,38 @@ describe("cross-repo memory", () => {
     const asked = { session: "sess-2", channel: "search", query: "Pay fact", file: null };
     expect(lastLine(ws.payments)).toMatchObject({ ...asked, ids: [payFactId] });
     expect(lastLine(ws.H)).toMatchObject({ ...asked, ids: [] });
+
+    fs.writeFileSync(paymentsFile, "export function charge() {}\n");
+    const homeLines = usageLines(ws.H).length;
+    const fromH = runCli(ws.H, ["outline", paymentsFile], sessionless(ws));
+    expect(fromH.status).toBe(0);
+    expect(fromH.stdout).toContain("charge");
+    expect(lastLine(ws.payments)).toMatchObject({ channel: "outline", path: "src/a.ts" });
+    expect(usageLines(ws.H)).toHaveLength(homeLines);
+    const stores = [ws.H, ws.storefront, ws.payments];
+    const usageText = () =>
+      stores.map((r) => fs.readFileSync(path.join(r, ".crank/usage.jsonl"), "utf-8"));
+    const textBefore = usageText();
+    const scratchFile = path.join(ws.scratch, "a.ts");
+    expect(runCli(ws.H, ["outline", scratchFile], sessionless(ws))).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: `crank-mem: ${scratchFile} is outside every installed project.\n`,
+    });
+    expect(usageText()).toEqual(textBefore);
+    expect(fs.existsSync(path.join(ws.scratch, ".crank"))).toBe(false);
+    expect(runCli(os.tmpdir(), ["outline", paymentsFile], sessionless(ws)).status).toBe(0);
+    const unfolded = runCli(ws.H, ["unfold", paymentsFile, "charge"], sessionless(ws));
+    expect(unfolded.status).toBe(0);
+    expect(unfolded.stdout).toContain("export function charge");
+
+    const worktreeFile = path.join(ws.worktree, "src/a.ts");
+    fs.writeFileSync(worktreeFile, "export function refund() {}\n");
+    const fromWorktree = runCli(ws.H, ["outline", worktreeFile], sessionless(ws));
+    expect(fromWorktree.status).toBe(0);
+    expect(fromWorktree.stdout).toContain("refund");
+    expect(fromWorktree.stdout).not.toContain("charge");
+    expect(lastLine(ws.payments)).toMatchObject({ channel: "outline", path: "src/a.ts" });
   }, 30_000);
 
   test("pair-reached history keeps 3 files and 5 lines each", () => {

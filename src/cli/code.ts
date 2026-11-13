@@ -1,12 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isSensitiveFile } from "../hooks/lib/config.ts";
-import { repoRelative } from "../hooks/lib/hook-io.ts";
+import { ownerOf } from "../hooks/lib/owner.ts";
 import { cliActor, recordUsage, type CodeOutcome } from "../hooks/lib/usage.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { codeSymbols, grammarFor, type CodeSymbol } from "./code-symbols.ts";
 import { COMMANDS } from "./commands.ts";
-import { openNearestProject } from "./project.ts";
 
 const NOT_INSTALLED = "the code reader is not installed — run `crank-mem setup`.";
 
@@ -240,26 +239,30 @@ function matchLines(lines: string[], s: CodeSymbol): string {
   return out;
 }
 
-type Target = { root: string; path: string | null } & (
+type Target = { root: string; path: string } & (
   | { outcome: "ok"; text: string; symbols: CodeSymbol[] }
   | { outcome: Exclude<CodeOutcome, "ok"> }
 );
 
 /**
  * The file's text and symbols, or the refusal it took after printing why crank-mem refuses to
- * read it. Null only when no project is found.
+ * read it. Null, after printing why, when no installed project owns the file.
  */
 async function readTarget(file: string): Promise<Target | null> {
-  const project = openNearestProject();
-  if (project === null) return null;
-  const at = { root: project.root, path: repoRelative(project.root, process.cwd(), file) };
+  const owner = ownerOf(path.resolve(process.cwd(), file));
+  if (owner.kind === "unowned") {
+    console.error(`crank-mem: ${file} is outside every installed project.`);
+    return null;
+  }
+  const at = { root: owner.root, path: owner.rel.split(path.sep).join("/") };
   const refuse = (reason: string, outcome: Exclude<CodeOutcome, "ok">): Target => {
     console.error(`crank-mem: ${reason}`);
     return { ...at, outcome };
   };
   const cannotRead = (e: unknown): Target =>
     refuse(`cannot read ${file} (${(e as NodeJS.ErrnoException).code}).`, "refused");
-  const real = checkedPath(file, at, refuse, cannotRead);
+  const within = owner.kind === "worktree" ? owner.top : owner.root;
+  const real = checkedPath(file, within, refuse, cannotRead);
   if (typeof real !== "string") return real;
   const grammar = grammarFor(file);
   if (grammar === null) {
@@ -281,24 +284,19 @@ async function readTarget(file: string): Promise<Target | null> {
 }
 
 /**
- * `file`'s real path once it passes the outside, existence and sensitive checks, in that order,
- * or the refusal the first failing check took.
+ * `file`'s real path once it passes the existence, outside (real path under `within`'s) and
+ * sensitive checks, in that order, or the refusal the first failing check took.
  */
 function checkedPath(
   file: string,
-  at: { root: string; path: string | null },
+  within: string,
   refuse: (reason: string, outcome: Exclude<CodeOutcome, "ok">) => Target,
   cannotRead: (e: unknown) => Target,
 ): string | Target {
   const outsideLine = `${file} is outside this project.`;
   const abs = path.resolve(process.cwd(), file);
-  const realRoot = fs.realpathSync(at.root);
-  const within = (p: string) => p === realRoot || p.startsWith(realRoot + path.sep);
-  if (at.path === null) {
-    let anc = abs;
-    while (!fs.existsSync(anc)) anc = path.dirname(anc);
-    if (!within(fs.realpathSync(anc))) return refuse(outsideLine, "refused");
-  }
+  const realRoot = fs.realpathSync(within);
+  const inside = (p: string) => p === realRoot || p.startsWith(realRoot + path.sep);
   let real: string;
   try {
     real = fs.realpathSync(abs);
@@ -307,7 +305,7 @@ function checkedPath(
       ? refuse(`no file ${file}.`, "not-found")
       : cannotRead(e);
   }
-  if (!within(real)) return refuse(outsideLine, "refused");
+  if (!inside(real)) return refuse(outsideLine, "refused");
   if (isSensitiveFile(path.basename(abs)) || isSensitiveFile(path.basename(real))) {
     return refuse(`${file} is a sensitive file; crank-mem does not read it.`, "refused");
   }

@@ -462,16 +462,20 @@ describe("where the commands run", () => {
 
   test("outside any project each command prints the init hint and exits 1", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-recall-bare-"));
-    for (const args of [
-      ...COMMANDS,
-      ["outline", "a.ts"],
-      ["unfold", "a.ts", "f"],
-      ["digest", "on"],
-      ["digest", "off"],
-    ]) {
+    for (const args of [...COMMANDS, ["digest", "on"], ["digest", "off"]]) {
       const run = runCli(bare, args);
       expect(run.status, args[0]).toBe(1);
       expect(run.stderr).toContain("not initialized here");
+      expect(fs.existsSync(path.join(bare, ".crank"))).toBe(false);
+    }
+    for (const args of [
+      ["outline", "a.ts"],
+      ["unfold", "a.ts", "f"],
+    ]) {
+      expect([args, runCli(bare, args)]).toEqual([
+        args,
+        { status: 1, stdout: "", stderr: "crank-mem: a.ts is outside every installed project.\n" },
+      ]);
       expect(fs.existsSync(path.join(bare, ".crank"))).toBe(false);
     }
   }, 20_000);
