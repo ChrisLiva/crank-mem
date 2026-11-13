@@ -29,7 +29,7 @@ const QUOTING = {
 };
 
 describe("classify", () => {
-  const { schema } = digestRequest("D", null, { cerebrum: null, existing: [] });
+  const { schema } = digestRequest("D", null, { cerebrum: null, projects: null, existing: [] });
 
   test.each([
     [

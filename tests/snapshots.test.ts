@@ -582,6 +582,7 @@ db.close();
     expect(calls.at(-1)!.stdin).toBe(
       digestRequest(later.text, SAMPLE_DIGEST.summary, {
         cerebrum: "## User Preferences\n\n## Memory",
+        projects: null,
         existing: [],
       }).input,
     );

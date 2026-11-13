@@ -5,10 +5,20 @@ import { COMMANDS } from "../cli/commands.ts";
 import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
 import { CRANK_DIR, errorMessage } from "../hooks/lib/config.ts";
 import { memoryPaths } from "../hooks/lib/hook-io.ts";
-import { memoryPath, openMemory, type Memory, type SessionKey } from "../hooks/lib/memory.ts";
+import {
+  memoryPath,
+  openMemory,
+  parseHandle,
+  withReader,
+  type Memory,
+  type MemoryReader,
+  type SessionKey,
+} from "../hooks/lib/memory.ts";
 import { deleteEntry, readSpool, settleEntry, type SpoolEntry } from "../hooks/lib/spool.ts";
 import { readStopState } from "../hooks/lib/user-state.ts";
-import { digestRequest, type Digest, type DigestContext } from "./digest-prompt.ts";
+import type { Observation } from "../hooks/lib/wire.ts";
+import { ownerOf, projectName } from "../hooks/lib/owner.ts";
+import { digestRequest, type Digest, type DigestContext, type Shown } from "./digest-prompt.ts";
 import { EMBED_MODEL, embed } from "./embedder.ts";
 import { CONSOLIDATE_EVERY_MS, consolidate } from "./consolidate.ts";
 import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
@@ -77,7 +87,7 @@ async function digest(
     settleEntry(stem, entry.updatedAt, "delete");
     return 0;
   }
-  const context = digestContext(memory, entry, d.paths);
+  const { context, shown } = await digestContext(memory, entry, d.paths);
   const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem), context), {
     timeoutMs,
   });
@@ -97,12 +107,7 @@ async function digest(
     next: d.next,
     model: r.model,
     costUsd: r.costUsd,
-    ...stored(
-      r.output,
-      entry.projectRoot,
-      entry.cwd,
-      context.existing.map((o) => o.id),
-    ),
+    ...stored(r.output, entry.projectRoot, entry.cwd, shown),
   });
   if (outcome === "appended") {
     if (!d.truncated) settleEntry(stem, entry.updatedAt, "delete");
@@ -135,32 +140,91 @@ async function consolidateQuietly(
   }
 }
 
-/**
- * Cerebrum's body (null when the file is missing or has no `## ` heading), and the newest non-stale rows
- * about the delta's files: HISTORY_PER_FILE per file in first-touched order, each row once, HISTORY_TOTAL in all.
- */
-function digestContext(memory: Memory, entry: SpoolEntry, paths: string[]): DigestContext {
-  let cerebrum: string | null = null;
+/** Cerebrum's body, or null when the file is missing or has no `## ` heading. */
+function readCerebrum(root: string): string | null {
   try {
-    cerebrum =
+    return (
       splitPreamble(
-        fs.readFileSync(path.join(entry.projectRoot, CRANK_DIR, CEREBRUM_FILE), "utf8"),
-      ).body?.trimEnd() ?? null;
+        fs.readFileSync(path.join(root, CRANK_DIR, CEREBRUM_FILE), "utf8"),
+      ).body?.trimEnd() ?? null
+    );
   } catch {
-    // no cerebrum: the digest runs on the transcript and history alone
+    return null; // no cerebrum: the digest runs on the transcript and history alone
   }
+}
+
+/** The installed projects other than the session's that own a kept path of the delta, by name. */
+function otherProjects(entry: SpoolEntry, paths: string[]): { name: string; root: string }[] {
+  const roots = new Set<string>();
+  for (const p of paths) {
+    const owner = ownerOf(path.resolve(entry.cwd, p));
+    if (owner.kind !== "unowned" && owner.root !== entry.projectRoot) roots.add(owner.root);
+  }
+  return [...roots]
+    .filter((root) => memoryPaths(root, entry.cwd, paths).length > 0)
+    .map((root) => ({ name: projectName(root), root }))
+    .sort((a, b) => (a.name < b.name ? -1 : 1));
+}
+
+/**
+ * Cerebrum's body, the touched projects (session's first, the rest by name; null when no other project is touched),
+ * and the newest non-stale rows about the delta's files from each project's store in that order: HISTORY_PER_FILE
+ * per file in first-touched order, each row once, HISTORY_TOTAL across all stores. `shown` holds one entry per
+ * listed project ("" for the session's), or only "" without [PROJECTS].
+ */
+async function digestContext(
+  memory: Memory,
+  entry: SpoolEntry,
+  paths: string[],
+): Promise<{ context: DigestContext; shown: Map<string, Shown> }> {
+  const cerebrum = readCerebrum(entry.projectRoot);
+  const others = otherProjects(entry, paths);
+  const projects =
+    others.length === 0
+      ? null
+      : [
+          { name: projectName(entry.projectRoot), root: entry.projectRoot, session: true },
+          ...others.map((o) => ({ ...o, session: false })),
+        ];
+  const existing: DigestContext["existing"] = [];
+  const shown = new Map<string, Shown>();
+  const show = (key: string, root: string, rows: HistoryRow[]) => {
+    shown.set(key, { root, ids: rows.map((o) => o.id) });
+    for (const { id, type, title, narrative } of rows)
+      existing.push({ handle: `${key}#${id}`, type, title, narrative });
+  };
+  const files = (root: string) => memoryPaths(root, entry.cwd, paths);
+  show("", entry.projectRoot, storeHistory(memory, files(entry.projectRoot), HISTORY_TOTAL));
+  for (const { name, root } of others) {
+    const left = HISTORY_TOTAL - existing.length;
+    const rows = await withReader(memoryPath(root), (reader) =>
+      storeHistory(reader, files(root), left),
+    );
+    show(name, root, Array.isArray(rows) ? rows : []);
+  }
+  return { context: { cerebrum, projects, existing }, shown };
+}
+
+type HistoryRow = Pick<Observation, "id" | "type" | "title" | "narrative">;
+
+/** One store's newest non-stale rows about `files`: HISTORY_PER_FILE per file in order, each row once, `limit` in all. */
+function storeHistory(reader: MemoryReader, files: string[], limit: number): HistoryRow[] {
   const ids = new Set<number>();
-  for (const file of memoryPaths(entry.projectRoot, entry.cwd, paths)) {
-    for (const line of memory.fileHistory(file, HISTORY_PER_FILE)) {
-      if (ids.size === HISTORY_TOTAL) break;
+  for (const file of files) {
+    for (const line of reader.fileHistory(file, HISTORY_PER_FILE)) {
+      if (ids.size >= limit) break;
       ids.add(line.id);
     }
-    if (ids.size === HISTORY_TOTAL) break;
+    if (ids.size >= limit) break;
   }
-  const existing = memory
-    .get([...ids])
-    .map(({ id, type, title, narrative }) => ({ id, type, title, narrative }));
-  return { cerebrum, existing };
+  return reader.get([...ids]);
+}
+
+/** The session-project row id `handle` names when the input showed that row, else null. */
+function ownShownId(handle: string, root: string, shown: Map<string, Shown>): number | null {
+  const h = parseHandle(handle);
+  if (h === null || (h.project !== "" && h.project !== projectName(root))) return null;
+  return shown.get("")!.ids.includes(h.id) ? h.id : null;
 }
 
 /** Store vectors for rows that lack one; a failure leaves them for the next digest and never changes the exit code. */
@@ -183,10 +247,10 @@ async function embedPending(memory: Memory): Promise<void> {
 
 /**
  * The model's output as the store takes it: every string redacted, paths repo-relative and deduped.
- * Relative paths resolve against the session's cwd. A stale flag stands only for a row the input showed,
- * and a proposal only with a non-blank bullet.
+ * Relative paths resolve against the session's cwd. A stale flag stands only for a session-project row the
+ * input showed (`#5`, or `<session name>#5`), and a proposal only with a non-blank bullet.
  */
-function stored(output: Digest, root: string, cwd: string, shownIds: number[]) {
+function stored(output: Digest, root: string, cwd: string, shown: Map<string, Shown>) {
   const s = output.summary;
   const files = (paths: string[]) => memoryPaths(root, cwd, paths.map(redact));
   return {
@@ -209,9 +273,10 @@ function stored(output: Digest, root: string, cwd: string, shownIds: number[]) {
     proposals: output.proposals
       .map((p) => ({ kind: p.kind, bullet: redact(p.bullet).trim() }))
       .filter((p) => p.bullet !== ""),
-    stale: output.stale
-      .filter((f) => shownIds.includes(f.id))
-      .map((f) => ({ id: f.id, reason: redact(f.reason) })),
+    stale: output.stale.flatMap((f) => {
+      const id = ownShownId(f.id, root, shown);
+      return id === null ? [] : [{ id, reason: redact(f.reason) }];
+    }),
     origin: null,
     links: [],
   };

@@ -168,6 +168,8 @@ consolidation call's tools, max turns, deny settings and project cwd.
 
 Amended 2026-11-12: `src/daemon/gateway.ts` → `matchesSchema` checks `structured_output` against the request's `schema`, the one passed as `--json-schema`, in place of the hand-written `validate`; like `validate`, it ignores `additionalProperties`.
 
+Amended 2026-11-12: the digest schema now takes string handles and a project per proposal: `stale` ids are strings (`#12` or `<name>#12`, as `[EXISTING OBSERVATIONS]` shows them), and each proposal requires `project`. One live run checked the new schema and prompt before `src/daemon/digest-prompt.ts` took them. The run used Claude Code 2.1.323 and bun 1.4.4, from a scratch directory outside the repo with a temp `CRANK_HOME` deleted afterward. It called `askClaude(digestRequest(<tests/fixtures/transcript.expected.txt>, null, { cerebrum: null, projects: [{ name: "H", root: "/w/H", session: true }, { name: "storefront", root: "/w/storefront", session: false }], existing: [{ handle: "storefront#3", type: "discovery", title: "t", narrative: "n" }] }))`, so the input held `[PROJECTS]`, `[EXISTING OBSERVATIONS]` and `[TRANSCRIPT]` blocks. The result was `kind` `ok` from `claude-haiku-5-5`, at $0.0017 and 8.4 seconds wall time, and `matchesSchema` of the output against the request's schema was `true`. The output held one observation, `proposals` `[]` and `stale` `[]`, so the run recorded no proposal `project` value.
+
 ## Re-probe method
 
 Re-run this reading whenever `claude --version` changes minor version, or a digest starts
@@ -176,7 +178,7 @@ failing in a new way.
 1. In a scratch directory outside any repo, set `CRANK_HOME=$(mktemp -d)`.
 2. Run `bun -e` with a script that imports `src/daemon/gateway.ts` and
    `src/daemon/digest-prompt.ts` from the clone, and calls
-   `askClaude(digestRequest(<tests/fixtures/transcript.expected.txt>, null))`. Print `kind`,
+   `askClaude(digestRequest(<tests/fixtures/transcript.expected.txt>, null, { cerebrum: null, projects: null, existing: [] }))`. Print `kind`,
    `model`, `costUsd` and the wall time.
 3. In a second `bun -e`, spawn `claude` with the argv from Finding 1, the env from Finding 2
    and cwd `$CRANK_HOME/run`. Write the same text to stdin, then print the first stdout line

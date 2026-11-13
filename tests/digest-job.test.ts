@@ -5,7 +5,7 @@ import { digestRequest, type Digest } from "../src/daemon/digest-prompt.ts";
 import { matchesSchema } from "../src/daemon/gateway.ts";
 import { EMBED_MODEL } from "../src/daemon/embedder.ts";
 import { redact } from "../src/daemon/redact.ts";
-import { memoryPath, openMemory, type Position } from "../src/hooks/lib/memory.ts";
+import { memoryPath, openMemory, parseHandle, type Position } from "../src/hooks/lib/memory.ts";
 import {
   FIXTURE,
   REPO_ROOT,
@@ -49,6 +49,7 @@ import {
   status500Stream,
 } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
+import { workspace } from "./workspace.ts";
 
 const EXPECTED = fs.readFileSync(
   path.join(REPO_ROOT, "tests/fixtures/transcript.expected.txt"),
@@ -58,7 +59,11 @@ const EXPECTED = fs.readFileSync(
 afterEach(cleanup);
 
 /** The digest context of a project whose cerebrum is the init template and whose store holds no history for the delta's files. */
-const TEMPLATE_CONTEXT = { cerebrum: "## User Preferences\n\n## Memory", existing: [] };
+const TEMPLATE_CONTEXT = {
+  cerebrum: "## User Preferences\n\n## Memory",
+  projects: null,
+  existing: [],
+};
 const TEMPLATE_CEREBRUM_BLOCK = "[CEREBRUM]\n## User Preferences\n\n## Memory\n\n";
 
 /** The saved transcript position of session s1, read through the Memory seam. */
@@ -87,7 +92,7 @@ describe("digest job (black-box)", () => {
     expect(longLines.length).toBeGreaterThan(0);
     for (const arg of call.argv)
       for (const line of longLines) expect(arg.includes(line)).toBe(false);
-    const req = digestRequest("", null, { cerebrum: null, existing: [] });
+    const req = digestRequest("", null, { cerebrum: null, projects: null, existing: [] });
     expect(call.argv).toEqual([
       "-p",
       "--model",
@@ -536,7 +541,17 @@ describe("digest context", () => {
       ].join("\n") + "\n";
     const { fake, job } = journey(
       root,
-      [{ lines: okStreamOf({ ...SAMPLE_DIGEST, stale: [{ id: env, reason: "unlisted" }] }) }],
+      [
+        {
+          lines: okStreamOf({
+            ...SAMPLE_DIGEST,
+            stale: [
+              { id: `#${env}`, reason: "unlisted" },
+              { id: `#${shared}`, reason: "wrong" },
+            ],
+          }),
+        },
+      ],
       {
         transcript,
       },
@@ -567,8 +582,9 @@ describe("digest context", () => {
     for (const title of ["Env row", "Elsewhere row", "Stale f1 row"])
       expect(stdin).not.toContain(title);
 
-    // The flag names a real row the block left out, so the job drops it.
-    expect(runCli(root, ["stats"]).stdout).toContain("\n  stale:            1\n");
+    // The first flag names a real row the block left out, so the job drops it; the second names a shown row.
+    expect(runCli(root, ["stats"]).stdout).toContain("\n  stale:            2\n");
+    expect(runCli(root, ["get", String(shared)]).stdout).toMatch(/^stale:.* wrong$/m);
     const got = runCli(root, ["get", String(env)]);
     expect(got.status).toBe(0);
     expect(got.stdout).toContain("Env row");
@@ -576,9 +592,115 @@ describe("digest context", () => {
   }, 30_000);
 });
 
+/** A transcript past MIN_DELTA_CHARS that reads each of `files`, built as the digest-context exemplar builds its own. */
+function readingTranscript(files: string[]): string {
+  return (
+    [
+      userRecord("ws-0", "2026-01-02T00:00:00.000Z", "read these files ".repeat(150)),
+      ...files.map((p, i) =>
+        readRecord(`ws-${i + 1}`, `2026-01-02T00:00:${String(i + 1).padStart(2, "0")}.000Z`, p),
+      ),
+    ].join("\n") + "\n"
+  );
+}
+
+describe("digest context across projects", () => {
+  test("the prompt lists each installed project the transcript touches", () => {
+    const ws = workspace();
+    const { H, storefront, payments } = ws;
+    const [hid] = seedMemory(H, [
+      { title: "Home row", narrative: "About home.", filesRead: ["src/h.ts"] },
+    ]);
+    const [sid] = seedMemory(storefront, [
+      { title: "Front row", narrative: "About front.", filesRead: ["src/a.ts"] },
+    ]);
+    const transcript = readingTranscript([
+      path.join(H, "src/h.ts"),
+      path.join(storefront, "src/a.ts"),
+      path.join(payments, "src/a.ts"),
+    ]);
+    const scripted = { ...SAMPLE_DIGEST, stale: [{ id: `H#${hid}`, reason: "named" }] };
+    const { fake, job } = journey(H, [{ lines: okStreamOf(scripted) }], {
+      home: ws.home,
+      cwd: H,
+      transcript,
+    });
+    expect(job.status).toBe(0);
+    // A handle under the session project's own name flags its shown row.
+    expect(runCli(H, ["get", String(hid)]).stdout).toMatch(/^stale:.* named$/m);
+    const stdin = fake.calls()[0]!.stdin;
+    expect(stdin).toContain(
+      `\n\n[PROJECTS]\nH ${H} (session)\npayments-api ${payments}\nstorefront ${storefront}\n\n`,
+    );
+    expect(stdin).toContain(`\n#${hid} discovery Home row: About home.\n`);
+    expect(stdin).toContain(`\nstorefront#${sid} discovery Front row: About front.\n`);
+    const argv = fake.calls()[0]!.argv;
+    const system = argv[argv.indexOf("--system-prompt") + 1]!;
+    expect(system).toContain(
+      "stale: each [EXISTING OBSERVATIONS] handle (#12 or name#12, as shown) this transcript shows to be wrong or replaced, with a one-line reason.",
+    );
+    expect(system).toContain(
+      'project: the [PROJECTS] name the fact belongs to; "cross-repo" for a fact about how projects relate; without [PROJECTS], "session".',
+    );
+    const cerebrum = stdin.slice(stdin.indexOf("[CEREBRUM]\n"), stdin.indexOf("[PROJECTS]\n"));
+    expect(stdin.startsWith("[CEREBRUM]\n")).toBe(true);
+    expect(cerebrum).toContain("project H.");
+    expect(cerebrum).not.toContain("project storefront.");
+    expect(cerebrum).not.toContain("project payments-api.");
+
+    const alone = journey(H, [{ lines: okStream(SAMPLE_DIGEST) }], {
+      home: ws.home,
+      cwd: H,
+      stem: "s2",
+      transcript: readingTranscript([path.join(H, "src/h.ts")]),
+    });
+    expect(alone.job.status).toBe(0);
+    expect(alone.fake.calls()[0]!.stdin).not.toContain("[PROJECTS]");
+  }, 30_000);
+
+  test("existing observations cap at 30 across stores", () => {
+    const ws = workspace();
+    const { H, storefront } = ws;
+    const rows = (prefix: string, count: number) =>
+      Array.from({ length: count }, (_, k) => `src/${prefix}${k + 1}.ts`).flatMap((file) =>
+        [1, 2, 3, 4, 5].map((i) => ({
+          title: `${file} row ${i}`,
+          narrative: `About ${file} row ${i}.`,
+          filesRead: [file],
+        })),
+      );
+    seedMemory(storefront, rows("s", 4));
+    seedMemory(H, rows("h", 3));
+    const transcript = readingTranscript([
+      ...[1, 2, 3, 4].map((n) => path.join(storefront, `src/s${n}.ts`)),
+      ...[1, 2, 3].map((n) => path.join(H, `src/h${n}.ts`)),
+    ]);
+    const { fake, job } = journey(H, [{ lines: okStream(SAMPLE_DIGEST) }], {
+      home: ws.home,
+      cwd: H,
+      transcript,
+    });
+    expect(job.status).toBe(0);
+    const stdin = fake.calls()[0]!.stdin;
+    const start = stdin.indexOf("[EXISTING OBSERVATIONS]\n") + "[EXISTING OBSERVATIONS]\n".length;
+    const block = stdin.slice(start, stdin.indexOf("\n\n[TRANSCRIPT]\n", start));
+    expect(block.split("\n").length).toBe(30);
+  }, 30_000);
+});
+
+describe("parseHandle", () => {
+  test("reads a bare id, a #id and a name#id, and nothing else", () => {
+    expect(parseHandle("209")).toEqual({ project: "", id: 209 });
+    expect(parseHandle("#209")).toEqual({ project: "", id: 209 });
+    expect(parseHandle("payments-api.v2_x#007")).toEqual({ project: "payments-api.v2_x", id: 7 });
+    for (const bad of ["", "#", "storefront#", "a b#1", "#-1", "1.5", "#1 ", "x##1", "é#1"])
+      expect(parseHandle(bad)).toBeNull();
+  });
+});
+
 describe("digestRequest", () => {
   const req = (delta: string, previous: Parameters<typeof digestRequest>[1] = null) =>
-    digestRequest(delta, previous, { cerebrum: null, existing: [] });
+    digestRequest(delta, previous, { cerebrum: null, projects: null, existing: [] });
 
   test("the digest schema accepts the sample and rejects a missing field, an unknown type and a non-array", () => {
     const { schema } = req("D");
@@ -616,10 +738,16 @@ describe("digestRequest", () => {
     expect(
       matchesSchema(schema, {
         ...SAMPLE_DIGEST,
-        stale: [{ id: 1, reason: "r" }],
-        proposals: [{ kind: "memory", bullet: "b" }],
+        stale: [{ id: "#1", reason: "r" }],
+        proposals: [{ kind: "memory", bullet: "b", project: "storefront" }],
       }),
     ).toBe(true);
+    expect(matchesSchema(schema, { ...SAMPLE_DIGEST, stale: [{ id: 1, reason: "r" }] })).toBe(
+      false,
+    );
+    expect(
+      matchesSchema(schema, { ...SAMPLE_DIGEST, proposals: [{ kind: "memory", bullet: "b" }] }),
+    ).toBe(false);
   });
 
   test("input is the delta, led by a prior summary block when one exists", () => {
@@ -634,14 +762,18 @@ describe("digestRequest", () => {
 
   test("the input blocks come in order: prior summary, cerebrum, existing observations, transcript", () => {
     const existing = [
-      { id: 4, type: "discovery" as const, title: "T  x", narrative: "line one\n line two" },
+      { handle: "#4", type: "discovery" as const, title: "T  x", narrative: "line one\n line two" },
     ];
-    expect(digestRequest("D", null, { cerebrum: "## Memory\n- **A**: b", existing }).input).toBe(
+    expect(
+      digestRequest("D", null, { cerebrum: "## Memory\n- **A**: b", projects: null, existing })
+        .input,
+    ).toBe(
       "[CEREBRUM]\n## Memory\n- **A**: b\n\n[EXISTING OBSERVATIONS]\n#4 discovery T x: line one line two\n\n[TRANSCRIPT]\nD",
     );
     expect(
       digestRequest("D", SAMPLE_DIGEST.summary, {
         cerebrum: "## Memory",
+        projects: null,
         existing,
       }).input.startsWith("[PRIOR SUMMARY]\nrequest: "),
     ).toBe(true);

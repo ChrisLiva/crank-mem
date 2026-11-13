@@ -379,6 +379,15 @@ export function formatLine(line: ObservationLine): string {
   return `#${line.id} ${localDate(line.createdAtMs)} ${line.type} ${line.stale ? "[stale] " : ""}${line.title}`;
 }
 
+const HANDLE = /^(?:(?<project>[A-Za-z0-9._-]+)?#)?(?<id>\d+)$/;
+
+/** The one parser of a row handle: `209` and `#209` name the current project (`""`), `<name>#209` names `<name>`; else null. */
+export function parseHandle(text: string): { project: string; id: number } | null {
+  const m = HANDLE.exec(text);
+  if (!m?.groups) return null;
+  return { project: m.groups.project ?? "", id: Number(m.groups.id) };
+}
+
 /** `YYYY-MM-DD` of an epoch time in the local zone. */
 export function localDate(ms: number): string {
   const d = new Date(ms);

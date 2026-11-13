@@ -95,7 +95,12 @@ const FILTER_NAMES = [
 const digestOf = (
   proposals: { kind: string; bullet: string }[],
   stale: { id: number; reason: string }[] = [],
-) => ({ observations: [], summary: SAMPLE_DIGEST.summary, proposals, stale });
+) => ({
+  observations: [],
+  summary: SAMPLE_DIGEST.summary,
+  proposals: proposals.map((p) => ({ ...p, project: "session" })),
+  stale: stale.map((f) => ({ id: `#${f.id}`, reason: f.reason })),
+});
 
 /** The value after `flag` in a recorded argv. */
 const flagValue = (argv: string[], flag: string): string => argv[argv.indexOf(flag) + 1]!;
