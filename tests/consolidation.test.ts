@@ -119,6 +119,9 @@ describe("digest feeds consolidation", () => {
     fs.mkdirSync(path.join(root, "src"));
     fs.writeFileSync(path.join(root, "src/lock.ts"), "export const LOCK_RETRY_MS = 5000;\n");
     fs.writeFileSync(path.join(root, "src/scan.ts"), "export function walk() {}\n");
+    // Older than every bullet citing them, so no bullet is re-checked until step 4.
+    for (const rel of ["src/lock.ts", "src/scan.ts"])
+      setMtime(path.join(root, rel), Date.parse("2026-01-01"));
     fs.writeFileSync(path.join(root, ".crank/cerebrum.md"), CEREBRUM);
     git(root, "init", "-q");
     gitCommit(root, "init");
@@ -334,10 +337,8 @@ describe("digest feeds consolidation", () => {
     expect(rerun(j, 10_000, {}, ["--consolidate-every-ms", "1"]).status).toBe(0);
     expect(fake.calls().length).toBe(6);
 
-    // Step 4: a scan sees src/lock.ts changed after the last ok run, so the bullets citing it are re-checked.
+    // Step 4: src/lock.ts changes on disk after the last ok run, with no scan, so the bullets citing it are re-checked.
     setMtime(path.join(root, "src/lock.ts"), Date.now());
-    setMtime(path.join(root, "src/scan.ts"), Date.parse("2026-01-01"));
-    expect(runCli(root, ["scan"]).status).toBe(0);
     appendRecords(j.transcript, [
       ...laterRecords("s4").records,
       readRecord("s4-read", "2026-01-03T00:00:03.000Z", path.join(root, "src/lock.ts")),
@@ -442,6 +443,13 @@ describe("bullets citing linked projects", () => {
 
   test("a bullet citing only linked projects is never due", () => {
     const ws = linkedWorkspace("- **Pay**: see `payments-api/src/a.ts` (2020-01-01).");
+    const indexed = runHook(
+      "src/hooks/session-start.ts",
+      JSON.stringify(claudeSessionStart(ws.payments)),
+      ws.payments,
+      { CRANK_HOME: ws.home },
+    );
+    expect(indexed.status).toBe(0);
     const j = journey(ws.H, scenarios(), { home: ws.home });
     expect(j.job.status).toBe(0);
     expect(j.fake.calls().length).toBe(1);
@@ -459,22 +467,6 @@ describe("bullets citing linked projects", () => {
     const k = journey(mixed.H, scenarios(), { home: mixed.home });
     expect(k.job.status).toBe(0);
     expect(k.fake.calls().length).toBe(2);
-  }, 30_000);
-
-  test("a bullet citing the project's own directory of a linked project's name is due", () => {
-    const ws = linkedWorkspace("- **Own**: see `payments-api/lib/x.ts` (2020-01-01).");
-    fs.mkdirSync(path.join(ws.H, "payments-api/lib"), { recursive: true });
-    fs.writeFileSync(path.join(ws.H, "payments-api/lib/x.ts"), "export const x = 1;\n");
-    const start = runHook(
-      "src/hooks/session-start.ts",
-      JSON.stringify(claudeSessionStart(ws.H)),
-      ws.H,
-      { CRANK_HOME: ws.home },
-    );
-    expect(start.status).toBe(0);
-    const j = journey(ws.H, scenarios(), { home: ws.home });
-    expect(j.job.status).toBe(0);
-    expect(j.fake.calls().length).toBe(2);
   }, 30_000);
 });
 

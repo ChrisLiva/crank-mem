@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { estimateProseTokens } from "./tokens.ts";
-import { ISO_DATE, parseBullets } from "./bullets.ts";
+import { parseBullets } from "./bullets.ts";
+import { citationCheck, type CitationCheck } from "./citations.ts";
 import { SOURCE_EXTENSIONS } from "./scanner.ts";
 import { symbolsSupported } from "./symbols.ts";
 import { CEREBRUM_FILE } from "./cerebrum-files.ts";
@@ -17,7 +18,7 @@ import {
 } from "./memory.ts";
 import { linkedProjects } from "./registry.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
-import { CRANK_DIR, type CrankConfig } from "./config.ts";
+import type { CrankConfig } from "./config.ts";
 import { loadIndex, type AnatomyIndex } from "./store.ts";
 import type { UsageEvent } from "./usage.ts";
 import type { ObservationLine } from "./wire.ts";
@@ -155,7 +156,6 @@ export interface InjectionSources {
   codex?: boolean;
   /** Project root; when set, the excerpt tags cited files that vanished or changed. */
   projectRoot?: string;
-  linked?: LinkedAnatomies;
   /** Digests run for this session, so recall applies with no store yet. Absent: false. */
   running?: boolean;
   /** What the memory store offers this session. Absent: no recall section or pointer. */
@@ -238,7 +238,7 @@ export interface Excerpt {
 export function excerptOf(
   md: string,
   budgetBytes: number,
-  cited?: CitedFiles,
+  cited?: CitationCheck,
   balanced = false,
 ): Excerpt {
   const sections = cerebrumSections(md);
@@ -253,9 +253,8 @@ export function excerptOf(
     .splice(0, Math.max(0, memory.length - MEMORY_RECENT_COUNT))
     .map(indexEntry);
   if (cited) {
-    const byName = basenameIndex(cited.index);
     for (const list of [prefs, memory])
-      list.forEach((b, i) => (list[i] = b + citationTags(b, cited, byName)));
+      list.forEach((b, i) => (list[i] = b + citationTags(b, cited)));
   }
 
   const state: ExcerptState = { prefs, memory, prefsIndex, memoryIndex, total };
@@ -344,165 +343,17 @@ function shedOne(state: ExcerptState, balanced: boolean): void {
   else prefs.shift();
 }
 
-/** What the excerpt checks a bullet's citations against. */
-export interface CitedFiles {
-  index: AnatomyIndex;
-  root: string;
-  linked?: LinkedAnatomies;
-}
-
-/**
- * A linked project's anatomy by its name, or undefined when no linked project has that name; a
- * citation whose first segment names one resolves in it.
- */
-type LinkedAnatomies = (
-  name: string,
-) => { index: AnatomyIndex; root: string; byName: Map<string, string[]> } | undefined;
-
-/**
- * Linked projects' anatomies: `projects` listed on the first lookup, each anatomy read and its
- * basename map built on its first, none written.
- */
-function linkedAnatomies(projects: () => { name: string; root: string }[]): LinkedAnatomies {
-  let roots: Map<string, string> | undefined;
-  const indexes = new Map<string, NonNullable<ReturnType<LinkedAnatomies>>>();
-  return (name) => {
-    roots ??= new Map(projects().map((p) => [p.name, p.root]));
-    const root = roots.get(name);
-    if (root === undefined) return undefined;
-    let linked = indexes.get(name);
-    if (!linked) {
-      const index = loadIndex(path.join(root, CRANK_DIR));
-      indexes.set(name, (linked = { index, root, byName: basenameIndex(index) }));
-    }
-    return linked;
-  };
-}
-
-/** A backticked file citation: a path or basename with an extension, then an optional `:line`. */
-const FILE_CITATION = /^([^\s*=:]+\.[A-Za-z]\w*)(?::\d+(?:-\d+)?)?$/;
-
-/** The index's files grouped by basename, for resolving a cited basename. */
-export function basenameIndex(index: AnatomyIndex): Map<string, string[]> {
-  const byName = new Map<string, string[]>();
-  for (const rel of Object.keys(index.files)) {
-    const name = path.posix.basename(rel);
-    byName.set(name, [...(byName.get(name) ?? []), rel]);
-  }
-  return byName;
-}
-
-/**
- * The files a bullet cites in backticks that are missing or modified, each
- * listed once. Missing: a path that is neither indexed nor on disk. Modified:
- * an indexed file whose mtime is past `sinceMs`, or, with `sinceMs` null, past
- * the end of the bullet's latest date; an undated bullet then has none.
- *
- * A basename resolves by a unique suffix match against the index, because
- * agents cite `geometry.py` far more often than its full path. An unresolved
- * basename is never called missing: the index omits files past max_files and
- * unindexable ones, and a dotted symbol such as `fs.statSync` reads the same.
- */
-export function citationStatus(
-  bullet: string,
-  cited: CitedFiles,
-  byName: Map<string, string[]>,
-  sinceMs: number | null,
-): { missing: string[]; modified: string[] } {
-  const cutoffMs = sinceMs ?? latestDateEnd(bullet);
-  const missing = new Set<string>();
-  const modified = new Set<string>();
-  for (const rel of fileCitations(bullet)) {
-    const status = resolveCitation(rel, cited, byName, cutoffMs);
-    if (status === "missing") missing.add(rel);
-    else if (status === "modified") modified.add(rel);
-  }
-  return { missing: [...missing], modified: [...modified] };
-}
-
-/** The end of the latest ISO date in a text, local time, in ms; null without a date. */
-function latestDateEnd(text: string): number | null {
-  let latest: number | null = null;
-  for (const [, y, m, d] of text.matchAll(ISO_DATE)) {
-    const end = new Date(Number(y), Number(m) - 1, Number(d) + 1).getTime();
-    if (latest === null || end > latest) latest = end;
-  }
-  return latest;
-}
-
-/**
- * The linked project a citation's first segment names, or null. An entry of that name in `root`
- * keeps the citation in `root`.
- */
-export function linkedPrefix(
-  rel: string,
-  root: string,
-  isLinked: (name: string) => boolean,
-): string | null {
-  const slash = rel.indexOf("/");
-  if (slash <= 0) return null;
-  const head = rel.slice(0, slash);
-  return !fs.existsSync(path.join(root, head)) && isLinked(head) ? head : null;
-}
-
-/**
- * One citation's status: modified past `cutoffMs`, missing, or null for neither. A citation whose
- * `linkedPrefix` names a linked project resolves in that project, the segment stripped.
- */
-function resolveCitation(
-  rel: string,
-  cited: CitedFiles,
-  byName: Map<string, string[]>,
-  cutoffMs: number | null,
-): "missing" | "modified" | null {
-  const head = linkedPrefix(rel, cited.root, (name) => cited.linked?.(name) !== undefined);
-  const linked = head === null ? undefined : cited.linked?.(head);
-  if (head === null || !linked) return resolveIn(rel, cited, byName, cutoffMs);
-  return resolveIn(rel.slice(head.length + 1), linked, linked.byName, cutoffMs);
-}
-
-function resolveIn(
-  rel: string,
-  cited: { index: AnatomyIndex; root: string },
-  byName: Map<string, string[]>,
-  cutoffMs: number | null,
-): "missing" | "modified" | null {
-  const hits = cited.index.files[rel]
-    ? [rel]
-    : (byName.get(path.posix.basename(rel)) ?? []).filter((c) => c.endsWith("/" + rel));
-  if (hits.length === 1) {
-    return cutoffMs !== null && cited.index.files[hits[0]!]!.mtimeMs > cutoffMs ? "modified" : null;
-  }
-  if (!hits.length && rel.includes("/") && !fs.existsSync(path.join(cited.root, rel)))
-    return "missing";
-  return null;
-}
-
 /**
  * Tags for a bullet's flagged citations: ` [cited file missing: …]` and
  * ` [cited file modified after this note; check: …]`, empty when nothing is
  * flagged. A checkout resets mtimes, hence "check".
  */
-function citationTags(bullet: string, cited: CitedFiles, byName: Map<string, string[]>): string {
-  const { missing, modified } = citationStatus(bullet, cited, byName, null);
+function citationTags(bullet: string, check: CitationCheck): string {
+  const { missing, modified } = check.status(bullet, null);
   return (
     (missing.length ? ` [cited file missing: ${missing.join(", ")}]` : "") +
     (modified.length ? ` [cited file modified after this note; check: ${modified.join(", ")}]` : "")
   );
-}
-
-/**
- * The files a text cites in backticks, as written minus a leading `./` and a
- * `:line` suffix. Spans starting with `-`, `/` or `~` are flags, routes and
- * home paths, and `*` or `=` marks a glob or an assignment, so none of them count.
- */
-export function fileCitations(text: string): string[] {
-  const cited: string[] = [];
-  for (const [, span] of text.matchAll(/`([^`\n]+)`/g)) {
-    const match = /^[-/~]/.test(span!) ? null : FILE_CITATION.exec(span!);
-    if (match) cited.push(match[1]!.replace(/^\.\//, ""));
-  }
-  return cited;
 }
 
 /**
@@ -555,9 +406,14 @@ export function composeInjection(
   const running = sources.running ?? false;
   const recall = sources.recall;
   const recallPointer = recall ? recallApplies(running, recall.status) : false;
-  const linked = recall?.status === "open" ? recall.linked.map((p) => p.name) : [];
+  const links = recall?.status === "open" ? recall.linked : [];
   const parts: string[] = [
-    instructions(sources.index, sources.codex ?? false, recallPointer, linked),
+    instructions(
+      sources.index,
+      sources.codex ?? false,
+      recallPointer,
+      links.map((p) => p.name),
+    ),
   ];
   const shown: Shown = {
     recentIds: [],
@@ -594,7 +450,10 @@ export function composeInjection(
       sources.cerebrumMd,
       budgetBytes - used - adrReserve - bytes(SEP),
       sources.projectRoot
-        ? { index: sources.index, root: sources.projectRoot, linked: sources.linked }
+        ? citationCheck(
+            { root: sources.projectRoot, index: sources.index },
+            { resolve: () => links },
+          )
         : undefined,
     );
     if (excerpt.text) shown.cerebrum = fit(excerpt.text);
@@ -680,7 +539,12 @@ export function subagentInjection(
   const md = readCerebrum(crankDir);
   // Balanced: at this budget the session-start order leaves no room for memory.
   const excerpt = md
-    ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, citationSources(crankDir, root), true).text
+    ? excerptOf(
+        md,
+        SUBAGENT_EXCERPT_BYTES,
+        citationCheck({ root, index: loadIndex(crankDir) }),
+        true,
+      ).text
     : "";
 
   const lines = [INJECTION_HEADING];
@@ -697,24 +561,6 @@ export function subagentInjection(
       recallPointer: recall,
     },
   };
-}
-
-/** A project's own anatomy and its store's linked anatomies, the links read only when a citation needs them. */
-export function citationSources(crankDir: string, root: string): CitedFiles {
-  return { index: loadIndex(crankDir), root, linked: linkedAnatomies(() => storeLinks(root)) };
-}
-
-/** `registry.ts` → `linkedProjects` of the store; none when the store cannot be read. */
-function storeLinks(root: string): { name: string; root: string }[] {
-  const opened = openMemory(memoryPath(root), "read");
-  if (opened.status !== "open") return [];
-  try {
-    return linkedProjects(opened.memory);
-  } catch {
-    return [];
-  } finally {
-    opened.memory.close();
-  }
 }
 
 /** The one read of cerebrum.md; any read error reads as absent. */
@@ -753,7 +599,6 @@ export function sessionStartInjection(
     index,
     adrPath: config.adr_path,
     projectRoot: root,
-    linked: linkedAnatomies(() => (recall.status === "open" ? recall.linked : [])),
     codex: opts.codex,
     recall,
     running: gate.running,

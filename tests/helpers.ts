@@ -14,6 +14,7 @@ import {
   type Position,
 } from "../src/hooks/lib/memory.ts";
 import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
+import type { AnatomyIndex, FileEntry } from "../src/hooks/lib/store.ts";
 import { DAEMON_FILE, type DaemonState, type SpoolEntry } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
@@ -828,6 +829,29 @@ export function projectId(root: string): string {
 // bun test runs this process in UTC, so each CLI child gets a pinned zone and dates are computed in it.
 // Zones on both sides of UTC make a UTC-midnight reading fail at any hour in one of them.
 export const ZONES = ["Pacific/Kiritimati", "Pacific/Pago_Pago"];
+
+/** Runs `fn` in `zone`, then restores the UTC `bun test` starts in; `delete` would fall back to the machine zone. */
+export function inZone<T>(zone: string, fn: () => T): T {
+  process.env.TZ = zone;
+  try {
+    return fn();
+  } finally {
+    process.env.TZ = "UTC";
+  }
+}
+
+/** An anatomy index of `files`, each entry filled out with placeholder fields. */
+export function idx(files: Record<string, Partial<FileEntry>>): AnatomyIndex {
+  const entries: Record<string, FileEntry> = {};
+  for (const [p, f] of Object.entries(files)) {
+    entries[p] = { description: "", tokens: 1, size: 1, mtimeMs: 0, ...f };
+  }
+  return {
+    version: 2,
+    files: entries,
+    meta: { lastScanned: null, fileCount: Object.keys(entries).length },
+  };
+}
 
 const STARTUP_LINE = /^crank-mem dashboard: (http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]+))\n/;
 
