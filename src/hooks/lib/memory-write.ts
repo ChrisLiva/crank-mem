@@ -29,7 +29,7 @@ function bulletHash(bullet: string): string {
   return normalizedHash(bullet.replace(ISO_DATE, "").replace(/\(\s*\)/g, ""));
 }
 
-function samePosition(a: Position | null, b: Position | null): boolean {
+export function samePosition(a: Position | null, b: Position | null): boolean {
   return a === null || b === null ? a === b : a.uuid === b.uuid && a.timestamp === b.timestamp;
 }
 

@@ -25,6 +25,8 @@ import type {
 // process.getBuiltinModule on each open, so a runtime without it degrades to
 // "unreadable" instead of failing at import time.
 
+export { samePosition } from "./memory-write.ts";
+
 export const MEMORY_FILE = "memory.db";
 export const MEMORY_OLDER_NOTE =
   "crank-mem: memory.db predates this version; run `crank-mem upgrade`.";

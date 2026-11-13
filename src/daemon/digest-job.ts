@@ -8,6 +8,7 @@ import { memoryPaths } from "../hooks/lib/hook-io.ts";
 import {
   memoryPath,
   openMemory,
+  samePosition,
   withReader,
   type DigestInput,
   type Memory,
@@ -331,7 +332,7 @@ function shareSkipped(root: string, reason: string): void {
 /** One share as a digest row at cost 0 with an empty summary; false when the store already holds `next`. */
 function writeShare(memory: Memory, share: Share, base: ShareBase): boolean {
   const expected = memory.position(base.session.id);
-  if (expected?.uuid === base.next.uuid && expected.timestamp === base.next.timestamp) return false;
+  if (samePosition(expected, base.next)) return false;
   return (
     memory.appendDigest({
       ...base,
