@@ -2,9 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs, positive } from "../cli/args.ts";
 import { COMMANDS } from "../cli/commands.ts";
-import { CEREBRUM_FILE, splitPreamble } from "../hooks/lib/cerebrum-files.ts";
+import { splitPreamble } from "../hooks/lib/cerebrum-files.ts";
 import { CRANK_DIR, errorMessage, loadConfig } from "../hooks/lib/config.ts";
 import { ownedPaths } from "../hooks/lib/hook-io.ts";
+import { readCerebrum } from "../hooks/lib/injection.ts";
 import {
   memoryPath,
   openMemory,
@@ -183,19 +184,6 @@ async function consolidateQuietly(
   }
 }
 
-/** Cerebrum's body, or null when the file is missing or has no `## ` heading. */
-function readCerebrum(root: string): string | null {
-  try {
-    return (
-      splitPreamble(
-        fs.readFileSync(path.join(root, CRANK_DIR, CEREBRUM_FILE), "utf8"),
-      ).body?.trimEnd() ?? null
-    );
-  } catch {
-    return null; // no cerebrum: the digest runs on the transcript and history alone
-  }
-}
-
 /** The installed projects other than the session's that own a kept path of the delta, by name. */
 function otherProjects(
   entry: SpoolEntry,
@@ -218,7 +206,8 @@ async function digestContext(
   entry: SpoolEntry,
   paths: string[],
 ): Promise<{ context: DigestContext; shown: Map<string, Shown> }> {
-  const cerebrum = readCerebrum(entry.projectRoot);
+  const md = readCerebrum(path.join(entry.projectRoot, CRANK_DIR));
+  const cerebrum = md === null ? null : (splitPreamble(md).body?.trimEnd() ?? null);
   const owned = ownedPaths(entry.cwd, paths);
   const others = otherProjects(entry, owned);
   const projects =
