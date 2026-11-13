@@ -214,6 +214,46 @@ test("the Updates section shows both versions and the self-update command, and a
   await unmount();
 });
 
+test("the Not installed section lists each repo with crank-mem init, and an empty or failed fetch shows nothing", async () => {
+  const routes = {
+    "/api/projects": { projects: [PROJECT] },
+    "/api/projects/p/health": HEALTHY,
+    "/api/updates": UPDATES,
+  };
+  const day = 24 * 60 * 60 * 1000;
+  const repos = [
+    { root: "/work/scratch-one", lastSeenMs: Date.now() - day, sessions: ["s1"] },
+    { root: "/work/scratch-two", lastSeenMs: Date.now() - 2 * day, sessions: [] },
+  ];
+  serve({ ...routes, "/api/untouched": { repos } });
+  let { page, unmount } = await openPage();
+  const section = page.querySelector("[aria-labelledby=untouched-heading]");
+  const updates = page.querySelector("[aria-labelledby=updates-heading]");
+  expect(section).not.toBeNull();
+  expect(
+    updates.compareDocumentPosition(section) & dom.Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(section.querySelector("#untouched-heading")?.textContent).toBe("Not installed");
+  expect(section.textContent).toContain("/work/scratch-one");
+  expect(section.textContent).toContain("/work/scratch-two");
+  expect([...section.querySelectorAll("time")].map((t: any) => t.getAttribute("datetime"))).toEqual(
+    repos.map((r) => new Date(r.lastSeenMs).toISOString()),
+  );
+  expect(section.textContent.split("crank-mem init").length - 1).toBe(1);
+  await unmount();
+
+  serve({ ...routes, "/api/untouched": { repos: [] } });
+  ({ page, unmount } = await openPage());
+  expect(page.querySelector("[aria-labelledby=untouched-heading]")).toBeNull();
+  await unmount();
+
+  serve(routes);
+  ({ page, unmount } = await openPage());
+  expect(tile(page, "Digest")).toStartWith("On");
+  expect(page.querySelector("[aria-labelledby=untouched-heading]")).toBeNull();
+  await unmount();
+});
+
 /** Runs `body` with the page's URL query set to `query`, then puts back the Health view. */
 async function at(query: string, body: () => Promise<void>): Promise<void> {
   dom.history.replaceState(null, "", query);

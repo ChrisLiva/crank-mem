@@ -9,6 +9,7 @@ import type {
   ProposalRow,
   ProposalState,
   StaleRow,
+  UntouchedRepo,
   UpdateStatus,
   UsageMetrics,
 } from "../../src/hooks/lib/wire";
@@ -30,6 +31,7 @@ export {
   type StaleRow,
   type Status,
   type Tone,
+  type UntouchedRepo,
   type UpdateStatus,
   type UsageChannel,
   type UsageMetrics,
@@ -158,4 +160,8 @@ export function fetchUsage(
 
 export function fetchUpdates(): Promise<UpdateStatus> {
   return getJson("/api/updates");
+}
+
+export function fetchUntouched(): Promise<{ repos: UntouchedRepo[] }> {
+  return getJson("/api/untouched");
 }

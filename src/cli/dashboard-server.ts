@@ -23,6 +23,7 @@ import { EMBED_MODEL } from "../daemon/embedder.ts";
 import { queryVector } from "./recall.ts";
 import { projectName } from "../hooks/lib/owner.ts";
 import { installedStores } from "../hooks/lib/registry.ts";
+import { readUntouched } from "../hooks/lib/untouched.ts";
 import { captureSummary } from "./stats.ts";
 import {
   checkDue,
@@ -388,6 +389,12 @@ function serveUpdates(res: http.ServerResponse, url: URL): boolean {
   return true;
 }
 
+function serveUntouched(res: http.ServerResponse, url: URL): boolean {
+  if (url.pathname !== "/api/untouched") return false;
+  sendAnswer(res, { status: 200, body: { repos: readUntouched() } });
+  return true;
+}
+
 function serveProjectRoute(res: http.ServerResponse, url: URL): boolean {
   const scoped = /^\/api\/projects\/([^/]+)(\/.*)$/.exec(url.pathname);
   if (!scoped) return false;
@@ -435,6 +442,7 @@ export async function serveDashboard(opts: {
     if (refuseCookie(req, res, opts.token)) return;
     if (serveProjects(res, url)) return;
     if (serveUpdates(res, url)) return;
+    if (serveUntouched(res, url)) return;
     if (serveProjectRoute(res, url)) return;
     serveStatic(res, url, opts.distDir);
   });

@@ -6,6 +6,7 @@ import type * as sqlite from "node:sqlite";
 import { cliVersion } from "../src/cli/version.ts";
 import { loadConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
+import { UNTOUCHED_FILE } from "../src/hooks/lib/untouched.ts";
 import type { UpdateStatus } from "../src/hooks/lib/wire.ts";
 import {
   MEMORY_NEWER_NOTE,
@@ -1220,6 +1221,26 @@ describe("updates", () => {
       behind: [{ root, name: "custom", vendored: "0.0.1" }],
     });
     expect((await dash.get("/api/updates", { headers: { Cookie: "" } })).status).toBe(401);
+  }, 20_000);
+
+  test("GET /api/untouched answers the not-installed repos, behind every guard", async () => {
+    const home = makeCrankHome();
+    const day = 24 * 60 * 60 * 1000;
+    const older = {
+      root: tempDir("crank-older-"),
+      lastSeenMs: Date.now() - 2 * day,
+      sessions: ["s1"],
+    };
+    const newer = { root: tempDir("crank-newer-"), lastSeenMs: Date.now() - day, sessions: [] };
+    fs.writeFileSync(path.join(home, UNTOUCHED_FILE), JSON.stringify({ repos: [older, newer] }));
+    const dash = await startDashboard(home, ["--port", "0"]);
+    const res = await dash.get("/api/untouched");
+    expect([res.status, res.headers.get("content-type")]).toEqual([
+      200,
+      "application/json; charset=utf-8",
+    ]);
+    expect(await res.json()).toEqual({ repos: [newer, older] });
+    expect((await dash.get("/api/untouched", { headers: { Cookie: "" } })).status).toBe(401);
   }, 20_000);
 
   test("the server checks at start only when due and only in an installed copy", async () => {

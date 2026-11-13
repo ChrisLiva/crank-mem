@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { claudePostWrite, claudeSessionStart } from "./fixtures/payloads.ts";
 import { readUntouched } from "../src/hooks/lib/untouched.ts";
-import { runHook, withEnv } from "./helpers.ts";
+import { localDate } from "../src/hooks/lib/memory.ts";
+import { runCli, runHook, withEnv } from "./helpers.ts";
 import { workspace } from "./workspace.ts";
 
 const SESSION = "a46b6073-1111-2222-3333-444455556666";
@@ -31,5 +32,11 @@ describe("cross-repo memory", () => {
     const numericId = { ...claudePostWrite(ws.H, scratchFile), session_id: 7 };
     expect(hook("post-write", numericId).status).toBe(0);
     expect(scratchSessions()).toEqual([SESSION]);
+
+    const r = withEnv({ CRANK_HOME: ws.home }, readUntouched).find((e) => e.root === ws.scratch)!;
+    const stats = runCli(ws.H, ["stats"], { CRANK_HOME: ws.home, TZ: "UTC" });
+    expect(stats.stdout).toContain(
+      `  not installed:    1\n    ${ws.scratch}  last seen ${localDate(r.lastSeenMs)}\n`,
+    );
   });
 });
