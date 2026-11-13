@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { openProject } from "./project.ts";
 import { loadIndex, INDEX_FILE, type AnatomyIndex } from "../hooks/lib/store.ts";
-import { walkProject } from "../hooks/lib/scanner.ts";
+import { refreshIndex, walkProject } from "../hooks/lib/scanner.ts";
 import type { CrankConfig } from "../hooks/lib/config.ts";
 import {
   citationCheck,
@@ -294,7 +294,11 @@ export async function run(_args: string[]): Promise<number> {
   console.log(`crank-mem stats`);
   for (const line of indexLines(root, crankDir, config, index)) console.log(line);
   if (installedCopy()) console.log(row("update", updateValue()));
-  for (const line of memoryLines(root, crankDir, config, index)) console.log(line);
+  // Refreshed in memory as session start refreshes it, so the excerpt and the
+  // citation check see files deleted or changed since the last scan; the
+  // saved index, which the rows above describe, stays as it is.
+  const fresh = refreshIndex(root, config, loadIndex(crankDir), Infinity).index;
+  for (const line of memoryLines(root, crankDir, config, fresh)) console.log(line);
   for (const [label, value] of await captureRows(root, config)) console.log(row(label, value));
   for (const line of untouchedLines()) console.log(line);
   for (const line of codexLines(root, crankDir, installPaths(root).codexHooks)) console.log(line);
