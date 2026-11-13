@@ -442,6 +442,13 @@ describe("bullets citing linked projects", () => {
 
   test("a bullet citing only linked projects is never due", () => {
     const ws = linkedWorkspace("- **Pay**: see `payments-api/src/a.ts` (2020-01-01).");
+    const indexed = runHook(
+      "src/hooks/session-start.ts",
+      JSON.stringify(claudeSessionStart(ws.payments)),
+      ws.payments,
+      { CRANK_HOME: ws.home },
+    );
+    expect(indexed.status).toBe(0);
     const j = journey(ws.H, scenarios(), { home: ws.home });
     expect(j.job.status).toBe(0);
     expect(j.fake.calls().length).toBe(1);
