@@ -242,7 +242,7 @@ function indexLines(
   ];
 }
 
-/** The `not installed` row and one line per repo agents wrote to that has no crank-mem install. */
+/** The `not installed` row and one line per repo agents read or wrote that has no crank-mem install. */
 function untouchedLines(): string[] {
   const repos = readUntouched();
   if (repos.length === 0) return [row("not installed", "none")];

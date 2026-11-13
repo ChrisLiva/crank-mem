@@ -26,8 +26,9 @@ import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
 import { redact } from "./redact.ts";
 import { distill } from "./transcript.ts";
 
-// `crank-mem job <stem>`: digest one spool entry's new transcript records into
-// its project's store. Exit 0 settles the entry for this sweep; exit 1 asks
+// `crank-mem job <stem>`: digest one spool entry's new transcript records,
+// split across every owning store: a share to each other project's store
+// first, the entry project's digest last. Exit 0 settles the entry for this sweep; exit 1 asks
 // for a retry after the daemon's backoff, and a rejection short of the limit
 // takes that path too.
 

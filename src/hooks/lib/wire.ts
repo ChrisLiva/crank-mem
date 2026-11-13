@@ -234,5 +234,5 @@ export type UsageMetrics = {
   filesWithoutMemory: { path: string; count: number }[];
 };
 
-/** A git repo written to outside any crank-mem install (`<crank home>/untouched.json`). */
+/** A git repo read or written outside any crank-mem install (`<crank home>/untouched.json`). */
 export type UntouchedRepo = { root: string; lastSeenMs: number; sessions: string[] };
