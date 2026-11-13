@@ -65,6 +65,8 @@ export type NewObservation = {
   facts: string[];
   filesRead: string[];
   filesModified: string[];
+  /** Files of other projects this observation cites, by project name. */
+  refs: { project: string; path: string; kind: "read" | "modified" }[];
 };
 export type DigestInput = {
   session: SessionKey;
@@ -76,8 +78,13 @@ export type DigestInput = {
   observations: NewObservation[];
   proposals: { kind: ProposalKind; bullet: string }[];
   stale: { id: number; reason: string }[];
+  /** The project whose digest this row shares, null for the store's own digest. */
+  origin: string | null;
+  /** Names of the projects this digest's session also worked in. */
+  links: string[];
 };
-type SearchHit = ObservationLine;
+/** A search result with its fused reciprocal-rank score, above 0. */
+type SearchHit = { line: ObservationLine; score: number };
 export type SearchQuery = {
   text: string;
   vector: { model: string; values: Float32Array } | null;
@@ -143,6 +150,12 @@ export interface Memory {
   recent(limit: number): ObservationLine[];
   latestNextSteps(): string | null;
   fileHistory(relPath: string, limit: number): ObservationLine[];
+  /** Each existing id's dedupe key (normalized title and narrative), equal across stores for equal text. */
+  contentHashes(ids: number[]): Map<number, string>;
+  /** Distinct project names in the stored links and the observations' refs, sorted. */
+  links(): string[];
+  /** Other projects' files cited by observations on `relPath`, by the newest citing observation first. */
+  pairedPaths(relPath: string, limit: number): { project: string; path: string }[];
   stats(model: string, sinceMs: number): MemoryStats;
   /** Pending proposals and unreviewed stale rows, oldest first; `limit` caps each list. */
   pending(limit: number): PendingWork;
@@ -389,6 +402,9 @@ function createMemory(db: sqlite.DatabaseSync, file: string): Memory {
     recent: (limit) => queries.recent(db, limit),
     latestNextSteps: () => queries.latestNextSteps(db),
     fileHistory: (relPath, limit) => queries.fileHistory(db, relPath, limit),
+    contentHashes: (ids) => queries.contentHashes(db, ids),
+    links: () => queries.links(db),
+    pairedPaths: (relPath, limit) => queries.pairedPaths(db, relPath, limit),
     stats: (model, sinceMs) => queries.stats(db, model, sinceMs),
     pending: (limit) => queries.pending(db, limit),
     proposalRows: (q) => queries.proposalRows(db, q),

@@ -47,8 +47,8 @@ export function appendDigest(db: sqlite.DatabaseSync, input: DigestInput): "appe
     const now = Date.now();
     const digestId = db
       .prepare(
-        `INSERT INTO digests (session_id, created_at, model, cost_usd, request, investigated, learned, completed, next_steps)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO digests (session_id, created_at, model, cost_usd, request, investigated, learned, completed, next_steps, origin)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         session.id,
@@ -60,6 +60,7 @@ export function appendDigest(db: sqlite.DatabaseSync, input: DigestInput): "appe
         summary.learned,
         summary.completed,
         summary.next_steps,
+        input.origin,
       ).lastInsertRowid;
     // ON CONFLICT names the unique column so a CHECK violation still throws; OR IGNORE would swallow it.
     const insertObservation = db.prepare(
@@ -68,6 +69,9 @@ export function appendDigest(db: sqlite.DatabaseSync, input: DigestInput): "appe
     );
     const insertFile = db.prepare(
       "INSERT OR IGNORE INTO observation_files (path, observation_id, kind) VALUES (?, ?, ?)",
+    );
+    const insertRef = db.prepare(
+      "INSERT OR IGNORE INTO observation_refs (observation_id, project, path, kind) VALUES (?, ?, ?, ?)",
     );
     for (const o of input.observations) {
       const inserted = insertObservation.run(
@@ -83,6 +87,7 @@ export function appendDigest(db: sqlite.DatabaseSync, input: DigestInput): "appe
       for (const file of o.filesRead) insertFile.run(file, inserted.lastInsertRowid, "read");
       for (const file of o.filesModified)
         insertFile.run(file, inserted.lastInsertRowid, "modified");
+      for (const r of o.refs) insertRef.run(inserted.lastInsertRowid, r.project, r.path, r.kind);
     }
     const insertProposal = db.prepare(
       `INSERT INTO proposals (digest_id, kind, bullet, bullet_hash, created_at)
@@ -95,6 +100,11 @@ export function appendDigest(db: sqlite.DatabaseSync, input: DigestInput): "appe
       "UPDATE observations SET stale_at = ?, stale_reason = ?, stale_reviewed = 0 WHERE id = ? AND stale_at IS NULL",
     );
     for (const f of input.stale) flag.run(now, f.reason, f.id);
+    const link = db.prepare(
+      `INSERT INTO project_links (project, last_ms) VALUES (?, ?)
+         ON CONFLICT(project) DO UPDATE SET last_ms = MAX(last_ms, excluded.last_ms)`,
+    );
+    for (const name of input.links) link.run(name, now);
     return "appended" as const;
   });
   return result === stale ? "stale" : result;
@@ -170,6 +180,7 @@ export function maintain(
     transaction(db, () => {
       const expired = "SELECT id FROM observations WHERE stale_at IS NOT NULL AND stale_at < ?";
       db.prepare(`DELETE FROM observation_files WHERE observation_id IN (${expired})`).run(cutoff);
+      db.prepare(`DELETE FROM observation_refs WHERE observation_id IN (${expired})`).run(cutoff);
       db.prepare(`DELETE FROM observation_vectors WHERE observation_id IN (${expired})`).run(
         cutoff,
       );

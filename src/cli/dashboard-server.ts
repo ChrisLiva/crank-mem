@@ -160,7 +160,7 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
   const body = await withReader(memoryPath(root), async (memory) => {
     if (q !== null) {
       const vector = await queryVector(memory, q);
-      const lines = memory.search({
+      const hits = memory.search({
         ...filters,
         text: q,
         vector,
@@ -168,7 +168,11 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
         limit: PAGE,
         related: relatedFiles(loadIndex(path.join(root, CRANK_DIR)), q),
       });
-      return { rows: lines, next: null, mode: vector !== null ? "hybrid" : "keyword" };
+      return {
+        rows: hits.map((hit) => hit.line),
+        next: null,
+        mode: vector !== null ? "hybrid" : "keyword",
+      };
     }
     const page = pageOf(
       memory.list({

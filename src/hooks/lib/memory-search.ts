@@ -105,6 +105,5 @@ export function search(
   }
   return [...fused.values()]
     .sort((x, y) => y.score - x.score || newestFirst(x.line, y.line))
-    .slice(0, query.limit)
-    .map((entry) => entry.line);
+    .slice(0, query.limit);
 }

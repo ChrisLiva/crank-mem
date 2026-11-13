@@ -98,7 +98,7 @@ export async function search(args: string[]): Promise<number> {
       stale,
       related: relatedFiles(loadIndex(project.crankDir), text),
     });
-    for (const hit of hits) console.log(formatLine(hit));
+    for (const hit of hits) console.log(formatLine(hit.line));
     recordUsage(project.root, cliActor(), {
       channel: "search",
       query: redact(text).slice(0, QUERY_CHARS),
@@ -108,7 +108,7 @@ export async function search(args: string[]): Promise<number> {
       file: relFile,
       stale,
       mode: vector === null ? "keyword" : "hybrid",
-      ids: hits.map((hit) => hit.id),
+      ids: hits.map((hit) => hit.line.id),
       ms: Date.now() - started,
     });
     return 0;

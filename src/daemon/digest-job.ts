@@ -204,6 +204,7 @@ function stored(output: Digest, root: string, cwd: string, shownIds: number[]) {
       facts: o.facts.map(redact),
       filesRead: files(o.files_read),
       filesModified: files(o.files_modified),
+      refs: [],
     })),
     proposals: output.proposals
       .map((p) => ({ kind: p.kind, bullet: redact(p.bullet).trim() }))
@@ -211,5 +212,7 @@ function stored(output: Digest, root: string, cwd: string, shownIds: number[]) {
     stale: output.stale
       .filter((f) => shownIds.includes(f.id))
       .map((f) => ({ id: f.id, reason: redact(f.reason) })),
+    origin: null,
+    links: [],
   };
 }

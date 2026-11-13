@@ -80,7 +80,7 @@ async function evaluate(root: string, memory: MemoryReader): Promise<string[]> {
           stale: false,
           related,
         })
-        .map((hit) => hit.id);
+        .map((hit) => hit.line.id);
       return {
         at5: recall(q.relevant, ids, 5),
         at10: recall(q.relevant, ids, 10),

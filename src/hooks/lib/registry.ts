@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_FILE, CRANK_DIR, readJsonObject } from "./config.ts";
-import { memoryPath } from "./memory.ts";
+import { memoryPath, type MemoryReader } from "./memory.ts";
 import { projectName } from "./owner.ts";
 import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 
@@ -88,4 +88,12 @@ export function rootOfName(name: string): string | null {
     if (best === null || s.addedAtMs > best.addedAtMs) best = s;
   }
   return best?.root ?? null;
+}
+
+/** The store's linked projects (`Memory` → `links`, sorted by name) that resolve to an installed root. */
+export function linkedProjects(memory: MemoryReader): { name: string; root: string }[] {
+  return memory.links().flatMap((name) => {
+    const root = rootOfName(name);
+    return root === null ? [] : [{ name, root }];
+  });
 }

@@ -4,7 +4,13 @@ import * as path from "node:path";
 import { claudeSessionStart } from "./fixtures/payloads.ts";
 import { CRANK_DIR, defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { projectName } from "../src/hooks/lib/owner.ts";
-import { installedStores, registerProject, rootOfName } from "../src/hooks/lib/registry.ts";
+import { memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
+import {
+  installedStores,
+  linkedProjects,
+  registerProject,
+  rootOfName,
+} from "../src/hooks/lib/registry.ts";
 import {
   makeCrankHome,
   makeCrankProject,
@@ -112,5 +118,22 @@ describe("ownership", () => {
       expect(main[0]!.root).toBe(ws.payments);
       expect(installedStores()).toHaveLength(3);
     });
+  });
+
+  test("linked projects are the stored links that resolve", () => {
+    const ws = workspace();
+    seedMemory(ws.H, [], { links: ["storefront", "ghost", "payments-api"] });
+    const opened = openMemory(memoryPath(ws.H), "read");
+    if (opened.status !== "open") throw new Error(opened.status);
+    try {
+      withEnv({ CRANK_HOME: ws.home }, () => {
+        expect(linkedProjects(opened.memory)).toEqual([
+          { name: "payments-api", root: ws.payments },
+          { name: "storefront", root: ws.storefront },
+        ]);
+      });
+    } finally {
+      opened.memory.close();
+    }
   });
 });
