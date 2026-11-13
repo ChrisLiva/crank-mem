@@ -517,40 +517,48 @@ describe("cross-repo memory", () => {
   }, 30_000);
 
   test("an entry store that will not open writes no share", () => {
-    const run = (setUp: (ws: Ws) => () => void) => {
-      const ws = workspace();
-      const { transcript } = crossTranscript(ws);
-      const j = journey(ws.H, [{ lines: okStream(crossDigest(ws)) }], {
-        home: ws.home,
-        cwd: ws.H,
-        transcript,
-        skipJob: true,
-      });
-      const restore = setUp(ws);
-      try {
-        const job = rerun(j);
-        const search = runCli(ws.storefront, ["search", "Cross fix"], { CRANK_HOME: ws.home });
-        return { job, search };
-      } finally {
-        restore();
+    const ws = workspace();
+    const { transcript } = crossTranscript(ws);
+    const j = journey(ws.H, [{ lines: okStream(crossDigest(ws)) }], {
+      home: ws.home,
+      cwd: ws.H,
+      transcript,
+      skipJob: true,
+    });
+    plantMemory(ws.H, "unreadable");
+    expect(rerun(j).status).toBe(1);
+    const search = runCli(ws.storefront, ["search", "Cross fix"], { CRANK_HOME: ws.home });
+    expect(search.stdout).not.toContain("Cross fix");
+  }, 30_000);
+
+  test("a share written before the entry write fails stays, and the retry skips it", () => {
+    const ws = workspace();
+    const { transcript } = crossTranscript(ws);
+    const j = journey(ws.H, [{ lines: okStream(crossDigest(ws)) }], {
+      home: ws.home,
+      cwd: ws.H,
+      transcript,
+      skipJob: true,
+    });
+    seedMemory(ws.H, []);
+    const db = memoryPath(ws.H);
+    const shares = () =>
+      runCli(ws.storefront, ["search", "Cross fix"], { CRANK_HOME: ws.home })
+        .stdout.split("\n")
+        .filter((l) => l.startsWith("#"));
+    fs.chmodSync(db, 0o444);
+    try {
+      expect(rerun(j).status).not.toBe(0);
+      expect(shares()).toHaveLength(1);
+    } finally {
+      // SQLite creates the -wal and -shm files with the store's 0444 mode.
+      for (const f of [db, `${db}-wal`, `${db}-shm`]) {
+        if (fs.existsSync(f)) fs.chmodSync(f, 0o644);
       }
-    };
-
-    const unreadable = run((ws) => {
-      plantMemory(ws.H, "unreadable");
-      return () => {};
-    });
-    expect(unreadable.job.status).toBe(1);
-    expect(unreadable.search.stdout).not.toContain("Cross fix");
-
-    const readOnly = run((ws) => {
-      seedMemory(ws.H, []);
-      const db = memoryPath(ws.H);
-      fs.chmodSync(db, 0o444);
-      return () => fs.chmodSync(db, 0o644);
-    });
-    expect(readOnly.job.status).not.toBe(0);
-    expect(readOnly.search.stdout.split("\n").filter((l) => l.startsWith("#"))).toHaveLength(1);
+    }
+    expect(rerun(j).status).toBe(0);
+    expect(shares()).toHaveLength(1);
+    expect(searchIds(ws, ws.H, "Cross fix")).toHaveLength(1);
   }, 30_000);
 
   test("a share is skipped for a project with digests off, a newer store, or a store that will not open", () => {
