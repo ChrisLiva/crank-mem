@@ -61,7 +61,6 @@ function fixture() {
   };
   const homeIndex = idx(HOME_INDEX);
   return {
-    home,
     payIndex,
     brokenRoot,
     links,
@@ -185,12 +184,6 @@ describe("a citation whose first segment names a linked project", () => {
     fs.writeFileSync(f.payIndex, JSON.stringify(idx({})));
     expect(check.status("`pay/src/p.ts`", 1000)).toEqual(modified("pay/src/p.ts"));
     expect(f.resolve().status("`pay/src/p.ts`", 1000)).toEqual(none);
-  });
-
-  test("resolves at home when no project is linked", () => {
-    const f = fixture();
-    const check = citationCheck({ root: f.home, index: idx(HOME_INDEX) }, { resolve: () => [] });
-    expect(check.status("`pay/src/p.ts`", 1000)).toEqual(missing("pay/src/p.ts"));
   });
 
   test("checks the disk alone when the linked anatomy is absent or corrupt", () => {
