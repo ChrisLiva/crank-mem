@@ -56,12 +56,13 @@ function linkedAnatomies(links: Links): LinkedAnatomies {
 }
 
 /**
- * A checker of the files a text cites. Missing: a path that is neither indexed nor on disk.
- * Modified: an indexed file whose mtime is past `sinceMs`, or, with `sinceMs` null, past the end of
- * the text's latest date; an undated text then has none.
+ * A checker of the files a text cites. Missing: a cited file not on disk. Modified: a cited file
+ * whose mtime on disk is past `sinceMs`, or, with `sinceMs` null, past the end of the text's latest
+ * date; an undated text then has none. The index only places a cited name: a caller's index may be
+ * stale, so the disk alone answers whether the file exists and when it changed.
  *
  * A basename resolves by a unique suffix match against the index, because agents cite
- * `geometry.py` far more often than its full path. An unresolved basename is never called missing:
+ * `geometry.py` far more often than its full path. An unresolved basename is never checked:
  * the index omits files past max_files and unindexable ones, and a dotted symbol such as
  * `fs.statSync` reads the same.
  *
@@ -154,12 +155,20 @@ function resolveIn(
   const hits = cited.index.files[rel]
     ? [rel]
     : (cited.byName().get(path.posix.basename(rel)) ?? []).filter((c) => c.endsWith("/" + rel));
-  if (hits.length === 1) {
-    return cutoffMs !== null && cited.index.files[hits[0]!]!.mtimeMs > cutoffMs ? "modified" : null;
+  if (hits.length > 1 || (!hits.length && !rel.includes("/"))) return null;
+  const mtimeMs = diskMtime(path.join(cited.root, hits[0] ?? rel));
+  if (mtimeMs === null) return "missing";
+  return cutoffMs !== null && mtimeMs > cutoffMs ? "modified" : null;
+}
+
+/** A file's mtime on disk, or null when nothing is there. */
+function diskMtime(file: string): number | null {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    // Bun throws ENOTDIR through a regular file even with throwIfNoEntry false.
+    return null;
   }
-  if (!hits.length && rel.includes("/") && !fs.existsSync(path.join(cited.root, rel)))
-    return "missing";
-  return null;
 }
 
 /**

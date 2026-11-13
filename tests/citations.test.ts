@@ -20,9 +20,12 @@ function idx(files: Record<string, Partial<FileEntry>>): AnatomyIndex {
   };
 }
 
+/** Writes a file whose mtime on disk is 2000 ms past the epoch. */
 function write(root: string, rel: string, text = "x\n"): void {
-  fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-  fs.writeFileSync(path.join(root, rel), text);
+  const file = path.join(root, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+  fs.utimesSync(file, new Date(2000), new Date(2000));
 }
 
 const HOME_INDEX = {
@@ -42,7 +45,7 @@ function fixture() {
   const brokenRoot = path.join(tmp, "broken");
   for (const rel of ["src/a.ts", "lib/deep/widget.ts", "docs/onDisk.md", "vendored/x.ts"])
     write(home, rel);
-  for (const rel of ["src/p.ts", "notes/raw.md"]) write(payRoot, rel);
+  for (const rel of ["src/p.ts", "lib/q/r.ts", "notes/raw.md"]) write(payRoot, rel);
   write(brokenRoot, "src/k.ts");
   const payIndex = path.join(payRoot, ".crank", "anatomy-index.json");
   write(
@@ -61,6 +64,7 @@ function fixture() {
   };
   const homeIndex = idx(HOME_INDEX);
   return {
+    home,
     payIndex,
     brokenRoot,
     links,
@@ -86,14 +90,15 @@ describe("a home citation", () => {
   test.each([
     ["`src/a.ts`", 1000, modified("src/a.ts")],
     ["`src/a.ts`", 2000, none],
-    ["`src/ghost.ts`", 5000, none],
+    ["`src/ghost.ts`", 5000, missing("src/ghost.ts")],
     ["`deep/widget.ts`", 1000, modified("deep/widget.ts")],
     ["`deep/widget.ts`", 5000, none],
     ["`widget.ts`", 1000, modified("widget.ts")],
     ["`shared/dup.ts`", 1000, none],
     ["`src/gone.ts`", 1000, missing("src/gone.ts")],
     ["`gone.ts`", 1000, none],
-    ["`docs/onDisk.md`", 1000, none],
+    ["`docs/onDisk.md`", 1000, modified("docs/onDisk.md")],
+    ["`docs/onDisk.md`", 5000, none],
     ["`ep/widget.ts`", 1000, missing("ep/widget.ts")],
   ])("%s past %d", (text, sinceMs, expected) => {
     expect(fixture().resolve().status(text, sinceMs)).toEqual(expected);
@@ -115,7 +120,11 @@ describe("with no cutoff, a citation is modified past the end of the text's late
         const f = fixture();
         const noon = new Date(2020, 0, 1, 12).getTime();
         const nextDay = new Date(2020, 0, 2).getTime();
-        const at = (mtimeMs: number) => f.resolve(idx({ "src/a.ts": { mtimeMs } }));
+        const at = (mtimeMs: number) => {
+          const when = new Date(mtimeMs);
+          fs.utimesSync(path.join(f.home, "src/a.ts"), when, when);
+          return f.resolve();
+        };
         expect(at(noon).status("`src/a.ts` (2020-01-01)", null)).toEqual(none);
         expect(at(nextDay + 1).status("`src/a.ts` (2020-01-01)", null)).toEqual(
           modified("src/a.ts"),
@@ -135,7 +144,7 @@ describe("a citation whose first segment names a linked project", () => {
     ["`pay/src/p.ts`", modified("pay/src/p.ts")],
     ["`pay/q/r.ts`", modified("pay/q/r.ts")],
     ["`pay/src/none.ts`", missing("pay/src/none.ts")],
-    ["`pay/notes/raw.md`", none],
+    ["`pay/notes/raw.md`", modified("pay/notes/raw.md")],
     ["`pay/zzz.ts`", none],
   ])("resolves %s in that project", (text, expected) => {
     expect(fixture().resolve().status(text, 1000)).toEqual(expected);
@@ -179,11 +188,11 @@ describe("a citation whose first segment names a linked project", () => {
     const f = fixture();
     const before = fs.readFileSync(f.payIndex);
     const check = f.resolve();
-    expect(check.status("`pay/src/p.ts`", 1000)).toEqual(modified("pay/src/p.ts"));
+    expect(check.status("`pay/p.ts`", 1000)).toEqual(modified("pay/p.ts"));
     expect(fs.readFileSync(f.payIndex).equals(before)).toBe(true);
     fs.writeFileSync(f.payIndex, JSON.stringify(idx({})));
-    expect(check.status("`pay/src/p.ts`", 1000)).toEqual(modified("pay/src/p.ts"));
-    expect(f.resolve().status("`pay/src/p.ts`", 1000)).toEqual(none);
+    expect(check.status("`pay/p.ts`", 1000)).toEqual(modified("pay/p.ts"));
+    expect(f.resolve().status("`pay/p.ts`", 1000)).toEqual(none);
   });
 
   test("checks the disk alone when the linked anatomy is absent or corrupt", () => {
@@ -196,7 +205,7 @@ describe("a citation whose first segment names a linked project", () => {
         check.status("`broken/none.ts`", 1000),
       ];
     };
-    const expected = [none, missing("broken/src/none.ts"), none];
+    const expected = [modified("broken/src/k.ts"), missing("broken/src/none.ts"), none];
     expect(rows()).toEqual(expected);
     write(f.brokenRoot, ".crank/anatomy-index.json", "not json");
     expect(rows()).toEqual(expected);
