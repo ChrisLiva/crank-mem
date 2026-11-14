@@ -5,7 +5,7 @@ import { digestRequest, type Digest } from "../src/daemon/digest-prompt.ts";
 import { matchesSchema } from "../src/daemon/gateway.ts";
 import { EMBED_MODEL } from "../src/daemon/embedder.ts";
 import { redact } from "../src/daemon/redact.ts";
-import { memoryPath, openMemory, parseHandle, type Position } from "../src/hooks/lib/memory.ts";
+import { parseHandle, readStoreSync, type Position } from "../src/hooks/lib/memory.ts";
 import {
   FIXTURE,
   REPO_ROOT,
@@ -68,13 +68,9 @@ const TEMPLATE_CEREBRUM_BLOCK = "[CEREBRUM]\n## User Preferences\n\n## Memory\n\
 
 /** The saved transcript position of session s1, read through the Memory seam. */
 function savedPosition(root: string): Position | null {
-  const opened = openMemory(memoryPath(root), "read");
-  if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
-  try {
-    return opened.memory.position("s1");
-  } finally {
-    opened.memory.close();
-  }
+  const read = readStoreSync(root, (memory) => memory.position("s1"));
+  if (read.status !== "open") throw new Error(`store is ${read.status}`);
+  return read.value;
 }
 
 describe("digest job (black-box)", () => {
@@ -279,13 +275,9 @@ describe("digest job (black-box)", () => {
     expect(await exited).toEqual([0, 0]);
     expect(j.fake.calls().length).toBe(2);
     expect(search(j.root, "EEXIST").trim().split("\n").length).toBe(1);
-    const opened = openMemory(memoryPath(j.root), "read");
-    if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
-    try {
-      expect(opened.memory.stats("m", 0).costUsdSince).toBeCloseTo(0.0123, 9);
-    } finally {
-      opened.memory.close();
-    }
+    const read = readStoreSync(j.root, (memory) => memory.stats("m", 0).costUsdSince);
+    if (read.status !== "open") throw new Error(`store is ${read.status}`);
+    expect(read.value).toBeCloseTo(0.0123, 9);
   }, 30_000);
 
   test("digests write no tracked file, and a repeated observation adds no row", () => {
@@ -810,13 +802,9 @@ describe("digestRequest", () => {
 
 /** The ids and texts in a project's store that have no vector under EMBED_MODEL, read through the Memory seam. */
 function unembedded(root: string): { id: number; text: string }[] {
-  const opened = openMemory(memoryPath(root), "read");
-  if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
-  try {
-    return opened.memory.unembedded(EMBED_MODEL, 10);
-  } finally {
-    opened.memory.close();
-  }
+  const read = readStoreSync(root, (memory) => memory.unembedded(EMBED_MODEL, 10));
+  if (read.status !== "open") throw new Error(`store is ${read.status}`);
+  return read.value;
 }
 
 describe("embedding after a digest (black-box, real model)", () => {

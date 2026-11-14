@@ -12,13 +12,13 @@ import { queryVector } from "../src/cli/recall.ts";
 import { CRANK_DIR } from "../src/hooks/lib/config.ts";
 import {
   memoryPath,
-  NO_MEMORY_NOTE,
-  withReader,
+  readStore,
   type MemoryReader,
   type SearchQuery,
 } from "../src/hooks/lib/memory.ts";
 import { relatedFiles } from "../src/hooks/lib/related-files.ts";
 import { loadIndex } from "../src/hooks/lib/store.ts";
+import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 
 type Query = { label: number; text: string; relevant: Set<number> };
 type Arm = { at5: number; at10: number; rr: number; top10: number[] };
@@ -188,16 +188,15 @@ if (typeof set === "string") {
   process.stderr.write(`${set}\n`);
   process.exit(1);
 }
-const result = await withReader(memoryPath(root), (memory) =>
+const result = await readStore(root, (memory) =>
   set ? replaySet(root, memory, set) : evaluate(root, memory, queries(memoryPath(root))),
 );
-if ("note" in result) {
+if (result.status === "open") {
+  for (const line of result.value) console.log(line);
+} else if (result.status === "missing") {
   // A missing store is an empty result, as `crank-mem search` answers it.
-  if (result.note !== NO_MEMORY_NOTE) {
-    console.error(result.note);
-    process.exit(1);
-  }
-  console.log(result.note);
+  console.log(STORE_TEXT.missing.note);
 } else {
-  for (const line of result) console.log(line);
+  console.error(STORE_TEXT[result.status].note);
+  process.exit(1);
 }

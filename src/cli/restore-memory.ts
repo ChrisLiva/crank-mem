@@ -19,7 +19,7 @@ export async function run(args: string[]): Promise<number> {
   }
   let result: Awaited<ReturnType<typeof restoreMemory>>;
   try {
-    result = await restoreMemory(store, source);
+    result = await restoreMemory(project.root, source);
   } catch (err) {
     console.error(`crank-mem: cannot restore: ${errorMessage(err)}.`);
     return 1;
@@ -34,6 +34,6 @@ export async function run(args: string[]): Promise<number> {
   }
   console.log(`restored memory.db from ${source}`);
   if (result.savedAs !== null) console.log(`  the previous store is at ${result.savedAs}`);
-  reportMigration(migrateStore(store));
+  reportMigration(migrateStore(project.root));
   return 0;
 }

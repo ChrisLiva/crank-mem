@@ -19,7 +19,7 @@ import {
 import { claudeSessionStart } from "./fixtures/payloads.ts";
 import { crankHooks } from "../src/cli/settings.ts";
 import { crankTrust } from "../src/cli/codex-trust.ts";
-import { memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
+import { openStoreForWrite } from "../src/hooks/lib/memory.ts";
 import { unknownFlag } from "../src/cli/args.ts";
 import { COMMANDS, commandHelp, commandSpec } from "../src/cli/commands.ts";
 import { cliVersion } from "../src/cli/version.ts";
@@ -307,7 +307,7 @@ describe("stats: capture health", () => {
     const before = cli(root, "stats").stdout;
     expect(before).toContain("\n  consolidation:    never\n");
     expect(before).toContain("  month cost:       $0.0022 (list price)\n");
-    const opened = openMemory(memoryPath(root), "write");
+    const opened = openStoreForWrite(root);
     if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
     try {
       opened.memory.recordConsolidation({
@@ -329,7 +329,7 @@ describe("stats: capture health", () => {
     expect(out).toContain("  month cost:       $0.0052 (list price)\n");
   });
 
-  test("digest off by default, and one memory row stands in for a store that is missing, newer or unreadable", () => {
+  test("digest off by default, and one memory row stands in for a store that is missing, newer, unreadable or failing its queries", () => {
     const root = initedCopy(ALPHA);
     const fresh = cli(root, "stats").stdout;
     expect(fresh).toMatch(CAPTURE_ROWS);
@@ -343,11 +343,13 @@ describe("stats: capture health", () => {
       "  memory:           newer than this version; run crank-mem upgrade\n",
     );
 
-    fs.rmSync(path.join(root, ".crank/memory.db"));
-    plantMemory(root, "unreadable");
-    const bad = cli(root, "stats");
-    expect(bad.status).toBe(0);
-    expect(bad.stdout).toContain("  memory:           unreadable\n");
+    for (const state of ["unreadable", "broken"] as const) {
+      fs.rmSync(path.join(root, ".crank/memory.db"), { force: true });
+      plantMemory(root, state);
+      const bad = cli(root, "stats");
+      expect(bad.status).toBe(0);
+      expect(bad.stdout).toContain("  memory:           unreadable\n");
+    }
   });
 });
 

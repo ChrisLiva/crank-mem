@@ -5,10 +5,8 @@ import { CRANK_DIR } from "../hooks/lib/config.ts";
 import {
   formatLine,
   localDate,
-  memoryPath,
-  NO_MEMORY_NOTE,
   parseHandle,
-  withReader,
+  readStore,
   type MemoryReader,
   type SearchQuery,
 } from "../hooks/lib/memory.ts";
@@ -23,6 +21,7 @@ import {
   type Observation,
   type ObservationLine,
   type ObservationType,
+  STORE_TEXT,
 } from "../hooks/lib/wire.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
@@ -37,13 +36,14 @@ async function withMemory(
   missingIsEmpty: boolean,
   fn: (memory: MemoryReader) => number | Promise<number>,
 ): Promise<number> {
-  const r = await withReader(memoryPath(root), fn);
-  if (typeof r === "number") return r;
-  if (missingIsEmpty && r.note === NO_MEMORY_NOTE) {
-    console.log(r.note);
+  const r = await readStore(root, fn);
+  if (r.status === "open") return r.value;
+  const note = STORE_TEXT[r.status].note;
+  if (missingIsEmpty && r.status === "missing") {
+    console.log(note);
     return 0;
   }
-  console.error(r.note);
+  console.error(note);
   return 1;
 }
 
@@ -263,8 +263,8 @@ async function ownerPairs(
   file: { root: string; rel: string },
 ): Promise<{ project: string; path: string }[]> {
   if (file.root === current) return memory.pairedPaths(file.rel, PAIRED_PATHS);
-  const r = await withReader(memoryPath(file.root), (m) => m.pairedPaths(file.rel, PAIRED_PATHS));
-  return Array.isArray(r) ? r : [];
+  const r = await readStore(file.root, (m) => m.pairedPaths(file.rel, PAIRED_PATHS));
+  return r.status === "open" ? r.value : [];
 }
 
 /** A target's `--file` filter: the owner-relative path in the owner's store, else the paired paths in its project. */
@@ -297,13 +297,12 @@ async function federatedSearch(
     const files = targetFiles(target, scope.file, pairs);
     if (files?.length === 0) continue;
     const query = { ...base, files, related: target.related };
-    const r =
-      target.root === current
-        ? storeHits(memory, target.name, target.root, query)
-        : await withReader(memoryPath(target.root), (m) =>
-            storeHits(m, target.name, target.root, query),
-          );
-    if (Array.isArray(r)) hits.push(...r);
+    if (target.root === current) {
+      hits.push(...storeHits(memory, target.name, target.root, query));
+      continue;
+    }
+    const r = await readStore(target.root, (m) => storeHits(m, target.name, target.root, query));
+    if (r.status === "open") hits.push(...r.value);
   }
   // A stable sort keeps the current store's hits, listed first, ahead of equal scores.
   hits.sort((a, b) => b.score - a.score);
@@ -450,17 +449,17 @@ export async function get(args: string[]): Promise<number> {
 async function getFrom(store: HandleStore, current: string): Promise<Observation[] | null> {
   const r =
     store.ids.length === 0
-      ? []
-      : await withReader(memoryPath(store.root), (memory) => memory.get(store.ids));
-  if (!Array.isArray(r)) {
+      ? { status: "open" as const, value: [] }
+      : await readStore(store.root, (memory) => memory.get(store.ids));
+  if (r.status !== "open") {
     if (store.root !== current) return [];
-    console.error(r.note);
+    console.error(STORE_TEXT[r.status].note);
     return null;
   }
   recordUsage(store.root, cliActor(), {
     channel: "get",
     requested: store.ids,
-    found: r.map((o) => o.id),
+    found: r.value.map((o) => o.id),
   });
-  return r;
+  return r.value;
 }

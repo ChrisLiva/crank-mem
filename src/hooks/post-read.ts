@@ -15,7 +15,7 @@ import { CRANK_DIR } from "./lib/config.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
 import { citationCheck } from "./lib/citations.ts";
 import { excerptOf, readCerebrum } from "./lib/injection.ts";
-import { formatLine, memoryPath, withReader, type MemoryReader } from "./lib/memory.ts";
+import { formatLine, memoryPath, readStore, type MemoryReader } from "./lib/memory.ts";
 import { ownerOf, projectName } from "./lib/owner.ts";
 import { rootOfName } from "./lib/registry.ts";
 import { loadIndex } from "./lib/store.ts";
@@ -122,16 +122,13 @@ function historyOf(m: MemoryReader, rel: string): History {
   return { lines, pairs: lines.length === 0 ? [] : m.pairedPaths(rel, PAIRED_FILES) };
 }
 
-/** Each store's history for its unseen reads; a store that does not open as "open" is absent. */
+/** Each owner's history for its unseen reads; an owner whose store does not open is absent. */
 async function fetchHistories(reads: Read[], isSeen: (r: Read) => boolean): Promise<Histories> {
   const out: Histories = new Map();
-  for (const store of new Set(reads.map((r) => r.store))) {
-    const rels = reads.filter((r) => r.store === store && !isSeen(r)).map((r) => r.rel);
-    const got = await withReader(
-      store,
-      (m) => new Map(rels.map((rel) => [rel, historyOf(m, rel)])),
-    );
-    if (got instanceof Map) out.set(store, got);
+  for (const owner of new Set(reads.map((r) => r.owner))) {
+    const rels = reads.filter((r) => r.owner === owner && !isSeen(r)).map((r) => r.rel);
+    const got = await readStore(owner, (m) => new Map(rels.map((rel) => [rel, historyOf(m, rel)])));
+    if (got.status === "open") out.set(owner, got.value);
   }
   return out;
 }
@@ -151,11 +148,8 @@ async function fetchPairs(found: Histories): Promise<Map<string, PairStore>> {
     const root = rootOfName(project);
     if (root === null) continue;
     const store = memoryPath(root);
-    const files = await withReader(
-      store,
-      (m) => new Map([...paths].map((p) => [p, linesOf(m, p)])),
-    );
-    if (files instanceof Map) out.set(project, { root, store, files });
+    const files = await readStore(root, (m) => new Map([...paths].map((p) => [p, linesOf(m, p)])));
+    if (files.status === "open") out.set(project, { root, store, files: files.value });
   }
   return out;
 }
@@ -251,7 +245,7 @@ function assemble(
 ): Assembled {
   const out: Assembled = { sections: [], tallies: new Map(), marked: [], full: false };
   for (const read of reads) {
-    const history = found.get(read.store);
+    const history = found.get(read.owner);
     if (!history) continue;
     const tally = tallyFor(out, read.store, read.owner);
     const own = history.get(read.rel);

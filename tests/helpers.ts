@@ -8,7 +8,7 @@ import type * as sqlite from "node:sqlite";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import {
   memoryPath,
-  openMemory,
+  openStoreForWrite,
   type DigestInput,
   type NewObservation,
   type Position,
@@ -343,7 +343,7 @@ export function seedMemory(
 ): number[] {
   const n = ++seedCount;
   const sessionId = opts.session ?? `seed-${n}`;
-  const opened = openMemory(memoryPath(root), "write");
+  const opened = openStoreForWrite(root);
   if (opened.status !== "open") throw new Error(`seedMemory: store is ${opened.status}`);
   const memory = opened.memory;
   try {
@@ -392,7 +392,7 @@ export function seedMemory(
 
 /** Store one vector so `search` embeds its query. */
 export function plantVector(root: string, id: number): void {
-  const opened = openMemory(memoryPath(root), "write");
+  const opened = openStoreForWrite(root);
   if (opened.status !== "open") throw new Error(`store is ${opened.status}`);
   try {
     opened.memory.putVectors(EMBED_MODEL, [{ id, vector: new Float32Array(384) }]);
@@ -401,8 +401,11 @@ export function plantVector(root: string, id: number): void {
   }
 }
 
-/** Write the project's store in one bad state: a newer schema, or a file that is not a database. */
-export function plantMemory(root: string, state: "newer" | "unreadable"): void {
+/**
+ * Write the project's store in one bad state: a newer schema, a file that is not a database, or a
+ * database at the current schema version with no tables, which opens and then fails every query.
+ */
+export function plantMemory(root: string, state: "newer" | "unreadable" | "broken"): void {
   const file = memoryPath(root);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (state === "unreadable") {
@@ -411,8 +414,8 @@ export function plantMemory(root: string, state: "newer" | "unreadable"): void {
   }
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
   const db = new mod.DatabaseSync(file);
-  db.exec("PRAGMA journal_mode=WAL");
-  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
+  if (state === "newer") db.exec("PRAGMA journal_mode=WAL");
+  db.exec(`PRAGMA user_version = ${state === "newer" ? SCHEMA_VERSION + 1 : SCHEMA_VERSION}`);
   db.close();
 }
 

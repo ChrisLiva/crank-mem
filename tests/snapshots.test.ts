@@ -9,7 +9,8 @@ import { digestRequest } from "../src/daemon/digest-prompt.ts";
 import { EMBED_MODEL } from "../src/daemon/embedder.ts";
 import { LOCAL_CONFIG_FILE } from "../src/hooks/lib/config.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
-import { MEMORY_OLDER_NOTE, memoryPath } from "../src/hooks/lib/memory.ts";
+import { memoryPath } from "../src/hooks/lib/memory.ts";
+import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import {
   appendRecords,
   children,
@@ -168,7 +169,7 @@ describe("migration", () => {
 
       const search = runCli(root, ["search", "lock"]);
       expect(search.status).toBe(1);
-      expect(search.stderr).toBe(MEMORY_OLDER_NOTE + "\n");
+      expect(search.stderr).toBe(STORE_TEXT.older.note + "\n");
 
       const j = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }]);
       expect(j.job.status).toBe(1);
@@ -224,7 +225,7 @@ describe("older stores", () => {
     );
     expect(start.status).toBe(0);
     const ctx: string = JSON.parse(start.stdout).hookSpecificOutput.additionalContext;
-    expect(ctx.split("\n")).toContain(`_Note: ${MEMORY_OLDER_NOTE}_`);
+    expect(ctx.split("\n")).toContain(`_Note: ${STORE_TEXT.older.note}_`);
     expect(ctx).not.toContain("## Recent memory");
     expect(ctx).not.toContain(RECALL_BULLET);
 
@@ -235,7 +236,7 @@ describe("older stores", () => {
     ]) {
       const r = runCli(root, args);
       expect(r.status).toBe(1);
-      expect(r.stderr).toBe(MEMORY_OLDER_NOTE + "\n");
+      expect(r.stderr).toBe(STORE_TEXT.older.note + "\n");
     }
 
     const read = runHook(
@@ -498,7 +499,7 @@ db.close();
       expect(failed.stderr).toContain("crank-mem: could not migrate memory.db (");
       const older = runCli(other, ["search", "lock"]);
       expect(older.status).toBe(1);
-      expect(older.stderr).toBe(MEMORY_OLDER_NOTE + "\n");
+      expect(older.stderr).toBe(STORE_TEXT.older.note + "\n");
     } finally {
       fs.chmodSync(dir, 0o755);
     }

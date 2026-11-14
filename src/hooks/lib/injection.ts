@@ -8,20 +8,13 @@ import { symbolsSupported } from "./symbols.ts";
 import { CEREBRUM_FILE } from "./cerebrum-files.ts";
 import { debugEvent } from "./debug.ts";
 import { driftNote } from "./drift.ts";
-import {
-  MEMORY_NEWER_NOTE,
-  MEMORY_OLDER_NOTE,
-  formatLine,
-  memoryPath,
-  memoryStatus,
-  openMemory,
-} from "./memory.ts";
+import { formatLine, readStoreSync, storeStatus, type StoreRead } from "./memory.ts";
 import { linkedProjects } from "./registry.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
 import type { CrankConfig } from "./config.ts";
 import { loadIndex, type AnatomyIndex } from "./store.ts";
 import type { UsageEvent } from "./usage.ts";
-import type { ObservationLine } from "./wire.ts";
+import { STORE_TEXT, type ObservationLine } from "./wire.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
 // file map, the code pointer, and the recall pointer when recallApplies) → staleness/drift/
@@ -162,14 +155,11 @@ export interface InjectionSources {
   recall?: Recall;
 }
 
-type Recall =
-  | {
-      status: "open";
-      nextSteps: string | null;
-      recent: ObservationLine[];
-      linked: { name: string; root: string }[];
-    }
-  | { status: "missing" | "older" | "newer" | "unreadable" };
+type Recall = StoreRead<{
+  nextSteps: string | null;
+  recent: ObservationLine[];
+  linked: { name: string; root: string }[];
+}>;
 
 /** The recall bullet shows with a readable store, and while digests run with none yet, since they will fill it. */
 function recallApplies(running: boolean, status: Recall["status"]): boolean {
@@ -183,8 +173,7 @@ function captureNotes(gate: DigestGate, status: Recall["status"]): string[] {
     notes.push(
       `crank-mem digests stopped (${gate.stop.reason}): run \`crank-mem digest resume\` once that is fixed.`,
     );
-  if (status === "newer") notes.push(MEMORY_NEWER_NOTE);
-  if (status === "older") notes.push(MEMORY_OLDER_NOTE);
+  if (status === "newer" || status === "older") notes.push(STORE_TEXT[status].note);
   if (gate.stalled) {
     notes.push(
       "crank-mem: a session here has waited over 2 hours for its digest; see `crank-mem stats`.",
@@ -406,7 +395,7 @@ export function composeInjection(
   const running = sources.running ?? false;
   const recall = sources.recall;
   const recallPointer = recall ? recallApplies(running, recall.status) : false;
-  const links = recall?.status === "open" ? recall.linked : [];
+  const links = recall?.status === "open" ? recall.value.linked : [];
   const parts: string[] = [
     instructions(
       sources.index,
@@ -475,7 +464,7 @@ function recallSections(
   recall: Extract<Recall, { status: "open" }>,
   fit: (section: string) => boolean,
 ): Pick<Shown, "nextSteps" | "recentIds"> {
-  const { nextSteps, recent } = recall;
+  const { nextSteps, recent } = recall.value;
   const shown: Pick<Shown, "nextSteps" | "recentIds"> = { nextSteps: false, recentIds: [] };
   if (nextSteps !== null && bytes(nextSteps) <= NEXT_STEPS_MAX_BYTES) {
     shown.nextSteps = fit(`## Next steps (last digested session)\n${nextSteps}`);
@@ -534,7 +523,7 @@ export function subagentInjection(
   opts: { agentType: string | null },
 ): { text: string; usage: SubagentStartUsage } {
   const running = digestGate(config, false, root).running;
-  const recall = recallApplies(running, memoryStatus(memoryPath(root)));
+  const recall = recallApplies(running, storeStatus(root));
 
   const md = readCerebrum(crankDir);
   // Balanced: at this budget the session-start order leaves no room for memory.
@@ -637,19 +626,9 @@ export function sessionStartInjection(
 }
 
 function readRecall(root: string, gate: DigestGate): Recall {
-  const opened = openMemory(memoryPath(root), "read");
-  if (opened.status !== "open") return { status: opened.status };
-  const { memory } = opened;
-  try {
-    return {
-      status: "open",
-      nextSteps: gate.running && gate.drained ? memory.latestNextSteps() : null,
-      recent: memory.recent(RECENT_MEMORY_ROWS),
-      linked: linkedProjects(memory),
-    };
-  } catch {
-    return { status: "unreadable" };
-  } finally {
-    memory.close();
-  }
+  return readStoreSync(root, (memory) => ({
+    nextSteps: gate.running && gate.drained ? memory.latestNextSteps() : null,
+    recent: memory.recent(RECENT_MEMORY_ROWS),
+    linked: linkedProjects(memory),
+  }));
 }

@@ -1,10 +1,8 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import type * as sqlite from "node:sqlite";
 import * as path from "node:path";
 import { errorMessage } from "../hooks/lib/config.ts";
-import { memoryPath, openForRead } from "../hooks/lib/memory.ts";
-import { userVersion } from "../hooks/lib/memory-schema.ts";
+import { storeVersion } from "../hooks/lib/memory.ts";
 import { registeredRoots } from "../hooks/lib/registry.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { COMMANDS } from "./commands.ts";
@@ -52,19 +50,10 @@ function schemaBlockers(targetDir: string): Blockers {
   } catch {
     return { ok: false, unreadable: true };
   }
-  const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
-  if (!mod) return { ok: true };
   const roots = registeredRoots().filter((root) => {
-    let db: sqlite.DatabaseSync | null = null;
-    try {
-      db = openForRead(mod, memoryPath(root));
-      return db !== null && userVersion(db) > target;
-    } catch {
-      // A store that is not a database, the older version reports itself.
-      return false;
-    } finally {
-      db?.close();
-    }
+    const v = storeVersion(root);
+    // A store that is not a database, the older version reports itself.
+    return v !== null && v > target;
   });
   return roots.length === 0 ? { ok: true } : { ok: false, roots };
 }

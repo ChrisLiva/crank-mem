@@ -19,8 +19,8 @@ import {
 import { readStopState } from "../hooks/lib/user-state.ts";
 import { readUntouched } from "../hooks/lib/untouched.ts";
 import { daemonAlive, readParked, readSpool, type SpoolItem } from "../hooks/lib/spool.ts";
-import { formatUsd, projectStatus, type HealthSummary } from "../hooks/lib/wire.ts";
-import { localDate, memoryPath, openMemory } from "../hooks/lib/memory.ts";
+import { formatUsd, projectStatus, STORE_TEXT, type HealthSummary } from "../hooks/lib/wire.ts";
+import { localDate, memoryPath, readStoreSync } from "../hooks/lib/memory.ts";
 import { ISO_DATE } from "../hooks/lib/bullets.ts";
 import { latestSnapshot } from "../hooks/lib/store-upkeep.ts";
 import { EMBED_MODEL, embedderReady } from "../daemon/embedder.ts";
@@ -122,13 +122,6 @@ function updateValue(): string {
   return "not checked yet";
 }
 
-const MEMORY_STATE = {
-  missing: "none yet",
-  older: "older than this version; run crank-mem upgrade",
-  newer: "newer than this version; run crank-mem upgrade",
-  unreadable: "unreadable",
-} as const;
-
 /**
  * Whether digests run, what waits for them from this project, what the store holds,
  * and whether search by meaning works: the dashboard's Health view reads it, and
@@ -137,35 +130,30 @@ const MEMORY_STATE = {
 export async function captureSummary(root: string, config: CrankConfig): Promise<HealthSummary> {
   const stop = readStopState();
   const ours = (items: SpoolItem[]) => items.filter(({ entry }) => entry.projectRoot === root);
-  const store = memoryPath(root);
-  const opened = openMemory(store, "read");
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const read = readStoreSync(root, (m) => m.stats(EMBED_MODEL, monthStart));
   let memory: HealthSummary["memory"] = null;
-  if (opened.status === "open") {
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    try {
-      const s = opened.memory.stats(EMBED_MODEL, monthStart);
-      memory = {
-        observations: s.observations,
-        unembedded: s.unembedded,
-        lastDigestMs: s.lastDigestMs,
-        monthCostUsd: s.costUsdSince,
-        pendingProposals: s.pendingProposals,
-        staleFlags: s.staleRows,
-        lastConsolidation: s.lastConsolidation,
-      };
-    } finally {
-      opened.memory.close();
-    }
+  if (read.status === "open") {
+    const s = read.value;
+    memory = {
+      observations: s.observations,
+      unembedded: s.unembedded,
+      lastDigestMs: s.lastDigestMs,
+      monthCostUsd: s.costUsdSince,
+      pendingProposals: s.pendingProposals,
+      staleFlags: s.staleRows,
+      lastConsolidation: s.lastConsolidation,
+    };
   }
   const facts: Omit<HealthSummary, "status"> = {
     digest: !config.digest ? "off" : stop ? "stopped" : "on",
     stopReason: config.digest && stop ? stop.reason : null,
     daemonAlive: daemonAlive(),
     spool: { waiting: ours(readSpool()).length, parked: ours(readParked()).length },
-    store: opened.status,
+    store: read.status,
     memory,
-    lastSnapshotMs: latestSnapshot(store)?.atMs ?? null,
+    lastSnapshotMs: latestSnapshot(memoryPath(root))?.atMs ?? null,
     embedderReady: await embedderReady(),
   };
   return { ...facts, status: projectStatus(facts) };
@@ -204,7 +192,7 @@ async function captureRows(
       last === null ? "never" : `${ageOf(last.startedMs)} (${last.outcome})`,
     ]);
   } else if (s.store !== "open") {
-    rows.push(["memory", MEMORY_STATE[s.store]]);
+    rows.push(["memory", STORE_TEXT[s.store].state]);
   }
   rows.push(["last snapshot", s.lastSnapshotMs === null ? "never" : ageOf(s.lastSnapshotMs)]);
   rows.push(["embedder", s.embedderReady ? "ready" : "not ready (run crank-mem setup)"]);

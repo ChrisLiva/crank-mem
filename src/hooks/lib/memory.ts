@@ -18,6 +18,7 @@ import type {
   ProposalRow,
   ProposalState,
   StaleRow,
+  StoreStatus,
 } from "./wire.ts";
 
 // The memory store: <project>/.crank/memory.db, one SQLite file per project
@@ -28,24 +29,20 @@ import type {
 export { samePosition } from "./memory-write.ts";
 
 export const MEMORY_FILE = "memory.db";
-export const MEMORY_OLDER_NOTE =
-  "crank-mem: memory.db predates this version; run `crank-mem upgrade`.";
-export const MEMORY_NEWER_NOTE =
-  "crank-mem: memory.db is newer than this version; run `crank-mem upgrade`.";
-export const MEMORY_UNREADABLE_NOTE = "crank-mem: .crank/memory.db is not a readable database.";
-export const NO_MEMORY_NOTE = "crank-mem: no memory exists yet.";
 export type MemoryReader = Omit<
   Memory,
   "appendDigest" | "recordRejection" | "putVectors" | "recordConsolidation" | "maintain"
 >;
 export type MemoryRead =
   | { status: "open"; memory: MemoryReader }
-  | { status: "missing" | "older" | "newer" | "unreadable" };
+  | { status: Exclude<StoreStatus, "open"> };
 /** migratedFrom: the version the open migrated from (0 for a fresh store), null when it applied no step. */
 export type MemoryWrite =
   | { status: "open"; memory: Memory; migratedFrom: number | null }
   | { status: "newer" | "unreadable" }
   | { status: "unmigrated"; detail: string };
+/** A read's result: `fn`'s answer over an open store, or the `StoreStatus` it read as. */
+export type StoreRead<T> = { status: "open"; value: T } | { status: Exclude<StoreStatus, "open"> };
 export type StoreMigration =
   | { status: "absent" | "current" | "newer" }
   | { status: "migrated"; from: number; to: number }
@@ -194,7 +191,7 @@ export function memoryPath(root: string): string {
  * Opens a store to read, or returns null when the file is missing (node:sqlite creates a missing file on open).
  * Read-write: under bun a read-only open of a closed WAL store with no -shm fails.
  */
-export function openForRead(mod: typeof sqlite, file: string): sqlite.DatabaseSync | null {
+function openForRead(mod: typeof sqlite, file: string): sqlite.DatabaseSync | null {
   if (!fs.existsSync(file)) return null;
   const db = new mod.DatabaseSync(file, { timeout: 200 });
   try {
@@ -266,29 +263,80 @@ function writerAt(db: sqlite.DatabaseSync, file: string, v: number): MemoryWrite
   return { status: "open", memory: createMemory(db, file), migratedFrom: from };
 }
 
-const READ_NOTES: Record<Exclude<MemoryRead["status"], "open">, string> = {
-  missing: NO_MEMORY_NOTE,
-  older: MEMORY_OLDER_NOTE,
-  newer: MEMORY_NEWER_NOTE,
-  unreadable: MEMORY_UNREADABLE_NOTE,
-};
+/**
+ * A query that failed on a store that opened (a missing table, a damaged page, a lock past the
+ * timeout) reads as "unreadable"; any other error is a bug in the reader and propagates.
+ */
+function unreadableOr(err: unknown): { status: "unreadable" } {
+  if ((err as { code?: unknown } | null)?.code === "ERR_SQLITE_ERROR")
+    return { status: "unreadable" };
+  throw err;
+}
 
-/** `fn`'s answer over the store, opened read-only and closed after; a store that does not open answers its note. */
-export async function withReader<T>(
-  file: string,
-  fn: (memory: MemoryReader) => T | Promise<T>,
-): Promise<T | { note: string }> {
-  const opened = openMemory(file, "read");
-  if (opened.status !== "open") return { note: READ_NOTES[opened.status] };
+/**
+ * `fn`'s answer over the store of the project at `root`, opened to read and closed after; `fn` never
+ * runs for a store that does not open, and a SQLite error from `fn` reads as "unreadable". An async
+ * `fn` fails to compile: the store closes before it settles.
+ */
+export function readStoreSync<T>(
+  root: string,
+  fn: (memory: MemoryReader) => T extends PromiseLike<unknown> ? never : T,
+): StoreRead<T> {
+  const opened = openMemory(memoryPath(root), "read");
+  if (opened.status !== "open") return { status: opened.status };
   try {
-    return await fn(opened.memory);
+    return { status: "open", value: fn(opened.memory) };
+  } catch (err) {
+    return unreadableOr(err);
   } finally {
     opened.memory.close();
   }
 }
 
+/** `readStoreSync` for an `fn` that may await. */
+export async function readStore<T>(
+  root: string,
+  fn: (memory: MemoryReader) => T | Promise<T>,
+): Promise<StoreRead<T>> {
+  const opened = openMemory(memoryPath(root), "read");
+  if (opened.status !== "open") return { status: opened.status };
+  try {
+    return { status: "open", value: await fn(opened.memory) };
+  } catch (err) {
+    return unreadableOr(err);
+  } finally {
+    opened.memory.close();
+  }
+}
+
+/** The store's status, "open" only when it answers a query. */
+export function storeStatus(root: string): StoreStatus {
+  return readStoreSync(root, (memory) => memory.recent(1)).status;
+}
+
+/** The store's `user_version`, newer or older than this code's; null when there is no store or it cannot be read. */
+export function storeVersion(root: string): number | null {
+  const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
+  if (!mod) return null;
+  let db: sqlite.DatabaseSync | null = null;
+  try {
+    db = openForRead(mod, memoryPath(root));
+    return db === null ? null : userVersion(db);
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
+/** The project's store opened to write, created or migrated first; the caller closes it. */
+export function openStoreForWrite(root: string): MemoryWrite {
+  return openMemory(memoryPath(root), "write");
+}
+
 /** Brings an existing store to the current schema (snapshotting a version-n store first); never creates a store. */
-export function migrateStore(storeFile: string): StoreMigration {
+export function migrateStore(root: string): StoreMigration {
+  const storeFile = memoryPath(root);
   if (!fs.existsSync(storeFile)) return { status: "absent" };
   const opened = openMemory(storeFile, "write");
   switch (opened.status) {
@@ -308,12 +356,6 @@ export function migrateStore(storeFile: string): StoreMigration {
   }
 }
 
-export function memoryStatus(file: string): MemoryRead["status"] {
-  const result = openMemory(file, "read");
-  if (result.status === "open") result.memory.close();
-  return result.status;
-}
-
 /** A restore retries a locked store every RESTORE_RETRY_MS for RESTORE_WAIT_MS. */
 const RESTORE_WAIT_MS = 10_000;
 const RESTORE_RETRY_MS = 100;
@@ -331,15 +373,16 @@ function snapshotProblem(src: sqlite.DatabaseSync): string | null {
 }
 
 /**
- * Copies `snapshotFile` over `storeFile`, first saving the current store as a daily snapshot.
+ * Copies `snapshotFile` over the store of the project at `root`, first saving the current store as a daily snapshot.
  * savedAs: where the previous store went, null when there was none.
  */
 export async function restoreMemory(
-  storeFile: string,
+  root: string,
   snapshotFile: string,
 ): Promise<
   { status: "restored"; savedAs: string | null } | { status: "invalid" | "busy"; detail: string }
 > {
+  const storeFile = memoryPath(root);
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
   if (!mod) throw new Error("node:sqlite is unavailable");
   let src: sqlite.DatabaseSync;

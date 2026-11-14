@@ -12,11 +12,7 @@ import {
   tempDir,
   ZONES,
 } from "./helpers.ts";
-import {
-  MEMORY_NEWER_NOTE,
-  MEMORY_UNREADABLE_NOTE,
-  NO_MEMORY_NOTE,
-} from "../src/hooks/lib/memory.ts";
+import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
 
 describe("search", () => {
@@ -247,19 +243,23 @@ describe("store states", () => {
   test("no store: search prints the note on stdout and exits 0; timeline and get print it on stderr and exit 1", () => {
     const root = initedCopy();
     const searched = runCli(root, COMMANDS[0]!);
-    expect(searched).toMatchObject({ status: 0, stdout: `${NO_MEMORY_NOTE}\n`, stderr: "" });
+    expect(searched).toMatchObject({
+      status: 0,
+      stdout: `${STORE_TEXT.missing.note}\n`,
+      stderr: "",
+    });
     for (const args of COMMANDS.slice(1)) {
       expect(runCli(root, args), args[0]).toMatchObject({
         status: 1,
         stdout: "",
-        stderr: `${NO_MEMORY_NOTE}\n`,
+        stderr: `${STORE_TEXT.missing.note}\n`,
       });
     }
   });
 
   for (const [state, note] of [
-    ["newer", MEMORY_NEWER_NOTE],
-    ["unreadable", MEMORY_UNREADABLE_NOTE],
+    ["newer", STORE_TEXT.newer.note],
+    ["unreadable", STORE_TEXT.unreadable.note],
   ] as const) {
     test(`a ${state} store: every command prints its note on stderr and exits 1`, () => {
       const root = initedCopy();

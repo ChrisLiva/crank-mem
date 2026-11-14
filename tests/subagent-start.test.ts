@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { makeCrankHome, makeCrankProject, runHook, seedMemory } from "./helpers.ts";
+import { makeCrankHome, makeCrankProject, plantMemory, runHook, seedMemory } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, INJECTION_HEADING, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import { claudeSessionStart, claudeSubagentStart } from "./fixtures/payloads.ts";
@@ -154,5 +154,16 @@ describe("subagent-start hook (black-box)", () => {
       `${bullet} [cited file modified after this note; check: payments-api/src/a.ts]`,
     );
     expect(ctx).not.toContain("[cited file missing");
+  });
+
+  test("a store whose queries throw after it opens still prints the excerpt, its citations read at home, and no recall pointer", () => {
+    const root = makeCrankProject({ "src/app.ts": "export const app = 1;\n" });
+    const bullet = "- **Linked**: see `payments-api/src/a.ts`.";
+    writeCerebrum(root, [], [bullet]);
+    setDigest(root, true);
+    plantMemory(root, "broken");
+    const ctx = context(root);
+    expect(ctx.split("\n")).toContain(`${bullet} [cited file missing: payments-api/src/a.ts]`);
+    expect(ctx).not.toContain(RECALL_BULLET);
   });
 });

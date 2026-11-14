@@ -12,7 +12,8 @@ import {
 import { CRANK_DIR, defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { registerProject } from "../src/hooks/lib/registry.ts";
 import { readUntouched } from "../src/hooks/lib/untouched.ts";
-import { localDate, MEMORY_NEWER_NOTE, memoryPath } from "../src/hooks/lib/memory.ts";
+import { localDate, memoryPath } from "../src/hooks/lib/memory.ts";
+import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import type { Digest } from "../src/daemon/digest-prompt.ts";
 import { okStream, okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
@@ -382,13 +383,13 @@ describe("cross-repo memory", () => {
     expect(cli(["timeline", "payments-api#1"])).toMatchObject({
       status: 1,
       stdout: "",
-      stderr: MEMORY_NEWER_NOTE + "\n",
+      stderr: STORE_TEXT.newer.note + "\n",
     });
     const closed = cli(["search", "Cross fix"]);
     expect(closed.stdout.split("\n").filter(Boolean)).toEqual([
       expect.stringMatching(new RegExp(`^#${hCross} `)),
     ]);
-    expect(closed.stderr).not.toContain(MEMORY_NEWER_NOTE);
+    expect(closed.stderr).not.toContain(STORE_TEXT.newer.note);
     expect(closed.stderr).not.toContain("payments");
 
     const sessioned = { CRANK_HOME: ws.home, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "sess-1" };

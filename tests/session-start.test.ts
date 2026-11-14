@@ -20,7 +20,8 @@ import {
 } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
-import { MEMORY_NEWER_NOTE, formatLine, memoryPath, openMemory } from "../src/hooks/lib/memory.ts";
+import { formatLine, openStoreForWrite, readStoreSync } from "../src/hooks/lib/memory.ts";
+import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import { claudeSessionStart, claudeSubagentStart, codexSessionStart } from "./fixtures/payloads.ts";
 import { workspace } from "./workspace.ts";
 
@@ -509,7 +510,7 @@ describe("digests running (black-box)", () => {
   test("recent memory lists whole lines, newest first, under its byte cap", () => {
     const { root, home } = memoryProject(true);
     // An open store with no rows: no section, but the bullet.
-    const empty = openMemory(memoryPath(root), "write");
+    const empty = openStoreForWrite(root);
     if (empty.status === "open") empty.memory.close();
     const before = injectIn(root, home);
     expect(before).not.toContain("## Recent memory");
@@ -526,10 +527,9 @@ describe("digests running (black-box)", () => {
       "## Recent memory (open one: `crank-mem get <id>`)\n",
     )!;
     expect(Buffer.byteLength(section, "utf-8")).toBeLessThanOrEqual(1536);
-    const opened = openMemory(memoryPath(root), "read");
-    if (opened.status !== "open") throw new Error(opened.status);
-    const all = opened.memory.recent(60).map(formatLine);
-    opened.memory.close();
+    const read = readStoreSync(root, (memory) => memory.recent(60).map(formatLine));
+    if (read.status !== "open") throw new Error(read.status);
+    const all = read.value;
     const lines = section.split("\n").slice(1);
     expect(lines.length).toBeGreaterThan(0);
     expect(lines).toEqual(all.slice(0, lines.length));
@@ -601,17 +601,21 @@ describe("digests running (black-box)", () => {
     const { root, home } = memoryProject(true);
     plantMemory(root, "newer");
     const ctx = injectIn(root, home);
-    expect(ctx).toContain(`_Note: ${MEMORY_NEWER_NOTE}_`);
+    expect(ctx).toContain(`_Note: ${STORE_TEXT.newer.note}_`);
     for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
       expect(ctx).not.toContain(absent);
   });
 
-  test("a store that is not a database injects without recall", () => {
+  test("a store that is not a database, or whose queries throw after it opens, injects without recall", () => {
     const { root, home } = memoryProject(true);
     plantMemory(root, "unreadable");
-    const ctx = injectIn(root, home);
-    for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
-      expect(ctx).not.toContain(absent);
+    const notADatabase = injectIn(root, home);
+    fs.rmSync(path.join(root, ".crank/memory.db"));
+    plantMemory(root, "broken");
+    const queriesThrow = injectIn(root, home);
+    for (const ctx of [notADatabase, queriesThrow])
+      for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
+        expect(ctx).not.toContain(absent);
   });
 
   test("a session waiting over 2 hours for its digest is noted, for this project only", () => {

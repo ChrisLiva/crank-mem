@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ISO_DATE } from "./bullets.ts";
 import { CRANK_DIR } from "./config.ts";
-import { memoryPath, openMemory } from "./memory.ts";
+import { readStoreSync } from "./memory.ts";
 import { linkedProjects } from "./registry.ts";
 import { loadIndex, type AnatomyIndex } from "./store.ts";
 
@@ -163,13 +163,6 @@ export function fileCitations(text: string): string[] {
 
 /** `registry.ts` → `linkedProjects` of the project's store; none when the store cannot be read. */
 export function storeLinks(root: string): ReturnType<Links> {
-  const opened = openMemory(memoryPath(root), "read");
-  if (opened.status !== "open") return [];
-  try {
-    return linkedProjects(opened.memory);
-  } catch {
-    return [];
-  } finally {
-    opened.memory.close();
-  }
+  const links = readStoreSync(root, linkedProjects);
+  return links.status === "open" ? links.value : [];
 }
