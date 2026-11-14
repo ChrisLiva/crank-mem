@@ -120,7 +120,7 @@ function historyOf(m: MemoryReader, rel: string): History {
   return { lines, pairs: lines.length === 0 ? [] : m.pairedPaths(rel, PAIRED_FILES) };
 }
 
-/** Each owner's history for its unseen reads, keyed by owner root; a store that does not open as "open" is absent. */
+/** Each owner's history for its unseen reads; an owner whose store does not open is absent. */
 async function fetchHistories(reads: Read[], isSeen: (r: Read) => boolean): Promise<Histories> {
   const out: Histories = new Map();
   for (const owner of new Set(reads.map((r) => r.owner))) {

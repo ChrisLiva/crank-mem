@@ -695,12 +695,8 @@ export function citationSources(crankDir: string, root: string): CitedFiles {
 
 /** `registry.ts` → `linkedProjects` of the store; none when the store cannot be read. */
 function storeLinks(root: string): { name: string; root: string }[] {
-  try {
-    const links = readStoreSync(root, linkedProjects);
-    return links.status === "open" ? links.value : [];
-  } catch {
-    return [];
-  }
+  const links = readStoreSync(root, linkedProjects);
+  return links.status === "open" ? links.value : [];
 }
 
 /** The one read of cerebrum.md; any read error reads as absent. */
@@ -778,13 +774,9 @@ export function sessionStartInjection(
 }
 
 function readRecall(root: string, gate: DigestGate): Recall {
-  try {
-    return readStoreSync(root, (memory) => ({
-      nextSteps: gate.running && gate.drained ? memory.latestNextSteps() : null,
-      recent: memory.recent(RECENT_MEMORY_ROWS),
-      linked: linkedProjects(memory),
-    }));
-  } catch {
-    return { status: "unreadable" };
-  }
+  return readStoreSync(root, (memory) => ({
+    nextSteps: gate.running && gate.drained ? memory.latestNextSteps() : null,
+    recent: memory.recent(RECENT_MEMORY_ROWS),
+    linked: linkedProjects(memory),
+  }));
 }

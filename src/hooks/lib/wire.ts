@@ -62,7 +62,7 @@ export type ConsolidationRow = {
   costUsd: number;
 };
 
-/** Whether memory.db opened for reading, or why not. */
+/** Whether memory.db opened and answers queries, or why not. */
 export type StoreStatus = "open" | "missing" | "older" | "newer" | "unreadable";
 
 export type Tone = "ok" | "warn" | "bad" | "off";

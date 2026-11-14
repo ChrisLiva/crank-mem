@@ -41,7 +41,7 @@ export type MemoryWrite =
   | { status: "open"; memory: Memory; migratedFrom: number | null }
   | { status: "newer" | "unreadable" }
   | { status: "unmigrated"; detail: string };
-/** A read's result: `fn`'s answer over an open store, or why the store did not open. */
+/** A read's result: `fn`'s answer over an open store, or the `StoreStatus` it read as. */
 export type StoreRead<T> = { status: "open"; value: T } | { status: Exclude<StoreStatus, "open"> };
 export type StoreMigration =
   | { status: "absent" | "current" | "newer" }
@@ -314,7 +314,7 @@ export function storeStatus(root: string): StoreStatus {
   return readStoreSync(root, (memory) => memory.recent(1)).status;
 }
 
-/** The store's `user_version`, whatever version this code reads; null when there is no store or it cannot be read. */
+/** The store's `user_version`, newer or older than this code's; null when there is no store or it cannot be read. */
 export function storeVersion(root: string): number | null {
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite | undefined;
   if (!mod) return null;

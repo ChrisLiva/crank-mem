@@ -223,7 +223,7 @@ describe("store by root", () => {
         calls: status === "open" ? 2 : 0,
       });
     }
-    // A store that opens and then fails its queries reads as unreadable; any other error from fn propagates.
+    // A store that opens and then fails its queries reads as unreadable.
     const broken = plantedRoot("broken");
     expect(readStoreSync(broken, (m) => m.recent(1))).toEqual({ status: "unreadable" });
     expect(await readStore(broken, (m) => m.recent(1))).toEqual({ status: "unreadable" });
