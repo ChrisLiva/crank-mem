@@ -5,17 +5,9 @@ import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { cliVersion } from "../src/cli/version.ts";
 import { loadConfig, saveConfig } from "../src/hooks/lib/config.ts";
-import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
 import { UNTOUCHED_FILE } from "../src/hooks/lib/untouched.ts";
-import type { UpdateStatus } from "../src/hooks/lib/wire.ts";
-import {
-  MEMORY_NEWER_NOTE,
-  MEMORY_UNREADABLE_NOTE,
-  memoryPath,
-  NO_MEMORY_NOTE,
-  openStoreForWrite,
-  type Memory,
-} from "../src/hooks/lib/memory.ts";
+import { STORE_TEXT, type UpdateStatus } from "../src/hooks/lib/wire.ts";
+import { memoryPath, openStoreForWrite, type Memory } from "../src/hooks/lib/memory.ts";
 import {
   cleanup,
   dashboardFixture,
@@ -717,13 +709,18 @@ describe("memory view", () => {
     plantMemory(newer, "newer");
     const unreadable = registeredCopy(home);
     plantMemory(unreadable, "unreadable");
+    const broken = registeredCopy(home);
+    plantMemory(broken, "broken");
     const seeded = registeredCopy(home);
     const [id] = seedMemory(seeded, [{ title: "Still here" }]);
     const dash = await startDashboard(home, ["--port", "0"]);
+    const listed = (await projects(dash)) as { projects: { root: string; memory: string }[] };
+    expect(listed.projects.find((p) => p.root === broken)?.memory).toBe("unreadable");
     for (const [root, note] of [
-      [missing, NO_MEMORY_NOTE],
-      [newer, MEMORY_NEWER_NOTE],
-      [unreadable, MEMORY_UNREADABLE_NOTE],
+      [missing, STORE_TEXT.missing.note],
+      [newer, STORE_TEXT.newer.note],
+      [unreadable, STORE_TEXT.unreadable.note],
+      [broken, STORE_TEXT.unreadable.note],
     ] as const) {
       for (const route of [
         "observations",
@@ -735,7 +732,9 @@ describe("memory view", () => {
         expect(await memoryJson(dash, root, route)).toEqual({ note });
       }
     }
-    expect(await memoryJson(dash, missing, "activity?days=7")).toEqual({ note: NO_MEMORY_NOTE });
+    expect(await memoryJson(dash, missing, "activity?days=7")).toEqual({
+      note: STORE_TEXT.missing.note,
+    });
     const lines = (await memoryJson(dash, seeded, "observations")).rows as Line[];
     expect(lines.map((l) => [l.id, l.title])).toEqual([[id!, "Still here"]]);
   }, 20_000);
@@ -743,15 +742,13 @@ describe("memory view", () => {
   test("a route that throws after its store opens answers 500, and the server keeps serving", async () => {
     const home = makeCrankHome();
     const root = registeredCopy(home);
+    const [id] = seedMemory(root, [{ title: "Bad facts" }]);
     const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
     const db = new mod.DatabaseSync(path.join(root, ".crank/memory.db"));
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.prepare("UPDATE observations SET facts = 'not json' WHERE id = ?").run(id!);
     db.close();
     const dash = await startDashboard(home, ["--port", "0"]);
-    expect(((await projects(dash)) as { projects: { memory: string }[] }).projects).toEqual([
-      expect.objectContaining({ memory: "open" }),
-    ]);
-    for (const route of ["observations", "observations?q=walrus", "observations/1"]) {
+    for (const route of [`observations/${id}`, `observations/${id}`]) {
       const res = await dash.get(`/api/projects/${projectId(root)}/${route}`);
       expect([
         route,

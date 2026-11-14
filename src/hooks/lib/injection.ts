@@ -7,20 +7,13 @@ import { symbolsSupported } from "./symbols.ts";
 import { CEREBRUM_FILE } from "./cerebrum-files.ts";
 import { debugEvent } from "./debug.ts";
 import { driftNote } from "./drift.ts";
-import {
-  MEMORY_NEWER_NOTE,
-  MEMORY_OLDER_NOTE,
-  formatLine,
-  readStoreSync,
-  storeStatus,
-  type StoreRead,
-} from "./memory.ts";
+import { formatLine, readStoreSync, storeStatus, type StoreRead } from "./memory.ts";
 import { linkedProjects } from "./registry.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
 import { CRANK_DIR, type CrankConfig } from "./config.ts";
 import { loadIndex, type AnatomyIndex } from "./store.ts";
 import type { UsageEvent } from "./usage.ts";
-import type { ObservationLine } from "./wire.ts";
+import { STORE_TEXT, type ObservationLine } from "./wire.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
 // file map, the code pointer, and the recall pointer when recallApplies) → staleness/drift/
@@ -180,8 +173,7 @@ function captureNotes(gate: DigestGate, status: Recall["status"]): string[] {
     notes.push(
       `crank-mem digests stopped (${gate.stop.reason}): run \`crank-mem digest resume\` once that is fixed.`,
     );
-  if (status === "newer") notes.push(MEMORY_NEWER_NOTE);
-  if (status === "older") notes.push(MEMORY_OLDER_NOTE);
+  if (status === "newer" || status === "older") notes.push(STORE_TEXT[status].note);
   if (gate.stalled) {
     notes.push(
       "crank-mem: a session here has waited over 2 hours for its digest; see `crank-mem stats`.",

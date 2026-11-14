@@ -20,7 +20,6 @@ import type {
   StaleRow,
   StoreStatus,
 } from "./wire.ts";
-import { STORE_TEXT } from "./wire.ts";
 
 // The memory store: <project>/.crank/memory.db, one SQLite file per project
 // holding digests and their observations. node:sqlite loads through
@@ -30,10 +29,6 @@ import { STORE_TEXT } from "./wire.ts";
 export { samePosition } from "./memory-write.ts";
 
 export const MEMORY_FILE = "memory.db";
-export const MEMORY_OLDER_NOTE = STORE_TEXT.older.note;
-export const MEMORY_NEWER_NOTE = STORE_TEXT.newer.note;
-export const MEMORY_UNREADABLE_NOTE = STORE_TEXT.unreadable.note;
-export const NO_MEMORY_NOTE = STORE_TEXT.missing.note;
 export type MemoryReader = Omit<
   Memory,
   "appendDigest" | "recordRejection" | "putVectors" | "recordConsolidation" | "maintain"
@@ -268,7 +263,21 @@ function writerAt(db: sqlite.DatabaseSync, file: string, v: number): MemoryWrite
   return { status: "open", memory: createMemory(db, file), migratedFrom: from };
 }
 
-/** `fn`'s answer over the store of the project at `root`, opened to read and closed after; `fn` never runs for a store that does not open. An async `fn` fails to compile: the store closes before it settles. */
+/**
+ * A query that failed on a store that opened (a missing table, a damaged page, a lock past the
+ * timeout) reads as "unreadable"; any other error is a bug in the reader and propagates.
+ */
+function unreadableOr(err: unknown): { status: "unreadable" } {
+  if ((err as { code?: unknown } | null)?.code === "ERR_SQLITE_ERROR")
+    return { status: "unreadable" };
+  throw err;
+}
+
+/**
+ * `fn`'s answer over the store of the project at `root`, opened to read and closed after; `fn` never
+ * runs for a store that does not open, and a SQLite error from `fn` reads as "unreadable". An async
+ * `fn` fails to compile: the store closes before it settles.
+ */
 export function readStoreSync<T>(
   root: string,
   fn: (memory: MemoryReader) => T extends PromiseLike<unknown> ? never : T,
@@ -277,6 +286,8 @@ export function readStoreSync<T>(
   if (opened.status !== "open") return { status: opened.status };
   try {
     return { status: "open", value: fn(opened.memory) };
+  } catch (err) {
+    return unreadableOr(err);
   } finally {
     opened.memory.close();
   }
@@ -291,13 +302,16 @@ export async function readStore<T>(
   if (opened.status !== "open") return { status: opened.status };
   try {
     return { status: "open", value: await fn(opened.memory) };
+  } catch (err) {
+    return unreadableOr(err);
   } finally {
     opened.memory.close();
   }
 }
 
+/** The store's status, "open" only when it answers a query. */
 export function storeStatus(root: string): StoreStatus {
-  return readStoreSync(root, () => null).status;
+  return readStoreSync(root, (memory) => memory.recent(1)).status;
 }
 
 /** The store's `user_version`, whatever version this code reads; null when there is no store or it cannot be read. */

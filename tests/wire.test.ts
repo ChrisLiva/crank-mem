@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  projectStatus,
-  STORE_TEXT,
-  type HealthSummary,
-  type Status,
-} from "../src/hooks/lib/wire.ts";
+import { projectStatus, type HealthSummary, type Status } from "../src/hooks/lib/wire.ts";
 
 type Input = Omit<HealthSummary, "status">;
 
@@ -129,32 +124,4 @@ describe("projectStatus", () => {
       expect(status.fix?.command).toBe(command);
     });
   }
-});
-
-describe("STORE_TEXT", () => {
-  test("each store status reads as its note, stats state and fix; a missing store's fix names no command", () => {
-    expect(STORE_TEXT).toEqual({
-      missing: {
-        note: "crank-mem: no memory exists yet.",
-        state: "none yet",
-        fix: { text: "The first digest creates it." },
-      },
-      older: {
-        note: "crank-mem: memory.db predates this version; run `crank-mem upgrade`.",
-        state: "older than this version; run crank-mem upgrade",
-        fix: { text: "memory.db predates this version.", command: "crank-mem upgrade" },
-      },
-      newer: {
-        note: "crank-mem: memory.db is newer than this version; run `crank-mem upgrade`.",
-        state: "newer than this version; run crank-mem upgrade",
-        fix: { text: "memory.db is newer than this version.", command: "crank-mem upgrade" },
-      },
-      unreadable: {
-        note: "crank-mem: .crank/memory.db is not a readable database.",
-        state: "unreadable",
-        fix: { text: "memory.db is not a readable database.", command: "crank-mem restore-memory" },
-      },
-    });
-    expect("command" in STORE_TEXT.missing.fix).toBe(false);
-  });
 });

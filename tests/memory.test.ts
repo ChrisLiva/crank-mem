@@ -183,7 +183,7 @@ describe("store by root", () => {
 
   const emptyRoot = () => path.dirname(path.dirname(tmpFile()));
 
-  function plantedRoot(state: "newer" | "unreadable"): string {
+  function plantedRoot(state: "newer" | "unreadable" | "broken"): string {
     const root = emptyRoot();
     plantMemory(root, state);
     return root;
@@ -223,6 +223,17 @@ describe("store by root", () => {
         calls: status === "open" ? 2 : 0,
       });
     }
+    // A store that opens and then fails its queries reads as unreadable; any other error from fn propagates.
+    const broken = plantedRoot("broken");
+    expect(readStoreSync(broken, (m) => m.recent(1))).toEqual({ status: "unreadable" });
+    expect(await readStore(broken, (m) => m.recent(1))).toEqual({ status: "unreadable" });
+    expect(storeStatus(broken)).toBe("unreadable");
+    const bug = () => {
+      throw new Error("bug in fn");
+    };
+    expect(() => readStoreSync(root, bug)).toThrow("bug in fn");
+    await expect(readStore(root, bug)).rejects.toThrow("bug in fn");
+
     const original = process.getBuiltinModule;
     process.getBuiltinModule = () => undefined;
     try {

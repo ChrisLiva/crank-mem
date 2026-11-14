@@ -120,14 +120,13 @@ function historyOf(m: MemoryReader, rel: string): History {
   return { lines, pairs: lines.length === 0 ? [] : m.pairedPaths(rel, PAIRED_FILES) };
 }
 
-/** Each store's history for its unseen reads; a store that does not open as "open" is absent. */
+/** Each owner's history for its unseen reads, keyed by owner root; a store that does not open as "open" is absent. */
 async function fetchHistories(reads: Read[], isSeen: (r: Read) => boolean): Promise<Histories> {
   const out: Histories = new Map();
-  for (const store of new Set(reads.map((r) => r.store))) {
-    const rels = reads.filter((r) => r.store === store && !isSeen(r)).map((r) => r.rel);
-    const owner = reads.find((r) => r.store === store)!.owner;
+  for (const owner of new Set(reads.map((r) => r.owner))) {
+    const rels = reads.filter((r) => r.owner === owner && !isSeen(r)).map((r) => r.rel);
     const got = await readStore(owner, (m) => new Map(rels.map((rel) => [rel, historyOf(m, rel)])));
-    if (got.status === "open") out.set(store, got.value);
+    if (got.status === "open") out.set(owner, got.value);
   }
   return out;
 }
@@ -244,7 +243,7 @@ function assemble(
 ): Assembled {
   const out: Assembled = { sections: [], tallies: new Map(), marked: [], full: false };
   for (const read of reads) {
-    const history = found.get(read.store);
+    const history = found.get(read.owner);
     if (!history) continue;
     const tally = tallyFor(out, read.store, read.owner);
     const own = history.get(read.rel);

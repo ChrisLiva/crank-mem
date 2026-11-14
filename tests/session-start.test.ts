@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type * as sqlite from "node:sqlite";
 import { spawnSync } from "node:child_process";
 import {
   REPO_ROOT,
@@ -21,13 +20,8 @@ import {
 } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
-import {
-  MEMORY_NEWER_NOTE,
-  formatLine,
-  openStoreForWrite,
-  readStoreSync,
-} from "../src/hooks/lib/memory.ts";
-import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
+import { formatLine, openStoreForWrite, readStoreSync } from "../src/hooks/lib/memory.ts";
+import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import { claudeSessionStart, claudeSubagentStart, codexSessionStart } from "./fixtures/payloads.ts";
 import { workspace } from "./workspace.ts";
 
@@ -607,7 +601,7 @@ describe("digests running (black-box)", () => {
     const { root, home } = memoryProject(true);
     plantMemory(root, "newer");
     const ctx = injectIn(root, home);
-    expect(ctx).toContain(`_Note: ${MEMORY_NEWER_NOTE}_`);
+    expect(ctx).toContain(`_Note: ${STORE_TEXT.newer.note}_`);
     for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])
       expect(ctx).not.toContain(absent);
   });
@@ -616,12 +610,8 @@ describe("digests running (black-box)", () => {
     const { root, home } = memoryProject(true);
     plantMemory(root, "unreadable");
     const notADatabase = injectIn(root, home);
-    const store = path.join(root, ".crank/memory.db");
-    fs.rmSync(store);
-    const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
-    const db = new mod.DatabaseSync(store);
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-    db.close();
+    fs.rmSync(path.join(root, ".crank/memory.db"));
+    plantMemory(root, "broken");
     const queriesThrow = injectIn(root, home);
     for (const ctx of [notADatabase, queriesThrow])
       for (const absent of ["## Recent memory", "## Next steps", RECALL_BULLET])

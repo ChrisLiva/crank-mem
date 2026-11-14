@@ -21,7 +21,7 @@ import {
   tempDir,
   ZONES,
 } from "./helpers.ts";
-import { MEMORY_NEWER_NOTE, NO_MEMORY_NOTE } from "../src/hooks/lib/memory.ts";
+import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import { RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import type { UsageLine } from "../src/hooks/lib/usage.ts";
 import { usageMetrics } from "../src/cli/usage-metrics.ts";
@@ -952,11 +952,11 @@ describe("usage window: the usage endpoint aggregates the log", () => {
     };
     expect(await usageOf(dash, newer, "days=90&manual=0")).toEqual({
       ...expected,
-      note: MEMORY_NEWER_NOTE,
+      note: STORE_TEXT.newer.note,
     });
     expect(await usageOf(dash, missing, "days=90&manual=0")).toEqual({
       ...expected,
-      note: NO_MEMORY_NOTE,
+      note: STORE_TEXT.missing.note,
     });
     expect(good).not.toHaveProperty("note");
   }, 20_000);

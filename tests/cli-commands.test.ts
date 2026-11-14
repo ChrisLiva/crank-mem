@@ -320,7 +320,7 @@ describe("stats: capture health", () => {
     expect(out).toContain("  month cost:       $0.0052 (list price)\n");
   });
 
-  test("digest off by default, and one memory row stands in for a store that is missing, newer or unreadable", () => {
+  test("digest off by default, and one memory row stands in for a store that is missing, newer, unreadable or failing its queries", () => {
     const root = initedCopy(ALPHA);
     const fresh = cli(root, "stats").stdout;
     expect(fresh).toMatch(CAPTURE_ROWS);
@@ -334,11 +334,13 @@ describe("stats: capture health", () => {
       "  memory:           newer than this version; run crank-mem upgrade\n",
     );
 
-    fs.rmSync(path.join(root, ".crank/memory.db"));
-    plantMemory(root, "unreadable");
-    const bad = cli(root, "stats");
-    expect(bad.status).toBe(0);
-    expect(bad.stdout).toContain("  memory:           unreadable\n");
+    for (const state of ["unreadable", "broken"] as const) {
+      fs.rmSync(path.join(root, ".crank/memory.db"), { force: true });
+      plantMemory(root, state);
+      const bad = cli(root, "stats");
+      expect(bad.status).toBe(0);
+      expect(bad.stdout).toContain("  memory:           unreadable\n");
+    }
   });
 });
 

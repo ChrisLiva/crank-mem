@@ -400,8 +400,11 @@ export function plantVector(root: string, id: number): void {
   }
 }
 
-/** Write the project's store in one bad state: a newer schema, or a file that is not a database. */
-export function plantMemory(root: string, state: "newer" | "unreadable"): void {
+/**
+ * Write the project's store in one bad state: a newer schema, a file that is not a database, or a
+ * database at the current schema version with no tables, which opens and then fails every query.
+ */
+export function plantMemory(root: string, state: "newer" | "unreadable" | "broken"): void {
   const file = memoryPath(root);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (state === "unreadable") {
@@ -410,8 +413,8 @@ export function plantMemory(root: string, state: "newer" | "unreadable"): void {
   }
   const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
   const db = new mod.DatabaseSync(file);
-  db.exec("PRAGMA journal_mode=WAL");
-  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
+  if (state === "newer") db.exec("PRAGMA journal_mode=WAL");
+  db.exec(`PRAGMA user_version = ${state === "newer" ? SCHEMA_VERSION + 1 : SCHEMA_VERSION}`);
   db.close();
 }
 
