@@ -8,6 +8,7 @@ import {
   childEnv,
   git,
   gitCommit,
+  inZone,
   makeCrankHome,
   makeCrankProject,
   plantMemory,
@@ -990,16 +991,6 @@ describe("usage window: the usage endpoint aggregates the log", () => {
 
 const NOW = Date.UTC(2026, 10, 10, 12);
 const IDS = [1, 2, 3, 4];
-
-/** Runs `fn` in `zone`, then restores the UTC `bun test` starts in; `delete` would fall back to the machine zone. */
-function inZone<T>(zone: string, fn: () => T): T {
-  process.env.TZ = zone;
-  try {
-    return fn();
-  } finally {
-    process.env.TZ = "UTC";
-  }
-}
 
 /** `usageMetrics` at NOW over `events`, with IDS titled as TITLES and every other id absent. */
 function metricsOf(events: object[], days: 7 | 30 | 90, manual = false) {

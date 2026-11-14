@@ -1,18 +1,7 @@
 import { expect, test } from "bun:test";
 import { relatedFiles } from "../src/hooks/lib/related-files.ts";
-import { type AnatomyIndex, emptyIndex, type FileEntry } from "../src/hooks/lib/store.ts";
-
-function idx(files: Record<string, Partial<FileEntry>>): AnatomyIndex {
-  const entries: Record<string, FileEntry> = {};
-  for (const [p, f] of Object.entries(files)) {
-    entries[p] = { description: "", tokens: 1, size: 1, mtimeMs: 0, ...f };
-  }
-  return {
-    version: 2,
-    files: entries,
-    meta: { lastScanned: null, fileCount: Object.keys(entries).length },
-  };
-}
+import { emptyIndex, type FileEntry } from "../src/hooks/lib/store.ts";
+import { idx } from "./helpers.ts";
 
 const G = idx({
   "src/lock.ts": {

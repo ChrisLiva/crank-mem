@@ -131,6 +131,15 @@ describe("stats: memory health", () => {
     expect(run.stdout).toContain("  last audit:");
   });
 
+  test("counts a cited file deleted since the last scan as missing", () => {
+    const root = memoryProject();
+    expect(cli(root, "scan").status).toBe(0);
+    fs.rmSync(path.join(root, "docs/kept.md"));
+    const run = cli(root, "stats");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("cited paths:      0 of 2 exist\n");
+  });
+
   test("a hidden bullet whose only date does not parse counts as undated", () => {
     const root = memoryProject();
     const file = path.join(root, ".crank/cerebrum.md");
