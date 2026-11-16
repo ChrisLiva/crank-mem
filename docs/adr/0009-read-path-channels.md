@@ -112,9 +112,11 @@ that owns a read file, is not the start project, and has not had its excerpt sho
 in this session. The hook records the shown excerpt as a `cerebrum:<root>` line in the same seen
 marker it uses for file paths.
 
-Amended 2026-11-16: after a file's history, post-read adds "Used by (crank-mem impact <rel>):",
-up to 5 caller files with their call counts in at most 512 B, from the project's code.db when
-the file's current size and mtime equal its parse stamp. It is marked seen as `graph:<abs path>`,
+Amended 2026-11-16: after a file's history, post-read adds "Used by (crank-mem impact <file>):",
+up to 5 caller files with their call counts in at most 512 B, from the owning project's code.db
+when the file's current size and mtime equal its parse stamp. `<file>` is the owner-relative path
+when the owner is the start project and the absolute path otherwise, so the pasted command
+resolves to that file from the start project's cwd. It is marked seen as `graph:<abs path>`,
 and the call still stays under 4,096 B. It uses the same PostToolUse channel as the history, so
 no new probe.
 

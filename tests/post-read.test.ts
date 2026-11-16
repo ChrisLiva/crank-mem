@@ -388,7 +388,7 @@ describe("post-read Used by", () => {
       run(ws.H, claudePostRead(ws.H, lib, TRANSCRIPT), { CRANK_HOME: makeCrankHome() });
 
     const ctx = context(read());
-    const order = [HEAD, "Used by (crank-mem impact src/lib.ts):", "Excerpt of "].map((m) =>
+    const order = [HEAD, `Used by (crank-mem impact ${lib}):`, "Excerpt of "].map((m) =>
       ctx.indexOf(m),
     );
     expect(order.every((at) => at >= 0)).toBe(true);
@@ -408,6 +408,38 @@ describe("post-read Used by", () => {
       fs.chmodSync(db, 0o644);
     }
   }, 20_000);
+
+  test("a read in another project prints an impact command that answers about that file from the start project", () => {
+    const ws = workspace();
+    const lib = path.join(ws.payments, "src/lib.ts");
+    for (const [root, rel, text] of [
+      [ws.payments, "src/lib.ts", LIB],
+      [ws.payments, "src/c1.ts", caller(["helper"])],
+      [ws.H, "src/lib.ts", "export function onlyHere() {}\n"],
+    ] as const) {
+      fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      fs.writeFileSync(path.join(root, rel), text);
+    }
+    setMtime(lib, Date.now() - HOUR);
+    buildGraph(ws.payments);
+    buildGraph(ws.H);
+    const env = { CRANK_HOME: makeCrankHome() };
+
+    const section = usedBy(context(run(ws.H, claudePostRead(ws.H, lib, TRANSCRIPT), env)))!;
+    const printed = /^Used by \(crank-mem (impact .+)\):/.exec(section)![1]!.split(" ");
+    const answer = runCli(ws.H, printed, env);
+    expect(answer.status).toBe(0);
+    expect(answer.stdout).toContain("src/c1.ts");
+    expect(answer.stdout).not.toContain("onlyHere");
+
+    const own = path.join(ws.H, "src/lib.ts");
+    setMtime(own, Date.now() - HOUR);
+    buildGraph(ws.H);
+    fs.writeFileSync(path.join(ws.H, "src/user.ts"), caller(["onlyHere"]));
+    buildGraph(ws.H);
+    const mine = usedBy(context(run(ws.H, claudePostRead(ws.H, own, TRANSCRIPT), env)));
+    expect(mine?.split("\n")[0]).toBe("Used by (crank-mem impact src/lib.ts):");
+  }, 30_000);
 });
 
 describe("post-read journey: init to Used by", () => {

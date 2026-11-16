@@ -305,9 +305,11 @@ function assemble(
 /**
  * `read`'s "Used by" section: the files calling into it, from its owner's code.db, up to
  * USED_BY_FILES of them in USED_BY_BYTES. Null when the store does not open, the file's size or
- * mtime differs from its parse stamp, or no other file calls it.
+ * mtime differs from its parse stamp, or no other file calls it. The command it prints names the
+ * file by its owner-relative path in the start project and by its absolute path in another, so the
+ * pasted command finds that file from the start project's cwd.
  */
-function usedBySection(read: Read): string | null {
+function usedBySection(read: Read, startRoot: string): string | null {
   let stat: fs.Stats;
   try {
     stat = fs.statSync(read.abs);
@@ -317,7 +319,8 @@ function usedBySection(read: Read): string | null {
   const callers = readCodeDb(read.owner, (db) =>
     db && parsedAt(db, read.rel, stat) ? callerFiles(db, read.rel, USED_BY_FILES) : [],
   );
-  const head = `Used by (crank-mem impact ${read.rel}):`;
+  const named = read.owner === startRoot ? read.rel : read.abs;
+  const head = `Used by (crank-mem impact ${named}):`;
   let text = head;
   for (const c of callers) {
     const next = `${text}\n- ${c.path} (${c.calls} ${c.calls === 1 ? "call" : "calls"})`;
@@ -333,6 +336,7 @@ function usedBySection(read: Read): string | null {
  * `marks` holds the `graph:` line of each one shown.
  */
 function withUsedBy(
+  startRoot: string,
   reads: Read[],
   assembled: Assembled,
   seen: string[],
@@ -346,7 +350,7 @@ function withUsedBy(
     at = end;
     const mark = GRAPH_MARK + read.abs;
     if (seen.includes(mark)) continue;
-    const text = usedBySection(read);
+    const text = usedBySection(read, startRoot);
     const call = text === null ? [] : [...sections, text, ...assembled.sections.slice(at)];
     if (text !== null && Buffer.byteLength(call.join(SEP)) < MAX_CALL_BYTES) {
       sections.push(text);
@@ -443,7 +447,7 @@ async function main(): Promise<void> {
   const pairStores = await fetchPairs(found);
   const assembled = assemble(startStore, reads, found, pairStores, isSeen);
   const { tallies, marked } = assembled;
-  const { sections, marks } = withUsedBy(reads, assembled, seen);
+  const { sections, marks } = withUsedBy(ctx.root, reads, assembled, seen);
   const block = excerptBlock(ctx.root, reads, seen, sections);
   const shown = block ? [...sections, block.text] : sections;
   if (shown.length > 0) {
