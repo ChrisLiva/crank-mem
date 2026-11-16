@@ -23,3 +23,4 @@ src/tsx.tsx
 76-78│export default function () { … }
 80-84│export default class {
 81-83│  show() { … }
+86-91│export function mount(el: HTMLElement): void { … }

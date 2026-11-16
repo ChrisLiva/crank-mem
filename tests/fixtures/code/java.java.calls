@@ -1,0 +1,8 @@
+9 Box → println (member)
+17 Box.area → Runnable (bare)
+39 Color.code → ordinal (bare)
+45 Driver.run → helper (bare)
+46 Driver.run → helper (self)
+47 Driver.run → area (member)
+48 Driver.run → area (member)
+48 Driver.run → Box (bare)

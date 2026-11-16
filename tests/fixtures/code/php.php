@@ -54,3 +54,13 @@ namespace Other {
         function f() {}
     }
 }
+
+function drive(User $user)
+{
+    helper(1);
+    $this->name();
+    $user?->name();
+    User::table();
+    self::table();
+    return new User();
+}

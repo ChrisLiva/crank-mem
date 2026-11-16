@@ -9,3 +9,4 @@ src/go.go:33-33 type ID
 src/go.go:35-35 type A
 src/go.go:38-38 struct B
 src/go.go:39-39 type C
+src/go.go:46-53 fn Drive

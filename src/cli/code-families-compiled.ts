@@ -1,6 +1,11 @@
-import type { FamilyRules, Node, SymbolKind } from "./code-symbols.ts";
+import type { CallRules, FamilyRules, Node, Receiver, SymbolKind } from "./code-symbols.ts";
 
 // The compiled-language rows of `code-symbols.ts` → `RULES`: Go, C/C++, Rust, Java and C#.
+
+type Callee = ReturnType<CallRules["callee"]>;
+/** A callee, or null when the call names nothing. */
+const named = (name: string | null, receiver: Receiver): Callee =>
+  name === null ? null : { name, receiver };
 
 const GO_SPEC_KINDS: Record<string, SymbolKind> = {
   struct_type: "struct",
@@ -10,6 +15,30 @@ const GO_SPEC_KINDS: Record<string, SymbolKind> = {
 const isLoneGoSpec = (node: Node) =>
   node.parent?.type === "type_declaration" &&
   !node.parent.children.some((child) => child.type === "(");
+
+/** A composite literal's type name: `T`, `pkg.T` or `T[int]`. */
+function goTypeName(node: Node | null): { name: string; qualified: boolean } | null {
+  if (node?.type === "type_identifier") return { name: node.text, qualified: false };
+  if (node?.type === "generic_type") return goTypeName(node.childForFieldName("type"));
+  const name = node?.type === "qualified_type" ? node.childForFieldName("name") : null;
+  return name ? { name: name.text, qualified: true } : null;
+}
+
+const goCalls: CallRules = {
+  types: new Set(["call_expression", "composite_literal"]),
+  callee(node) {
+    if (node.type === "composite_literal") {
+      const type = goTypeName(node.childForFieldName("type"));
+      return type && { name: type.name, receiver: type.qualified ? "member" : "bare" };
+    }
+    const target = node.childForFieldName("function");
+    if (target?.type === "identifier") return { name: target.text, receiver: "bare" };
+    const field = target?.type === "selector_expression" ? target.childForFieldName("field") : null;
+    if (field === null || target === null) return null;
+    const self = target.childForFieldName("operand")?.text === "self";
+    return { name: field.text, receiver: self ? "self" : "member" };
+  },
+};
 
 export const go: FamilyRules = {
   kind(node) {
@@ -48,6 +77,7 @@ export const go: FamilyRules = {
     if (type?.type === "interface_type") return type.children.find((c) => c.type === "{") ?? null;
     return null;
   },
+  calls: goCalls,
 };
 
 const CPP_TYPES: Record<string, SymbolKind> = {
@@ -98,6 +128,38 @@ function cppFunctionName(node: Node): string | null {
   return name && CPP_FUNCTION_NAMES.has(name.type) ? name.text : null;
 }
 
+/** The name a call or `new` reaches: an identifier's text, or the last segment of a qualified or template name. */
+function cppCallName(node: Node | null): string | null {
+  switch (node?.type) {
+    case "qualified_identifier":
+    case "template_function":
+    case "template_method":
+    case "template_type":
+      return cppCallName(node.childForFieldName("name"));
+    case "identifier":
+    case "field_identifier":
+    case "type_identifier":
+    case "destructor_name":
+    case "operator_name":
+      return node.text;
+  }
+  return null;
+}
+
+const cppCalls: CallRules = {
+  types: new Set(["call_expression", "new_expression"]),
+  callee(node) {
+    const target = node.childForFieldName(node.type === "new_expression" ? "type" : "function");
+    if (target?.type === "field_expression") {
+      const name = cppCallName(target.childForFieldName("field"));
+      const self = target.childForFieldName("argument")?.type === "this";
+      return named(name, self ? "self" : "member");
+    }
+    const receiver = target?.type === "qualified_identifier" ? "member" : "bare";
+    return named(cppCallName(target), receiver);
+  },
+};
+
 export const cpp: FamilyRules = {
   kind(node, parent) {
     const fn = parent === "class" || parent === "struct" ? "method" : "fn";
@@ -137,6 +199,7 @@ export const cpp: FamilyRules = {
       return firstTypeIdentifier(node.childForFieldName("declarator"))?.text ?? "";
     return node.childForFieldName("name")?.text ?? "";
   },
+  calls: cppCalls,
 };
 
 function firstTypeIdentifier(node: Node | null): Node | null {
@@ -163,6 +226,36 @@ const rustImplType = (node: Node) => {
   return (type?.type === "generic_type" ? type.childForFieldName("type") : type)?.text ?? "";
 };
 
+/** A call's callee, unwrapped through `(f)` and `f::<T>`. */
+function rustTarget(node: Node | null): Node | null {
+  while (node?.type === "parenthesized_expression" || node?.type === "generic_function")
+    node =
+      node.type === "generic_function"
+        ? node.childForFieldName("function")
+        : (node.namedChildren[0] ?? null);
+  return node;
+}
+
+/** A call's callee: a path's last segment (`Self::f` is a self call), a method, or a plain name. */
+function rustCallee(target: Node | null): Callee {
+  if (target?.type === "identifier") return named(target.text, "bare");
+  if (target?.type === "scoped_identifier") {
+    const self = target.childForFieldName("path")?.text === "Self";
+    return named(target.childForFieldName("name")?.text ?? null, self ? "self" : "member");
+  }
+  const field = target?.type === "field_expression" ? target.childForFieldName("field") : null;
+  const self = target?.childForFieldName("value")?.type === "self";
+  return field?.type === "field_identifier" ? named(field.text, self ? "self" : "member") : null;
+}
+
+const rustCalls: CallRules = {
+  types: new Set(["call_expression", "struct_expression"]),
+  callee: (node) =>
+    node.type === "struct_expression"
+      ? named(node.childForFieldName("name")?.text ?? null, "bare")
+      : rustCallee(rustTarget(node.childForFieldName("function"))),
+};
+
 export const rust: FamilyRules & { name(node: Node): string } = {
   kind(node, parent) {
     if (node.type === "function_item" || node.type === "function_signature_item") {
@@ -185,6 +278,7 @@ export const rust: FamilyRules & { name(node: Node): string } = {
   },
   scope: (node) => (node.type === "impl_item" ? rustImplType(node) : rust.name(node)),
   comments: new Set(["line_comment", "block_comment"]),
+  calls: rustCalls,
 };
 
 const JAVA_KINDS: Record<string, SymbolKind> = {
@@ -198,11 +292,35 @@ const JAVA_KINDS: Record<string, SymbolKind> = {
 };
 const JAVA_CONTAINERS: ReadonlySet<SymbolKind> = new Set(["class", "interface", "enum"]);
 
+/** A created class's name: `T`, `a.T` or `T<X>`. */
+function javaTypeName(node: Node | null): { name: string; qualified: boolean } | null {
+  if (node?.type === "type_identifier") return { name: node.text, qualified: false };
+  if (node?.type === "generic_type") return javaTypeName(node.namedChildren[0] ?? null);
+  const name = node?.type === "scoped_type_identifier" ? node.namedChildren.at(-1) : null;
+  return name ? { name: name.text, qualified: true } : null;
+}
+
+const javaCalls: CallRules = {
+  types: new Set(["method_invocation", "object_creation_expression"]),
+  callee(node) {
+    if (node.type === "object_creation_expression") {
+      const type = javaTypeName(node.childForFieldName("type"));
+      return type && { name: type.name, receiver: type.qualified ? "member" : "bare" };
+    }
+    const name = node.childForFieldName("name");
+    const object = node.childForFieldName("object");
+    if (name === null) return null;
+    if (object === null) return { name: name.text, receiver: "bare" };
+    return { name: name.text, receiver: object.type === "this" ? "self" : "member" };
+  },
+};
+
 export const java: FamilyRules = {
   kind: (node) => (Object.hasOwn(JAVA_KINDS, node.type) ? JAVA_KINDS[node.type]! : null),
   container: (kind) => JAVA_CONTAINERS.has(kind),
   passThrough: (node) => (node.type === "enum_body_declarations" ? node.namedChildren : null),
   comments: new Set(["line_comment", "block_comment"]),
+  calls: javaCalls,
 };
 
 const CSHARP_KINDS: Record<string, SymbolKind> = {
@@ -227,6 +345,54 @@ const CSHARP_CONTAINERS: ReadonlySet<SymbolKind> = new Set([
   "interface",
 ]);
 
+/** A callee or created type's name: `T`, `T<X>` or the last segment of `a.T`. */
+function csharpName(node: Node | null): string | null {
+  switch (node?.type) {
+    case "identifier":
+      return node.text;
+    case "generic_name":
+      return node.namedChildren[0]?.text ?? null;
+    case "qualified_name":
+      return csharpName(node.childForFieldName("name"));
+  }
+  return null;
+}
+
+/** `Foo f = new(…)` has the type its declaration names; any other `new(…)` has none. */
+function targetTypedName(node: Node): string | null {
+  const declaration = node.parent?.type === "variable_declarator" ? node.parent.parent : null;
+  return csharpName(declaration?.childForFieldName("type") ?? null);
+}
+
+function csharpCreated(node: Node): Callee {
+  const type = node.childForFieldName("type");
+  const name = type === null ? targetTypedName(node) : csharpName(type);
+  return named(name, type?.type === "qualified_name" ? "member" : "bare");
+}
+
+function csharpInvoked(node: Node): Callee {
+  const target = node.childForFieldName("function");
+  if (target?.type === "member_access_expression") {
+    const self = target.childForFieldName("expression")?.type === "this";
+    return named(csharpName(target.childForFieldName("name")), self ? "self" : "member");
+  }
+  if (target?.type === "conditional_access_expression") {
+    const binding = target.namedChildren.find((c) => c.type === "member_binding_expression");
+    return named(csharpName(binding?.childForFieldName("name") ?? null), "member");
+  }
+  return named(csharpName(target), "bare");
+}
+
+const csharpCalls: CallRules = {
+  types: new Set([
+    "invocation_expression",
+    "object_creation_expression",
+    "implicit_object_creation_expression",
+  ]),
+  callee: (node) =>
+    node.type === "invocation_expression" ? csharpInvoked(node) : csharpCreated(node),
+};
+
 export const csharp: FamilyRules = {
   kind: (node) => (Object.hasOwn(CSHARP_KINDS, node.type) ? CSHARP_KINDS[node.type]! : null),
   container: (kind) => CSHARP_CONTAINERS.has(kind),
@@ -242,4 +408,5 @@ export const csharp: FamilyRules = {
     }
     return node.childForFieldName("name")?.text ?? "";
   },
+  calls: csharpCalls,
 };

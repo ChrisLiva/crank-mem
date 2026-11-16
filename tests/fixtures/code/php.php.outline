@@ -12,3 +12,4 @@ src/php.php
 52-56│namespace Other {
 53-55│    class Inner {
 54-54│        function f() { … }
+58-66│function drive(User $user) { … }

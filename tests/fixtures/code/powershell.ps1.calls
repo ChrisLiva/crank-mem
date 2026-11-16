@@ -1,0 +1,5 @@
+36 Invoke-Drive → Get-Thing (bare)
+37 Invoke-Drive → Area (self)
+38 Invoke-Drive → Area (member)
+39 Invoke-Drive → new (member)
+40 Invoke-Drive → New-Object (bare)

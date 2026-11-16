@@ -83,3 +83,11 @@ declare module "m" {
 export default function () {
   return readFileSync.length + n + obj.method();
 }
+
+export function drive(box: Box): number {
+  count();
+  this.helper();
+  box.resize(2);
+  new Box(1);
+  return new ns.Shape().area();
+}

@@ -39,3 +39,12 @@ enum Color {
         return ordinal();
     }
 }
+
+class Driver {
+    int run(Box box) {
+        helper();
+        this.helper();
+        box.area();
+        return new Box(1).area();
+    }
+}

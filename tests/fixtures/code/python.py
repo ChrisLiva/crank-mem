@@ -32,3 +32,10 @@ def one(): pass
 type Alias = int
 
 f = lambda x: x
+
+
+def drive(shape):
+    fib(3)
+    self.area(1)
+    shape.area(2)
+    return Shape()

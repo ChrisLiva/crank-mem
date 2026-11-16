@@ -19,3 +19,10 @@ s() (
 )
 
 outer() { inner() { :; }; }
+
+drive() {
+  f
+  g "$(h)"
+  $tool run
+  ./build.sh --all
+}

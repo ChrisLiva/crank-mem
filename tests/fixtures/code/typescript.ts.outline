@@ -24,3 +24,4 @@ src/typescript.ts
 79-81│module "m" {
 80-80│  export function fromM(): void;
 83-85│export default function () { … }
+87-93│export function drive(box: Box): number { … }

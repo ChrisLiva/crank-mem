@@ -82,3 +82,10 @@ export default class {
     return <Badge label="x" />;
   }
 }
+
+export function mount(el: HTMLElement): void {
+  ready();
+  this.render();
+  el.focus();
+  new Panel();
+}

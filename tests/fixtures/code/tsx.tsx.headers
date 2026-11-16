@@ -22,3 +22,4 @@ src/tsx.tsx:73-73 fn m.fromM
 src/tsx.tsx:76-78 fn default
 src/tsx.tsx:80-84 class default
 src/tsx.tsx:81-83 method default.show
+src/tsx.tsx:86-91 fn mount

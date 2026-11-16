@@ -42,3 +42,12 @@ type (
 var v = 1
 
 const k = 2
+
+func Drive(f Foo) int {
+	Add(1, 2)
+	self.Len()
+	f.Len()
+	_ = Foo{x: 1}
+	_ = pkg.Opts{}
+	return pkg.Run()
+}

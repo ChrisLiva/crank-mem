@@ -39,3 +39,4 @@ src/cpp.cpp
 90-92│  class ExtruderGroup {
 91-91│    void SetTitle();
 94-95│  void ExtruderGroup::SetTitle() { … }
+98-98│void drive(A::B::Foo* p) { … }

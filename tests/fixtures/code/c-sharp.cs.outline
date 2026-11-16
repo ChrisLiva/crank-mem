@@ -12,3 +12,5 @@ src/c-sharp.cs
 40-40│    double Area();
 43-47│public enum Color { … }
 49-49│public delegate void Handler(int code);
+51-61│public class Driver {
+53-60│    public void Run(Foo foo) { … }

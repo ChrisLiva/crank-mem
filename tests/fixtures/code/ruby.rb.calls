@@ -1,0 +1,7 @@
+6 Shapes.Box → attr_reader (bare)
+20 Shapes.Box.pm → private (bare)
+35 drive → top (bare)
+36 drive → m (self)
+37 drive → area (member)
+38 drive → new (member)
+39 drive → puts (bare)

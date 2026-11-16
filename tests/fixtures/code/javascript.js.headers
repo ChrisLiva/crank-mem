@@ -11,3 +11,4 @@ src/javascript.js:34-36 method Store.get
 src/javascript.js:39-39 fn App
 src/javascript.js:41-41 class default
 src/javascript.js:47-50 fn outer
+src/javascript.js:53-58 fn drive

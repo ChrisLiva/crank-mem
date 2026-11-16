@@ -16,3 +16,4 @@ src/rust.rs:50-52 method Foo.fmt
 src/rust.rs:55-57 module inner
 src/rust.rs:56-56 fn inner.f
 src/rust.rs:61-61 type Alias
+src/rust.rs:66-72 fn drive

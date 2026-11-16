@@ -1,4 +1,4 @@
-import type { FamilyRules, Node, SymbolKind } from "./code-symbols.ts";
+import type { CallRules, FamilyRules, Node, SymbolKind } from "./code-symbols.ts";
 
 // The scripting-language rows of `code-symbols.ts` → `RULES`: TypeScript, JavaScript, Python, Bash, Ruby, PHP and PowerShell.
 
@@ -44,6 +44,28 @@ const isDefaultExport = (node: Node) =>
   node.parent?.type === "export_statement" &&
   node.parent.childForFieldName("value")?.equals(node) === true;
 
+/** A callee expression without its `(f)` and `f!` wrappers. */
+function unwrapCallee(node: Node | null): Node | null {
+  while (node?.type === "parenthesized_expression" || node?.type === "non_null_expression")
+    node = node.namedChildren[0] ?? null;
+  return node;
+}
+
+const tsCalls: CallRules = {
+  types: new Set(["call_expression", "new_expression"]),
+  callee(node) {
+    const target = unwrapCallee(
+      node.childForFieldName(node.type === "new_expression" ? "constructor" : "function"),
+    );
+    if (target?.type === "identifier") return { name: target.text, receiver: "bare" };
+    const property =
+      target?.type === "member_expression" ? target.childForFieldName("property") : null;
+    if (property === null || target === null) return null;
+    const self = target.childForFieldName("object")?.type === "this";
+    return { name: property.text, receiver: self ? "self" : "member" };
+  },
+};
+
 export const typescript: FamilyRules = {
   kind(node) {
     if (Object.hasOwn(TS_KINDS, node.type)) return TS_KINDS[node.type]!;
@@ -80,6 +102,7 @@ export const typescript: FamilyRules = {
     VALUE_BODIES.has(node.type)
       ? (node.childForFieldName("value")?.childForFieldName("body") ?? null)
       : node.childForFieldName("body"),
+  calls: tsCalls,
 };
 
 export const javascript: FamilyRules = {
@@ -97,6 +120,18 @@ export const javascript: FamilyRules = {
     return (
       node.childForFieldName(node.type === "field_definition" ? "property" : "name")?.text ?? ""
     );
+  },
+};
+
+const pythonCalls: CallRules = {
+  types: new Set(["call"]),
+  callee(node) {
+    const target = node.childForFieldName("function");
+    if (target?.type === "identifier") return { name: target.text, receiver: "bare" };
+    const name = target?.type === "attribute" ? target.childForFieldName("attribute") : null;
+    if (name === null || target === null) return null;
+    const self = target.childForFieldName("object")?.text === "self";
+    return { name: name.text, receiver: self ? "self" : "member" };
   },
 };
 
@@ -124,12 +159,20 @@ export const python: FamilyRules = {
   }),
   name: (node) =>
     node.childForFieldName(node.type === "type_alias_statement" ? "left" : "name")?.text ?? "",
+  calls: pythonCalls,
 };
 
 export const bash: FamilyRules = {
   kind: (node) => (node.type === "function_definition" ? "fn" : null),
   container: () => false,
   passThrough: () => null,
+  calls: {
+    types: new Set(["command"]),
+    callee(node) {
+      const name = node.childForFieldName("name");
+      return name?.firstChild?.type === "word" ? { name: name.text, receiver: "bare" } : null;
+    },
+  },
 };
 
 /** A method in `class << self`: its parent is the singleton class's body. */
@@ -139,6 +182,17 @@ const rubyWrappingCall = (node: Node) =>
   node.parent?.type === "argument_list" && node.parent.parent?.type === "call"
     ? node.parent.parent
     : null;
+
+const rubyCalls: CallRules = {
+  types: new Set(["call"]),
+  callee(node) {
+    const method = node.childForFieldName("method");
+    if (method === null) return null;
+    const receiver = node.childForFieldName("receiver");
+    if (receiver === null) return { name: method.text, receiver: "bare" };
+    return { name: method.text, receiver: receiver.type === "self" ? "self" : "member" };
+  },
+};
 
 export const ruby: FamilyRules = {
   kind(node, parent) {
@@ -171,6 +225,7 @@ export const ruby: FamilyRules = {
       return `${node.childForFieldName("object")?.text ?? ""}.${name}`;
     return node.type === "method" && inRubySingletonClass(node) ? `self.${name}` : name;
   },
+  calls: rubyCalls,
 };
 
 const PHP_KINDS: Record<string, SymbolKind> = {
@@ -190,10 +245,46 @@ const PHP_CONTAINERS: ReadonlySet<SymbolKind> = new Set([
   "namespace",
 ]);
 
+/** A class or function name: a plain `name`, or a qualified one's last segment. */
+const phpName = (node: Node | null) => {
+  if (node?.type === "name") return node.text;
+  return node?.type === "qualified_name" ? (node.children.at(-1)?.text ?? null) : null;
+};
+const PHP_SELF_TARGETS = new Set(["$this", "self", "static"]);
+
+const phpCalls: CallRules = {
+  types: new Set([
+    "function_call_expression",
+    "member_call_expression",
+    "nullsafe_member_call_expression",
+    "scoped_call_expression",
+    "object_creation_expression",
+  ]),
+  callee(node) {
+    if (node.type === "function_call_expression" || node.type === "object_creation_expression") {
+      const target =
+        node.type === "function_call_expression"
+          ? node.childForFieldName("function")
+          : node.namedChildren.find((child) => phpName(child) !== null);
+      const name = phpName(target ?? null);
+      return name === null ? null : { name, receiver: "bare" };
+    }
+    const name = node.childForFieldName("name");
+    if (name?.type !== "name") return null;
+    const scoped = node.type === "scoped_call_expression";
+    const target = node.childForFieldName(scoped ? "scope" : "object");
+    return {
+      name: name.text,
+      receiver: PHP_SELF_TARGETS.has(target?.text ?? "") ? "self" : "member",
+    };
+  },
+};
+
 export const php: FamilyRules = {
   kind: (node) => (Object.hasOwn(PHP_KINDS, node.type) ? PHP_KINDS[node.type]! : null),
   container: (kind) => PHP_CONTAINERS.has(kind),
   passThrough: () => null,
+  calls: phpCalls,
 };
 
 const PS_KINDS: Record<string, SymbolKind> = {
@@ -209,6 +300,19 @@ const PS_BRACE_BODIES = new Set([
   "class_method_definition",
 ]);
 
+const powershellCalls: CallRules = {
+  types: new Set(["command", "invokation_expression"]),
+  callee(node) {
+    if (node.type === "command") {
+      const name = node.childForFieldName("command_name");
+      return name?.type === "command_name" ? { name: name.text, receiver: "bare" } : null;
+    }
+    const member = node.children.find((child) => child.type === "member_name");
+    if (member === undefined) return null;
+    return { name: member.text, receiver: node.children[0]?.text === "$this" ? "self" : "member" };
+  },
+};
+
 export const powershell: FamilyRules = {
   kind: (node) => (Object.hasOwn(PS_KINDS, node.type) ? PS_KINDS[node.type]! : null),
   container: (kind) => kind === "class",
@@ -221,4 +325,5 @@ export const powershell: FamilyRules = {
   body: (node) =>
     PS_BRACE_BODIES.has(node.type) ? (node.children.find((c) => c.type === "{") ?? null) : null,
   members: (node, body) => node.namedChildren.filter((child) => child.startIndex >= body.endIndex),
+  calls: powershellCalls,
 };

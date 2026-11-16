@@ -38,3 +38,4 @@ src/cpp.cpp:86-87 method GUI.HoverLabel.SetTitle
 src/cpp.cpp:90-92 class GUI.ExtruderGroup
 src/cpp.cpp:91-91 method GUI.ExtruderGroup.SetTitle
 src/cpp.cpp:94-95 fn GUI.ExtruderGroup::SetTitle
+src/cpp.cpp:98-98 fn drive

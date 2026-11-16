@@ -17,3 +17,4 @@ src/rust.rs
 55-57│mod inner {
 56-56│    fn f() { … }
 61-61│type Alias = u8;
+66-72│fn drive(foo: &Foo) { … }

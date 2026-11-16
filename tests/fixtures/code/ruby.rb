@@ -30,3 +30,11 @@ end
 def sq(x) = x * x
 
 def m; end
+
+def drive(box)
+  top()
+  self.m
+  box.area(1, 2)
+  Shapes::Box.new
+  puts "done"
+end

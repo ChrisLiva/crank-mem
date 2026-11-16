@@ -5,3 +5,4 @@ src/powershell.ps1:18-28 class Box
 src/powershell.ps1:21-23 method Box.Box
 src/powershell.ps1:25-27 method Box.Area
 src/powershell.ps1:30-33 enum Color
+src/powershell.ps1:35-41 fn Invoke-Drive

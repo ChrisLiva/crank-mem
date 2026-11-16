@@ -19,6 +19,7 @@ import {
 
 type TreeSitter = typeof import("web-tree-sitter");
 type Language = import("web-tree-sitter").Language;
+type Parser = import("web-tree-sitter").Parser;
 export type Node = import("web-tree-sitter").Node;
 
 export type SymbolKind =
@@ -34,6 +35,8 @@ export type SymbolKind =
   | "impl"
   | "type";
 export interface CodeSymbol {
+  /** The unqualified name `qualified` ends with. */
+  name: string;
   qualified: string;
   kind: SymbolKind;
   start: number;
@@ -51,25 +54,66 @@ export function grammarFor(file: string): Grammar | null {
   return Object.hasOwn(GRAMMARS, ext) ? GRAMMARS[ext]! : null;
 }
 
-/** Top-level symbols with members nested, or null when web-tree-sitter or the grammar's wasm cannot load. */
-export async function codeSymbols(text: string, grammar: Grammar): Promise<CodeSymbol[] | null> {
-  let ts: TreeSitter;
-  let language: Language;
+export type Receiver = "bare" | "self" | "member";
+/** One call site: `enclosing` indexes the innermost symbol holding `line` in `preorder` order, null at top level. */
+export interface CallSite {
+  line: number;
+  callee: string;
+  receiver: Receiver;
+  enclosing: number | null;
+}
+/** The most call sites one file records; later calls in source order are dropped. */
+const MAX_CALLS = 5000;
+
+let treeSitter: Promise<{ ts: TreeSitter; parser: Parser }> | null = null;
+const languages = new Map<Grammar, Language>();
+
+/** The shared parser and the grammar's language, loaded once; null when web-tree-sitter or the wasm cannot load. */
+async function parserFor(grammar: Grammar): Promise<{ parser: Parser; language: Language } | null> {
   try {
-    ts = await import("web-tree-sitter");
-    await ts.Parser.init();
-    const wasm = createRequire(import.meta.url).resolve(
-      `@vscode/tree-sitter-wasm/wasm/tree-sitter-${grammar}.wasm`,
-    );
-    language = await ts.Language.load(wasm);
+    treeSitter ??= (async () => {
+      const ts = await import("web-tree-sitter");
+      await ts.Parser.init();
+      return { ts, parser: new ts.Parser() };
+    })();
+    const { ts, parser } = await treeSitter;
+    let language = languages.get(grammar);
+    if (language === undefined) {
+      const wasm = createRequire(import.meta.url).resolve(
+        `@vscode/tree-sitter-wasm/wasm/tree-sitter-${grammar}.wasm`,
+      );
+      language = await ts.Language.load(wasm);
+      languages.set(grammar, language);
+    }
+    return { parser, language };
   } catch {
+    treeSitter = null;
     return null;
   }
-  const parser = new ts.Parser();
-  parser.setLanguage(language);
-  const tree = parser.parse(text);
+}
+
+/** Top-level symbols with members nested and the file's call sites, or null when web-tree-sitter or the grammar's wasm cannot load. */
+export async function codeFacts(
+  text: string,
+  grammar: Grammar,
+): Promise<{ symbols: CodeSymbol[]; calls: CallSite[] } | null> {
+  const loaded = await parserFor(grammar);
+  if (loaded === null) return null;
+  loaded.parser.setLanguage(loaded.language);
+  const tree = loaded.parser.parse(text);
   if (tree === null) throw new Error("tree-sitter returned no tree");
-  return walk(tree.rootNode.namedChildren, null, RULES[grammar], text);
+  try {
+    const rules = RULES[grammar];
+    const symbols = walk(tree.rootNode.namedChildren, null, rules, text);
+    return { symbols, calls: callSites(tree.rootNode, rules, symbols) };
+  } finally {
+    tree.delete();
+  }
+}
+
+/** Top-level symbols with members nested, or null when web-tree-sitter or the grammar's wasm cannot load. */
+export async function codeSymbols(text: string, grammar: Grammar): Promise<CodeSymbol[] | null> {
+  return (await codeFacts(text, grammar))?.symbols ?? null;
 }
 
 /** One family's Symbol table row; walk, resolveHooks, buildSymbol, docStart and headEnd read only these. */
@@ -91,6 +135,13 @@ export interface FamilyRules {
   members?(node: Node, body: Node): Node[];
   /** Comment node types; defaults to `comment`. */
   comments?: ReadonlySet<string>;
+  /** The call sites: the node types that call or construct, and each one's callee name and receiver, or null for a callee with no name. */
+  calls?: CallRules;
+}
+
+export interface CallRules {
+  types: ReadonlySet<string>;
+  callee(node: Node): { name: string; receiver: Receiver } | null;
 }
 
 const DEFAULT_COMMENTS: ReadonlySet<string> = new Set(["comment"]);
@@ -205,6 +256,7 @@ function buildSymbol(
   const lineStart = text.lastIndexOf("\n", headNode.startIndex - 1) + 1;
   const startLine = start.startPosition.row + 1;
   return {
+    name,
     qualified: parent ? `${parent.qualifier}.${name}` : name,
     kind,
     start: startLine,
@@ -220,4 +272,44 @@ function buildSymbol(
         ? walk(rules.members?.(node, body) ?? body.namedChildren, { kind, qualifier }, rules, text)
         : [],
   };
+}
+
+/** A symbol with its place in `preorder` order, for locating a line's innermost symbol. */
+interface Slot {
+  symbol: CodeSymbol;
+  index: number;
+  children: Slot[];
+}
+
+function slotsOf(symbols: CodeSymbol[], next: { n: number }): Slot[] {
+  return symbols.map((symbol) => {
+    const index = next.n++;
+    return { symbol, index, children: slotsOf(symbol.children, next) };
+  });
+}
+
+/** The `preorder` index of the innermost symbol whose lines hold `line`, or null. */
+function innermost(slots: Slot[], line: number): number | null {
+  const slot = slots.find(({ symbol }) => symbol.start <= line && line <= symbol.end);
+  return slot ? (innermost(slot.children, line) ?? slot.index) : null;
+}
+
+/** The file's call sites in source order, at most `MAX_CALLS`. */
+function callSites(root: Node, rules: FamilyRules, symbols: CodeSymbol[]): CallSite[] {
+  const calls: CallSite[] = [];
+  if (!rules.calls) return calls;
+  const slots = slotsOf(symbols, { n: 0 });
+  for (const node of root.descendantsOfType([...rules.calls.types])) {
+    const callee = rules.calls.callee(node);
+    if (callee === null) continue;
+    const line = node.startPosition.row + 1;
+    calls.push({
+      line,
+      callee: callee.name,
+      receiver: callee.receiver,
+      enclosing: innermost(slots, line),
+    });
+    if (calls.length === MAX_CALLS) break;
+  }
+  return calls;
 }

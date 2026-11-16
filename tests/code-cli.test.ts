@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { codeSymbols, grammarFor } from "../src/cli/code-symbols.ts";
+import { codeFacts, codeSymbols, grammarFor } from "../src/cli/code-symbols.ts";
 import { outlinePage, preorder } from "../src/cli/code.ts";
 import { childEnv, makeCrankProject, REPO_ROOT, runCli, tempDir, type CliRun } from "./helpers.ts";
 
@@ -625,6 +625,19 @@ describe("families", () => {
       ).toEqual(headers);
     });
 
+    test(`call sites reproduce the committed calls for ${fixture}`, async () => {
+      const { text } = golden(fixture);
+      const calls = fs.readFileSync(path.join(FIXTURES, `${fixture}.calls`), "utf8");
+      const facts = await codeFacts(text, grammarFor(file)!);
+      expect(facts).not.toBeNull();
+      const entries = preorder(facts!.symbols);
+      const lines = facts!.calls.map(
+        (c) =>
+          `${c.line} ${c.enclosing === null ? "-" : entries[c.enclosing]!.symbol.qualified} → ${c.callee} (${c.receiver})`,
+      );
+      expect(lines.join("\n") + "\n").toBe(calls);
+    });
+
     test(`outline and unfold match the committed expectation for ${fixture}`, async () => {
       const { text, outline, headers } = golden(fixture);
       const root = makeCrankProject({ [file]: text });
@@ -642,4 +655,17 @@ describe("families", () => {
       ]);
     }, 30_000);
   }
+});
+
+describe("call cap", () => {
+  test("a file of 5,001 calls records the first 5,000, the last on line 5,000", async () => {
+    const text = Array.from({ length: 5001 }, () => "f();").join("\n");
+    const facts = await codeFacts(text, "typescript");
+    expect(facts!.calls).toHaveLength(5000);
+    expect(facts!.calls.at(-1)).toMatchObject({ line: 5000, callee: "f", receiver: "bare" });
+  });
+
+  test("an empty file has no symbols and no calls", async () => {
+    expect(await codeFacts("", "typescript")).toEqual({ symbols: [], calls: [] });
+  });
 });

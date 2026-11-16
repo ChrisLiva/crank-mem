@@ -11,3 +11,4 @@ src/php.php:46-49 method Suit.label
 src/php.php:52-56 namespace Other
 src/php.php:53-55 class Other.Inner
 src/php.php:54-54 method Other.Inner.f
+src/php.php:58-66 fn drive

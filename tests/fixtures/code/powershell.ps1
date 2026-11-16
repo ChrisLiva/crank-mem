@@ -31,3 +31,11 @@ enum Color {
     Red
     Green
 }
+
+function Invoke-Drive {
+    Get-Thing -Name x
+    $this.Area()
+    $box.Area()
+    [Box]::new(1)
+    New-Object Box
+}

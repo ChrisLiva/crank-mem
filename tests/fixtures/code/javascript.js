@@ -49,3 +49,10 @@ function outer() {
   return inner;
 }
 const n = 1;
+
+function drive(box) {
+  add(1, 2);
+  this.reset();
+  box.bump(1);
+  return new Store();
+}

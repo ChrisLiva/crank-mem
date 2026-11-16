@@ -7,3 +7,4 @@ src/ruby.rb:20-20 method Shapes.Box.pm
 src/ruby.rb:23-25 method Shapes.Box.self.build
 src/ruby.rb:30-30 fn sq
 src/ruby.rb:32-32 fn m
+src/ruby.rb:34-40 fn drive

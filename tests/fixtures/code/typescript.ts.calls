@@ -1,0 +1,8 @@
+33 - → forEach (member)
+84 default → method (member)
+88 drive → count (bare)
+89 drive → helper (self)
+90 drive → resize (member)
+91 drive → Box (bare)
+92 drive → area (member)
+92 drive → Shape (member)

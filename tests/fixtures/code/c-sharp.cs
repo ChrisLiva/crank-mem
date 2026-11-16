@@ -47,3 +47,15 @@ public enum Color
 }
 
 public delegate void Handler(int code);
+
+public class Driver
+{
+    public void Run(Foo foo)
+    {
+        Helper();
+        this.Helper();
+        foo.Area();
+        var f = new Foo(1);
+        Foo g = new(2);
+    }
+}

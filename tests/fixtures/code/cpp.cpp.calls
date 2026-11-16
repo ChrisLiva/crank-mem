@@ -1,0 +1,6 @@
+7 add → twice (bare)
+98 drive → add (bare)
+98 drive → get (self)
+98 drive → get (member)
+98 drive → run (member)
+98 drive → Foo (member)

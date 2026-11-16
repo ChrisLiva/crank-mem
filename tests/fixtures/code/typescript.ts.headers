@@ -23,3 +23,4 @@ src/typescript.ts:76-76 fn NS.helper
 src/typescript.ts:79-81 module m
 src/typescript.ts:80-80 fn m.fromM
 src/typescript.ts:83-85 fn default
+src/typescript.ts:87-93 fn drive

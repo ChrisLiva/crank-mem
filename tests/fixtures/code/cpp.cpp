@@ -94,3 +94,5 @@ namespace GUI {
   void ExtruderGroup::SetTitle() {
   }
 }
+
+void drive(A::B::Foo* p) { add(1, 2); this->get(); p->get(); ns::run(); new A::B::Foo(); }

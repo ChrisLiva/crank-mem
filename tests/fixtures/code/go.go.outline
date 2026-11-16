@@ -10,3 +10,4 @@ src/go.go
 35-35│type A = int
 38-38│	B struct { … }
 39-39│	C int
+46-53│func Drive(f Foo) int { … }

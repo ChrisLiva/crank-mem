@@ -1,0 +1,8 @@
+31 - → forEach (member)
+43 Panel.format → String (bare)
+77 default → String (bare)
+77 default → onClick (member)
+87 mount → ready (bare)
+88 mount → render (self)
+89 mount → focus (member)
+90 mount → Panel (bare)

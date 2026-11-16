@@ -62,3 +62,11 @@ type Alias = u8;
 
 const C: u8 = 1;
 static S: u8 = 2;
+
+fn drive(foo: &Foo) {
+    add_one(1);
+    self.get();
+    foo.get();
+    Self::new();
+    crate::util::run();
+}

@@ -1,0 +1,6 @@
+27 Foo.Area → Square (bare)
+55 Driver.Run → Helper (bare)
+56 Driver.Run → Helper (self)
+57 Driver.Run → Area (member)
+58 Driver.Run → Foo (bare)
+59 Driver.Run → Foo (bare)
