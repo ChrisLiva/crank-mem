@@ -10,9 +10,13 @@ import {
   digestProject,
   fakeTool,
   fakeClaude,
+  childEnv,
+  git,
+  gitCommit,
   killDaemon,
   laterRecords,
   makeCrankHome,
+  makeCrankProject,
   makeInstalledCopy,
   readDaemon,
   releaseDir,
@@ -28,14 +32,23 @@ import {
   userRecord,
   waitFor,
   withEnv,
+  withReadOnlyCodeDb,
   type FakeCall,
   type FakeScenario,
 } from "./helpers.ts";
 import { digestRequest } from "../src/daemon/digest-prompt.ts";
+import { refreshGraph } from "../src/cli/code-parse.ts";
+import { openCodeDb, pendingCount, refreshFileFacts } from "../src/hooks/lib/code-db.ts";
+import { loadConfig } from "../src/hooks/lib/config.ts";
 import { registerProject } from "../src/hooks/lib/registry.ts";
 import { okStream, refusalStream, status500Stream } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
-import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
+import {
+  claudePostWrite,
+  claudeSessionEnd,
+  claudeSessionStart,
+  claudeStop,
+} from "./fixtures/payloads.ts";
 
 const FIXTURE = path.join(REPO_ROOT, "tests/fixtures/transcript.jsonl");
 const EXPECTED = fs.readFileSync(
@@ -974,4 +987,289 @@ describe("mid-session digests", () => {
     await waitFor(() => e.fake.calls().length === 1, 10_000);
     expect(e.fake.calls()[0]!.startMs - t1).toBeGreaterThanOrEqual(600);
   }, 30_000);
+});
+
+describe("daemon graph jobs", () => {
+  const GRAPH_IDLE = ["--idle-ms", "1", "--sweep-ms", "50"];
+
+  /** A registered project whose code.db lists `files` and holds none of their symbols yet; no CLI command has run in it. */
+  function pendingProject(e: Env, files: Record<string, string>, make = makeCrankProject): string {
+    const root = fs.realpathSync(make(files));
+    temps.push(root);
+    const opened = openCodeDb(root, "write");
+    refreshFileFacts(root, loadConfig(path.join(root, ".crank")), opened.db!, Infinity);
+    opened.db!.close();
+    withEnv({ CRANK_HOME: e.home }, () => registerProject(root));
+    return root;
+  }
+
+  /** Files still unparsed in `root`'s code.db; Infinity when it cannot be read. */
+  function pending(root: string): number {
+    const opened = openCodeDb(root, "read", 1000);
+    if (opened.status !== "open") return Infinity;
+    try {
+      return pendingCount(opened.db!);
+    } finally {
+      opened.db!.close();
+    }
+  }
+
+  /** `n` one-function files under src/m0 ... src/m19. */
+  function manyFiles(n: number): Record<string, string> {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < n; i++)
+      files[`src/m${i % 20}/f${i}.ts`] = `export function a${i}() {\n  return ${i};\n}\n`;
+    return files;
+  }
+
+  /** Every page of `anatomy` as one entry (the path line and its symbol lines) per path, plus the last line of the last page. */
+  function anatomyEntries(root: string): { entries: Map<string, string>; last: string } {
+    const entries = new Map<string, string>();
+    let args = ["anatomy"];
+    for (;;) {
+      const run = runCli(root, args);
+      expect(run.status).toBe(0);
+      let current = "";
+      for (const line of run.stdout.split("\n")) {
+        const head = /^- `([^`]+)`/.exec(line);
+        if (head) {
+          current = head[1]!;
+          entries.set(current, line);
+        } else if (current !== "" && line.startsWith("  - ")) {
+          entries.set(current, `${entries.get(current)}\n${line}`);
+        }
+      }
+      const last = run.stdout.trimEnd().split("\n").at(-1)!;
+      const more = /^… \d+ more files from (\S+): crank-mem anatomy --from \S+$/.exec(last);
+      if (!more) return { entries, last };
+      args = ["anatomy", "--from", more[1]!];
+    }
+  }
+
+  /** The `(symbols pending)` marker on an entry's first line. */
+  const marked = (entry: string): boolean => entry.split("\n")[0]!.endsWith("(symbols pending)");
+
+  test("a daemon parses a pending project on its own, and pending files alone keep it alive", async () => {
+    const e = setup();
+    const root = pendingProject(e, {
+      "a.ts": "export function alpha() {}\n",
+      "src/b.ts": "export class Beta {}\n",
+    });
+    expect(pending(root)).toBe(2);
+    const d = daemon(GRAPH_IDLE, e);
+    // No CLI command runs here: `anatomy` would refresh the store itself and hide a daemon that did nothing.
+    await waitFor(() => pending(root) === 0, 20_000);
+    expect(await within(d.exited, 10_000)).toBe(0);
+
+    const run = runCli(root, ["anatomy"]);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("  - alpha (");
+    expect(run.stdout).toContain("  - Beta (");
+    expect(run.stdout).not.toContain("(symbols pending)");
+  }, 40_000);
+
+  test("a stop state keeps the daemon from parsing and ends it", async () => {
+    const e = setup();
+    const root = pendingProject(e, manyFiles(50));
+    stopDigests(e.home);
+    const d = daemon(GRAPH_IDLE, e);
+    expect(await within(d.exited, 15_000)).toBe(0);
+    expect(pending(root)).toBe(50);
+  }, 30_000);
+
+  test("a daemon killed mid-parse leaves every file whole or pending, and the next daemon finishes them", async () => {
+    const e = setup();
+    const files = manyFiles(2000);
+    const root = pendingProject(e, files);
+    const start = pending(root);
+    expect(start).toBe(2000);
+    const d = daemon(GRAPH_IDLE, e);
+    await waitFor(() => pending(root) < start && pending(root) > 0, 30_000);
+    const pid = d.proc.pid!;
+    killDaemon(e.home);
+    await d.exited;
+    const groupGone = () => {
+      try {
+        process.kill(-pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    await waitFor(groupGone, 10_000);
+
+    // Read what the kill left, before any refresh can repair it.
+    const left = withReadOnlyCodeDb(root, () => anatomyEntries(root));
+    expect(left.last).toMatch(/^\(\d+ file\(s\) still pending parse\)$/);
+    expect(left.entries.size).toBe(2000);
+    const never = anatomyEntries(makeCrankProject(files));
+    expect(never.last).not.toContain("pending");
+    const done = [...left.entries].filter(([, entry]) => !marked(entry));
+    expect(done.length).toBeGreaterThan(0);
+    expect(done.length).toBeLessThan(2000);
+    for (const [rel, entry] of done) expect(entry).toBe(never.entries.get(rel)!);
+
+    fs.rmSync(path.join(e.home, "daemon.json"), { force: true });
+    const again = daemon(GRAPH_IDLE, e);
+    await waitFor(() => pending(root) === 0, 60_000);
+    expect(await within(again.exited, 10_000)).toBe(0);
+    const after = anatomyEntries(root);
+    expect(after.last).not.toContain("pending");
+    expect(after.entries).toEqual(never.entries);
+  }, 180_000);
+
+  test("a code.db the file system will not let graph-job write exits 1, holds its project, and the daemon idles out", async () => {
+    const e = setup();
+    const root = pendingProject(e, { "a.ts": "export function alpha() {}\n" });
+    // Left read-only: the project's temp dir is removed after the test, and a restore could race a retry.
+    for (const name of ["code.db", "code.db-wal", "code.db-shm"]) {
+      const file = path.join(root, ".crank", name);
+      if (fs.existsSync(file)) fs.chmodSync(file, 0o444);
+    }
+    const job = runCli(root, ["graph-job", root]);
+    expect(job.status).toBe(1);
+    expect(job.stderr).toContain("crank-mem: .crank/code.db is not readable (SQLITE_READONLY)");
+    // A hold of the default length: a daemon that retried every sweep would never idle out.
+    const d = daemon(["--idle-ms", "300", "--sweep-ms", "50"], e);
+    expect(await within(d.exited, 15_000)).toBe(0);
+    expect(pending(root)).toBe(1);
+  }, 40_000);
+
+  test("a parseable file whose text cannot be read stops counting as pending, so the daemon idles out", async () => {
+    const e = setup();
+    const root = pendingProject(e, {
+      "ok.ts": "export function okFn() {}\n",
+      "locked.ts": "export function lockedFn() {}\n",
+    });
+    const locked = path.join(root, "locked.ts");
+    fs.chmodSync(locked, 0o000);
+    try {
+      expect(pending(root)).toBe(2);
+      const d = daemon(GRAPH_IDLE, e);
+      expect(await within(d.exited, 20_000)).toBe(0);
+      expect(readDaemon(e.home)).toBe(null);
+      expect(pending(root)).toBe(0);
+
+      const run = runCli(root, ["anatomy"]);
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain("  - okFn (");
+      expect(run.stdout).not.toContain("pending");
+    } finally {
+      fs.chmodSync(locked, 0o644);
+    }
+  }, 40_000);
+
+  test("two refreshes released at one start time both exit 0 and leave one parse's rows", async () => {
+    const files = manyFiles(300);
+    const root = makeCrankProject(files);
+    temps.push(root);
+    const refresher = path.join(REPO_ROOT, "tests/fixtures/graph-refresher.ts");
+    const at = String(Date.now() + 1500);
+    const runs = [0, 1].map(() => {
+      const child = spawn(process.execPath, [refresher, root, at], {
+        env: childEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      others.push(child);
+      let err = "";
+      child.stderr!.on("data", (chunk) => (err += chunk));
+      return new Promise<{ code: number | null; err: string }>((resolve) =>
+        child.once("exit", (code) => resolve({ code, err })),
+      );
+    });
+    const results = await Promise.all(runs);
+    expect(results.map((r) => [r.code, r.err.split("\n")[0]])).toEqual([
+      [0, ""],
+      [0, ""],
+    ]);
+
+    const raced = anatomyEntries(root);
+    expect(raced.last).not.toContain("pending");
+    expect(raced.entries).toEqual(anatomyEntries(makeCrankProject(files)).entries);
+  }, 60_000);
+
+  test("a post-write upsert between a parse's read and its transaction leaves the file pending, then current", async () => {
+    const root = makeCrankProject({ "t.ts": "export function oldName() {}\n" });
+    temps.push(root);
+    const file = path.join(root, "t.ts");
+    const refreshed = await refreshGraph(root, loadConfig(path.join(root, ".crank")), {
+      deadlineMs: Infinity,
+      afterRead(rel) {
+        if (rel !== "t.ts") return;
+        fs.writeFileSync(file, "export function freshName() {\n  return 1;\n}\n");
+        setMtime(file, Date.now() + 1000);
+        const hook = runHook(
+          "src/hooks/post-write.ts",
+          JSON.stringify(claudePostWrite(root, file)),
+        );
+        expect(hook.status).toBe(0);
+      },
+    });
+    expect(refreshed.status).toBe("open");
+    expect(refreshed.pending).toBe(1);
+
+    // Before any refresh the store holds the old parse, and says it is not current.
+    const stale = withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]));
+    expect(stale.stdout).toContain("(symbols pending)\n  - oldName (");
+
+    const current = runCli(root, ["anatomy"]);
+    expect(current.stdout).toContain("  - freshName (");
+    expect(current.stdout).not.toContain("oldName");
+    expect(current.stdout).not.toContain("pending");
+  }, 30_000);
+
+  test("daemon --once runs the graph-job and nothing else while a digest entry waits", async () => {
+    const e = setup();
+    const root = fs.realpathSync(digestProject({}, temps));
+    fs.writeFileSync(path.join(root, "g.ts"), "export function gamma() {}\n");
+    const opened = openCodeDb(root, "write");
+    refreshFileFacts(root, loadConfig(path.join(root, ".crank")), opened.db!, Infinity);
+    opened.db!.close();
+    withEnv({ CRANK_HOME: e.home }, () => registerProject(root));
+    const entry = plantEntry(e.home, "waiting", {
+      transcriptPath: transcriptCopy("waiting", "marker-W"),
+      projectRoot: root,
+      ended: true,
+    });
+
+    const d = daemon(["--once", "--sweep-ms", "50"], e);
+    expect(await within(d.exited, 30_000)).toBe(0);
+    expect(pending(root)).toBe(0);
+    expect(fs.existsSync(entry)).toBe(true);
+    expect(e.fake.calls()).toEqual([]);
+  }, 40_000);
+
+  test("a refresh parses the twice-written file, then the churned one, then first-party source, then vendored", async () => {
+    const root = fs.realpathSync(makeCrankProject({ "c.ts": "export const c = 0;\n" }));
+    temps.push(root);
+    git(root, "init", "-q");
+    gitCommit(root, "c 0");
+    for (const n of [1, 2]) {
+      fs.writeFileSync(path.join(root, "c.ts"), `export const c = ${n};\n`);
+      gitCommit(root, `c ${n}`);
+    }
+    for (const rel of ["w.ts", "src/s.ts", "vendor/v.ts"]) {
+      fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      fs.writeFileSync(path.join(root, rel), `export const x = "${rel}";\n`);
+    }
+    expect(
+      runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root))).status,
+    ).toBe(0);
+    for (let n = 0; n < 2; n++) {
+      const written = runHook(
+        "src/hooks/post-write.ts",
+        JSON.stringify(claudePostWrite(root, path.join(root, "w.ts"))),
+      );
+      expect(written.status).toBe(0);
+    }
+
+    const refresher = path.join(REPO_ROOT, "tests/fixtures/graph-refresher.ts");
+    const run = spawnSync(process.execPath, [refresher, root, "0"], {
+      encoding: "utf-8",
+      timeout: 30_000,
+      env: childEnv(),
+    });
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim().split("\n")).toEqual(["w.ts", "c.ts", "src/s.ts", "vendor/v.ts"]);
+  }, 40_000);
 });

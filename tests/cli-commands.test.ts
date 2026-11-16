@@ -903,6 +903,7 @@ const COMMAND_NAMES = [
   "uninstall",
   "daemon",
   "job",
+  "graph-job",
 ];
 
 describe("flags (in-process)", () => {
@@ -915,7 +916,8 @@ describe("flags (in-process)", () => {
       if (spec!.summary) expect(help).toContain(spec!.summary);
       else expect([name, help]).toEqual([name, spec!.usage]);
     }
-    expect(["daemon", "job"].map((name) => commandSpec(name)!.summary)).toEqual([
+    expect(["daemon", "job", "graph-job"].map((name) => commandSpec(name)!.summary)).toEqual([
+      undefined,
       undefined,
       undefined,
     ]);

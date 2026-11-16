@@ -6,7 +6,7 @@ import { cliVersion } from "./version.ts";
 // Flags kept out of `usage` exist for tests and stay unlisted.
 
 export interface CommandSpec {
-  /** The line in the command list; absent for the internal daemon and job. */
+  /** The line in the command list; absent for the internal daemon, job and graph-job. */
   summary?: string;
   usage: string;
   /** Flags that take the next argument as their value. */
@@ -163,6 +163,11 @@ export const COMMANDS = {
   job: {
     usage: "Usage: crank-mem job <stem> (internal: the daemon runs it)",
     value: ["run-timeout-ms", "consolidate-every-ms"],
+    bool: [],
+  },
+  "graph-job": {
+    usage: "Usage: crank-mem graph-job <root> (internal: the daemon runs it)",
+    value: [],
     bool: [],
   },
 } satisfies Record<string, CommandSpec>;

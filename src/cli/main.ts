@@ -19,6 +19,7 @@ const RUNNERS: Record<string, Runner> = {
   impact: async (args) => (await import("./graph-commands.ts")).impact(args),
   "restore-memory": async (args) => (await import("./restore-memory.ts")).run(args),
   job: async (args) => (await import("../daemon/digest-job.ts")).run(args),
+  "graph-job": async (args) => (await import("./code-parse.ts")).run(args),
   daemon: async (args) => (await import("../daemon/daemon.ts")).run(args),
   setup: async (args) => (await import("./setup.ts")).run(args),
   stats: async (args) => (await import("./stats.ts")).run(args),

@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
-import type { CrankConfig } from "../hooks/lib/config.ts";
+import { COMMANDS } from "./commands.ts";
+import { CRANK_DIR, loadConfig, type CrankConfig } from "../hooks/lib/config.ts";
 import {
   clearDerivedFacts,
   deleteCodeDb,
@@ -15,6 +16,7 @@ import {
   type PendingFile,
 } from "../hooks/lib/code-db.ts";
 import { fileLinks, type FileLinks } from "../hooks/lib/imports.ts";
+import { isInstalled } from "../hooks/lib/owner.ts";
 import { rank } from "../hooks/lib/scanner.ts";
 import { estimateTokens } from "../hooks/lib/tokens.ts";
 import { codeFacts, grammarFor, type CallSite, type CodeSymbol } from "./code-symbols.ts";
@@ -49,6 +51,23 @@ export interface GraphRefresh {
 
 const DEFAULT_BUSY_MS = 2000;
 
+/** The deadline `graph-job` gives one run; a store with more pending files resumes at the daemon's next sweep. */
+const GRAPH_JOB_MS = 60_000;
+
+/** SQLITE_BUSY; extended codes (261, 517) carry it in the low byte. */
+const SQLITE_BUSY = 5;
+
+function isBusy(err: unknown): boolean {
+  const { errcode } = err as { errcode?: unknown };
+  return typeof errcode === "number" && (errcode & 0xff) === SQLITE_BUSY;
+}
+
+/** True when an open's `reason` (`errcode <n>`, as `code-db.ts` → `failure` words it) names SQLITE_BUSY. */
+function busyReason(reason: string | undefined): boolean {
+  const code = /^errcode (\d+)$/.exec(reason ?? "")?.[1];
+  return code !== undefined && isBusy({ errcode: Number(code) });
+}
+
 /** The store opened to write, rebuilt first when it is corrupt or another version. */
 function openForRefresh(root: string, busyMs: number): CodeDbOpen {
   const opened = openCodeDb(root, "write", busyMs);
@@ -64,6 +83,10 @@ export async function refreshGraph(
 ): Promise<GraphRefresh> {
   const opened = openForRefresh(root, options.busyMs ?? DEFAULT_BUSY_MS);
   const db = opened.db;
+  if (opened.status === "unreadable" && busyReason(opened.reason)) {
+    // Another writer outlasted the busy wait: leave every file as it is for the next run.
+    return { status: "open", pending: 0 };
+  }
   if (opened.status !== "open" || db === undefined) {
     const status = opened.status === "readonly" ? "readonly" : "unreadable";
     return { status, reason: opened.reason ?? opened.status, pending: 0 };
@@ -72,6 +95,10 @@ export async function refreshGraph(
     refreshFileFacts(root, config, db, options.deadlineMs);
     const outcome = await parsePending(root, config, db, options);
     return { status: outcome === "no-parser" ? "no-parser" : "open", pending: pendingCount(db) };
+  } catch (err) {
+    // A writer held the lock past the busy wait: the files not yet committed stay pending.
+    if (!isBusy(err)) throw err;
+    return { status: "open", pending: pendingCount(db) };
   } finally {
     db.close();
   }
@@ -100,6 +127,7 @@ async function parsePending(
     if (Date.now() >= options.deadlineMs) break;
     const outcome = await parseFile(root, rel, config, writer, options.afterRead);
     if (outcome === "no-parser") return "no-parser";
+    if (outcome === "busy") break;
     if (outcome === "committed") options.onProgress?.(++done, queue.length, rel);
   }
   return "done";
@@ -116,43 +144,71 @@ interface Parsed {
   error: string | null;
 }
 
+/** The file's text; the error code of a read that fails while the file exists; null when the file is gone. */
+function readText(file: string): { text: string } | { error: string } | null {
+  try {
+    return { text: fs.readFileSync(file, "utf-8") };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === "ENOENT" ? null : { error: code ?? String(err) };
+  }
+}
+
+/** Fills `parsed`'s facts and links; a parse that throws records its message as the file's `error`. */
+async function extract(
+  parsed: Parsed,
+  root: string,
+  config: CrankConfig,
+  grammar: NonNullable<ReturnType<typeof grammarFor>>,
+): Promise<"done" | "no-parser"> {
+  try {
+    parsed.facts = await codeFacts(parsed.text, grammar);
+    // Nothing loaded: leave the file pending rather than stamp it parsed and empty.
+    if (parsed.facts === null) return "no-parser";
+    parsed.links = fileLinks(root, parsed.rel, parsed.text, config);
+  } catch (err) {
+    parsed.error = err instanceof Error ? err.message : String(err);
+  }
+  return "done";
+}
+
 async function parseFile(
   root: string,
   rel: string,
   config: CrankConfig,
   writer: Writer,
   afterRead?: (rel: string) => void,
-): Promise<"committed" | "skipped" | "no-parser"> {
+): Promise<"committed" | "skipped" | "no-parser" | "busy"> {
   const grammar = grammarFor(rel);
   let stat: fs.Stats;
-  let text: string;
   try {
     // The stamp comes from before the read: a file that changes after it stays pending.
     stat = fs.statSync(path.join(root, rel));
-    if (grammar === null || !parseable(rel, stat.size)) return "skipped";
-    text = fs.readFileSync(path.join(root, rel), "utf-8");
   } catch {
     return "skipped";
   }
+  if (grammar === null || !parseable(rel, stat.size)) return "skipped";
+  const read = readText(path.join(root, rel));
+  if (read === null) return "skipped";
   afterRead?.(rel);
   const parsed: Parsed = {
     rel,
-    text,
+    text: "text" in read ? read.text : "",
     size: stat.size,
     mtimeMs: stat.mtimeMs,
     facts: null,
     links: {},
-    error: null,
+    error: "error" in read ? read.error : null,
   };
+  if (parsed.error === null && (await extract(parsed, root, config, grammar)) === "no-parser")
+    return "no-parser";
   try {
-    parsed.facts = await codeFacts(text, grammar);
-    // Nothing loaded: leave the file pending rather than stamp it parsed and empty.
-    if (parsed.facts === null) return "no-parser";
-    parsed.links = fileLinks(root, rel, text, config);
+    return writer.commit(parsed) ? "committed" : "skipped";
   } catch (err) {
-    parsed.error = err instanceof Error ? err.message : String(err);
+    // Another writer holds the lock past the busy wait: this file and the rest stay pending.
+    if (isBusy(err)) return "busy";
+    throw err;
   }
-  return writer.commit(parsed) ? "committed" : "skipped";
 }
 
 interface Writer {
@@ -223,4 +279,23 @@ function prepareWriter(db: sqlite.DatabaseSync): Writer {
       });
     },
   };
+}
+
+/** `crank-mem graph-job <root>` (internal: the daemon runs it): refresh the project's code.db for up to 60 s. */
+export async function run(args: string[]): Promise<number> {
+  const root = args[0];
+  if (root === undefined) {
+    console.error(COMMANDS["graph-job"].usage);
+    return 1;
+  }
+  // A project uninstalled since the daemon looked has no graph to keep; a refresh would recreate it.
+  if (!isInstalled(root)) return 0;
+  const refreshed = await refreshGraph(root, loadConfig(path.join(root, CRANK_DIR)), {
+    deadlineMs: Date.now() + GRAPH_JOB_MS,
+  });
+  if (refreshed.status === "unreadable" || refreshed.status === "readonly") {
+    console.error(`crank-mem: .crank/code.db is not readable (${refreshed.reason})`);
+    return 1;
+  }
+  return refreshed.status === "no-parser" ? 1 : 0;
 }

@@ -19,7 +19,9 @@ import {
   loadConfig,
   readJsonObject,
 } from "../hooks/lib/config.ts";
+import { openCodeDb, pendingCount } from "../hooks/lib/code-db.ts";
 import { trySteal } from "../hooks/lib/lock.ts";
+import { installedStores } from "../hooks/lib/registry.ts";
 import {
   DAEMON_FILE,
   daemonAlive,
@@ -40,8 +42,9 @@ import {
 import { RUN_TIMEOUT_MS } from "./gateway.ts";
 
 // `crank-mem daemon`: one per user, owning <crank home>/daemon.json. Each sweep
-// heartbeats, prunes the spool and starts at most one `crank-mem job` child,
-// across every project. The first sweep starts a release check when one is due;
+// heartbeats, prunes the spool and starts at most one child, across every
+// project: `crank-mem graph-job` for a project with unparsed files, else
+// `crank-mem job` for a spool entry. The first sweep starts a release check when one is due;
 // in auto mode an installed copy runs `self-update` (or `upgrade --all` for
 // lagging projects) as that one child, between digest jobs. Hooks start it
 // through ensureDaemon; it exits when idle, stopped, upgraded, or replaced by
@@ -194,9 +197,7 @@ class Daemon {
       if (readStopState() !== null) this.stopping = true;
       this.pruneSpool();
       this.fireCheck();
-      // An update goes ahead of the next spool entry.
-      if (!this.stopping && this.job === null) this.startAuto();
-      if (!this.stopping && this.job === null) this.startNext();
+      this.startWork();
     } catch (err) {
       console.error(`crank-mem daemon: sweep failed: ${errorMessage(err)}`);
     }
@@ -209,6 +210,14 @@ class Daemon {
     if (readSpool().length > 0) this.busySince = Date.now();
     else if (Date.now() - this.busySince >= this.opts.idleMs) return "exit";
     return "continue";
+  }
+
+  /** Starts at most one child, in order: an update, a graph parse (code before the next digest), the next digest. */
+  private startWork(): void {
+    if (this.stopping || this.job !== null) return;
+    this.startAuto();
+    if (this.job === null) this.startGraph();
+    if (this.job === null) this.startNext();
   }
 
   /** On the first sweep, start the release check when one is due, without waiting for it. */
@@ -238,6 +247,17 @@ class Daemon {
     if (this.autoStarted.has(kind)) return;
     this.autoStarted.add(kind);
     this.startChild(toolRoot(), argv, () => {});
+  }
+
+  /** Start `graph-job` for the first installed store whose code.db has pending files and no hold. */
+  private startGraph(): void {
+    const now = Date.now();
+    for (const { root } of installedStores()) {
+      const key = `graph:${root}`;
+      if ((this.holds.get(key)?.untilMs ?? 0) > now || !hasPending(root)) continue;
+      this.startChild(REPO_ROOT, ["graph-job", root], (code) => this.settle(key, code));
+      return;
+    }
   }
 
   /** Entries whose transcript is gone have nothing left to digest; the rest open their mid-session window on first sight. */
@@ -295,6 +315,25 @@ class Daemon {
     const prev = this.holds.get(stem);
     const delayMs = prev ? Math.min(prev.delayMs * 2, this.opts.retryCapMs) : this.opts.retryMs;
     this.holds.set(stem, { untilMs: Date.now() + delayMs, delayMs });
+  }
+}
+
+/** How long a read of a project's code.db waits for another process's WAL recovery or checkpoint. */
+const GRAPH_READ_BUSY_MS = 1000;
+
+/**
+ * True when the project's code.db opens and lists a parseable file with no current parse. The read
+ * waits out a concurrent open: a busy answer read as "nothing pending" would let an idle daemon exit.
+ */
+function hasPending(root: string): boolean {
+  const opened = openCodeDb(root, "read", GRAPH_READ_BUSY_MS);
+  if (opened.status !== "open" || opened.db === undefined) return false;
+  try {
+    return pendingCount(opened.db) > 0;
+  } catch {
+    return false;
+  } finally {
+    opened.db.close();
   }
 }
 
