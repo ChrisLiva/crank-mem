@@ -98,6 +98,10 @@ _Avoid_: Call, reference, usage
 A caller is the symbol whose body holds a call site; the callee is the symbol that site resolves to, or the bare name when it resolves to no single definition.
 _Avoid_: Parent and child, dependent and dependency
 
+**Graph list**:
+The observations reached through the code graph from a query's seed files and symbols: search ranks them beside its text and meaning lists. A file a query names by path passes its weight to the files it shares an import, namespace or resolved call with; a symbol it names passes its weight to the files of that symbol's resolved callers and callees.
+_Avoid_: Related list, neighbour search
+
 **Impact**:
 The callers of a symbol, their callers and so on to a depth, which `crank-mem impact` prints as a tree.
 _Avoid_: Blast radius, dependents

@@ -81,6 +81,29 @@ describe("graph search", () => {
   });
 });
 
+describe("graph search over call edges", () => {
+  test("a symbol or a file path reaches observations linked only to a file that calls it", () => {
+    const root = initedCopy({
+      "src/Store.java": "class Store {\n  void save() {}\n}\n",
+      "src/Caller.java": "class Caller {\n  void run(Store s) { s.save(); }\n}\n",
+      "src/Other.java": "class Other {\n  void idle() {}\n}\n",
+    });
+    buildGraph(root);
+    const [caller, other] = seedMemory(root, [
+      {
+        title: "Retry added around the writer",
+        narrative: "retry",
+        filesModified: ["src/Caller.java"],
+      },
+      { title: "Unrelated cleanup", narrative: "tidy", filesModified: ["src/Other.java"] },
+    ]) as [number, number];
+    const ids = (stdout: string) => [...stdout.matchAll(/^#(\d+) /gm)].map((m) => Number(m[1]));
+    expect(ids(runCli(root, ["search", "Store.save"]).stdout)).toEqual([caller]);
+    expect(ids(runCli(root, ["search", "src/Store.java"]).stdout)).toEqual([caller]);
+    expect(ids(runCli(root, ["search", "src/Other.java"]).stdout)).toEqual([other]);
+  });
+});
+
 function localDate(offsetDays: number, timeZone: string): string {
   return new Date(Date.now() + offsetDays * 86_400_000).toLocaleDateString("en-CA", { timeZone });
 }

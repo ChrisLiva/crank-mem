@@ -112,6 +112,16 @@ export function findSymbols(db: sqlite.DatabaseSync, query: SymbolQuery): Symbol
     .all(symbol, symbol, file, file) as unknown as SymbolRow[];
 }
 
+/** The symbols of `file` named `lowered` (a name or qualified name, already lowercase), case-blind. */
+export function symbolsNamed(db: sqlite.DatabaseSync, file: string, lowered: string): SymbolRow[] {
+  return db
+    .prepare(
+      `SELECT ${SYMBOL_COLUMNS} FROM symbols
+       WHERE path = ? AND (lower(name) = ? OR lower(qualified_name) = ?) ${SYMBOL_ORDER}`,
+    )
+    .all(file, lowered, lowered) as unknown as SymbolRow[];
+}
+
 /** The symbols whose qualified name holds `text`, in every file or in the one `file`, case-blind. */
 export function similarSymbols(
   db: sqlite.DatabaseSync,
@@ -416,6 +426,38 @@ export function callerFiles(
       if (site.path !== file) counts.set(site.path, (counts.get(site.path) ?? 0) + 1);
   return [...counts]
     .map(([caller, calls]) => ({ path: caller, calls }))
+    .sort((a, b) => b.calls - a.calls || (a.path < b.path ? -1 : 1))
+    .slice(0, limit);
+}
+
+/** The files of the resolved callers and callees of the symbol set, its own file left out. */
+export function callEdgeFiles(db: sqlite.DatabaseSync, set: SymbolRow[]): Set<string> {
+  const own = set[0]!.path;
+  const out = new Set<string>();
+  for (const site of callersOf(db, set).resolved) if (site.path !== own) out.add(site.path);
+  for (const site of calleesOf(db, set).resolved)
+    if (site.target!.path !== own) out.add(site.target!.path);
+  return out;
+}
+
+/**
+ * The other files that the resolved calls made inside `file`'s symbols reach, with their site
+ * counts, most calls first then by path, at most `limit`. Calls at top level, outside every symbol, are not seen.
+ */
+export function calleeFiles(
+  db: sqlite.DatabaseSync,
+  file: string,
+  limit: number,
+): { path: string; calls: number }[] {
+  const roots = symbolsInFile(db, file).filter((row) => row.parentId === null);
+  if (roots.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const site of calleesOf(db, roots).resolved) {
+    const target = site.target!.path;
+    if (target !== file) counts.set(target, (counts.get(target) ?? 0) + 1);
+  }
+  return [...counts]
+    .map(([callee, calls]) => ({ path: callee, calls }))
     .sort((a, b) => b.calls - a.calls || (a.path < b.path ? -1 : 1))
     .slice(0, limit);
 }

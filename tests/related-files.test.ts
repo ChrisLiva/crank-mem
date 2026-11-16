@@ -56,9 +56,9 @@ const G = project({
 
 test("terms match a file by path, path suffix, basename, stem or symbol", () => {
   const lock = { seeds: ["src/lock.ts"], neighbours: ["src/a.ts", "src/b.ts"] };
+  expect(rel(G, "withLock")).toEqual({ seeds: ["src/lock.ts"], neighbours: [] });
   for (const q of [
     "why did lock.ts?!. change",
-    "withLock",
     "LOCK.TS",
     "(lock.ts),",
     "SRC/LOCK.TS",
@@ -199,10 +199,6 @@ test("only path-like and identifier-shaped terms seed", () => {
   expect(rel(B, "bin/crank-mem")).toEqual({ seeds: ["bin/crank-mem"], neighbours: [] });
   expect(rel(B, "main.ts")).toEqual({ seeds: ["src/cli/main.ts"], neighbours: [] });
 
-  expect(rel(G, "withLock")).toEqual({
-    seeds: ["src/lock.ts"],
-    neighbours: ["src/a.ts", "src/b.ts"],
-  });
   const U = graphProject({
     "src/cfg.py": "def read_config():\n    pass\n",
     "x/my_mod.ts": "export const m = 1;\n",
@@ -212,4 +208,60 @@ test("only path-like and identifier-shaped terms seed", () => {
   expect(rel(U, "READ_CONFIG")).toEqual({ seeds: ["src/cfg.py"], neighbours: [] });
   expect(rel(U, "my_mod")).toEqual({ seeds: ["x/my_mod.ts"], neighbours: [] });
   expect(rel(U, "my_mod.test")).toEqual({ seeds: ["x/my_mod.test.ts"], neighbours: [] });
+});
+
+test("a symbol seeds its defining file and reaches only its resolved callers and callees", () => {
+  const C = graphProject({
+    "src/store.ts":
+      'import { audit } from "./audit";\nexport class Store {\n  save() { audit(); }\n  load() {}\n}\n',
+    "src/audit.ts": "export function audit() {}\n",
+    "src/user.ts": 'import { Store } from "./store";\nexport function go(s: Store) { s.save(); }\n',
+    "src/reader.ts":
+      'import { Store } from "./store";\nexport function read(s: Store) { s.load(); }\n',
+    "src/idle.ts": 'import { Store } from "./store";\nexport const idle = Store;\n',
+  });
+  expect(rel(C, "Store.save")).toEqual({
+    seeds: ["src/store.ts"],
+    neighbours: ["src/audit.ts", "src/user.ts"],
+  });
+  expect(rel(C, "store.SAVE")).toEqual(rel(C, "Store.save"));
+  expect(rel(C, "store.ts").neighbours).toEqual([
+    "src/audit.ts",
+    "src/idle.ts",
+    "src/reader.ts",
+    "src/user.ts",
+  ]);
+
+  const TWO = graphProject({
+    "src/a.ts": "export class Repo {\n  fetchAll() {}\n}\n",
+    "src/b.ts": "export class Repo {\n  fetchAll() {}\n}\n",
+    "src/c.ts": "export class Other {\n  fetchAll() {}\n}\n",
+  });
+  expect(rel(TWO, "Repo.fetchAll").seeds).toEqual(["src/a.ts", "src/b.ts"]);
+  expect(rel(TWO, "fetchAll").seeds).toEqual(["src/a.ts", "src/b.ts", "src/c.ts"]);
+});
+
+test("a file seed adds the files whose calls reach it or that it calls, when nothing imports", () => {
+  const J = graphProject({
+    "src/A.java": "class A {\n  void run(B b) { b.go(); }\n}\n",
+    "src/B.java": "class B {\n  void go() { C.help(); }\n}\n",
+    "src/C.java": "class C {\n  static void help() {}\n}\n",
+    "src/D.java": "class D {\n  void other() {}\n}\n",
+  });
+  expect(rel(J, "src/B.java")).toEqual({
+    seeds: ["src/B.java"],
+    neighbours: ["src/A.java", "src/C.java"],
+  });
+  expect(rel(J, "src/D.java")).toEqual({ seeds: ["src/D.java"], neighbours: [] });
+  expect(weighted(J, "src/B.java").neighbours.map((n) => n.weight)).toEqual([0.5, 0.5]);
+
+  const M = graphProject({
+    "src/a.ts": 'import "./b";\nimport { z } from "./c";\nexport function a() { z(); }\n',
+    "src/b.ts": "export const b = 1;\n",
+    "src/c.ts": "export function z() {}\n",
+  });
+  expect(weighted(M, "src/a.ts").neighbours).toEqual([
+    { path: "src/b.ts", weight: 0.5 },
+    { path: "src/c.ts", weight: 0.5 },
+  ]);
 });
