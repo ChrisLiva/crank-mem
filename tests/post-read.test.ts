@@ -5,16 +5,28 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   REPO_ROOT,
+  buildGraph,
   childEnv,
+  killDaemon,
   makeCrankHome,
   makeCrankProject,
+  makeProject,
   plantMemory,
+  runCli,
   runHook,
   seedMemory,
   setMtime,
+  stopDigests,
   type HookRun,
 } from "./helpers.ts";
-import { claudePostBash, claudePostRead } from "./fixtures/payloads.ts";
+import { workspace } from "./workspace.ts";
+import {
+  claudePostBash,
+  claudePostRead,
+  claudePostWrite,
+  claudeSessionStart,
+} from "./fixtures/payloads.ts";
+import { CODE_BULLET } from "../src/hooks/lib/injection.ts";
 
 const HOOK = "src/hooks/post-read.ts";
 const TRANSCRIPT = "/u/.claude/projects/-proj/551be959.jsonl";
@@ -242,4 +254,200 @@ describe("post-read under both runtimes", () => {
     expect(viaNode.stdout).not.toBe("");
     expect(viaNode.stdout).toBe(viaBun.stdout);
   });
+});
+
+const LIB = "export function helper() {}\nexport function other() {}\n";
+
+/** A file importing `names` from `lib` and calling each once. */
+function caller(names: string[], lib = "./lib"): string {
+  const calls = names.map((n) => `  ${n}();`).join("\n");
+  return `import { ${names.join(", ")} } from "${lib}";\nexport function run() {\n${calls}\n}\n`;
+}
+
+/** The "Used by" section of a call's context, or null. */
+function usedBy(ctx: string): string | null {
+  return ctx.split("\n\n").find((section) => section.startsWith("Used by")) ?? null;
+}
+
+/**
+ * A project of `files` with its graph built and `src/lib.ts` carrying `rows` observations, its
+ * mtime an hour before them. The graph is built after the mtime is set, so the parse stamp matches.
+ */
+function graphed(files: Record<string, string>, rows = 0): string {
+  const root = makeCrankProject({ "src/lib.ts": LIB, ...files });
+  const seedMs = Date.now();
+  if (rows > 0)
+    seedMemory(
+      root,
+      Array.from({ length: rows }, (_, i) => ({
+        title: `Read lib ${i}`,
+        filesRead: ["src/lib.ts"],
+      })),
+    );
+  setMtime(path.join(root, "src/lib.ts"), seedMs - HOUR);
+  buildGraph(root);
+  return root;
+}
+
+const HEAD = "History of src/lib.ts (open one: `crank-mem get <id>`):\n";
+const HISTORY = `${HEAD}#`;
+
+describe("post-read Used by", () => {
+  test("a read lists its caller files with counts after its history, once per agent per session", () => {
+    const root = graphed(
+      { "src/a.ts": caller(["helper"]), "src/b.ts": caller(["helper", "other"]) },
+      2,
+    );
+    const env = { CRANK_HOME: makeCrankHome() };
+    const read = () =>
+      run(root, claudePostRead(root, path.join(root, "src/lib.ts"), TRANSCRIPT), env);
+    const ctx = context(read());
+    expect(ctx).toStartWith(HISTORY);
+    const [history, section, ...rest] = ctx.split("\n\n");
+    expect(history).toStartWith(HISTORY);
+    expect(section).toBe(
+      "Used by (crank-mem impact src/lib.ts):\n- src/b.ts (2 calls)\n- src/a.ts (1 call)",
+    );
+    expect(rest).toEqual([]);
+    expect(read().stdout).toBe("");
+  });
+
+  test("a file with no history still shows it, and a file with no callers shows none", () => {
+    const root = graphed({ "src/a.ts": caller(["helper"]) });
+    expect(fs.existsSync(path.join(root, ".crank/memory.db"))).toBe(false);
+    const lib = run(root, claudePostRead(root, path.join(root, "src/lib.ts"), TRANSCRIPT));
+    expect(context(lib)).toBe("Used by (crank-mem impact src/lib.ts):\n- src/a.ts (1 call)");
+    expect(run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)).stdout).toBe(
+      "",
+    );
+  });
+
+  test("a file touched after its parse shows none, and a store that is gone leaves today's output", () => {
+    const root = graphed({ "src/a.ts": caller(["helper"]) }, 2);
+    const file = path.join(root, "src/lib.ts");
+    const read = () => run(root, claudePostRead(root, file, TRANSCRIPT));
+    const stamp = fs.statSync(file).mtimeMs;
+    setMtime(file, stamp + 5000);
+    expect(usedBy(context(read()))).toBeNull();
+    setMtime(file, stamp);
+    expect(usedBy(context(read()))).not.toBeNull();
+
+    for (const name of ["code.db", "code.db-wal", "code.db-shm"])
+      fs.rmSync(path.join(root, ".crank", name), { force: true });
+    const bare = context(
+      run(root, claudePostRead(root, file, TRANSCRIPT), { CRANK_HOME: makeCrankHome() }),
+    );
+    expect(bare).toStartWith(HISTORY);
+    expect(bare).not.toContain("Used by");
+    expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(false);
+  });
+
+  test("seven caller files print five, and long paths print only what fits in 512 bytes", () => {
+    const names = [1, 2, 3, 4, 5, 6, 7].map((n) => `c${n}`);
+    const short = graphed(
+      Object.fromEntries(names.map((n) => [`src/${n}.ts`, caller(["helper"])])),
+    );
+    const five = usedBy(
+      context(run(short, claudePostRead(short, path.join(short, "src/lib.ts"), TRANSCRIPT))),
+    )!;
+    expect(five.split("\n").slice(1)).toEqual(
+      names.slice(0, 5).map((n) => `- src/${n}.ts (1 call)`),
+    );
+
+    const deep = "d".repeat(110);
+    const long = graphed(
+      Object.fromEntries(names.map((n) => [`src/${deep}/${n}.ts`, caller(["helper"], "../lib")])),
+    );
+    const cut = usedBy(
+      context(run(long, claudePostRead(long, path.join(long, "src/lib.ts"), TRANSCRIPT))),
+    )!;
+    expect(Buffer.byteLength(cut)).toBeLessThanOrEqual(512);
+    expect(cut.split("\n").length).toBeGreaterThan(1);
+    expect(cut.split("\n").length).toBeLessThan(6);
+  }, 20_000);
+
+  test("history, Used by and another project's excerpt print in that order under 4,096 bytes, and an unreadable code.db drops only Used by", () => {
+    const ws = workspace();
+    const lib = path.join(ws.payments, "src/lib.ts");
+    for (const [rel, text] of Object.entries({
+      "src/lib.ts": LIB,
+      "src/c1.ts": caller(["helper"]),
+      "src/c2.ts": caller(["helper", "other"]),
+    }))
+      fs.writeFileSync(path.join(ws.payments, rel), text);
+    seedMemory(
+      ws.payments,
+      Array.from({ length: 5 }, (_, i) => ({
+        title: `l${i} `.padEnd(200, "x"),
+        filesRead: ["src/lib.ts"],
+      })),
+    );
+    setMtime(lib, Date.now() - HOUR);
+    buildGraph(ws.payments);
+    const read = () =>
+      run(ws.H, claudePostRead(ws.H, lib, TRANSCRIPT), { CRANK_HOME: makeCrankHome() });
+
+    const ctx = context(read());
+    const order = [HEAD, "Used by (crank-mem impact src/lib.ts):", "Excerpt of "].map((m) =>
+      ctx.indexOf(m),
+    );
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(Buffer.byteLength(ctx)).toBeLessThanOrEqual(4096);
+
+    const db = path.join(ws.payments, ".crank/code.db");
+    fs.chmodSync(db, 0o000);
+    try {
+      const locked = read();
+      expect([locked.status, locked.stderr]).toEqual([0, ""]);
+      const without = context(locked);
+      expect(without).toStartWith(HEAD);
+      expect(without).toContain("Excerpt of ");
+      expect(without).not.toContain("Used by");
+    } finally {
+      fs.chmodSync(db, 0o644);
+    }
+  }, 20_000);
+});
+
+describe("post-read journey: init to Used by", () => {
+  test("a new caller reaches callers, a Claude Read and impact, once", () => {
+    const { root, codexHome } = makeProject({ "src/lib.ts": LIB });
+    const home = makeCrankHome();
+    // A stop state keeps init's daemon from parsing under the test, so the pending clause is stable
+    // and the on-demand refresh does the parse; killDaemon ends one that started anyway.
+    stopDigests(home);
+    const env = { CRANK_HOME: home, CODEX_HOME: codexHome };
+    const hook = (file: string, payload: object) =>
+      runHook(file, JSON.stringify(payload), root, env);
+    try {
+      expect(runCli(root, ["init", "--yes", "--codex", "skip"], env).status).toBe(0);
+
+      const start = hook("src/hooks/session-start.ts", claudeSessionStart(root));
+      const pointer = JSON.parse(start.stdout).hookSpecificOutput.additionalContext;
+      expect(pointer).toContain(CODE_BULLET);
+      expect(pointer).toMatch(
+        /symbol line ranges \(symbols for \d+ files are still being parsed\)/,
+      );
+
+      const file = path.join(root, "src/c.ts");
+      fs.writeFileSync(file, caller(["helper"]));
+      expect(hook("src/hooks/post-write.ts", claudePostWrite(root, file)).status).toBe(0);
+
+      const callers = runCli(root, ["callers", "helper"], env);
+      expect(callers.status).toBe(0);
+      expect(callers.stdout).toContain("src/c.ts");
+
+      const read = () =>
+        hook(HOOK, claudePostRead(root, path.join(root, "src/lib.ts"), TRANSCRIPT));
+      expect(context(read())).toBe("Used by (crank-mem impact src/lib.ts):\n- src/c.ts (1 call)");
+      expect(read().stdout).toBe("");
+
+      const impact = runCli(root, ["impact", "helper"], env);
+      expect(impact.status).toBe(0);
+      expect(impact.stdout).toContain("src/c.ts");
+    } finally {
+      killDaemon(home);
+    }
+  }, 60_000);
 });

@@ -14,6 +14,8 @@ import { CEREBRUM_FILE } from "./lib/cerebrum-files.ts";
 import { CRANK_DIR } from "./lib/config.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
 import { citationCheck } from "./lib/citations.ts";
+import { readCodeDb } from "./lib/code-db.ts";
+import { callerFiles, parsedAt } from "./lib/code-graph.ts";
 import { excerptOf, readCerebrum } from "./lib/injection.ts";
 import { formatLine, memoryPath, readStore, type MemoryReader } from "./lib/memory.ts";
 import { ownerOf, projectName } from "./lib/owner.ts";
@@ -30,8 +32,11 @@ import type { ObservationLine } from "./lib/wire.ts";
 // newest lines from the store of the project that owns it, once per file per
 // agent per session. After a file's own section come up to PAIRED_FILES sections
 // for the other projects' files its observations cite, read from those projects'
-// stores and never marked seen. Last comes at most one other project's cerebrum
-// excerpt (`excerptBlock`), once per project per agent per session.
+// stores and never marked seen. Each read's history and pairs are followed by its
+// "Used by" section (`usedBySection`), the caller files from the owner's code.db,
+// which needs no memory.db and counts toward MAX_CALL_BYTES only. Last comes at
+// most one other project's cerebrum excerpt (`excerptBlock`), once per project per
+// agent per session.
 // Every path exits 0.
 
 const HISTORY_LINES = 5;
@@ -40,8 +45,12 @@ const MAX_BYTES = 1536;
 const SEP = "\n\n";
 const EXCERPT_BYTES = 2048;
 const MAX_CALL_BYTES = 4096;
+const USED_BY_FILES = 5;
+const USED_BY_BYTES = 512;
 /** Marker line prefix for a project whose excerpt was shown; never a path, which is absolute. */
 const CEREBRUM_MARK = "cerebrum:";
+/** Marker line prefix for a file whose "Used by" section was shown. */
+const GRAPH_MARK = "graph:";
 
 function readPaths(payload: HookPayload): string[] {
   const input = payload.tool_input ?? {};
@@ -180,7 +189,14 @@ function section(read: Read, lines: ObservationLine[], handle: string): string {
   return `History of ${read.rel} (open one: \`crank-mem get <id>\`):${tag}\n${body.join("\n")}`;
 }
 
-type Assembled = { sections: string[]; tallies: Map<string, Tally>; marked: Read[]; full: boolean };
+type Assembled = {
+  sections: string[];
+  tallies: Map<string, Tally>;
+  marked: Read[];
+  full: boolean;
+  /** How many of `sections` each read (by `abs`) and the reads before it account for. */
+  ends: Map<string, number>;
+};
 
 function tallyFor(out: Assembled, store: string, owner: string): Tally {
   const tally = out.tallies.get(store) ?? tallyOf(owner);
@@ -234,6 +250,36 @@ function showPairs(
   }
 }
 
+/** `read`'s history section, when it has lines and the call has room, then its paired files' sections. */
+function assembleRead(
+  out: Assembled,
+  startStore: string,
+  read: Read,
+  found: Histories,
+  pairStores: Map<string, PairStore>,
+  isSeen: (r: Read) => boolean,
+): void {
+  const history = found.get(read.owner);
+  if (!history) return;
+  const tally = tallyFor(out, read.store, read.owner);
+  const own = history.get(read.rel);
+  if (isSeen(read) || !own) {
+    tally.seen.push(read.rel);
+    return;
+  }
+  if (out.full) tally.cut.push(read.rel);
+  else if (own.lines.length === 0) tally.empty.push(read.rel);
+  else
+    show(
+      out,
+      tally,
+      read,
+      own.lines.map((l) => l.line),
+      read.store === startStore ? "" : projectName(read.owner),
+    );
+  showPairs(out, startStore, read, own, pairStores);
+}
+
 /** Sections in read order until the next would pass MAX_BYTES; every read of an open store lands in its tally. */
 function assemble(
   startStore: string,
@@ -242,29 +288,72 @@ function assemble(
   pairStores: Map<string, PairStore>,
   isSeen: (r: Read) => boolean,
 ): Assembled {
-  const out: Assembled = { sections: [], tallies: new Map(), marked: [], full: false };
+  const out: Assembled = {
+    sections: [],
+    tallies: new Map(),
+    marked: [],
+    full: false,
+    ends: new Map(),
+  };
   for (const read of reads) {
-    const history = found.get(read.owner);
-    if (!history) continue;
-    const tally = tallyFor(out, read.store, read.owner);
-    const own = history.get(read.rel);
-    if (isSeen(read) || !own) {
-      tally.seen.push(read.rel);
-      continue;
-    }
-    if (out.full) tally.cut.push(read.rel);
-    else if (own.lines.length === 0) tally.empty.push(read.rel);
-    else
-      show(
-        out,
-        tally,
-        read,
-        own.lines.map((l) => l.line),
-        read.store === startStore ? "" : projectName(read.owner),
-      );
-    showPairs(out, startStore, read, own, pairStores);
+    assembleRead(out, startStore, read, found, pairStores, isSeen);
+    out.ends.set(read.abs, out.sections.length);
   }
   return out;
+}
+
+/**
+ * `read`'s "Used by" section: the files calling into it, from its owner's code.db, up to
+ * USED_BY_FILES of them in USED_BY_BYTES. Null when the store does not open, the file's size or
+ * mtime differs from its parse stamp, or no other file calls it.
+ */
+function usedBySection(read: Read): string | null {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(read.abs);
+  } catch {
+    return null;
+  }
+  const callers = readCodeDb(read.owner, (db) =>
+    db && parsedAt(db, read.rel, stat) ? callerFiles(db, read.rel, USED_BY_FILES) : [],
+  );
+  const head = `Used by (crank-mem impact ${read.rel}):`;
+  let text = head;
+  for (const c of callers) {
+    const next = `${text}\n- ${c.path} (${c.calls} ${c.calls === 1 ? "call" : "calls"})`;
+    if (Buffer.byteLength(next) > USED_BY_BYTES) break;
+    text = next;
+  }
+  return text === head ? null : text;
+}
+
+/**
+ * The call's sections: each read's history and pair sections, then its "Used by" when that is
+ * unseen and the whole call, the history still to come included, stays under MAX_CALL_BYTES.
+ * `marks` holds the `graph:` line of each one shown.
+ */
+function withUsedBy(
+  reads: Read[],
+  assembled: Assembled,
+  seen: string[],
+): { sections: string[]; marks: string[] } {
+  const sections: string[] = [];
+  const marks: string[] = [];
+  let at = 0;
+  for (const read of reads) {
+    const end = assembled.ends.get(read.abs)!;
+    sections.push(...assembled.sections.slice(at, end));
+    at = end;
+    const mark = GRAPH_MARK + read.abs;
+    if (seen.includes(mark)) continue;
+    const text = usedBySection(read);
+    const call = text === null ? [] : [...sections, text, ...assembled.sections.slice(at)];
+    if (text !== null && Buffer.byteLength(call.join(SEP)) < MAX_CALL_BYTES) {
+      sections.push(text);
+      marks.push(mark);
+    }
+  }
+  return { sections, marks };
 }
 
 /** One usage line per store, each with its own paths, bare ids and bytes; the start project always gets one. */
@@ -352,11 +441,13 @@ async function main(): Promise<void> {
 
   const startStore = memoryPath(ctx.root);
   const pairStores = await fetchPairs(found);
-  const { sections, tallies, marked } = assemble(startStore, reads, found, pairStores, isSeen);
+  const assembled = assemble(startStore, reads, found, pairStores, isSeen);
+  const { tallies, marked } = assembled;
+  const { sections, marks } = withUsedBy(reads, assembled, seen);
   const block = excerptBlock(ctx.root, reads, seen, sections);
   const shown = block ? [...sections, block.text] : sections;
   if (shown.length > 0) {
-    markSeen(seenFile, [...marked.map((r) => r.abs), ...(block ? [block.mark] : [])]);
+    markSeen(seenFile, [...marked.map((r) => r.abs), ...marks, ...(block ? [block.mark] : [])]);
     emitAdditionalContext("PostToolUse", shown.join(SEP));
     debugEvent("file-history", { paths: marked.map((r) => safePath(r.rel)) });
   }

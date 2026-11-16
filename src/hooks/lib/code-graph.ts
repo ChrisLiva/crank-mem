@@ -387,3 +387,35 @@ export function importersOf(db: sqlite.DatabaseSync, file: string): string[] {
     }[]
   ).map((row) => row.from_path);
 }
+
+/** True when `files` holds the path parsed at exactly this size and mtime, so its rows describe the file on disk. */
+export function parsedAt(
+  db: sqlite.DatabaseSync,
+  file: string,
+  stat: { size: number; mtimeMs: number },
+): boolean {
+  return (
+    db
+      .prepare("SELECT 1 FROM files WHERE path = ? AND parsed_size = ? AND parsed_mtime_ms = ?")
+      .get(file, stat.size, stat.mtimeMs) !== undefined
+  );
+}
+
+/**
+ * The other files whose resolved call sites reach a symbol of `file`, with their site counts, most
+ * calls first then by path, at most `limit`. A file's calls into itself make it no caller of itself.
+ */
+export function callerFiles(
+  db: sqlite.DatabaseSync,
+  file: string,
+  limit: number,
+): { path: string; calls: number }[] {
+  const counts = new Map<string, number>();
+  for (const set of symbolSets(symbolsInFile(db, file)))
+    for (const site of callersOf(db, set).resolved)
+      if (site.path !== file) counts.set(site.path, (counts.get(site.path) ?? 0) + 1);
+  return [...counts]
+    .map(([caller, calls]) => ({ path: caller, calls }))
+    .sort((a, b) => b.calls - a.calls || (a.path < b.path ? -1 : 1))
+    .slice(0, limit);
+}
