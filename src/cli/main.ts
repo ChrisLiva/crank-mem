@@ -13,6 +13,7 @@ const RUNNERS: Record<string, Runner> = {
   get: async (args) => (await import("./recall.ts")).get(args),
   outline: async (args) => (await import("./code.ts")).outline(args),
   unfold: async (args) => (await import("./code.ts")).unfold(args),
+  anatomy: async (args) => (await import("./graph-commands.ts")).anatomy(args),
   "restore-memory": async (args) => (await import("./restore-memory.ts")).run(args),
   job: async (args) => (await import("../daemon/digest-job.ts")).run(args),
   daemon: async (args) => (await import("../daemon/daemon.ts")).run(args),

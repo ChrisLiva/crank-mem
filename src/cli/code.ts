@@ -45,7 +45,7 @@ export async function outline(args: string[]): Promise<number> {
   return target.outcome === "ok" ? 0 : 1;
 }
 
-const CAP = 25_000;
+export const CAP = 25_000;
 
 /**
  * The outline page from line `n`: whole runs of equal-start rows while they and the continuation
@@ -288,7 +288,7 @@ async function readTarget(file: string): Promise<Target | null> {
  * `file`'s real path once it passes the existence, outside (real path under `within`'s) and
  * sensitive checks, in that order, or the refusal the first failing check took.
  */
-function checkedPath(
+export function checkedPath(
   file: string,
   within: string,
   refuse: (reason: string, outcome: Exclude<CodeOutcome, "ok">) => Target,

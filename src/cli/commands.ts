@@ -66,6 +66,12 @@ export const COMMANDS = {
     value: [],
     bool: [],
   },
+  anatomy: {
+    summary: "List the project's files with a description and size",
+    usage: "Usage: crank-mem anatomy [<dir>] [--from <path>]",
+    value: ["from"],
+    bool: [],
+  },
   "restore-memory": {
     summary: "Put a memory.db snapshot back",
     usage: "Usage: crank-mem restore-memory [<file>]",

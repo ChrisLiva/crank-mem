@@ -4,7 +4,7 @@ import { isObj, type CrankConfig } from "./config.ts";
 import { isProjectFile } from "./hook-io.ts";
 import { isIndexableName, toPosix } from "./indexable.ts";
 import type { FileEntry } from "./store.ts";
-import { SYMBOL_MAX_BYTES } from "./symbols.ts";
+import { PARSE_MAX_BYTES } from "./code-db.ts";
 
 // The anatomy's file-to-file links: which indexed files a file imports,
 // resolved by regex and a few stats. Never shown in anatomy.md.
@@ -466,7 +466,7 @@ function exportsOf(rootDir: string, rel: string): ModuleExports | null {
     const memo = moduleExports.get(abs);
     if (memo?.stamp === stamp) return memo.exports;
     const content = fs.readFileSync(abs, "utf-8");
-    if (content.length > SYMBOL_MAX_BYTES) return null;
+    if (content.length > PARSE_MAX_BYTES) return null;
     const exports = parseExports(content);
     moduleExports.set(abs, { stamp, exports });
     return exports;
@@ -562,7 +562,7 @@ export function fileLinks(
 ): Pick<FileEntry, "imports" | "namespaces"> {
   try {
     const importer = toPosix(relPath);
-    if (content.length > SYMBOL_MAX_BYTES) return {};
+    if (content.length > PARSE_MAX_BYTES) return {};
     const ext = path.posix.extname(importer).toLowerCase();
     if (ext === ".cs") {
       const namespaces = csNamespaces(content);

@@ -18,6 +18,50 @@ import { ownedBy } from "./owner.ts";
  * size gate, read, NUL sniff, then analyze. Null on any rejection or I/O failure.
  */
 export function indexFile(rootDir: string, relPath: string, config: CrankConfig): FileEntry | null {
+  const read = readIndexable(rootDir, relPath, config);
+  if (read === null) return null;
+  const { content, facts } = read;
+  const ext = path.extname(relPath).toLowerCase();
+  const symbols =
+    facts.tokens >= SYMBOL_MIN_TOKENS &&
+    symbolsSupported(ext) &&
+    !TEST_PATH.test(relPath) &&
+    !facts.generated
+      ? extractSymbols(content, ext)
+      : undefined;
+  const entry: FileEntry = {
+    description: facts.description,
+    tokens: facts.tokens,
+    size: facts.size,
+    mtimeMs: facts.mtimeMs,
+  };
+  if (symbols && symbols.length > 0) entry.symbols = symbols;
+  return { ...entry, ...fileLinks(rootDir, relPath, content, config) };
+}
+
+/** What `code.db`'s `files` table holds for one file. */
+export interface FileFacts {
+  size: number;
+  mtimeMs: number;
+  tokens: number;
+  description: string;
+  generated: boolean;
+}
+
+/** The file's facts through the same gate as indexFile, or null on any rejection or I/O failure. */
+export function fileFacts(rootDir: string, relPath: string, config: CrankConfig): FileFacts | null {
+  return readIndexable(rootDir, relPath, config)?.facts ?? null;
+}
+
+/**
+ * The gate both stores share: name checks, one stat, size gate, read, NUL sniff, then the
+ * facts every store keeps. Null on any rejection or I/O failure.
+ */
+function readIndexable(
+  rootDir: string,
+  relPath: string,
+  config: CrankConfig,
+): { content: string; facts: FileFacts } | null {
   if (!isIndexableName(relPath, config)) return null;
   const absPath = path.join(rootDir, relPath);
   let stat: fs.Stats;
@@ -31,23 +75,16 @@ export function indexFile(rootDir: string, relPath: string, config: CrankConfig)
   }
   if (buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return null;
   const content = buf.toString("utf-8");
-  const ext = path.extname(absPath).toLowerCase();
-  const tokens = estimateTokens(content, absPath);
-  const symbols =
-    tokens >= SYMBOL_MIN_TOKENS &&
-    symbolsSupported(ext) &&
-    !TEST_PATH.test(relPath) &&
-    !isGenerated(content)
-      ? extractSymbols(content, ext)
-      : undefined;
-  const entry: FileEntry = {
-    description: describeFile(absPath),
-    tokens,
-    size: stat.size,
-    mtimeMs: stat.mtimeMs,
+  return {
+    content,
+    facts: {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      tokens: estimateTokens(content, absPath),
+      description: describeFile(absPath),
+      generated: isGenerated(content),
+    },
   };
-  if (symbols && symbols.length > 0) entry.symbols = symbols;
-  return { ...entry, ...fileLinks(rootDir, relPath, content, config) };
 }
 
 // Ranked last, never excluded: vendored code and asset trees. Config excludes

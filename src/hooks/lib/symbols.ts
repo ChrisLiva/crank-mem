@@ -4,6 +4,8 @@
 // declarations only; a symbol's end is the line before the next symbol.
 // Crude ranges are fine for offset/limit reads.
 
+import { PARSE_MAX_BYTES } from "./code-db.ts";
+
 export interface SymbolEntry {
   name: string;
   kind: "fn" | "class" | "section";
@@ -14,8 +16,6 @@ export interface SymbolEntry {
 
 /** Only extract for files at least this many estimated tokens. */
 export const SYMBOL_MIN_TOKENS = 500;
-/** Never extract from more than this much content. */
-export const SYMBOL_MAX_BYTES = 256 * 1024;
 /** Cap symbols per file (in declaration order). */
 export const SYMBOL_MAX_COUNT = 30;
 
@@ -71,7 +71,7 @@ export function symbolsSupported(ext: string): boolean {
  */
 export function extractSymbols(content: string, ext: string): SymbolEntry[] {
   const patterns = LANG_PATTERNS[ext.toLowerCase()];
-  if (!patterns || content.length > SYMBOL_MAX_BYTES) return [];
+  if (!patterns || content.length > PARSE_MAX_BYTES) return [];
 
   const lines = content.split(/\r?\n/);
   const found: Array<{ name: string; kind: SymbolEntry["kind"]; startLine: number }> = [];

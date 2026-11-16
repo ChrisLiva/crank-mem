@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { oneLine } from "../daemon/digest-prompt.ts";
+import { GRAMMARS, type Grammar } from "../hooks/lib/code-db.ts";
 import { cpp, csharp, go, java, rust } from "./code-families-compiled.ts";
 import {
   bash,
@@ -20,20 +21,6 @@ type TreeSitter = typeof import("web-tree-sitter");
 type Language = import("web-tree-sitter").Language;
 export type Node = import("web-tree-sitter").Node;
 
-export type Grammar =
-  | "typescript"
-  | "tsx"
-  | "javascript"
-  | "python"
-  | "go"
-  | "rust"
-  | "cpp"
-  | "bash"
-  | "java"
-  | "c-sharp"
-  | "ruby"
-  | "php"
-  | "powershell";
 export type SymbolKind =
   | "fn"
   | "method"
@@ -57,37 +44,6 @@ export interface CodeSymbol {
   fold: "brace" | "other" | "none";
   children: CodeSymbol[];
 }
-
-const GRAMMARS: Record<string, Grammar> = {
-  ".ts": "typescript",
-  ".mts": "typescript",
-  ".cts": "typescript",
-  ".tsx": "tsx",
-  ".js": "javascript",
-  ".jsx": "javascript",
-  ".mjs": "javascript",
-  ".cjs": "javascript",
-  ".py": "python",
-  ".pyi": "python",
-  ".go": "go",
-  ".rs": "rust",
-  ".c": "cpp",
-  ".h": "cpp",
-  ".cc": "cpp",
-  ".cpp": "cpp",
-  ".cxx": "cpp",
-  ".hpp": "cpp",
-  ".hh": "cpp",
-  ".hxx": "cpp",
-  ".sh": "bash",
-  ".bash": "bash",
-  ".java": "java",
-  ".cs": "c-sharp",
-  ".rb": "ruby",
-  ".php": "php",
-  ".ps1": "powershell",
-  ".psm1": "powershell",
-};
 
 /** The grammar for a path's extension, case-insensitive, or null. */
 export function grammarFor(file: string): Grammar | null {
