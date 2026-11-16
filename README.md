@@ -206,9 +206,10 @@ such as `packages/web` in a monorepo: it also gets no churn ranking.
 
 Session start and each write record a file's description and token count at
 once. The daemon then parses the files that await a parse, up to 256 KiB each
-and at most 5,000 calls per file, in this order: files an agent wrote (up to
-100, most recent first), the 100 files changed most often in the last 300
-commits, not counting commits that touch more than 50 files, then source code,
+and at most 5,000 calls per file, in this order: files an agent wrote, most
+writes first (the 100 most recently written keep their count), the 100 files
+changed most often in the last 300 commits, not counting commits that touch
+more than 50 files, then source code,
 with anything under `deps_src`, `third_party`, `vendor`, `external`,
 `node_modules`, `resources`, `assets`, `static` or `public` last. crank-mem
 recomputes the churn list only when HEAD moves, and a written file stays
