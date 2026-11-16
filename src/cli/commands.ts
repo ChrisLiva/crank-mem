@@ -72,6 +72,18 @@ export const COMMANDS = {
     value: ["from"],
     bool: [],
   },
+  callers: {
+    summary: "List the call sites of a function or method",
+    usage: "Usage: crank-mem callers [<file>] <symbol>",
+    value: [],
+    bool: [],
+  },
+  callees: {
+    summary: "List the calls a function or method makes",
+    usage: "Usage: crank-mem callees [<file>] <symbol>",
+    value: [],
+    bool: [],
+  },
   "restore-memory": {
     summary: "Put a memory.db snapshot back",
     usage: "Usage: crank-mem restore-memory [<file>]",

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { spawnSync } from "node:child_process";
 import { refreshGraph } from "../src/cli/code-parse.ts";
+import { openCodeDb, refreshFileFacts } from "../src/hooks/lib/code-db.ts";
 import { loadConfig } from "../src/hooks/lib/config.ts";
 import {
   childEnv,
@@ -293,4 +294,282 @@ describe("anatomy", () => {
 
     expect(allPages(root).last).not.toContain("pending");
   }, 120_000);
+});
+
+/** The sites a `callers` or `callees` answer lists, as `<file>:<line> <label>` with ` (inferred)` where marked, split at the no-single-definition heading. */
+function listed(stdout: string): { resolved: string[]; unresolved: string[] } {
+  const [before = "", after = ""] = stdout.split(/^.*no single definition:\n/m);
+  const parse = (text: string) => {
+    const out: string[] = [];
+    let group = "";
+    for (const line of text.split("\n")) {
+      const row = /^\s*(\d+)│(\S+)\s+.*?( \(inferred\))?$/.exec(line);
+      if (row) out.push(`${group}:${row[1]} ${row[2]}${row[3] ?? ""}`);
+      else if (!line.includes("│")) group = line;
+    }
+    return out;
+  };
+  return { resolved: parse(before), unresolved: parse(after) };
+}
+
+describe("callers and callees", () => {
+  const callers = (root: string, ...args: string[]) => runCli(root, ["callers", ...args]);
+
+  test("a call resolves to the same file first, then to what the caller imports, and a deleted caller drops out", () => {
+    const root = makeCrankProject({
+      "src/util.ts": "export function helper() {}\nexport function shared() {}\n",
+      "src/a.ts": [
+        'import { helper } from "./util";',
+        "function shared() {}",
+        "export function one() {",
+        "  shared();",
+        "  helper();",
+        "}",
+        "export class Box {",
+        "  run() {",
+        "    this.step();",
+        "  }",
+        "  step() {}",
+        "}",
+        "",
+      ].join("\n"),
+      "src/b.ts": 'import { helper } from "./util";\nexport function two() {\n  helper();\n}\n',
+    });
+    // Both files define `shared`; the call in a.ts reaches its own.
+    expect(listed(callers(root, "src/a.ts", "shared").stdout)).toEqual({
+      resolved: ["src/a.ts:4 one"],
+      unresolved: [],
+    });
+    expect(listed(callers(root, "src/util.ts", "shared").stdout).resolved).toEqual([]);
+    expect(listed(callers(root, "Box.step").stdout).resolved).toEqual(["src/a.ts:9 Box.run"]);
+    expect(listed(callers(root, "helper").stdout).resolved).toEqual([
+      "src/a.ts:5 one",
+      "src/b.ts:3 two",
+    ]);
+
+    fs.rmSync(path.join(root, "src/b.ts"));
+    const after = callers(root, "helper");
+    expect(listed(after.stdout).resolved).toEqual(["src/a.ts:5 one"]);
+    expect(after.stdout).toContain("1 call sites in 1 files.");
+  });
+
+  test("a name defined in two imported files, or called on an object, resolves only when one candidate remains", () => {
+    const root = makeCrankProject({
+      "src/p.ts": "export function dup() {}\n",
+      "src/q.ts": "export function dup() {}\n",
+      "src/c.ts":
+        'import { dup } from "./p";\nimport "./q";\nexport function use() {\n  dup();\n}\n',
+      "src/one.ts": "export class One {\n  go() {}\n}\n",
+      "src/two.ts": "export class Two {\n  go() {}\n}\n",
+      "src/e1.ts": 'import { One } from "./one";\nexport function e1(o: One) {\n  o.go();\n}\n',
+      "src/e2.ts":
+        'import { One } from "./one";\nimport { Two } from "./two";\nexport function e2(o: One) {\n  o.go();\n}\n',
+    });
+    for (const file of ["src/p.ts", "src/q.ts"]) {
+      expect(listed(callers(root, file, "dup").stdout)).toEqual({
+        resolved: [],
+        unresolved: ["src/c.ts:4 use"],
+      });
+    }
+    expect(callers(root, "src/p.ts", "dup").stdout).toContain(
+      "Call sites named dup with no single definition:",
+    );
+    expect(listed(callers(root, "One.go").stdout)).toEqual({
+      resolved: ["src/e1.ts:3 e1 (inferred)"],
+      unresolved: ["src/e2.ts:4 e2"],
+    });
+  });
+
+  test("Java resolves a name unique in the project but never to a test file; C# also needs a shared namespace", () => {
+    const root = makeCrankProject({
+      "src/main/Svc.java": "class Svc {\n  void persist() {}\n}\n",
+      "src/test/java/SvcTest.java": "class SvcTest {\n  void persist() {}\n}\n",
+      "src/main/App.java": "class App {\n  void go(Svc svc) {\n    svc.persist();\n  }\n}\n",
+      "src/Models/Repo.cs":
+        "namespace Acme.Data {\n  class Repo {\n    public void Persist() {}\n  }\n}\n",
+      "src/Models/Thing.cs":
+        "namespace Other.Place {\n  class Thing {\n    public void Persist() {}\n  }\n}\n",
+      "src/App/Runner.cs":
+        "using Acme.Data;\nnamespace Tool {\n  class Runner {\n    void Go(Repo r) {\n      r.Persist();\n    }\n  }\n}\n",
+    });
+    expect(listed(callers(root, "src/main/Svc.java", "persist").stdout).resolved).toEqual([
+      "src/main/App.java:3 App.go (inferred)",
+    ]);
+    expect(listed(callers(root, "src/test/java/SvcTest.java", "persist").stdout).resolved).toEqual(
+      [],
+    );
+    expect(listed(callers(root, "src/Models/Repo.cs", "Persist").stdout).resolved).toEqual([
+      "src/App/Runner.cs:5 Tool.Runner.Go (inferred)",
+    ]);
+    expect(listed(callers(root, "src/Models/Thing.cs", "Persist").stdout).resolved).toEqual([]);
+  });
+
+  test("two files that each define a name give each importer its own", () => {
+    const root = makeCrankProject({
+      "src/a.ts": "export function save() {}\n",
+      "src/b.ts": "export function save() {}\n",
+      "src/ua.ts": 'import { save } from "./a";\nexport function useA() {\n  save();\n}\n',
+      "src/ub.ts": 'import { save } from "./b";\nexport function useB() {\n  save();\n}\n',
+    });
+    const a = callers(root, "src/a.ts", "save");
+    expect(listed(a.stdout)).toEqual({ resolved: ["src/ua.ts:3 useA"], unresolved: [] });
+    expect(a.stdout).not.toContain("src/ub.ts");
+  });
+
+  test("an ambiguous name is refused with pasteable candidates, a miss offers close names, and every spelling of one symbol answers alike", () => {
+    const twice = makeCrankProject({
+      "src/a.ts": "export function save() {}\n",
+      "src/b.ts": "export function save() {}\n",
+    });
+    const ambiguous = callers(twice, "save");
+    expect(ambiguous.status).toBe(1);
+    expect(ambiguous.stdout).toBe("");
+    expect(ambiguous.stderr).toContain("crank-mem: save names 2 symbols.");
+    expect(ambiguous.stderr).toContain("Close: src/a.ts save, src/b.ts save");
+    expect(callers(twice, "src/a.ts", "save").status).toBe(0);
+
+    const root = makeCrankProject({
+      "src/box.ts": "export class Box {\n  save() {}\n}\n",
+      "src/put.ts": 'import { Box } from "./box";\nexport function put(b: Box) {\n  b.save();\n}\n',
+    });
+    const byQualified = callers(root, "Box.save");
+    expect(byQualified.status).toBe(0);
+    expect(listed(byQualified.stdout).resolved).toEqual(["src/put.ts:3 put (inferred)"]);
+    expect(callers(root, "src/box.ts", "save").stdout).toBe(byQualified.stdout);
+    expect(callers(root, "save").stdout).toBe(byQualified.stdout);
+
+    const miss = callers(root, "ox.sa");
+    expect(miss.status).toBe(1);
+    expect(miss.stdout).toBe("");
+    expect(miss.stderr).toContain("crank-mem: no symbol ox.sa.");
+    expect(miss.stderr).toContain("Close: src/box.ts Box.save");
+    const none = callers(root, "nosuch");
+    expect(none.status).toBe(1);
+    expect(none.stderr).toContain("crank-mem: no symbol nosuch.");
+    expect(none.stderr).not.toContain("Close:");
+  });
+
+  describe("the printed layout", () => {
+    const files = {
+      "src/lib/memory.ts": [
+        "export function readStoreSync(root: string, fn: (m: string) => string): string {",
+        "  return fn(root);",
+        "}",
+        "export function storeStatus(root: string): string {",
+        "  return readStoreSync(root, (memory) => memory);",
+        "}",
+        "",
+      ].join("\n"),
+      "src/lib/format.ts": "export function pretty(text: string): string {\n  return text;\n}\n",
+      "src/cli/stats.ts": [
+        'import { readStoreSync } from "../lib/memory.ts";',
+        'import { pretty } from "../lib/format.ts";',
+        "",
+        "export function captureSummary(root: string): string {",
+        "  const read = readStoreSync(root, (m) => m);",
+        "  const shown = pretty(read);",
+        "  return external(shown);",
+        "}",
+        "",
+      ].join("\n"),
+      "src/lib/citations.ts": [
+        'import { readStoreSync } from "./memory.ts";',
+        "export function storeLinks(root: string): string {",
+        "  const links = readStoreSync(root, (m) => m);",
+        "  return links;",
+        "}",
+        "",
+      ].join("\n"),
+      "src/lib/injection.ts": [
+        'import { readStoreSync } from "./memory.ts";',
+        "export function readRecall(root: string): string {",
+        "  return readStoreSync(root, (memory) => memory);",
+        "}",
+        "",
+      ].join("\n"),
+    };
+
+    test("callers groups the sites by file with a gutter, padded labels and the follow-up commands", () => {
+      const run = callers(makeCrankProject(files), "readStoreSync");
+      expect(run.status).toBe(0);
+      expect(run.stdout).toBe(
+        [
+          "readStoreSync  src/lib/memory.ts:1-3  fn",
+          "src/cli/stats.ts",
+          "     5│captureSummary  const read = readStoreSync(root, (m) => m);",
+          "src/lib/citations.ts",
+          "     3│storeLinks      const links = readStoreSync(root, (m) => m);",
+          "src/lib/injection.ts",
+          "     3│readRecall      return readStoreSync(root, (memory) => memory);",
+          "src/lib/memory.ts",
+          "     5│storeStatus     return readStoreSync(root, (memory) => memory);",
+          "4 call sites in 4 files.",
+          "Open one: crank-mem unfold src/cli/stats.ts captureSummary",
+          "Wider: crank-mem impact readStoreSync",
+          "",
+        ].join("\n"),
+      );
+    });
+
+    test("callees groups the calls by the file defining each callee and lists the unresolved ones apart", () => {
+      const run = runCli(makeCrankProject(files), ["callees", "captureSummary"]);
+      expect(run.status).toBe(0);
+      expect(run.stdout).toBe(
+        [
+          "captureSummary  src/cli/stats.ts:4-8  fn",
+          "src/lib/format.ts",
+          "     6│pretty         const shown = pretty(read);",
+          "src/lib/memory.ts",
+          "     5│readStoreSync  const read = readStoreSync(root, (m) => m);",
+          "2 call sites in 2 files.",
+          "Calls with no single definition:",
+          "     7│external       return external(shown);",
+          "Open one: crank-mem unfold src/lib/format.ts pretty",
+          "Wider: crank-mem callers captureSummary",
+          "",
+        ].join("\n"),
+      );
+    });
+  });
+
+  test("a sensitive file and a path outside every project are refused", () => {
+    const root = makeCrankProject({ ".env": "TOKEN=secret\n", "a.ts": "export const a = 1;\n" });
+    for (const command of ["callers", "callees"]) {
+      const sensitive = runCli(root, [command, ".env", "a"]);
+      expect(sensitive.status).toBe(1);
+      expect(sensitive.stderr).toContain("is a sensitive file; crank-mem does not read it.");
+      expect(sensitive.stdout).toBe("");
+      const outside = runCli(root, [command, tempDir("crank-outside-"), "a"]);
+      expect(outside.status).toBe(1);
+      expect(outside.stderr).toContain("is outside every installed project.");
+    }
+  });
+
+  test("a store the file system will not let it write answers from what it holds and counts the files still pending", () => {
+    const root = makeCrankProject({
+      "src/lib.ts": "export function target() {}\n",
+      "src/user.ts": 'import { target } from "./lib";\nexport function use() {\n  target();\n}\n',
+    });
+    expect(listed(callers(root, "target").stdout).resolved).toEqual(["src/user.ts:3 use"]);
+
+    const user = path.join(root, "src/user.ts");
+    setMtime(user, Date.now() + 5000);
+    const opened = openCodeDb(root, "write");
+    refreshFileFacts(root, loadConfig(path.join(root, ".crank")), opened.db!, Infinity);
+    opened.db!.close();
+
+    const restore = () => {
+      for (const file of codeDbFiles(root)) fs.chmodSync(file, 0o644);
+    };
+    try {
+      for (const file of codeDbFiles(root)) fs.chmodSync(file, 0o444);
+      const run = callers(root, "target");
+      expect(run.status).toBe(0);
+      expect(listed(run.stdout).resolved).toEqual(["src/user.ts:3 use"]);
+      expect(run.stdout.trimEnd().split("\n").at(-1)).toBe("(1 file(s) still pending parse)");
+    } finally {
+      restore();
+    }
+    expect(callers(root, "target").stdout).not.toContain("pending");
+  });
 });
