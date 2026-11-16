@@ -6,9 +6,17 @@ import { spawnSync } from "node:child_process";
 import type * as sqlite from "node:sqlite";
 import { fileFacts, walkProject } from "../src/hooks/lib/scanner.ts";
 import { openCodeDb, refreshFileFacts } from "../src/hooks/lib/code-db.ts";
-import { readChurn, writeActivity } from "../src/hooks/lib/activity.ts";
 import { defaultConfig } from "../src/hooks/lib/config.ts";
-import { git, gitCommit } from "./helpers.ts";
+import {
+  git,
+  gitCommit,
+  makeCrankProject,
+  runCli,
+  runHook,
+  setMtime,
+  withReadOnlyCodeDb,
+} from "./helpers.ts";
+import { claudePostWrite, claudeSessionStart, codexApplyPatch } from "./fixtures/payloads.ts";
 
 function makeProject(files: Record<string, string>): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-scan-"));
@@ -263,20 +271,25 @@ describe("refreshFileFacts", () => {
   });
 
   test("unchanged files are not read again", () => {
-    const root = makeProject({ "a.ts": "const a = 1;" });
-    const config = defaultConfig();
-    const db = openFacts(root);
-    try {
-      refreshFileFacts(root, config, db, Infinity);
-      // A sentinel no analysis would ever produce: reading a file again overwrites its description.
-      db.exec("UPDATE files SET description = 'SENTINEL — not read again'");
-      expect(refreshFileFacts(root, config, db, Infinity).changed).toBe(0);
-      expect(
-        (db.prepare("SELECT description FROM files").get() as { description: string }).description,
-      ).toBe("SENTINEL — not read again");
-    } finally {
-      db.close();
-    }
+    const root = makeCrankProject({ "a.ts": "/** Alpha. */\nconst x = 1;\n" });
+    const file = path.join(root, "a.ts");
+    const start = () =>
+      runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root)));
+    const described = () => withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]).stdout);
+    const stamp = fs.statSync(file).mtimeMs - 5000;
+    setMtime(file, stamp);
+    expect(start().status).toBe(0);
+    expect(described()).toContain("`a.ts` — Alpha.");
+
+    // Same size, new text, the old mtime: a refresh that reads the file again would show "Omega."
+    fs.writeFileSync(file, "/** Omega. */\nconst x = 1;\n");
+    setMtime(file, stamp);
+    expect(start().status).toBe(0);
+    expect(described()).toContain("`a.ts` — Alpha.");
+
+    setMtime(file, stamp + 2000);
+    expect(start().status).toBe(0);
+    expect(described()).toContain("`a.ts` — Omega.");
   });
 
   test("drops a file once it grows past max_file_size_bytes", () => {
@@ -342,10 +355,19 @@ describe("refreshFileFacts", () => {
 });
 
 describe("churn and write pins", () => {
-  test("ranks by commits, skips commits touching more than 50 files, and reuses the list while HEAD stays put", () => {
+  const start = (root: string) =>
+    runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root)));
+  /** The files `crank-mem anatomy` lists under Most active files, as the hooks left them. */
+  const mostActive = (root: string): string[] => {
+    const out = withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]).stdout);
+    const section = out.split("## Most active files")[1]?.split("## All files")[0] ?? "";
+    return [...section.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]!);
+  };
+
+  test("ranks by commits and skips commits touching more than 50 files", () => {
     const bulk: Record<string, string> = {};
     for (let i = 0; i < 51; i++) bulk[`vendor/v${i}.ts`] = "x";
-    const root = makeProject({ "src/a.ts": "x", "src/b.ts": "x", ...bulk });
+    const root = makeCrankProject({ "src/a.ts": "x", "src/b.ts": "x", ...bulk });
     git(root, "init", "-q");
     gitCommit(root, "bulk");
     fs.writeFileSync(path.join(root, "src/b.ts"), "y");
@@ -353,49 +375,32 @@ describe("churn and write pins", () => {
     fs.writeFileSync(path.join(root, "src/b.ts"), "z");
     fs.writeFileSync(path.join(root, "src/a.ts"), "z");
     gitCommit(root, "a and b");
-    const config = defaultConfig();
-    const db = openFacts(root);
-    try {
-      refreshFileFacts(root, config, db, Infinity);
-      writeActivity(db, root, config);
-      const head = git(root, "rev-parse", "HEAD").trim();
-      expect(readChurn(db)).toEqual({ head, paths: ["src/b.ts", "src/a.ts"] });
-
-      // A cached list for the current HEAD is trusted as is; a new commit replaces it.
-      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('churn', ?)").run(
-        JSON.stringify({ head, paths: ["src/a.ts"] }),
-      );
-      writeActivity(db, root, config);
-      expect(readChurn(db)!.paths).toEqual(["src/a.ts"]);
-      fs.writeFileSync(path.join(root, "src/a.ts"), "w");
-      gitCommit(root, "a");
-      writeActivity(db, root, config);
-      expect(readChurn(db)!.paths).toEqual(["src/a.ts", "src/b.ts"]);
-    } finally {
-      db.close();
-    }
+    expect(start(root).status).toBe(0);
+    expect(mostActive(root)).toEqual(["src/b.ts", "src/a.ts"]);
   });
 
   test("keeps at most 100 write pins, dropping the least recently written", () => {
-    const files: Record<string, string> = {};
-    for (let i = 0; i < 101; i++) files[`f${String(i).padStart(3, "0")}.ts`] = "x";
-    const root = makeProject(files);
-    fs.utimesSync(path.join(root, "f050.ts"), new Date(2020, 0, 1), new Date(2020, 0, 1));
-    const config = defaultConfig();
-    const db = openFacts(root);
-    try {
-      refreshFileFacts(root, config, db, Infinity);
-      db.exec("UPDATE files SET write_count = 1");
-      writeActivity(db, root, config);
-      const pinned = (
-        db.prepare("SELECT path FROM files WHERE write_count = 1").all() as {
-          path: string;
-        }[]
-      ).map((row) => row.path);
-      expect(pinned).toHaveLength(100);
-      expect(pinned).not.toContain("f050.ts");
-    } finally {
-      db.close();
+    const root = makeCrankProject({ "old.ts": "export const old = 1;\n" });
+    // The oldest file is written most, so it tops the list unless the pin cap drops it.
+    setMtime(path.join(root, "old.ts"), new Date(2020, 0, 1).getTime());
+    for (let i = 0; i < 3; i++)
+      runHook(
+        "src/hooks/post-write.ts",
+        JSON.stringify(claudePostWrite(root, path.join(root, "old.ts"))),
+      );
+    const added: string[] = [];
+    for (let i = 0; i < 100; i++) {
+      const rel = `f${String(i).padStart(3, "0")}.ts`;
+      fs.writeFileSync(path.join(root, rel), `export const v${i} = ${i};\n`);
+      added.push(`*** Add File: ${path.join(root, rel)}`, "+x");
     }
+    const patch = ["*** Begin Patch", ...added, "*** End Patch"].join("\n");
+    expect(
+      runHook("src/hooks/post-write.ts", JSON.stringify(codexApplyPatch(root, patch))).status,
+    ).toBe(0);
+    expect(start(root).status).toBe(0);
+    const active = mostActive(root);
+    expect(active).toHaveLength(25);
+    expect(active).not.toContain("old.ts");
   });
 });

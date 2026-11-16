@@ -123,8 +123,13 @@ describe("projectStatus", () => {
       },
     ],
     [
-      "a missing graph or a pending parse is not a problem",
+      "a missing graph is not a problem",
       { graph: { status: "missing", files: 0, pending: 0 } },
+      HEALTHY,
+    ],
+    [
+      "a pending parse is not a problem",
+      { graph: { status: "open", files: 3, pending: 2 } },
       HEALTHY,
     ],
     ["healthy", {}, HEALTHY],

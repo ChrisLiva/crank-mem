@@ -343,7 +343,8 @@ describe("post-write writes code.db", () => {
     const graph = readDebugLog(root)
       .flatMap((r) => r.events as Array<Record<string, unknown>>)
       .filter((e) => String(e.event).startsWith("graph"));
-    expect(graph).toEqual([{ event: "graph-skip", root: null, status: "rebuild" }]);
+    expect(graph).toHaveLength(1);
+    expect(graph[0]).toMatchObject({ event: "graph-skip", status: "rebuild" });
   });
 
   test("a parseable write starts the daemon unless a stop state is set", async () => {

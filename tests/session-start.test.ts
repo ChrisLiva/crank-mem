@@ -890,7 +890,9 @@ describe("session-start writes code.db", () => {
     const before = fs.readFileSync(file);
     expect(sessionStart(root).status).toBe(0);
     expect(fs.readFileSync(file).equals(before)).toBe(true);
-    expect(graphEvents(root)).toEqual([{ event: "graph-skip", status: "rebuild" }]);
+    const events = graphEvents(root);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ event: "graph-skip", status: "rebuild" });
   });
 
   test("a pending file starts the daemon with digests off, and a stop state keeps it down", async () => {

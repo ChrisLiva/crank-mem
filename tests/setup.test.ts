@@ -13,6 +13,7 @@ import {
   realModelsDir,
   runCli,
   startModelServer,
+  stopDigests,
 } from "./helpers.ts";
 
 const MODEL_FILE = "Xenova/all-MiniLM-L6-v2/onnx/model_quantized.onnx";
@@ -274,6 +275,8 @@ describe("upgrade --all", () => {
   /** A crank home with two projects inited from it, each stamped as vendored at 0.0.1. */
   function twoProjects(): { home: string; a: string; b: string } {
     const home = makeCrankHome();
+    // init starts a parsing daemon in this home; it would rewrite code.db under the tests.
+    stopDigests(home);
     const [a, b] = ["a", "b"].map((name) => {
       const root = fs.realpathSync(tempDir(`crank-all-${name}-`));
       fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
