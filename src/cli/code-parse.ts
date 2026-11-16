@@ -6,18 +6,19 @@ import { CRANK_DIR, loadConfig, type CrankConfig } from "../hooks/lib/config.ts"
 import {
   clearDerivedFacts,
   deleteCodeDb,
+  isBusy,
   openCodeDb,
   parseable,
   pendingCount,
   pendingFiles,
   refreshFileFacts,
-  transaction,
   type CodeDbOpen,
   type PendingFile,
 } from "../hooks/lib/code-db.ts";
 import { fileLinks, type FileLinks } from "../hooks/lib/imports.ts";
 import { isInstalled } from "../hooks/lib/owner.ts";
 import { rank } from "../hooks/lib/scanner.ts";
+import { transaction } from "../hooks/lib/transaction.ts";
 import { estimateTokens } from "../hooks/lib/tokens.ts";
 import { codeFacts, grammarFor, type CallSite, type CodeSymbol } from "./code-symbols.ts";
 
@@ -39,11 +40,12 @@ export interface RefreshOptions {
 
 export interface GraphRefresh {
   /**
-   * `open`: the store is current as far as the deadline allowed. `readonly`: the file system
-   * refuses writes, so nothing was refreshed. `unreadable`: the store cannot be opened (see
-   * `reason`). `no-parser`: web-tree-sitter or a grammar did not load, so every parse stayed pending.
+   * `open`: the store is current as far as the deadline allowed. `busy`: another process held the
+   * write lock past the wait, so the refresh stopped short (`pending` counts what it left, 0 when
+   * it never opened the store). `readonly`: the file system refuses writes, so nothing was
+   * refreshed. `unreadable`: the store cannot be opened (see `reason`). `no-parser`: web-tree-sitter or a grammar did not load, so every parse stayed pending.
    */
-  status: "open" | "readonly" | "unreadable" | "no-parser";
+  status: "open" | "busy" | "readonly" | "unreadable" | "no-parser";
   reason?: string;
   /** Parseable files still unparsed; 0 when the store was not opened to write. */
   pending: number;
@@ -54,25 +56,22 @@ const DEFAULT_BUSY_MS = 2000;
 /** The deadline `graph-job` gives one run; a store with more pending files resumes at the daemon's next sweep. */
 const GRAPH_JOB_MS = 60_000;
 
-/** SQLITE_BUSY; extended codes (261, 517) carry it in the low byte. */
-const SQLITE_BUSY = 5;
-
-export function isBusy(err: unknown): boolean {
-  const { errcode } = err as { errcode?: unknown };
-  return typeof errcode === "number" && (errcode & 0xff) === SQLITE_BUSY;
+/** The error code of a delete that failed, or null when the store and its WAL files are gone. */
+export function deleteStore(root: string): string | null {
+  try {
+    deleteCodeDb(root);
+    return null;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code ?? "unknown";
+  }
 }
 
-/** True when an open's `reason` (`errcode <n>`, as `code-db.ts` → `failure` words it) names SQLITE_BUSY. */
-export function busyReason(reason: string | undefined): boolean {
-  const code = /^errcode (\d+)$/.exec(reason ?? "")?.[1];
-  return code !== undefined && isBusy({ errcode: Number(code) });
-}
-
-/** The store opened to write, rebuilt first when it is corrupt or another version. */
+/** The store opened to write, rebuilt first when it is corrupt or another version; a delete the file system refuses reads as `unreadable`. */
 export function openForRefresh(root: string, busyMs: number): CodeDbOpen {
   const opened = openCodeDb(root, "write", busyMs);
   if (opened.status !== "rebuild") return opened;
-  deleteCodeDb(root);
+  const failed = deleteStore(root);
+  if (failed !== null) return { status: "unreadable", reason: failed };
   return openCodeDb(root, "write", busyMs);
 }
 
@@ -83,9 +82,9 @@ export async function refreshGraph(
 ): Promise<GraphRefresh> {
   const opened = openForRefresh(root, options.busyMs ?? DEFAULT_BUSY_MS);
   const db = opened.db;
-  if (opened.status === "unreadable" && busyReason(opened.reason)) {
+  if (opened.status === "busy") {
     // Another writer outlasted the busy wait: leave every file as it is for the next run.
-    return { status: "open", pending: 0 };
+    return { status: "busy", pending: 0 };
   }
   if (opened.status !== "open" || db === undefined) {
     const status = opened.status === "readonly" ? "readonly" : "unreadable";
@@ -98,7 +97,7 @@ export async function refreshGraph(
   } catch (err) {
     // A writer held the lock past the busy wait: the files not yet committed stay pending.
     if (!isBusy(err)) throw err;
-    return { status: "open", pending: pendingCount(db) };
+    return { status: "busy", pending: pendingCount(db) };
   } finally {
     db.close();
   }

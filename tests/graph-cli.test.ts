@@ -10,6 +10,7 @@ import {
   childEnv,
   git,
   gitCommit,
+  graphProject,
   makeCrankProject,
   REPO_ROOT,
   runCli,
@@ -231,13 +232,20 @@ describe("anatomy", () => {
     const root = makeCrankProject({
       "src/a.ts":
         "export function alpha() {\n  return 1;\n}\nexport class Beta {\n  gamma() {}\n}\nexport const delta = () => 2;\n",
+      "src/c.ts": '// Calls alpha\nimport { alpha } from "./a";\nexport const c = alpha();\n',
+      "empty.ts": "",
       "notes.md": "# Notes\n",
       "big.ts": "// " + "x".repeat(300 * 1024) + "\nexport function huge() {}\n",
     });
     const run = runCli(root, ["anatomy"]);
     expect(run.status).toBe(0);
     const entries = blocks(run.stdout);
-    expect([...entries.keys()]).toEqual(["big.ts", "notes.md", "src/a.ts"]);
+    expect([...entries.keys()]).toEqual(["big.ts", "empty.ts", "notes.md", "src/a.ts", "src/c.ts"]);
+    // An entry is the path, its description and its token estimate, and never the file's imports.
+    const entryLine = (rel: string) => entries.get(rel)!.split("\n")[0];
+    expect(entryLine("src/c.ts")).toMatch(/^- `src\/c\.ts` — Calls alpha \(~\d+ tok\)$/);
+    expect(entryLine("empty.ts")).toMatch(/^- `empty\.ts` \(~\d+ tok\)$/);
+    expect(entries.get("src/c.ts")).not.toMatch(/\.\/a|src\/a\.ts|import/);
     expect(entries.get("src/a.ts")).toMatch(/^  - alpha \(fn, L1–L3, ~\d+ tok\)$/m);
     expect(entries.get("src/a.ts")).toMatch(/^  - Beta \(class, L4–L6, ~\d+ tok\)$/m);
     expect(entries.get("src/a.ts")).not.toContain("gamma");
@@ -642,6 +650,62 @@ describe("callers and callees", () => {
       restore();
     }
     expect(callers(root, "target").stdout).not.toContain("pending");
+  });
+});
+
+describe("a store the commands cannot refresh", () => {
+  test("a store another process holds busy fails `scan`, and `callers` answers with the not-fresh line", () => {
+    const root = graphProject({
+      "src/lib.ts": "export function target() {}\n",
+      "src/user.ts": 'import { target } from "./lib";\nexport function use() {\n  target();\n}\n',
+    });
+    const holder = openCodeDb(root, "write");
+    holder.db!.exec("BEGIN IMMEDIATE");
+    try {
+      // The open itself reports busy, which `scan` must not read as a store to delete.
+      expect(openCodeDb(root, "write").status).toBe("busy");
+      const scan = runCli(root, ["scan"]);
+      expect(scan.status).toBe(1);
+      expect(scan.stderr).toContain("crank-mem: code.db busy, scan skipped");
+      expect(scan.stdout).not.toContain("full scan complete");
+
+      const run = runCli(root, ["callers", "target"]);
+      expect(run.status).toBe(0);
+      expect(listed(run.stdout).resolved).toEqual(["src/user.ts:3 use"]);
+      expect(run.stdout.trimEnd().split("\n").at(-1)).toBe("(code.db busy; answer may be stale)");
+    } finally {
+      holder.db!.exec("ROLLBACK");
+      holder.db!.close();
+    }
+    expect(runCli(root, ["callers", "target"]).stdout).not.toContain("busy");
+    expect(runCli(root, ["scan"]).stdout).toContain("full scan complete");
+  }, 30_000);
+
+  test("a rebuild whose delete the file system refuses exits 1 with the OS error", () => {
+    const root = makeCrankProject({ "a.ts": "export function x() {}\n" });
+    const sqliteModule = process.getBuiltinModule("node:sqlite") as typeof sqlite;
+    const db = new sqliteModule.DatabaseSync(path.join(root, ".crank/code.db"));
+    db.exec("CREATE TABLE files (x); PRAGMA user_version = 99");
+    db.close();
+    const crank = path.join(root, ".crank");
+    try {
+      fs.chmodSync(crank, 0o555);
+      const run = runCli(root, ["callers", "x"]);
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain(
+        "crank-mem: .crank/code.db is not readable (EACCES). Fix: crank-mem scan",
+      );
+      expect(run.stderr).not.toContain("at ");
+      const job = runCli(root, ["graph-job", root]);
+      expect(job.status).toBe(1);
+      const scan = runCli(root, ["scan"]);
+      expect(scan.status).toBe(1);
+      expect(scan.stderr).toContain("crank-mem: could not delete .crank/code.db (EACCES)");
+      expect(scan.stdout).not.toContain("full scan complete");
+    } finally {
+      fs.chmodSync(crank, 0o755);
+    }
+    expect(runCli(root, ["scan"]).status).toBe(0);
   });
 });
 

@@ -4,7 +4,8 @@ import { loadConfig } from "../../src/hooks/lib/config.ts";
 
 // One unbounded graph refresh that spins until a shared start time, so writers released together
 // contend for code.db at once; a hook's own start-up spreads them too far apart to race. It prints
-// each parsed path, in parse order, and exits 1 unless the store ended `open`.
+// each parsed path, in parse order, and exits 1 unless the store ended `open` or `busy` (the other
+// writer held it, and the files it skipped stay pending, as graph-job leaves them).
 // argv: <project root> <start time, epoch ms>
 
 const [root, at] = process.argv.slice(2);
@@ -15,4 +16,4 @@ const refreshed = await refreshGraph(root!, loadConfig(path.join(root!, ".crank"
     console.log(rel);
   },
 });
-process.exit(refreshed.status === "open" ? 0 : 1);
+process.exit(refreshed.status === "open" || refreshed.status === "busy" ? 0 : 1);

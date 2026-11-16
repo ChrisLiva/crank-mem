@@ -1,10 +1,11 @@
 import { openProject } from "./project.ts";
-import { busyReason, isBusy, openForRefresh, refreshGraph } from "./code-parse.ts";
+import { deleteCodeDb } from "../hooks/lib/code-db.ts";
+import { deleteStore, openForRefresh, refreshGraph } from "./code-parse.ts";
 import { errorMessage, type CrankConfig } from "../hooks/lib/config.ts";
 import {
-  deleteCodeDb,
   graphCounts,
   graphHealth,
+  isBusy,
   openCodeDb,
   refreshFileFacts,
 } from "../hooks/lib/code-db.ts";
@@ -23,7 +24,13 @@ export async function run(_args: string[]): Promise<number> {
     // scan rebuilds whatever the store's state: corrupt, another version or unreadable.
     const probe = openCodeDb(root, "read");
     probe.db?.close();
-    if (probe.status === "rebuild" || probe.status === "unreadable") deleteCodeDb(root);
+    if (probe.status === "rebuild" || probe.status === "unreadable") {
+      const failed = deleteStore(root);
+      if (failed !== null) {
+        console.error(`crank-mem: could not delete .crank/code.db (${failed})`);
+        return 1;
+      }
+    }
     const refreshed = await refreshGraph(root, config, {
       deadlineMs: Infinity,
       busyMs: CLI_LOCK_BUDGET_MS,
@@ -41,9 +48,11 @@ export async function run(_args: string[]): Promise<number> {
       console.error(
         "crank-mem: the tree-sitter packages did not load, so symbols stay unparsed — run `crank-mem setup`.",
       );
-    } else if (refreshed.pending > 0) {
+    } else if (refreshed.status === "busy" || refreshed.pending > 0) {
       console.error(
-        `crank-mem: code.db busy, ${refreshed.pending} files still unparsed — try again.`,
+        refreshed.pending > 0
+          ? `crank-mem: code.db busy, ${refreshed.pending} files still unparsed — try again.`
+          : "crank-mem: code.db busy, scan skipped — try again.",
       );
       return 1;
     }
@@ -73,7 +82,7 @@ export type FactsOutcome =
 export function writeFileFacts(root: string, config: CrankConfig): FactsOutcome {
   const opened = openForRefresh(root, CLI_LOCK_BUDGET_MS);
   if (opened.status !== "open" || opened.db === undefined) {
-    return busyReason(opened.reason)
+    return opened.status === "busy"
       ? { status: "busy" }
       : { status: "failed", reason: opened.reason ?? opened.status };
   }

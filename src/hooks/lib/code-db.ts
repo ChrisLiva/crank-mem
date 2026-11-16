@@ -4,6 +4,7 @@ import type * as sqlite from "node:sqlite";
 import { CRANK_DIR, type CrankConfig } from "./config.ts";
 import { SOURCE_EXTENSIONS } from "./indexable.ts";
 import { fileFacts, walkProject, type FileFacts } from "./scanner.ts";
+import { transaction } from "./transaction.ts";
 import type { GraphStatus } from "./wire.ts";
 
 // .crank/code.db: the project's code graph. This module owns the schema, every open and the
@@ -112,16 +113,18 @@ CREATE INDEX IF NOT EXISTS imports_to_path ON imports(to_path);
 CREATE INDEX IF NOT EXISTS namespaces_path ON namespaces(path);
 `;
 
-type CodeDbStatus = "open" | "missing" | "rebuild" | "unreadable" | "readonly";
+type CodeDbStatus = "open" | "missing" | "rebuild" | "unreadable" | "readonly" | "busy";
 
 export interface CodeDbOpen {
   status: CodeDbStatus;
   /** Present when `status` is `open`; the caller closes it. */
   db?: sqlite.DatabaseSync;
-  /** Why the status is `rebuild`, `unreadable` or `readonly`. */
+  /** Why the status is `rebuild`, `unreadable`, `readonly` or `busy`. */
   reason?: string;
 }
 
+/** SQLITE_BUSY; extended codes (261, 517) carry it in the low byte. */
+const SQLITE_BUSY = 5;
 const NOTADB = 26;
 const CORRUPT = 11;
 const CANTOPEN = 14;
@@ -133,9 +136,16 @@ export function codeDbPath(root: string): string {
   return path.join(root, CRANK_DIR, CODE_DB);
 }
 
+/** True when `err` is SQLITE_BUSY: another process holds the lock past the wait. SQLITE_LOCKED (6) only arises with a shared cache, which nothing here opens. */
+export function isBusy(err: unknown): boolean {
+  const { errcode } = err as { errcode?: unknown };
+  return typeof errcode === "number" && (errcode & 0xff) === SQLITE_BUSY;
+}
+
 /** The open status a failure maps to; node:sqlite errors carry only `errcode`, fs errors a `code`. */
 function failure(err: unknown): CodeDbOpen {
   const { errcode, code } = err as { errcode?: unknown; code?: unknown };
+  if (isBusy(err)) return { status: "busy", reason: `errcode ${errcode}` };
   if (errcode === NOTADB || errcode === CORRUPT)
     return { status: "rebuild", reason: `errcode ${errcode}` };
   if (errcode === READONLY || errcode === READONLY_DIRECTORY)
@@ -235,19 +245,6 @@ function createSchema(db: sqlite.DatabaseSync): void {
 export function deleteCodeDb(root: string): void {
   const file = codeDbPath(root);
   for (const name of [file, `${file}-wal`, `${file}-shm`]) fs.rmSync(name, { force: true });
-}
-
-/** Runs `fn` in one `BEGIN IMMEDIATE` transaction, committing when it returns and rolling back when it throws. */
-export function transaction<T>(db: sqlite.DatabaseSync, fn: () => T): T {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const result = fn();
-    db.exec("COMMIT");
-    return result;
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
 }
 
 const DERIVED_TABLES: [table: string, column: string][] = [
@@ -453,12 +450,22 @@ export interface GraphHealth {
   lastRefresh: string | null;
 }
 
+/**
+ * The wire status of an open's outcome. A read-only store cannot serve a refresh, so it reads as
+ * `unreadable`. A busy store exists and serves once its writer finishes, so it reads as `open`
+ * (the closed `GraphStatus` list has no busy) with no counts, and raises no "needs a look" fix.
+ */
+function graphStatus(status: CodeDbStatus): GraphStatus {
+  if (status === "readonly") return "unreadable";
+  return status === "busy" ? "open" : status;
+}
+
 /** What `stats` and `/health` report of the graph; a store that is not `open` reports zero counts. */
 export function graphHealth(root: string): GraphHealth {
   const none = { files: 0, parseable: 0, pending: 0, lastRefresh: null };
   const opened = openCodeDb(root, "read", GRAPH_READ_BUSY_MS);
   if (opened.status !== "open" || !opened.db) {
-    return { status: opened.status === "readonly" ? "unreadable" : opened.status, ...none };
+    return { status: graphStatus(opened.status), ...none };
   }
   try {
     const rows = opened.db.prepare("SELECT path, size FROM files").all() as {

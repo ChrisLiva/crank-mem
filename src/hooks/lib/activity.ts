@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import type * as sqlite from "node:sqlite";
-import { transaction } from "./code-db.ts";
+import { transaction } from "./transaction.ts";
 import type { CrankConfig } from "./config.ts";
 import { debugEvent } from "./debug.ts";
 import { isIndexableName } from "./indexable.ts";

@@ -117,10 +117,15 @@ async function serve(
     return result.outcome === "ok" ? 0 : 1;
   };
   if (scope.refused !== null) return finish(refusal(scope.refused), 0);
-  const db = await refreshedStore(scope.root, started + COMMAND_REFRESH_MS);
-  if (db === null) return finish(refusal("refused"), 0);
+  const store = await refreshedStore(scope.root, started + COMMAND_REFRESH_MS);
+  if (store === null) return finish(refusal("refused"), 0);
+  const { db, fresh } = store;
   try {
-    return finish(answer(db, scope), pendingCount(db));
+    const result = answer(db, scope);
+    return finish(
+      fresh ? result : { ...result, text: result.text + NOT_FRESH_LINE },
+      pendingCount(db),
+    );
   } finally {
     db.close();
   }
@@ -150,20 +155,25 @@ function commandScope(target: string): Scope | null {
   };
 }
 
+/** What a command prints last when another process held `code.db` busy and the refresh was skipped. */
+const NOT_FRESH_LINE = "(code.db busy; answer may be stale)\n";
+
 /**
  * The store brought current by `deadlineMs`, opened to read. A store the file system will not let
- * this process write is read as it stands. Null, after printing why, when the store cannot be opened.
+ * this process write is read as it stands, and so is one another process held busy, with `fresh`
+ * false. Null, after printing why, when the store cannot be opened.
  */
 async function refreshedStore(
   root: string,
   deadlineMs: number,
-): Promise<sqlite.DatabaseSync | null> {
+): Promise<{ db: sqlite.DatabaseSync; fresh: boolean } | null> {
   const refreshed = await refreshGraph(root, loadConfig(path.join(root, CRANK_DIR)), {
     deadlineMs,
     busyMs: BUSY_MS,
   });
   const opened = refreshed.status === "unreadable" ? null : openCodeDb(root, "read", BUSY_MS);
-  if (opened?.status === "open" && opened.db) return opened.db;
+  if (opened?.status === "open" && opened.db)
+    return { db: opened.db, fresh: refreshed.status !== "busy" };
   console.error(
     `crank-mem: .crank/code.db is not readable (${refreshed.reason ?? opened?.reason ?? opened?.status}). Fix: crank-mem scan`,
   );
