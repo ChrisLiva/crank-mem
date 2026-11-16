@@ -10,3 +10,6 @@ src/java.java
 38-40│    int code() { … }
 43-50│class Driver {
 44-49│    int run(Box box) { … }
+52-60│class Child extends Box {
+53-55│    Child() { … }
+57-59│    Child(int n) { … }

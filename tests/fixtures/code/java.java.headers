@@ -9,3 +9,6 @@ src/java.java:35-41 enum Color
 src/java.java:38-40 method Color.code
 src/java.java:43-50 class Driver
 src/java.java:44-49 method Driver.run
+src/java.java:52-60 class Child
+src/java.java:53-55 method Child.Child
+src/java.java:57-59 method Child.Child

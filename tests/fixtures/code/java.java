@@ -48,3 +48,13 @@ class Driver {
         return new Box(1).area();
     }
 }
+
+class Child extends Box {
+    Child() {
+        this(1);
+    }
+
+    Child(int n) {
+        super(n);
+    }
+}

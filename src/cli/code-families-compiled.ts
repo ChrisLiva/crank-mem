@@ -300,9 +300,36 @@ function javaTypeName(node: Node | null): { name: string; qualified: boolean } |
   return name ? { name: name.text, qualified: true } : null;
 }
 
+const JAVA_TYPE_DECLARATIONS = new Set([
+  "class_declaration",
+  "enum_declaration",
+  "record_declaration",
+]);
+
+/** The class a `this(…)` or `super(…)` constructor call sits in. */
+function javaEnclosingType(node: Node): Node | null {
+  for (let at = node.parent; at !== null; at = at.parent)
+    if (JAVA_TYPE_DECLARATIONS.has(at.type)) return at;
+  return null;
+}
+
+/** `this(…)` names the enclosing class, `super(…)` its superclass; both reach it as `self`. */
+function javaConstructorCallee(node: Node): { name: string; receiver: "self" } | null {
+  const own = javaEnclosingType(node);
+  const name = node.namedChildren.some((c) => c.type === "this")
+    ? own?.childForFieldName("name")?.text
+    : javaTypeName(own?.childForFieldName("superclass")?.namedChildren[0] ?? null)?.name;
+  return name ? { name, receiver: "self" } : null;
+}
+
 const javaCalls: CallRules = {
-  types: new Set(["method_invocation", "object_creation_expression"]),
+  types: new Set([
+    "method_invocation",
+    "object_creation_expression",
+    "explicit_constructor_invocation",
+  ]),
   callee(node) {
+    if (node.type === "explicit_constructor_invocation") return javaConstructorCallee(node);
     if (node.type === "object_creation_expression") {
       const type = javaTypeName(node.childForFieldName("type"));
       return type && { name: type.name, receiver: type.qualified ? "member" : "bare" };
