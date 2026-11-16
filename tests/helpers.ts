@@ -180,13 +180,17 @@ export function withEnv<T>(vars: Record<string, string>, fn: () => T): T {
  * current dashboard fixture as CRANK_DASHBOARD_DIR unless `env` overrides them.
  */
 export function runCli(cwd: string, args: string[], env?: Record<string, string>): CliRun {
+  const home = makeCrankHome();
+  // `init` and `upgrade` start a parsing daemon; in a throwaway home nothing ever stops it, and it
+  // rewrites code.db under the test (an uninstall then keeps code.db as "what other tools wrote").
+  if (args[0] === "init" || args[0] === "upgrade") stopDigests(home);
   const result = spawnSync(process.execPath, [path.join(REPO_ROOT, "src/cli/main.ts"), ...args], {
     cwd,
     encoding: "utf-8",
     timeout: 30_000,
     env: childEnv({
       CODEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "crank-codexhome-")),
-      CRANK_HOME: makeCrankHome(),
+      CRANK_HOME: home,
       CRANK_DASHBOARD_DIR: sharedDashboardDir(),
       ...env,
     }),
