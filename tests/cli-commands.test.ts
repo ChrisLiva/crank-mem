@@ -6,10 +6,12 @@ import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import {
   initedCopy,
+  killDaemon,
   makeCrankHome,
   makeCrankProject,
   makeModelHome,
   plantMemory,
+  readDaemon,
   runCli,
   runHook,
   seedMemory,
@@ -40,8 +42,8 @@ const LINKED = {
   "src/a.ts": 'import { b } from "./b";\nexport const a = b;\n',
   "src/b.ts": "export const b = 1;\n",
 };
-const V1_INDEX = '{"version":1,"meta":{"lastScanned":null,"fileCount":0},"files":{}}';
-const SCAN_LINE = /^crank-mem: full scan complete — \d+ files indexed → \.crank\/anatomy\.md$/m;
+const SCAN_LINE = /^crank-mem: full scan complete — \d+ files indexed → \.crank\/code\.db$/m;
+const RETIRED = ["anatomy.md", "anatomy-index.json", "anatomy-index.lock"];
 
 /** A project inited on its own, for a test that reads the install time. */
 function initedProject(): string {
@@ -52,20 +54,92 @@ function initedProject(): string {
 }
 
 describe("scan", () => {
-  test("rebuilds the index and picks up new files", () => {
+  test("rebuilds the graph and picks up new files", () => {
     const root = initedCopy(ALPHA);
     fs.writeFileSync(path.join(root, "b.ts"), "export const b = 2;\n");
     const run = cli(root, "scan");
     expect(run.status).toBe(0);
+    expect(run.stdout).toMatch(SCAN_LINE);
     expect(run.stdout).toContain("2 files indexed");
-    const index = JSON.parse(
-      fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"),
-    );
-    expect(index.files["b.ts"]).toBeDefined();
+    expect(cli(root, "anatomy").stdout).toContain("`b.ts`");
   });
+
+  test("parses every file with a progress line each 200 files, and rebuilds a store it cannot read", () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 201; i++)
+      files[`f${String(i).padStart(3, "0")}.ts`] = `export const v${i} = ${i};\n`;
+    const root = makeCrankProject(files);
+    const run = cli(root, "scan");
+    expect(run.status).toBe(0);
+    expect(run.stderr.match(/^crank-mem: parsing \d+\/\d+ files…$/gm)).toEqual([
+      "crank-mem: parsing 200/201 files…",
+    ]);
+    expect(cli(root, "stats").stdout).toContain("pending:          0\n");
+
+    // A store that is not a database is deleted and rebuilt; one that cannot be deleted fails with its error.
+    const store = path.join(root, ".crank/code.db");
+    for (const name of ["code.db-wal", "code.db-shm"])
+      fs.rmSync(path.join(root, ".crank", name), { force: true });
+    fs.writeFileSync(store, "not a database");
+    expect(cli(root, "scan").status).toBe(0);
+    expect(cli(root, "stats").stdout).toContain("files:            201\n");
+    fs.rmSync(store);
+    fs.mkdirSync(store);
+    const blocked = cli(root, "scan");
+    expect(blocked.status).toBe(1);
+    expect(blocked.stderr).toMatch(/^crank-mem: .+/);
+  });
+
   test("errors when not initialized", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-bare-"));
     expect(cli(bare, "scan").status).toBe(1);
+  });
+});
+
+describe("init and upgrade start the parse", () => {
+  const daemonUp = async (home: string): Promise<boolean> => {
+    for (let waited = 0; waited < 5000; waited += 100) {
+      if (typeof readDaemon(home)?.heartbeatMs === "number") return true;
+      await Bun.sleep(100);
+    }
+    return false;
+  };
+
+  test("each records the files, prints the code.db line and starts a daemon", async () => {
+    const home = makeCrankHome();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-cli-"));
+    fs.writeFileSync(path.join(root, "a.ts"), ALPHA["a.ts"]);
+    const env = {
+      CODEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "crank-ch-")),
+      CRANK_HOME: home,
+    };
+    try {
+      const init = runCli(root, ["init", "--yes", "--codex", "skip"], env);
+      expect(init.status).toBe(0);
+      expect(init.stdout).toContain("  indexed 1 files → .crank/code.db\n");
+      expect(await daemonUp(home)).toBe(true);
+
+      killDaemon(home);
+      fs.rmSync(path.join(home, "daemon.json"), { force: true });
+      for (const name of ["code.db", "code.db-wal", "code.db-shm"])
+        fs.rmSync(path.join(root, ".crank", name), { force: true });
+      const upgrade = runCli(root, ["upgrade"], env);
+      expect(upgrade.status).toBe(0);
+      expect(upgrade.stdout).toMatch(SCAN_LINE);
+      expect(await daemonUp(home)).toBe(true);
+    } finally {
+      killDaemon(home);
+    }
+  });
+});
+
+describe("graph-job", () => {
+  test("a project uninstalled since the daemon looked exits 0 and gets no code.db", () => {
+    const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
+    fs.rmSync(path.join(root, ".crank/config.json"));
+    const run = runCli(root, ["graph-job", root]);
+    expect(run.status).toBe(0);
+    expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(false);
   });
 });
 
@@ -534,7 +608,17 @@ describe("stats: codex wiring", () => {
 });
 
 describe("upgrade", () => {
-  test("stale stamp: re-vendors, updates stamp, preserves config/cerebrum/index", () => {
+  /** An upgrade whose crank home holds a stop state, so no daemon starts to parse or rebuild the store under the test. */
+  function upgradeStopped(root: string): CliRun {
+    const home = makeCrankHome();
+    stopDigests(home);
+    return runCli(root, ["upgrade"], {
+      CODEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "crank-ch-")),
+      CRANK_HOME: home,
+    });
+  }
+
+  test("stale stamp: re-vendors, updates stamp, preserves config/cerebrum/journal", () => {
     const root = initedCopy(ALPHA);
     const crankDir = path.join(root, ".crank");
     // Simulate an old vendored version + user data.
@@ -546,11 +630,10 @@ describe("upgrade", () => {
     fs.appendFileSync(path.join(crankDir, "cerebrum.md"), "- custom memory\n");
     fs.appendFileSync(path.join(crankDir, "journal.md"), "- 2026-07-29: shipped the thing\n");
     fs.writeFileSync(path.join(crankDir, "hooks/session-start.ts"), "// stale vendored copy\n");
-    const indexBefore = fs.readFileSync(path.join(crankDir, "anatomy-index.json"), "utf-8");
 
     const run = cli(root, "upgrade");
     expect(run.status).toBe(0);
-    expect(run.stdout.trimEnd().split("\n").at(-1)).toBe(
+    expect(run.stdout.split("\n")).toContain(
       `crank-mem: upgraded vendored hooks 0.10.0 → ${cliVersion()}`,
     );
     expect(run.stdout).not.toContain("re-vendored");
@@ -565,7 +648,7 @@ describe("upgrade", () => {
     expect(fs.readFileSync(path.join(crankDir, "journal.md"), "utf-8")).toContain(
       "shipped the thing",
     );
-    expect(fs.readFileSync(path.join(crankDir, "anatomy-index.json"), "utf-8")).toBe(indexBefore);
+    expect(fs.existsSync(path.join(crankDir, "code.db"))).toBe(true);
     // old hooks were backed up
     const backups = fs.readdirSync(path.join(crankDir, "backups")).sort();
     const latest = backups[backups.length - 1]!;
@@ -574,12 +657,17 @@ describe("upgrade", () => {
     ).toContain("stale vendored copy");
   });
 
-  test("scans an index that is not at version 2, and leaves a version-2 one alone", () => {
+  test("brings code.db current, saying so only when it changed, and rebuilds a missing, unreadable or other-version store", () => {
     const root = initedCopy(LINKED);
-    const indexFile = path.join(root, ".crank/anatomy-index.json");
-    fs.writeFileSync(indexFile, V1_INDEX);
+    const crankDir = path.join(root, ".crank");
+    const store = path.join(crankDir, "code.db");
+    const clear = () => {
+      for (const name of ["code.db", "code.db-wal", "code.db-shm"])
+        fs.rmSync(path.join(crankDir, name), { force: true });
+    };
 
-    const first = cli(root, "upgrade");
+    clear();
+    const first = upgradeStopped(root);
     expect(first.status).toBe(0);
     expect(first.stdout.match(new RegExp(SCAN_LINE.source, "gm"))).toHaveLength(1);
     const lines = first.stdout.trimEnd().split("\n");
@@ -588,60 +676,82 @@ describe("upgrade", () => {
     );
     expect(repairLast).toBeGreaterThanOrEqual(0);
     expect(lines.findIndex((l) => SCAN_LINE.test(l))).toBeGreaterThan(repairLast);
-    const rebuilt = JSON.parse(fs.readFileSync(indexFile, "utf-8"));
-    expect(rebuilt.version).toBe(3);
-    expect(rebuilt.files["src/a.ts"].imports).toEqual(["src/b.ts"]);
+    expect(cli(root, "anatomy").stdout).toContain("`src/b.ts`");
 
-    const current = fs.readFileSync(indexFile);
-    const second = cli(root, "upgrade");
-    expect(second.status).toBe(0);
-    expect(second.stdout).not.toContain("full scan complete");
-    expect(fs.readFileSync(indexFile)).toEqual(current);
-
-    // A missing index is built under the project's own config.
-    fs.rmSync(indexFile);
-    const configFile = path.join(root, ".crank/config.json");
+    // A current store stays quiet; a file the project's config excludes leaves it, and the run says so.
+    expect(upgradeStopped(root).stdout).not.toMatch(SCAN_LINE);
+    const configFile = path.join(crankDir, "config.json");
     const config = JSON.parse(fs.readFileSync(configFile, "utf-8"));
     config.excludes.push("b.ts");
     fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
-    const missing = cli(root, "upgrade");
-    expect(missing.status).toBe(0);
-    expect(missing.stdout).toMatch(SCAN_LINE);
-    const built = JSON.parse(fs.readFileSync(indexFile, "utf-8"));
-    expect(built.version).toBe(3);
-    expect(Object.keys(built.files)).not.toContain("src/b.ts");
-    expect(built.files["src/a.ts"]).not.toHaveProperty("imports");
+    const second = upgradeStopped(root);
+    expect(second.status).toBe(0);
+    expect(second.stdout).toMatch(SCAN_LINE);
+    expect(cli(root, "anatomy").stdout).not.toContain("`src/b.ts`");
 
-    fs.writeFileSync(indexFile, "{not json");
-    const unparsable = cli(root, "upgrade");
-    expect(unparsable.status).toBe(0);
-    expect(unparsable.stdout).toMatch(SCAN_LINE);
-    expect(JSON.parse(fs.readFileSync(indexFile, "utf-8")).version).toBe(3);
+    // A store that is not a database, and one from another schema version, are rebuilt.
+    clear();
+    fs.writeFileSync(store, "not a database");
+    const unreadable = upgradeStopped(root);
+    expect(unreadable.status).toBe(0);
+    expect(unreadable.stdout).toMatch(SCAN_LINE);
+    expect(cli(root, "stats").stdout).toContain("files:            1\n");
+    const opened = openCodeDb(root, "write");
+    opened.db!.exec("PRAGMA user_version = 99");
+    opened.db!.close();
+    const other = upgradeStopped(root);
+    expect(other.status).toBe(0);
+    expect(other.stdout).toMatch(SCAN_LINE);
+    expect(cli(root, "stats").stdout).toContain("files:            1\n");
   });
 
-  test("a held anatomy lock skips the scan", () => {
+  test("deletes the retired anatomy files once, and says git will show them in commit mode", () => {
+    const root = initedCopy(ALPHA);
+    const crankDir = path.join(root, ".crank");
+    const line = `crank-mem: removed the retired anatomy files (${RETIRED.join(", ")}).`;
+    for (const name of RETIRED) fs.writeFileSync(path.join(crankDir, name), "old\n");
+    const first = upgradeStopped(root);
+    expect(first.status).toBe(0);
+    expect(first.stdout.split("\n")).toContain(line);
+    for (const name of RETIRED) expect(fs.existsSync(path.join(crankDir, name))).toBe(false);
+    expect(upgradeStopped(root).stdout).not.toContain("retired anatomy files");
+
+    // Only some of them present still prints the one line; commit mode adds the git note.
+    const configFile = path.join(crankDir, "config.json");
+    const config = JSON.parse(fs.readFileSync(configFile, "utf-8"));
+    config.git = "commit";
+    fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+    fs.writeFileSync(path.join(crankDir, "anatomy.md"), "old\n");
+    const commit = upgradeStopped(root);
+    expect(commit.stdout.split("\n")).toContain(`${line} git will show them as deleted.`);
+    expect(fs.existsSync(path.join(crankDir, "anatomy.md"))).toBe(false);
+  });
+
+  test("a code.db held past its busy wait skips the scan", () => {
     const root = initedCopy(LINKED);
-    const indexFile = path.join(root, ".crank/anatomy-index.json");
-    fs.writeFileSync(indexFile, V1_INDEX);
-    fs.writeFileSync(
-      path.join(root, ".crank/anatomy-index.lock"),
-      JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() }),
-    );
-    const run = cli(root, "upgrade");
-    expect(run.status).toBe(0);
-    expect(run.stderr.split("\n")).toContain("crank-mem: anatomy busy, scan skipped");
-    expect(fs.readFileSync(indexFile, "utf-8")).toBe(V1_INDEX);
+    const holder = openCodeDb(root, "write");
+    holder.db!.exec("BEGIN IMMEDIATE");
+    try {
+      const run = upgradeStopped(root);
+      expect(run.status).toBe(0);
+      expect(run.stderr.split("\n")).toContain("crank-mem: code.db busy, scan skipped");
+      expect(run.stdout).not.toMatch(SCAN_LINE);
+    } finally {
+      holder.db!.exec("ROLLBACK");
+      holder.db!.close();
+    }
   }, 20_000);
 
   test("a scan that throws costs only the scan", () => {
     const root = initedCopy(LINKED);
-    const indexFile = path.join(root, ".crank/anatomy-index.json");
-    fs.rmSync(indexFile);
-    fs.mkdirSync(indexFile);
-    const run = cli(root, "upgrade");
+    const store = path.join(root, ".crank/code.db");
+    for (const name of ["code.db", "code.db-wal", "code.db-shm"])
+      fs.rmSync(path.join(root, ".crank", name), { force: true });
+    fs.mkdirSync(store);
+    const run = upgradeStopped(root);
     expect(run.status).toBe(0);
     expect(run.stderr).toContain("crank-mem: could not scan (");
-    expect(run.stdout).not.toContain("full scan complete");
+    expect(run.stdout).not.toMatch(SCAN_LINE);
   });
 
   // Crank commands in the settings file the git mode does not use, plus wiring

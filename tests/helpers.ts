@@ -267,6 +267,27 @@ export function runInstalled(
   args: string[],
   env?: Record<string, string>,
 ): CliRun {
+  // `init` and `upgrade` start a daemon on files that await a parse; a stop state for the run keeps
+  // that daemon out of tests that assert on release checks, pruning and daemon files.
+  const quiet = (args[0] === "init" || args[0] === "upgrade") && readStop(home) === null;
+  if (quiet) stopDigests(home);
+  try {
+    return spawnInstalled(home, cwd, args, env);
+  } finally {
+    if (quiet) fs.rmSync(path.join(home, STOP_FILE), { force: true });
+  }
+}
+
+function readStop(home: string): unknown {
+  return fs.existsSync(path.join(home, STOP_FILE)) ? true : null;
+}
+
+function spawnInstalled(
+  home: string,
+  cwd: string,
+  args: string[],
+  env?: Record<string, string>,
+): CliRun {
   const result = spawnSync(path.join(home, "current/bin/crank-mem"), args, {
     cwd,
     encoding: "utf-8",
@@ -299,7 +320,12 @@ export function initedCopy(
       fs.mkdirSync(path.dirname(path.join(template, rel)), { recursive: true });
       fs.writeFileSync(path.join(template, rel), content);
     }
-    expect(runCli(template, ["init", "--yes", "--codex", "skip"]).status).toBe(0);
+    // A home under a stop state: the template's daemon would parse it while it is copied.
+    const home = makeCrankHome();
+    stopDigests(home);
+    expect(
+      runCli(template, ["init", "--yes", "--codex", "skip"], { CRANK_HOME: home }).status,
+    ).toBe(0);
     initedTemplates.set(key, template);
   }
   const copy = tempDir("crank-copy-");

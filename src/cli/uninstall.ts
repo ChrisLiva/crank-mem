@@ -11,8 +11,7 @@ import {
 } from "./settings.ts";
 import { crankTrust, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
 import { CRANK_DIR, CONFIG_FILE, LOCAL_CONFIG_FILE } from "../hooks/lib/config.ts";
-import { INDEX_FILE, ANATOMY_FILE } from "../hooks/lib/store.ts";
-import { LOCK_FILE } from "../hooks/lib/lock.ts";
+import { CODE_DB } from "../hooks/lib/code-db.ts";
 import {
   MARKER_FILE,
   DEDUP_FILE,
@@ -27,6 +26,7 @@ import { MEMORY_FILE } from "../hooks/lib/memory.ts";
 import { SNAPSHOT_DIR } from "../hooks/lib/store-upkeep.ts";
 import { USAGE_FILE, USAGE_LOCK_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
 import { openProject } from "./project.ts";
+import { REPAIR_LOCK_FILE } from "./upgrade.ts";
 import { restoreInstall } from "./backups.ts";
 import { removeInstall } from "./install.ts";
 import { attemptRemoval, installPaths, type Report } from "./install-support.ts";
@@ -214,9 +214,13 @@ function deleteOwnedFiles(crankDir: string): string[] {
   const owned = [
     CONFIG_FILE,
     LOCAL_CONFIG_FILE,
-    INDEX_FILE,
-    ANATOMY_FILE,
-    LOCK_FILE,
+    "anatomy-index.json",
+    "anatomy.md",
+    "anatomy-index.lock",
+    CODE_DB,
+    `${CODE_DB}-wal`,
+    `${CODE_DB}-shm`,
+    REPAIR_LOCK_FILE,
     MARKER_FILE,
     DEDUP_FILE,
     JOURNAL_FILE,

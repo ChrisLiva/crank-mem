@@ -3,9 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fullScan, refreshIndex, walkProject } from "../src/hooks/lib/scanner.ts";
+import type * as sqlite from "node:sqlite";
+import { fileFacts, walkProject } from "../src/hooks/lib/scanner.ts";
+import { openCodeDb, refreshFileFacts } from "../src/hooks/lib/code-db.ts";
+import { readChurn, writeActivity } from "../src/hooks/lib/activity.ts";
 import { defaultConfig } from "../src/hooks/lib/config.ts";
-import { SYMBOL_MIN_TOKENS } from "../src/hooks/lib/symbols.ts";
 import { git, gitCommit } from "./helpers.ts";
 
 function makeProject(files: Record<string, string>): string {
@@ -34,29 +36,21 @@ describe("walkProject", () => {
       "pnpm-lock.yaml": "lockfileVersion: 9",
       "web/package-lock.json": "{}",
     });
-    const files = walkProject(root, defaultConfig()).files;
-    expect(files.sort()).toEqual(["README.md", "src/a.ts"]);
+    expect(walkProject(root, defaultConfig()).sort()).toEqual(["README.md", "src/a.ts"]);
   });
 
-  test("outside git, caps at max_files and records truncation without a count", () => {
+  test("outside git, lists every file in path order with no cap", () => {
     const files: Record<string, string> = {};
-    for (let i = 0; i < 20; i++) files[`f${String(i).padStart(2, "0")}.ts`] = "x";
+    for (let i = 0; i < 600; i++) files[`f${String(i).padStart(3, "0")}.ts`] = "x";
     const root = makeProject(files);
-    expect(walkProject(root, { ...defaultConfig(), max_files: 5 })).toEqual({
-      files: ["f00.ts", "f01.ts", "f02.ts", "f03.ts", "f04.ts"],
-      truncated: true,
-      candidateCount: null,
-    });
-    const all = walkProject(root, { ...defaultConfig(), max_files: 20 });
-    expect(all.truncated).toBe(false);
-    expect(all.candidateCount).toBe(20);
+    expect(walkProject(root, defaultConfig())).toEqual(Object.keys(files));
   });
 
-  test("oversized files survive the stat-free walk but are not indexed", () => {
+  test("an oversized file is no file to index", () => {
     const root = makeProject({ "big.ts": "x".repeat(100), "small.ts": "x" });
     const config = { ...defaultConfig(), max_file_size_bytes: 50 };
-    expect(walkProject(root, config).files.sort()).toEqual(["big.ts", "small.ts"]);
-    expect(Object.keys(fullScan(root, config).files)).toEqual(["small.ts"]);
+    expect(fileFacts(root, "big.ts", config)).toBeNull();
+    expect(fileFacts(root, "small.ts", config)).not.toBeNull();
   });
 });
 
@@ -67,7 +61,7 @@ describe("walkProject in a git repo", () => {
     return root;
   }
 
-  test("lists git's files, ranks first-party code ahead of vendored code, and cuts at max_files", () => {
+  test("lists git's files, ranks first-party code ahead of vendored code, and takes every one", () => {
     const root = makeRepo({
       ".gitignore": "ignored/\n",
       "ignored/x.ts": "x",
@@ -80,11 +74,15 @@ describe("walkProject in a git repo", () => {
       "notes.md": "untracked",
     });
     git(root, "add", ".gitignore", "deps_src", "src", "README.md");
-    expect(walkProject(root, { ...defaultConfig(), max_files: 5 })).toEqual({
-      files: ["src/a.ts", "src/b.ts", "src/c.ts", "README.md", "notes.md"],
-      truncated: true,
-      candidateCount: 7,
-    });
+    expect(walkProject(root, defaultConfig())).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+      "src/c.ts",
+      "README.md",
+      "notes.md",
+      "deps_src/a.ts",
+      "deps_src/b.ts",
+    ]);
   });
 
   test("a listing past 1 MiB still comes from git", () => {
@@ -101,11 +99,7 @@ describe("walkProject in a git repo", () => {
       input: entries,
     });
     expect(r.status).toBe(0);
-    expect(walkProject(root, defaultConfig())).toEqual({
-      files: ["src/a.ts"],
-      truncated: false,
-      candidateCount: 12_001,
-    });
+    expect(walkProject(root, defaultConfig())).toEqual(["src/a.ts"]);
   });
 
   test("a conflicted path git lists once per stage counts once", () => {
@@ -120,19 +114,14 @@ describe("walkProject in a git repo", () => {
         .split("\n")
         .filter((l) => l === "a.ts"),
     ).toHaveLength(3);
-    expect(walkProject(root, { ...defaultConfig(), max_files: 3 })).toEqual({
-      files: ["a.ts", "b.ts", "c.ts"],
-      truncated: false,
-      candidateCount: 3,
-    });
+    expect(walkProject(root, defaultConfig())).toEqual(["a.ts", "b.ts", "c.ts"]);
   });
 
-  test("an oversized file takes no max_files slot", () => {
+  test("an oversized file is left out of the walk", () => {
     const root = makeRepo({ "src/a.ts": "x".repeat(100), "src/b.ts": "x", "src/c.ts": "x" });
     git(root, "add", ".");
-    const config = { ...defaultConfig(), max_files: 2, max_file_size_bytes: 50 };
-    expect(walkProject(root, config).files).toEqual(["src/b.ts", "src/c.ts"]);
-    expect(Object.keys(fullScan(root, config).files)).toEqual(["src/b.ts", "src/c.ts"]);
+    const config = { ...defaultConfig(), max_file_size_bytes: 50 };
+    expect(walkProject(root, config)).toEqual(["src/b.ts", "src/c.ts"]);
   });
 
   test("a tracked symlink is not a file to index", () => {
@@ -140,62 +129,35 @@ describe("walkProject in a git repo", () => {
     const outside = makeProject({ "secret.txt": "outside the project" });
     fs.symlinkSync(path.join(outside, "secret.txt"), path.join(root, "link.txt"));
     git(root, "add", ".");
-    expect(walkProject(root, defaultConfig()).files).toEqual(["src/a.ts"]);
+    expect(walkProject(root, defaultConfig())).toEqual(["src/a.ts"]);
   });
 });
 
-describe("fullScan", () => {
-  test("indexes with descriptions, tokens, symbols for big files", () => {
+describe("fileFacts", () => {
+  test("reads a file's description, tokens, size and mtime", () => {
     const bigTs =
       "/** Widget engine. */\n" +
       Array.from({ length: 60 }, (_, i) => `export function w${i}() { return ${i}; }`).join("\n");
     const root = makeProject({ "src/big.ts": bigTs, "notes.md": "# Notes\nbody" });
-    const index = fullScan(root, defaultConfig());
-    expect(index.meta.fileCount).toBe(2);
-    const big = index.files["src/big.ts"]!;
+    const big = fileFacts(root, "src/big.ts", defaultConfig())!;
     expect(big.description).toBe("Widget engine.");
     expect(big.tokens).toBeGreaterThan(300);
-    expect(big.symbols!.length).toBeGreaterThan(0);
-    expect(index.files["notes.md"]!.description).toBe("Notes");
+    expect(big.size).toBe(Buffer.byteLength(bigTs));
+    expect(big.generated).toBe(false);
+    expect(fileFacts(root, "notes.md", defaultConfig())!.description).toBe("Notes");
   });
 
-  test("omits symbols for test, spec and generated files but keeps their descriptions", () => {
-    const body = Array.from(
-      { length: 100 },
-      (_, i) => `export function w${i}() { return ${i}; }`,
-    ).join("\n");
-    const goBody =
-      "package api\n" +
-      Array.from({ length: 100 }, (_, i) => `func W${i}() int { return ${i} }`).join("\n");
-    const pyBody = Array.from({ length: 100 }, (_, i) => `def test_w${i}():\n    assert ${i}`).join(
-      "\n",
-    );
+  test("flags a generated file and keeps its description", () => {
     const root = makeProject({
-      "src/widget.ts": body,
-      "src/api.py": pyBody,
-      "api/auth.go": goBody,
-      "src/widget.test.ts": body,
-      "src/widget.spec.ts": body,
-      "src/__tests__/widget.ts": body,
-      "tests/test_api.py": pyBody,
-      "api/auth_test.go": goBody,
-      "api/gen/models.go": "// Code generated by sqlc. DO NOT EDIT.\n\n" + goBody,
+      "api/gen/models.go": "// Code generated by sqlc. DO NOT EDIT.\n\npackage gen\n",
+      "api/auth.go": "package api\n",
     });
-    const files = fullScan(root, defaultConfig()).files;
-    for (const rel of ["src/widget.ts", "src/api.py", "api/auth.go"])
-      expect(files[rel]!.symbols!.length).toBeGreaterThan(0);
-    for (const rel of [
-      "src/widget.test.ts",
-      "src/widget.spec.ts",
-      "src/__tests__/widget.ts",
-      "tests/test_api.py",
-      "api/auth_test.go",
-      "api/gen/models.go",
-    ]) {
-      expect(files[rel]!.tokens).toBeGreaterThanOrEqual(SYMBOL_MIN_TOKENS);
-      expect(files[rel]!.symbols).toBeUndefined();
-    }
-    expect(files["api/gen/models.go"]!.description).toBe("Code generated by sqlc. DO NOT EDIT.");
+    const config = defaultConfig();
+    expect(fileFacts(root, "api/gen/models.go", config)).toMatchObject({
+      generated: true,
+      description: "Code generated by sqlc. DO NOT EDIT.",
+    });
+    expect(fileFacts(root, "api/auth.go", config)!.generated).toBe(false);
   });
 
   test("skips files with a NUL byte in the first 8,000 bytes", () => {
@@ -204,25 +166,18 @@ describe("fullScan", () => {
       "late-nul.txt": "x".repeat(8000) + "\0",
       "plain.txt": "hello",
     });
-    expect(Object.keys(fullScan(root, defaultConfig()).files).sort()).toEqual([
-      "late-nul.txt",
-      "plain.txt",
-    ]);
+    const config = defaultConfig();
+    expect(fileFacts(root, "blob.dat", config)).toBeNull();
+    expect(fileFacts(root, "late-nul.txt", config)).not.toBeNull();
+    expect(fileFacts(root, "plain.txt", config)).not.toBeNull();
   });
-});
 
-describe("walk metadata", () => {
-  test("fullScan records truncation and the candidate count; refreshIndex clears truncation once it no longer applies", () => {
-    const root = makeProject({ "a.ts": "x", "b.ts": "x", "c.ts": "x" });
-    git(root, "init", "-q");
-    const config = { ...defaultConfig(), max_files: 2 };
-    const index = fullScan(root, config);
-    expect(index.meta.truncated).toBe(true);
-    expect(index.meta.candidateCount).toBe(3);
-    fs.unlinkSync(path.join(root, "c.ts"));
-    const result = refreshIndex(root, config, index, 5000);
-    expect(result.index.meta.truncated).toBeUndefined();
-    expect(result.index.meta.candidateCount).toBe(2);
+  test("gives nothing for a sensitive, excluded, missing or unreadable path", () => {
+    const root = makeProject({ ".env": "SECRET=1", "node_modules/p/i.js": "x", "ok.ts": "x" });
+    const config = defaultConfig();
+    for (const rel of [".env", "node_modules/p/i.js", "missing.ts"])
+      expect(fileFacts(root, rel, config)).toBeNull();
+    expect(fileFacts(root, "ok.ts", config)).not.toBeNull();
   });
 });
 
@@ -256,99 +211,133 @@ describe("ownership", () => {
     });
   }
 
-  test("a scan leaves out files another project or repo owns, and the walk stops there", () => {
-    const p = makeOwnersRepo();
-    const index = fullScan(p, defaultConfig());
-    expect(Object.keys(index.files).sort()).toEqual(["src/a.ts", "vendor/m/x.ts"]);
-    expect(index.meta.candidateCount).toBe(2);
+  test("a walk leaves out files another project or repo owns, and stops there", () => {
+    expect(walkProject(makeOwnersRepo(), defaultConfig()).sort()).toEqual([
+      "src/a.ts",
+      "vendor/m/x.ts",
+    ]);
 
-    // Outside git the walk itself stops, so the child's files never count toward max_files.
     const extra: Record<string, string> = {};
     for (let i = 1; i <= 5; i++) extra[`child/f${i}.ts`] = `export const f${i} = 1;`;
-    const q = makeOwnersTree(extra);
-    const walked = fullScan(q, { ...defaultConfig(), max_files: 2 });
-    expect(Object.keys(walked.files).sort()).toEqual(["q1.ts", "q2.ts"]);
-    expect(walked.meta.truncated).toBeUndefined();
-    expect(walked.meta.candidateCount).toBe(2);
-  });
-
-  test("a refresh drops a file once a nested project claims it", () => {
-    const p = makeProject({ "src/a.ts": "export const a = 1;", "pkg/x.ts": "export const x = 1;" });
-    git(p, "init", "-q");
-    const config = defaultConfig();
-    const index = fullScan(p, config);
-    expect(Object.keys(index.files)).toContain("pkg/x.ts");
-    fs.mkdirSync(path.join(p, "pkg/.crank"));
-    fs.writeFileSync(path.join(p, "pkg/.crank/config.json"), "{}");
-    const result = refreshIndex(p, config, index, 2_000);
-    expect(Object.keys(result.index.files)).not.toContain("pkg/x.ts");
-
-    // Outside git, a write-pinned file seeds the walk; the claim still drops it.
-    const q = makeProject({ "q1.ts": "export const q1 = 1;", "child/c.ts": "export const c = 1;" });
-    const pinned = fullScan(q, config);
-    pinned.files["child/c.ts"]!.writeCount = 1;
-    fs.mkdirSync(path.join(q, "child/.crank"));
-    fs.writeFileSync(path.join(q, "child/.crank/config.json"), "{}");
-    expect(Object.keys(refreshIndex(q, config, pinned, 2_000).index.files)).toEqual(["q1.ts"]);
+    expect(walkProject(makeOwnersTree(extra), defaultConfig()).sort()).toEqual(["q1.ts", "q2.ts"]);
   });
 });
 
-describe("refreshIndex", () => {
+/** A fresh code.db for `root`, closed by the test's `finally`. */
+function openFacts(root: string): sqlite.DatabaseSync {
+  fs.mkdirSync(path.join(root, ".crank"), { recursive: true });
+  const opened = openCodeDb(root, "write");
+  expect(opened.status).toBe("open");
+  return opened.db!;
+}
+
+const filesIn = (db: sqlite.DatabaseSync): string[] =>
+  (db.prepare("SELECT path FROM files ORDER BY path").all() as { path: string }[]).map(
+    (row) => row.path,
+  );
+
+describe("refreshFileFacts", () => {
   test("detects changed, added, deleted", () => {
     const root = makeProject({ "a.ts": "const a = 1;", "b.ts": "const b = 1;" });
     const config = defaultConfig();
-    const index = fullScan(root, config);
+    const db = openFacts(root);
+    try {
+      expect(refreshFileFacts(root, config, db, Infinity)).toMatchObject({ added: 2 });
 
-    // change a (content + size), add c and d, delete b
-    fs.writeFileSync(path.join(root, "a.ts"), "const a = 12345; // changed now");
-    fs.writeFileSync(path.join(root, "c.ts"), "const c = 1;");
-    fs.writeFileSync(path.join(root, "d.ts"), "const d = 1;");
-    fs.unlinkSync(path.join(root, "b.ts"));
+      // change a (content + size), add c and d, delete b
+      fs.writeFileSync(path.join(root, "a.ts"), "const a = 12345; // changed now");
+      fs.writeFileSync(path.join(root, "c.ts"), "const c = 1;");
+      fs.writeFileSync(path.join(root, "d.ts"), "const d = 1;");
+      fs.unlinkSync(path.join(root, "b.ts"));
 
-    const result = refreshIndex(root, config, index, 5000);
-    expect(result.changed).toBe(1);
-    expect(result.added).toBe(2);
-    expect(result.removed).toBe(1);
-    expect(result.partial).toBe(false);
-    expect(Object.keys(result.index.files).sort()).toEqual(["a.ts", "c.ts", "d.ts"]);
+      expect(refreshFileFacts(root, config, db, Infinity)).toEqual({
+        changed: 1,
+        added: 2,
+        removed: 1,
+        partial: false,
+      });
+      expect(filesIn(db)).toEqual(["a.ts", "c.ts", "d.ts"]);
+    } finally {
+      db.close();
+    }
   });
 
-  test("unchanged files are not re-extracted", () => {
+  test("unchanged files are not read again", () => {
     const root = makeProject({ "a.ts": "const a = 1;" });
     const config = defaultConfig();
-    const index = fullScan(root, config);
-    // A sentinel no analysis would ever produce: re-extraction overwrites the
-    // whole entry, so its survival is the observation. (mtimeMs cannot serve —
-    // it is copied from the file's stat and is identical either way.)
-    index.files["a.ts"]!.description = "SENTINEL — not re-extracted";
-    const result = refreshIndex(root, config, index, 5000);
-    expect(result.changed).toBe(0);
-    expect(result.index.files["a.ts"]!.description).toBe("SENTINEL — not re-extracted");
+    const db = openFacts(root);
+    try {
+      refreshFileFacts(root, config, db, Infinity);
+      // A sentinel no analysis would ever produce: reading a file again overwrites its description.
+      db.exec("UPDATE files SET description = 'SENTINEL — not read again'");
+      expect(refreshFileFacts(root, config, db, Infinity).changed).toBe(0);
+      expect(
+        (db.prepare("SELECT description FROM files").get() as { description: string }).description,
+      ).toBe("SENTINEL — not read again");
+    } finally {
+      db.close();
+    }
   });
 
-  test("drops the stale entry when a file grows past max_file_size_bytes", () => {
+  test("drops a file once it grows past max_file_size_bytes", () => {
     const root = makeProject({ "a.ts": "const a = 1;" });
     const config = { ...defaultConfig(), max_file_size_bytes: 50 };
-    const index = fullScan(root, config);
-    expect(index.files["a.ts"]).toBeDefined();
-    fs.writeFileSync(path.join(root, "a.ts"), "x".repeat(100));
-    const result = refreshIndex(root, config, index, 5000);
-    expect(result.index.files["a.ts"]).toBeUndefined();
-    expect(result.removed).toBe(1);
+    const db = openFacts(root);
+    try {
+      refreshFileFacts(root, config, db, Infinity);
+      expect(filesIn(db)).toEqual(["a.ts"]);
+      fs.writeFileSync(path.join(root, "a.ts"), "x".repeat(100));
+      expect(refreshFileFacts(root, config, db, Infinity).removed).toBe(1);
+      expect(filesIn(db)).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 
-  test("zero budget marks partial and still drops deleted files", () => {
+  test("an expired deadline marks partial, reads no new file and still drops deleted ones", () => {
     const root = makeProject({ "a.ts": "const a = 1;", "gone.ts": "const g = 1;" });
     const config = defaultConfig();
-    const index = fullScan(root, config);
-    fs.unlinkSync(path.join(root, "gone.ts"));
-    fs.writeFileSync(path.join(root, "new.ts"), "const n = 1;");
-    const result = refreshIndex(root, config, index, -1);
-    expect(result.partial).toBe(true);
-    expect(result.index.meta.partial).toBe(true);
-    expect(result.removed).toBe(1);
-    expect(result.added).toBe(0);
-    expect(Object.keys(result.index.files)).toEqual(["a.ts"]);
+    const db = openFacts(root);
+    try {
+      refreshFileFacts(root, config, db, Infinity);
+      fs.unlinkSync(path.join(root, "gone.ts"));
+      fs.writeFileSync(path.join(root, "new.ts"), "const n = 1;");
+      const result = refreshFileFacts(root, config, db, 0);
+      expect(result).toMatchObject({ partial: true, removed: 1, added: 0 });
+      expect(filesIn(db)).toEqual(["a.ts"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("drops a file once a nested project claims it", () => {
+    const p = makeProject({ "src/a.ts": "export const a = 1;", "pkg/x.ts": "export const x = 1;" });
+    git(p, "init", "-q");
+    const config = defaultConfig();
+    const db = openFacts(p);
+    try {
+      refreshFileFacts(p, config, db, Infinity);
+      expect(filesIn(db)).toContain("pkg/x.ts");
+      fs.mkdirSync(path.join(p, "pkg/.crank"));
+      fs.writeFileSync(path.join(p, "pkg/.crank/config.json"), "{}");
+      refreshFileFacts(p, config, db, Infinity);
+      expect(filesIn(db)).toEqual(["src/a.ts"]);
+    } finally {
+      db.close();
+    }
+
+    // Outside git the walk itself stops at the claim.
+    const q = makeProject({ "q1.ts": "export const q1 = 1;", "child/c.ts": "export const c = 1;" });
+    const qdb = openFacts(q);
+    try {
+      refreshFileFacts(q, config, qdb, Infinity);
+      fs.mkdirSync(path.join(q, "child/.crank"));
+      fs.writeFileSync(path.join(q, "child/.crank/config.json"), "{}");
+      refreshFileFacts(q, config, qdb, Infinity);
+      expect(filesIn(qdb)).toEqual(["q1.ts"]);
+    } finally {
+      qdb.close();
+    }
   });
 });
 
@@ -365,31 +354,48 @@ describe("churn and write pins", () => {
     fs.writeFileSync(path.join(root, "src/a.ts"), "z");
     gitCommit(root, "a and b");
     const config = defaultConfig();
-    const index = fullScan(root, config);
-    const head = git(root, "rev-parse", "HEAD").trim();
-    expect(index.meta.churn).toEqual({ head, paths: ["src/b.ts", "src/a.ts"] });
+    const db = openFacts(root);
+    try {
+      refreshFileFacts(root, config, db, Infinity);
+      writeActivity(db, root, config);
+      const head = git(root, "rev-parse", "HEAD").trim();
+      expect(readChurn(db)).toEqual({ head, paths: ["src/b.ts", "src/a.ts"] });
 
-    // A cached list for the current HEAD is trusted as is; a new commit replaces it.
-    index.meta.churn = { head, paths: ["src/a.ts"] };
-    expect(refreshIndex(root, config, index, 5000).index.meta.churn!.paths).toEqual(["src/a.ts"]);
-    fs.writeFileSync(path.join(root, "src/a.ts"), "w");
-    gitCommit(root, "a");
-    expect(refreshIndex(root, config, index, 5000).index.meta.churn!.paths).toEqual([
-      "src/a.ts",
-      "src/b.ts",
-    ]);
+      // A cached list for the current HEAD is trusted as is; a new commit replaces it.
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('churn', ?)").run(
+        JSON.stringify({ head, paths: ["src/a.ts"] }),
+      );
+      writeActivity(db, root, config);
+      expect(readChurn(db)!.paths).toEqual(["src/a.ts"]);
+      fs.writeFileSync(path.join(root, "src/a.ts"), "w");
+      gitCommit(root, "a");
+      writeActivity(db, root, config);
+      expect(readChurn(db)!.paths).toEqual(["src/a.ts", "src/b.ts"]);
+    } finally {
+      db.close();
+    }
   });
 
-  test("a refresh keeps at most 100 pins, dropping the least recently written", () => {
+  test("keeps at most 100 write pins, dropping the least recently written", () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 101; i++) files[`f${String(i).padStart(3, "0")}.ts`] = "x";
     const root = makeProject(files);
     fs.utimesSync(path.join(root, "f050.ts"), new Date(2020, 0, 1), new Date(2020, 0, 1));
     const config = defaultConfig();
-    const index = fullScan(root, config);
-    for (const entry of Object.values(index.files)) entry.writeCount = 1;
-    const after = refreshIndex(root, config, index, 5000).index;
-    expect(after.files["f050.ts"]!.writeCount).toBeUndefined();
-    expect(Object.values(after.files).filter((e) => e.writeCount === 1).length).toBe(100);
+    const db = openFacts(root);
+    try {
+      refreshFileFacts(root, config, db, Infinity);
+      db.exec("UPDATE files SET write_count = 1");
+      writeActivity(db, root, config);
+      const pinned = (
+        db.prepare("SELECT path FROM files WHERE write_count = 1").all() as {
+          path: string;
+        }[]
+      ).map((row) => row.path);
+      expect(pinned).toHaveLength(100);
+      expect(pinned).not.toContain("f050.ts");
+    } finally {
+      db.close();
+    }
   });
 });

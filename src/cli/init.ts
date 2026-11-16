@@ -18,9 +18,7 @@ import {
   type CrankConfig,
 } from "../hooks/lib/config.ts";
 import { unusedName } from "../hooks/lib/registry.ts";
-import { fullScan } from "../hooks/lib/scanner.ts";
-import { commitIndex } from "../hooks/lib/store.ts";
-import { CLI_LOCK_BUDGET_MS } from "../hooks/lib/lock.ts";
+import { startParsing, writeFileFacts } from "./scan.ts";
 
 function detectRuntime(): CrankConfig["runtime"] | null {
   if (spawnSync("bun", ["--version"], { stdio: "ignore" }).status === 0) return "bun";
@@ -92,21 +90,25 @@ function codexChoiceFor(codexMode: string, codexTrust: string): CodexChoice {
   return codexTrust === "write" ? "trust" : "review";
 }
 
-/** Backup dir, first scan, config, then every item; null after printing the failure lines. */
+/** Backup dir, file facts, config, then every item; null after printing the failure lines. */
 function installAll(
   root: string,
   crankDir: string,
   config: CrankConfig & { codex: CodexChoice },
-): { scanned: ReturnType<typeof commitIndex>; installed: ReturnType<typeof applyInstall> } | null {
+): { files: number; installed: ReturnType<typeof applyInstall> } | null {
   fs.mkdirSync(crankDir, { recursive: true });
   const backupDir = newBackupDir(crankDir);
   // Each writer backs up its file just before writing it, so a partial failure
   // is recoverable through `uninstall --restore`; init prints that hint instead of rolling back.
   try {
-    const scanned = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, () => fullScan(root, config));
+    const facts = writeFileFacts(root, config);
+    if (facts.status === "busy") throw new Error("code.db is busy");
+    if (facts.status === "failed") throw new Error(`could not write code.db (${facts.reason})`);
     saveConfig(crankDir, config);
     const installed = applyInstall({ root, crankDir, config, backupDir: () => backupDir });
-    return { scanned, installed };
+    // After the install, so the daemon finds a project it can parse.
+    startParsing(config, facts.pending);
+    return { files: facts.files, installed };
   } catch (err) {
     console.error(`crank-mem: ${errorMessage(err)}`);
     // uninstall needs .crank/config.json; before it exists nothing outside
@@ -162,10 +164,10 @@ export async function run(args: string[]): Promise<number> {
 
   const result = installAll(root, crankDir, config);
   if (!result) return 1;
-  const { scanned, installed } = result;
+  const { files, installed } = result;
 
   console.log(`crank-mem ${cliVersion()} initialized (runtime: ${runtime}, git: ${gitMode})`);
-  console.log(`  indexed ${scanned?.meta.fileCount ?? "?"} files → .crank/anatomy.md`);
+  console.log(`  indexed ${files} files → .crank/code.db`);
   printReport(installed);
   console.log(`Next: start a Claude Code session here — project memory injects at session start.`);
   console.log(`Optional: install the audit skill — npx skills add ChrisLiva/crank-mem`);

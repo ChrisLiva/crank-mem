@@ -77,3 +77,41 @@ export function isIndexableName(relPath: string, config: CrankConfig): boolean {
   if (LOCKFILE.test(relPath)) return false;
   return true;
 }
+
+/** Extensions of first-party source: the walk ranks them first and the session-start pointer counts the ones no grammar reads. */
+export const SOURCE_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".py",
+  ".go",
+  ".rs",
+  ".java",
+  ".kt",
+  ".scala",
+  ".swift",
+  ".c",
+  ".cc",
+  ".cpp",
+  ".cxx",
+  ".h",
+  ".hh",
+  ".hpp",
+  ".m",
+  ".mm",
+  ".cs",
+  ".rb",
+  ".php",
+  ".lua",
+  ".dart",
+  ".zig",
+  ".sh",
+  ".sql",
+  ".css",
+  ".scss",
+  ".vue",
+  ".svelte",
+]);

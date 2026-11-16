@@ -4,8 +4,8 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { debugEvent } from "./debug.ts";
 
-// Cross-process mutual exclusion over a lock file in .crank/: LOCK_FILE for
-// anatomy writers, or the file a caller names, such as usage rotation's.
+// Cross-process mutual exclusion over a lock file in .crank/ that the caller names, such as
+// usage rotation's.
 //
 // Mechanism: lockfile created with the "wx" flag (atomic O_EXCL on macOS,
 // Linux and Windows, no native deps). The file body records the owner for
@@ -18,7 +18,6 @@ import { debugEvent } from "./debug.ts";
 // Callers NEVER block the agent: on budget exhaustion withLock returns null
 // and the caller skips its update (the next writer converges the state).
 
-export const LOCK_FILE = "anatomy-index.lock";
 const STALE_MS = 10_000; // Matches the 10-second hook timeout that settings.ts sets.
 /** Pid-reuse guard: a same-host lock this old is stale even when its pid is alive. */
 const LIVE_OWNER_MAX_MS = 10 * 60_000;
@@ -101,16 +100,15 @@ export function trySteal(lockPath: string): void {
 }
 
 /**
- * Run `fn` while holding `lockFile` in `crankDir` (the anatomy lock by
- * default). Returns fn's result, or null if the lock could not be acquired
- * within `budgetMs` (caller must degrade gracefully — skip the update, never
- * block).
+ * Run `fn` while holding `lockFile` in `crankDir`. Returns fn's result, or
+ * null if the lock could not be acquired within `budgetMs` (caller must
+ * degrade gracefully — skip the update, never block).
  */
 export function withLock<T>(
   crankDir: string,
   budgetMs: number,
   fn: () => T,
-  lockFile = LOCK_FILE,
+  lockFile: string,
 ): T | null {
   const lockPath = path.join(crankDir, lockFile);
   const started = Date.now();
@@ -126,8 +124,7 @@ export function withLock<T>(
       steals++;
     }
     if (Date.now() >= deadline) {
-      // The one place lock contention is unambiguous: commitIndex collapses
-      // "lock lost" and "nothing to write" into the same null.
+      // The one place lock contention is unambiguous: a null result also means "nothing to write".
       debugEvent("lock-timeout", {
         lock: lockFile,
         waitedMs: Date.now() - started,

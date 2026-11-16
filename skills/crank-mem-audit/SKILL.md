@@ -75,9 +75,9 @@ by it). Do this before writing anything.
 
 - **cerebrum.md** — rewrite densely: telegram-style bullets under the file's
   existing headings, deduplicated, verified facts only.
-- **anatomy.md and the index belong to the scanner.** If the index looks
-  stale, suggest `crank-mem scan`; anatomy.md is rendered from the machine
-  index and overwritten on the next scan, so hand-edits are lost.
+- **code.db belongs to the scanner.** If the code graph looks stale, suggest
+  `crank-mem scan`; `.crank/code.db` is derived from the project's files and
+  rebuilt by the next scan, so hand-edits are lost.
 
 ## 7. Report
 

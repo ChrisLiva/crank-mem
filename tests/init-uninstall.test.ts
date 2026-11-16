@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -10,12 +10,17 @@ import {
   runHook,
   setMtime,
   snapshot,
+  stopDigests,
   type CliRun,
 } from "./helpers.ts";
 import { claudeSessionStart, claudeStop, codexApplyPatch } from "./fixtures/payloads.ts";
+import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 
 // Smoke: init into a temp project, check the wiring, uninstall, then expect a
 // byte-identical restore and no crank residue.
+
+// A daemon that init or upgrade starts would parse code.db while a test uninstalls and compares trees.
+beforeAll(() => stopDigests(process.env.CRANK_HOME!));
 
 function cli(cwd: string, codexHome: string, ...args: string[]): CliRun {
   return runCli(cwd, args, { CODEX_HOME: codexHome });
@@ -108,17 +113,23 @@ describe("init → uninstall round-trip", () => {
     );
     expect(fs.readFileSync(path.join(root, ".git/info/exclude"), "utf-8")).toContain(".crank/");
     // data dir
-    expect(fs.existsSync(path.join(root, ".crank/anatomy-index.json"))).toBe(true);
+    expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(true);
+    for (const retired of ["anatomy.md", "anatomy-index.json", "anatomy-index.lock"])
+      expect(fs.existsSync(path.join(root, ".crank", retired))).toBe(false);
     expect(fs.existsSync(path.join(root, ".crank/cerebrum.md"))).toBe(true);
     expect(fs.readFileSync(path.join(root, ".crank/cerebrum.md"), "utf-8")).toBe(
       "# Cerebrum\n\n## User Preferences\n\n## Memory\n",
     );
     expect(fs.existsSync(path.join(root, ".crank/journal.md"))).toBe(false);
     expect(fs.existsSync(path.join(root, ".crank/hooks/lib/scanner.ts"))).toBe(true);
-    const index = JSON.parse(
-      fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"),
-    );
-    expect(index.meta.fileCount).toBeGreaterThanOrEqual(2);
+    const opened = openCodeDb(root, "read");
+    expect(opened.status).toBe("open");
+    try {
+      const counted = opened.db!.prepare("SELECT COUNT(*) AS n FROM files").get() as { n: number };
+      expect(counted.n).toBeGreaterThanOrEqual(2);
+    } finally {
+      opened.db!.close();
+    }
 
     const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
     expect(un.status).toBe(0);
@@ -157,7 +168,11 @@ describe("init → uninstall round-trip", () => {
       ".crank/backups/x/manifest.json",
       ".crank/backups/cerebrum/c.md",
       ".crank/debug.log",
+      ".crank/anatomy.md",
+      ".crank/anatomy-index.json",
       ".crank/anatomy-index.lock",
+      ".crank/code.db",
+      ".crank/repair.lock",
       ".crank/cerebrum-dedup.json",
       ".crank/efforts/e1/plan.md",
     ]) {
@@ -306,7 +321,12 @@ describe("init → uninstall round-trip", () => {
       "cerebrum-nudge.json",
       "cerebrum-dedup.json",
       "cerebrum-archive.md",
+      "anatomy.md",
+      "anatomy-index.json",
       "anatomy-index.lock",
+      "code.db-wal",
+      "code.db-shm",
+      "repair.lock",
       "journal.md.tmp",
     ]) {
       fs.writeFileSync(path.join(crank, name), "x");

@@ -1,9 +1,10 @@
 # crank-mem
 
 Project memory for coding agents (Claude Code + Codex). Maintains a
-token-annotated file anatomy index and a cerebrum, `.crank/cerebrum.md`,
+code graph, `.crank/code.db` (every file's description and token count, its
+symbols, imports and call sites), and a cerebrum, `.crank/cerebrum.md`,
 injected at session start; Claude Code subagents get a 2 KB cerebrum excerpt;
-re-indexes on writes. With digests on, Claude Code sessions are digested
+refreshes the graph on writes. With digests on, Claude Code sessions are digested
 automatically into a per-project store, `.crank/memory.db`, that agents search
 with `crank-mem search`, `timeline` and `get`, and that shows up at session
 start and when an agent reads a file it covers. After a digest, consolidation
@@ -87,8 +88,8 @@ Requires bun, or node >= 23.6 (runs TypeScript directly).
 
 ### Commands
 
-- `crank-mem init` — wire hooks into `.claude`/`.codex`, add the `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`, `Bash(crank-mem get *)`, `Bash(crank-mem outline *)`, `Bash(crank-mem unfold *)`, `Bash(crank-mem callers *)`, `Bash(crank-mem callees *)`, `Bash(crank-mem impact *)` and `Bash(crank-mem anatomy *)` allow rules to the Claude settings file so agents run the recall and code-reading commands without a prompt, seed `.crank/` with the project named after its folder (`-2`, `-3`, … added when another installed project has that name; set `name` in `.crank/config.json` to change it), first scan; removes crank hooks from the other Claude settings file
-- `crank-mem scan` — full index rebuild
+- `crank-mem init` — wire hooks into `.claude`/`.codex`, add the `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`, `Bash(crank-mem get *)`, `Bash(crank-mem outline *)`, `Bash(crank-mem unfold *)`, `Bash(crank-mem callers *)`, `Bash(crank-mem callees *)`, `Bash(crank-mem impact *)` and `Bash(crank-mem anatomy *)` allow rules to the Claude settings file so agents run the recall and code-reading commands without a prompt, seed `.crank/` with the project named after its folder (`-2`, `-3`, … added when another installed project has that name; set `name` in `.crank/config.json` to change it), record every file in `.crank/code.db` and start the daemon that parses them; removes crank hooks from the other Claude settings file
+- `crank-mem scan` — bring `.crank/code.db` current: record every indexable file, then parse every file that awaits a parse, with a `crank-mem: parsing N/M files…` line on stderr every 200 files. It deletes and rebuilds a store that is corrupt, at another schema version or unreadable, and fails with the OS error when it cannot delete one
 - `crank-mem digest on|off|resume` — turn background digests on or off for this checkout, a switch kept in the gitignored `.crank/config.local.json`; `resume` clears a stop and restarts the daemon
 - `crank-mem search <query>` — search stored memory by meaning or keyword (`--limit`, `--type`, `--since YYYY-MM-DD`, `--file`, `--project <name>` to search only that project's store, and `--stale` to include observations flagged stale, marked `[stale]`); keyword only until `setup` has run
 - `crank-mem timeline <id>` — the observations around one id (`--depth`)
@@ -101,17 +102,17 @@ Requires bun, or node >= 23.6 (runs TypeScript directly).
 - `crank-mem anatomy [<dir>]` — one entry per indexed file under the directory, in path order, with its description, token count and top-level symbols; a long listing ends with a `--from <path>` command for the next page
 - `crank-mem restore-memory [<file>]` — put a `memory.db` snapshot back: the named file, or the newest one in `.crank/backups/memory/`. It checks the snapshot's integrity and schema version, saves the current store as a snapshot first so the restore can be undone, then migrates the restored store to this version
 - `crank-mem setup` — install crank-mem's packages, build the dashboard into `dashboard/dist/`, and download the local search model into `~/.crank/models`; an installed copy installs only production packages and skips the dashboard build, since its release ships one
-- `crank-mem stats` — index report; memory health (cerebrum bullets injected against total, preferences left out, the oldest bullet left out, cited paths that still exist, days since the last audit); capture health (a status line naming the first problem and the command that fixes it, digest on, off or stopped, daemon, spool waiting and parked, store counts, last digest, the month's cost at list price, pending `proposals`, `stale` rows, the last `consolidation` and its outcome, `last snapshot`, embedder); repos sessions touched that have no crank-mem install (`not installed`); whether Codex threads got the injection and whether its hook trust is current
+- `crank-mem stats` — code graph report; memory health (cerebrum bullets injected against total, preferences left out, the oldest bullet left out, cited paths that still exist, days since the last audit); capture health (a status line naming the first problem and the command that fixes it, digest on, off or stopped, daemon, spool waiting and parked, store counts, last digest, the month's cost at list price, pending `proposals`, `stale` rows, the last `consolidation` and its outcome, `last snapshot`, embedder); repos sessions touched that have no crank-mem install (`not installed`); whether Codex threads got the injection and whether its hook trust is current
 - `crank-mem dashboard` — serve a read-only memory dashboard on `127.0.0.1` until Ctrl-C: a Health board of every registered project (capture status, the command that fixes a stalled one, cost and 30-day digests), then each project's Health, Curation, Usage and Memory views, with per-day charts in Health and Usage. It prints `crank-mem dashboard: http://127.0.0.1:<port>/?token=<token>` and opens that URL in the browser; the token, kept in `~/.crank/dashboard.json`, trades for a session cookie. `--port <n>` picks the port (default `38700` plus your uid mod 100), and `--no-open` skips the browser. It refuses until `setup` has built the dashboard
-- `crank-mem upgrade [--all]` — re-vendor hooks and repair their wiring after an update, and add the project to `~/.crank/projects.json`, the list the dashboard shows; `--all` installs crank-mem's packages once, then repairs every project in that list, skipping a missing root and a project whose anatomy lock is held
+- `crank-mem upgrade [--all]` — re-vendor hooks and repair their wiring after an update, and add the project to `~/.crank/projects.json`, the list the dashboard shows; `--all` installs crank-mem's packages once, then repairs every project in that list, skipping a missing root and a project whose repair lock is held. Each repair also brings `.crank/code.db`'s file facts current, starts the daemon on files that await a parse, and deletes the `anatomy.md`, `anatomy-index.json` and `anatomy-index.lock` that earlier releases kept
 - `crank-mem self-update [--to vX.Y.Z]` — install the latest release, or the tagged one, make it the current version and repair every registered project with it; the previous version stays installed and older ones are removed, except the one this process, a live daemon or a live dashboard runs. It refuses in a clone, which updates with `git pull`
 - `crank-mem rollback` — make the previous installed version the current one and repair every registered project with it. It refuses when a project's memory store has a schema newer than that version reads, naming the projects and `crank-mem restore-memory`, and refuses in a clone
 - `crank-mem self-uninstall` — remove the installed crank-mem: stop the daemon, offer to run `crank-mem uninstall` in every registered project (`--yes` accepts), then remove `~/.crank/versions/`, the `current` link, the `crank-mem` link in the bin dir (`--bin-dir <dir>`, default `~/.local/bin`) and the PATH block in your shell rc file. `--purge` also removes the state crank-mem keeps in `~/.crank` (the spool, models, registry, dashboard token and daemon files) and nothing another tool keeps there
-- `crank-mem uninstall` — remove all wiring, offer backup restore: `--restore` puts each project file crank-mem changed back as it was before crank-mem first changed it and deletes the files crank-mem created, while files outside the project, such as `~/.codex/config.toml`, only lose crank-mem's entries; `--delete-crank` deletes only the files crank-mem writes in `.crank/`, `memory.db` and its `-wal` and `-shm` files included, and removes the directory only when nothing else is left in it; it exits 1, naming the file, when it cannot remove crank-mem's entries from a file (one that is not valid JSON, or one it cannot read or write)
+- `crank-mem uninstall` — remove all wiring, offer backup restore: `--restore` puts each project file crank-mem changed back as it was before crank-mem first changed it and deletes the files crank-mem created, while files outside the project, such as `~/.codex/config.toml`, only lose crank-mem's entries; `--delete-crank` deletes only the files crank-mem writes in `.crank/`, `code.db` and `memory.db` and their `-wal` and `-shm` files included, and removes the directory only when nothing else is left in it; it exits 1, naming the file, when it cannot remove crank-mem's entries from a file (one that is not valid JSON, or one it cannot read or write)
 
 ### Layout under `.crank/`
 
-`anatomy-index.json` (data), `anatomy.md` (human/agent view), `cerebrum.md`
+`code.db` (the code graph, derived data that `crank-mem scan` rebuilds, kept out of git), `cerebrum.md`
 (the cerebrum, kept by consolidation), `cerebrum-archive.md` (bullets
 consolidation removed or replaced, each with its reason; never injected),
 `memory.db` (digested memory, kept out of git), `config.json`, `config.local.json` (the per-checkout digest switch, kept out of git), `hooks/` (vendored), `backups/` (init/upgrade backups,
@@ -124,8 +125,7 @@ to `usage.1.jsonl`, replacing the older one). A `journal.md` from an earlier
 release stays on disk, but nothing reads or writes it.
 
 `.crank/.gitignore` is an allowlist: it ignores everything in `.crank/` except
-`config.json`, `cerebrum.md`, `cerebrum-archive.md`, `journal.md`,
-`anatomy.md`, `anatomy-index.json` and `hooks/`. In commit mode, backups, the
+`config.json`, `cerebrum.md`, `cerebrum-archive.md`, `journal.md` and `hooks/`. In commit mode, backups, the
 lock file, the debug log and files another tool writes into `.crank/` stay
 out of git. `init` backs up a `.crank/.gitignore` that another tool wrote
 before replacing it.
@@ -195,23 +195,26 @@ so a flag left standing for 90 days ends that observation's retention.
 
 ### What gets indexed
 
-When the project root holds `.git`, the file list comes from
-`git ls-files -co --exclude-standard`, so gitignored files stay out. Two
-groups of files go first: files an agent wrote (up to 100, most recent first)
-and the 100 files changed most often in the last 300 commits, not counting
-commits that touch more than 50 files. crank-mem recomputes that churn list
-only when HEAD moves. Source code comes next, and anything under `deps_src`,
-`third_party`, `vendor`, `external`, `node_modules`, `resources`, `assets`,
-`static` or `public` ranks last; the first `max_files` (default 500) are
-indexed. A written file stays pinned until it shows up in the churn list.
-`anatomy.md` opens with the 25 most active of these files. Submodule contents
-are not indexed. A write to a gitignored file is indexed by the write hook and
+Every indexable file goes into `.crank/code.db`, with no cap. When the project
+root holds `.git`, the file list comes from `git ls-files -co
+--exclude-standard`, so gitignored files stay out. Submodule contents are not
+indexed. A write to a gitignored file is recorded by the write hook and
 dropped again at the next session start. When the root has no `.git`, or git
 fails, a sorted directory walk is used instead, and it does not read
 `.gitignore`. That includes a project initialized in a subdirectory of a repo,
-such as `packages/web` in a monorepo: it also gets no churn ranking. When the cap cuts files, the session-start injection says so and, in
-git, gives the indexed count against the total; `crank-mem stats` counts every
-indexable file without the cap.
+such as `packages/web` in a monorepo: it also gets no churn ranking.
+
+Session start and each write record a file's description and token count at
+once. The daemon then parses the files that await a parse, up to 256 KiB each
+and at most 5,000 calls per file, in this order: files an agent wrote (up to
+100, most recent first), the 100 files changed most often in the last 300
+commits, not counting commits that touch more than 50 files, then source code,
+with anything under `deps_src`, `third_party`, `vendor`, `external`,
+`node_modules`, `resources`, `assets`, `static` or `public` last. crank-mem
+recomputes the churn list only when HEAD moves, and a written file stays
+pinned until it shows up in it. `crank-mem anatomy` opens with the 25 most
+active of these files, and `crank-mem stats` counts every file and every file
+still awaiting a parse.
 
 ### Audit skill
 
@@ -252,13 +255,14 @@ Either writes `.crank/debug.log` — one record per hook run:
 
 ```json
 {"ts":"…","hook":"post-write","ms":5,"ok":true,"events":[
-  {"event":"reindex","tool":"Write","paths":["src/app.ts"],"committed":true}]}
+  {"event":"reindex","tool":"Write","paths":["src/app.ts"],"deletes":0,"skipped":[]}]}
 ```
 
-`ok:false` carries the full stack. Useful events: `refresh` (changed/added/
+`ok:false` carries the full stack. Useful events: `graph-refresh` (changed/added/
 removed/partial counts), `injected` (bytes vs. budget, plus estimated tokens), `reindex`
-(`committed:false` means the write did not land), `lock-timeout` (contention —
-the only way to tell it apart from "nothing to write"), `walk-fallback` (git listing failed, so the directory walk ran),
+(the paths a write recorded in `code.db`, and the ones it skipped), `graph-skip` and
+`graph-failed` (the store was left as it was, with the reason), `lock-timeout` (contention on a
+lock file), `walk-fallback` (git listing failed, so the directory walk ran),
 `churn-skipped` (no churn list, for example before the first commit).
 
 `CRANK_DEBUG=0` forces it off. The log is gitignored, capped at 1 MB then

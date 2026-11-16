@@ -8,20 +8,17 @@ import {
   isCodexPayload,
 } from "./lib/hook-io.ts";
 import { errorMessage, type CrankConfig } from "./lib/config.ts";
-import { loadIndex, commitIndex } from "./lib/store.ts";
 import { openCodeDb, pendingCount, refreshFileFacts } from "./lib/code-db.ts";
 import { writeActivity } from "./lib/activity.ts";
 import { ensureDaemon } from "./lib/spool.ts";
 import { readStopState } from "./lib/user-state.ts";
-import { refreshIndex } from "./lib/scanner.ts";
-import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
 import { sessionStartInjection } from "./lib/injection.ts";
 import { debugEvent } from "./lib/debug.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
 import { registerProject } from "./lib/registry.ts";
 
 // SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
-// included. Refreshes the index under lock, then emits the injection via
+// included. Refreshes code.db's file facts, then emits the injection via
 // hookSpecificOutput.additionalContext. sessionStartInjection applies the digest
 // gate (ADR 0010).
 // Advisory-only: every path exits 0.
@@ -30,12 +27,16 @@ const REFRESH_BUDGET_MS = 2_000;
 // The code.db open leaves this much of the budget for the facts and activity writes.
 const GRAPH_RESERVE_MS = 100;
 
+const STALENESS_NOTE =
+  "file refresh ran out of time before covering every file — the code graph may be slightly stale";
+
 /**
  * Brings code.db's file facts and activity current before `deadlineMs`, then starts the daemon
  * when files still await a parse and no stop state is set. A store that is corrupt, another
- * version, unreadable or read-only is left as it is. Never throws.
+ * version, unreadable or read-only is left as it is. Returns the staleness note for a refresh
+ * that ran out of time. Never throws.
  */
-function writeGraph(root: string, config: CrankConfig, deadlineMs: number): void {
+function writeGraph(root: string, config: CrankConfig, deadlineMs: number): string | null {
   try {
     const opened = openCodeDb(
       root,
@@ -44,18 +45,20 @@ function writeGraph(root: string, config: CrankConfig, deadlineMs: number): void
     );
     if (opened.status !== "open" || !opened.db) {
       debugEvent("graph-skip", { status: opened.status });
-      return;
+      return null;
     }
     try {
       const refresh = refreshFileFacts(root, config, opened.db, deadlineMs);
       writeActivity(opened.db, root, config);
       debugEvent("graph-refresh", { ...refresh });
       if (pendingCount(opened.db) > 0 && readStopState() === null) ensureDaemon(config);
+      return refresh.partial ? STALENESS_NOTE : null;
     } finally {
       opened.db.close();
     }
   } catch (err) {
     debugEvent("graph-failed", { error: errorMessage(err) });
+    return null;
   }
 }
 
@@ -73,31 +76,7 @@ async function main(): Promise<void> {
     // A root that cannot be resolved stays unregistered until init or upgrade.
   }
 
-  let stalenessNote: string | null = null;
-  const refreshDeadline = Date.now() + REFRESH_BUDGET_MS;
-  let index = commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (current) => {
-    const startedRefresh = Date.now();
-    const result = refreshIndex(root, config, current, REFRESH_BUDGET_MS);
-    debugEvent("refresh", {
-      ms: Date.now() - startedRefresh,
-      changed: result.changed,
-      added: result.added,
-      removed: result.removed,
-      partial: result.partial,
-      fileCount: result.index.meta.fileCount,
-    });
-    return result.index;
-  });
-
-  if (index === null) {
-    stalenessNote =
-      "index refresh skipped (another writer holds the lock) — the file map may be slightly stale";
-    index = loadIndex(crankDir);
-  } else if (index.meta.partial) {
-    stalenessNote =
-      "index refresh ran out of time before covering every file — the file map may be slightly stale";
-  }
-  writeGraph(root, config, refreshDeadline);
+  const stalenessNote = writeGraph(root, config, Date.now() + REFRESH_BUDGET_MS);
 
   const result = sessionStartInjection(root, crankDir, config, {
     codex: isCodexPayload(payload),
@@ -106,7 +85,7 @@ async function main(): Promise<void> {
   });
   emitAdditionalContext("SessionStart", result.text);
   recordUsage(root, hookActor(payload), result.usage);
-  console.error(`crank-mem: injected project memory (${index.meta.fileCount} files indexed)`);
+  console.error("crank-mem: injected project memory");
 }
 
 await runAdvisoryHook("session-start", main);

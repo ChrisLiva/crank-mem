@@ -45,7 +45,6 @@ export type CodexChoice = "skip" | "review" | "trust";
 export interface CrankConfig {
   version: number;
   excludes: string[];
-  max_files: number;
   max_file_size_bytes: number;
   /**
    * Cap on the session-start injection, in bytes. Claude Code caps
@@ -84,7 +83,6 @@ export function defaultConfig(): CrankConfig {
   return {
     version: 1,
     excludes: [...DEFAULT_EXCLUDES],
-    max_files: 500,
     max_file_size_bytes: MAX_FILE_SIZE_BYTES,
     injection_budget_bytes: 8192,
     adr_path: "docs/adr",
@@ -104,7 +102,7 @@ export function defaultConfig(): CrankConfig {
  * additions survive a round-trip; these are dropped instead, so a stale knob
  * that no longer governs anything doesn't linger in every installed config.
  */
-const LEGACY_KEYS = new Set(["injection_budget_tokens", "codex_trust_written"]);
+const LEGACY_KEYS = new Set(["injection_budget_tokens", "codex_trust_written", "max_files"]);
 
 const GIT_MODES: readonly CrankConfig["git"][] = ["commit", "ignore", "exclude"];
 const RUNTIMES: readonly CrankConfig["runtime"][] = ["bun", "node"];
@@ -235,7 +233,7 @@ export function isExcluded(relPath: string, excludes: string[]): boolean {
   if (isSensitiveFile(basename)) return true;
   // Hidden paths — any dot-prefixed component (.claude/skills, .codex,
   // .github, .crank itself, .DS_Store) — are never indexed. Always on, like
-  // the sensitive filter: agent/tool config trees don't belong in the anatomy.
+  // the sensitive filter: agent/tool config trees don't belong in the code graph.
   if (parts.some((p) => p.startsWith("."))) return true;
   for (const pattern of excludes) {
     if (pattern.startsWith("*.")) {

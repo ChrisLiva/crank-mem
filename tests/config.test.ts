@@ -24,14 +24,14 @@ describe("loadConfig sanitization", () => {
     const dir = dirWithConfig(
       JSON.stringify({
         excludes: "oops",
-        max_files: "many",
+        max_file_size_bytes: "many",
         injection_budget_bytes: 2000,
         adr_path: "adr",
       }),
     );
     const config = loadConfig(dir);
     expect(config.excludes).toEqual(DEFAULT_EXCLUDES);
-    expect(config.max_files).toBe(defaultConfig().max_files);
+    expect(config.max_file_size_bytes).toBe(defaultConfig().max_file_size_bytes);
     expect(config.injection_budget_bytes).toBe(2000);
     expect(config.adr_path).toBe("adr");
     expect(config.digest).toBe(false);
@@ -57,14 +57,16 @@ describe("loadConfig sanitization", () => {
   });
 
   test("non-finite numbers rejected", () => {
-    const dir = dirWithConfig(`{"max_files": 1e999}`);
-    expect(loadConfig(dir).max_files).toBe(defaultConfig().max_files);
+    const dir = dirWithConfig(`{"max_file_size_bytes": 1e999}`);
+    expect(loadConfig(dir).max_file_size_bytes).toBe(defaultConfig().max_file_size_bytes);
   });
 
   test("zero and negative numbers rejected", () => {
-    const dir = dirWithConfig(JSON.stringify({ max_files: -1, max_file_size_bytes: 0 }));
+    const dir = dirWithConfig(
+      JSON.stringify({ injection_budget_bytes: -1, max_file_size_bytes: 0 }),
+    );
     const config = loadConfig(dir);
-    expect(config.max_files).toBe(defaultConfig().max_files);
+    expect(config.injection_budget_bytes).toBe(defaultConfig().injection_budget_bytes);
     expect(config.max_file_size_bytes).toBe(defaultConfig().max_file_size_bytes);
   });
 
@@ -90,12 +92,12 @@ describe("loadConfig sanitization", () => {
     expect(loadConfig(dirWithConfig(`"just a string"`))).toEqual(defaultConfig());
   });
 
-  test("unknown user keys survive a load → save round-trip", () => {
+  test("unknown user keys survive a load → save round-trip, and the retired max_files does not", () => {
     const dir = dirWithConfig(JSON.stringify({ max_files: 42, my_note: "keep me" }));
     saveConfig(dir, loadConfig(dir));
     const written = JSON.parse(fs.readFileSync(path.join(dir, CONFIG_FILE), "utf-8"));
     expect(written.my_note).toBe("keep me");
-    expect(written.max_files).toBe(42);
+    expect("max_files" in written).toBe(false);
   });
 });
 

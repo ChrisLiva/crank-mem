@@ -5,8 +5,8 @@ import { isProjectFile } from "./hook-io.ts";
 import { isIndexableName, toPosix } from "./indexable.ts";
 import { PARSE_MAX_BYTES } from "./code-db.ts";
 
-// The anatomy's file-to-file links: which indexed files a file imports,
-// resolved by regex and a few stats. Never shown in anatomy.md.
+// The code graph's file-to-file links: which indexed files a file imports,
+// resolved by regex and a few stats. Never listed by `crank-mem anatomy`.
 
 /** A file's links to other files: what it imports and, for C#, the namespaces it declares and uses. */
 export interface FileLinks {

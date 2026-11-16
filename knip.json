@@ -12,7 +12,7 @@
       "project": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
       "ignore": ["tests/fixtures/code/**"],
       "ignoreDependencies": ["@vscode/tree-sitter-wasm"],
-      "ignoreBinaries": ["shasum", "scan"]
+      "ignoreBinaries": ["shasum"]
     },
     "dashboard": {}
   },

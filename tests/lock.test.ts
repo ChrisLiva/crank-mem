@@ -8,12 +8,12 @@ function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "crank-lock-"));
 }
 
-const LOCK = "anatomy-index.lock";
+const LOCK = "test.lock";
 
 describe("withLock", () => {
   test("runs fn and releases", () => {
     const dir = tmpDir();
-    const result = withLock(dir, 1000, () => 42);
+    const result = withLock(dir, 1000, () => 42, LOCK);
     expect(result).toBe(42);
     expect(fs.existsSync(path.join(dir, LOCK))).toBe(false);
   });
@@ -21,9 +21,14 @@ describe("withLock", () => {
   test("releases on throw", () => {
     const dir = tmpDir();
     expect(() =>
-      withLock(dir, 1000, () => {
-        throw new Error("boom");
-      }),
+      withLock(
+        dir,
+        1000,
+        () => {
+          throw new Error("boom");
+        },
+        LOCK,
+      ),
     ).toThrow("boom");
     expect(fs.existsSync(path.join(dir, LOCK))).toBe(false);
   });
@@ -36,7 +41,7 @@ describe("withLock", () => {
       JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() }),
     );
     const start = Date.now();
-    const result = withLock(dir, 200, () => 42);
+    const result = withLock(dir, 200, () => 42, LOCK);
     expect(result).toBeNull();
     expect(Date.now() - start).toBeGreaterThanOrEqual(200);
   });
@@ -49,7 +54,7 @@ describe("withLock", () => {
     ]) {
       const dir = tmpDir();
       fs.writeFileSync(path.join(dir, LOCK), JSON.stringify(body));
-      expect(withLock(dir, 2000, () => "stolen")).toBe("stolen");
+      expect(withLock(dir, 2000, () => "stolen", LOCK)).toBe("stolen");
     }
   });
 
@@ -63,14 +68,14 @@ describe("withLock", () => {
         acquiredAt: Date.now() - 60_000,
       }),
     );
-    expect(withLock(dir, 200, () => 42)).toBeNull();
+    expect(withLock(dir, 200, () => 42, LOCK)).toBeNull();
   });
 
   test("releasing does not remove a lock another process took", () => {
     const dir = tmpDir();
     const lockPath = path.join(dir, LOCK);
     const other = JSON.stringify({ pid: 99999998, hostname: "elsewhere", acquiredAt: Date.now() });
-    withLock(dir, 1000, () => fs.writeFileSync(lockPath, other));
+    withLock(dir, 1000, () => fs.writeFileSync(lockPath, other), LOCK);
     expect(fs.readFileSync(lockPath, "utf-8")).toBe(other);
   });
 
@@ -81,7 +86,7 @@ describe("withLock", () => {
       path.join(dir, LOCK),
       JSON.stringify({ pid: 99999999, hostname: os.hostname(), acquiredAt: Date.now() }),
     );
-    expect(withLock(dir, 2000, () => "stolen")).toBe("stolen");
+    expect(withLock(dir, 2000, () => "stolen", LOCK)).toBe("stolen");
   });
 
   test("steals a corrupt old lock file", () => {
@@ -90,6 +95,6 @@ describe("withLock", () => {
     fs.writeFileSync(lockPath, "garbage{{{");
     const old = new Date(Date.now() - 60_000);
     fs.utimesSync(lockPath, old, old);
-    expect(withLock(dir, 2000, () => "stolen")).toBe("stolen");
+    expect(withLock(dir, 2000, () => "stolen", LOCK)).toBe("stolen");
   });
 });

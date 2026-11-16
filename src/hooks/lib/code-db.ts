@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { CRANK_DIR, type CrankConfig } from "./config.ts";
+import { SOURCE_EXTENSIONS } from "./indexable.ts";
 import { fileFacts, walkProject, type FileFacts } from "./scanner.ts";
 import type { GraphStatus } from "./wire.ts";
 
@@ -9,7 +10,7 @@ import type { GraphStatus } from "./wire.ts";
 // file-fact refresh the hooks and the CLI share. The store is derived data: a corrupt or
 // other-version file is deleted and rebuilt, never migrated.
 
-const CODE_DB = "code.db";
+export const CODE_DB = "code.db";
 const CODE_SCHEMA_VERSION = 1;
 /** Files larger than this are never parsed. */
 export const PARSE_MAX_BYTES = 256 * 1024;
@@ -59,44 +60,6 @@ export const GRAMMARS: Record<string, Grammar> = {
   ".ps1": "powershell",
   ".psm1": "powershell",
 };
-
-/** Extensions of first-party source: the scanner ranks them first and the session-start pointer counts the ones no grammar reads. */
-export const SOURCE_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-  ".py",
-  ".go",
-  ".rs",
-  ".java",
-  ".kt",
-  ".scala",
-  ".swift",
-  ".c",
-  ".cc",
-  ".cpp",
-  ".cxx",
-  ".h",
-  ".hh",
-  ".hpp",
-  ".m",
-  ".mm",
-  ".cs",
-  ".rb",
-  ".php",
-  ".lua",
-  ".dart",
-  ".zig",
-  ".sh",
-  ".sql",
-  ".css",
-  ".scss",
-  ".vue",
-  ".svelte",
-]);
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS files (
@@ -234,7 +197,7 @@ export function openCodeDb(root: string, mode: "read" | "write", busyMs = 0): Co
 }
 
 /** How long a read waits on a writer (WAL recovery reports busy for a moment). */
-const GRAPH_READ_BUSY_MS = 1000;
+export const GRAPH_READ_BUSY_MS = 1000;
 
 /**
  * Runs `fn` over the project's `code.db`, opened for read and closed after. A store that is
@@ -337,7 +300,7 @@ export function refreshFileFacts(
   db: sqlite.DatabaseSync,
   deadlineMs: number,
 ): FactsRefresh {
-  const walked = walkProject(root, { ...config, max_files: Infinity }).files;
+  const walked = walkProject(root, config);
   const known = new Map<string, { size: number; mtimeMs: number }>();
   const rows = db.prepare("SELECT path, size, mtime_ms FROM files").all() as {
     path: string;

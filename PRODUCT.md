@@ -20,7 +20,7 @@ Browsing stored observations (Memory) supports these jobs; users did not name it
 
 ## Product Purpose
 
-crank-mem is project memory for coding agents. It records what a project's files contain (the anatomy) and what past agent sessions learned (the store and `cerebrum.md`), and hands both to each new session. Agents stay unaware of memory upkeep (ADR 0010): digests turn finished and live Claude Code sessions into observations, and consolidation checks what sessions proposed against the code before it edits `cerebrum.md`.
+crank-mem is project memory for coding agents. It records what a project's files contain (the code graph) and what past agent sessions learned (the store and `cerebrum.md`), and hands both to each new session. Agents stay unaware of memory upkeep (ADR 0010): digests turn finished and live Claude Code sessions into observations, and consolidation checks what sessions proposed against the code before it edits `cerebrum.md`.
 
 Because that upkeep happens out of sight, the dashboard (`crank-mem dashboard`) exists so a developer can see it: confirm memory capture is healthy, audit what consolidation decided and why, and judge whether memory pays for its cost. Success is a developer who trusts their projects' memory because they can check it, not because they are told to.
 

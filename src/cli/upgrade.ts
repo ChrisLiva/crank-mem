@@ -20,16 +20,14 @@ import { CLI_LOCK_BUDGET_MS, withLock } from "../hooks/lib/lock.ts";
 import { migrateStore } from "../hooks/lib/memory.ts";
 import { projectName } from "../hooks/lib/owner.ts";
 import { registeredRoots } from "../hooks/lib/registry.ts";
-import { fullScan } from "../hooks/lib/scanner.ts";
-import { commitIndex, INDEX_FILE, INDEX_VERSION } from "../hooks/lib/store.ts";
-import { scanCompleteLine } from "./scan.ts";
+import { scanCompleteLine, startParsing, writeFileFacts } from "./scan.ts";
 
 // Non-interactive. Once per run it installs the tool's packages and, in a
 // clone, rebuilds a dashboard not built for this version. `--all` repairs every
-// registered project, each under its anatomy lock. Of config.json it updates
+// registered project, each under its repair lock. Of config.json it updates
 // only vendored_version, clone_root, a missing codex and a missing name; it
-// scans an index that is missing or not at INDEX_VERSION. Exits 1 when any
-// repair failed, after every step has run. src/cli/install.ts → ITEMS holds
+// brings code.db's file facts current and deletes the retired anatomy files.
+// Exits 1 when any repair failed, after every step has run. src/cli/install.ts → ITEMS holds
 // the per-item repair rules.
 
 export async function run(args: string[]): Promise<number> {
@@ -63,9 +61,15 @@ export function upgradeTool(): void {
   }
 }
 
+/** The lock `--all` holds while it repairs a project, so two repairs of one project never overlap. */
+export const REPAIR_LOCK_FILE = "repair.lock";
+
+/** The files the anatomy kept before code.db; `upgrade` deletes them. */
+const RETIRED_ANATOMY_FILES = ["anatomy.md", "anatomy-index.json", "anatomy-index.lock"];
+
 /**
  * Repairs the project at `root`; `"missing"` when it has no config. With
- * `lock`, the repair runs under its anatomy lock, headed by the root it
+ * `lock`, the repair runs under its repair lock, headed by the root it
  * repairs, and a lock not won within the CLI budget is `"busy"`.
  */
 export async function repairProject(
@@ -77,43 +81,58 @@ export async function repairProject(
   const repair = () => (repairSync(root, crankDir) ? "failed" : "ok");
   // withLock's callback is synchronous, so the whole repair stays inside it.
   const result = opts.lock
-    ? withLock(crankDir, CLI_LOCK_BUDGET_MS, () => {
-        console.log(`crank-mem: repairing ${root}`);
-        return repair();
-      })
+    ? withLock(
+        crankDir,
+        CLI_LOCK_BUDGET_MS,
+        () => {
+          console.log(`crank-mem: repairing ${root}`);
+          return repair();
+        },
+        REPAIR_LOCK_FILE,
+      )
     : repair();
   if (result === null) return "busy";
-  // withLock is not reentrant, so the scan takes the lock after the repair releases it.
-  scanLagging(root, crankDir);
+  refreshCodeFacts(root, crankDir);
+  removeRetiredFiles(crankDir);
   return result;
 }
 
 /**
- * Rebuilds the anatomy index when the file on disk is not at INDEX_VERSION. A
- * scan that fails or finds the lock held costs only the scan, never the
- * repair's result or a later project of `--all`.
+ * Brings code.db's file facts current, saying so only when the refresh changed something. A throw, an unreadable store or one busy past its
+ * timeout costs only this step, never the repair's result or a later project of `--all`.
  */
-function scanLagging(root: string, crankDir: string): void {
-  if (indexVersion(crankDir) === INDEX_VERSION) return;
+function refreshCodeFacts(root: string, crankDir: string): void {
   try {
     const config = loadConfig(crankDir);
-    const index = commitIndex(crankDir, CLI_LOCK_BUDGET_MS, (current) =>
-      fullScan(root, config, current),
-    );
-    if (index === null) console.error("crank-mem: anatomy busy, scan skipped");
-    else console.log(scanCompleteLine(index.meta.fileCount));
+    const facts = writeFileFacts(root, config);
+    if (facts.status === "busy") console.error("crank-mem: code.db busy, scan skipped");
+    else if (facts.status === "failed")
+      console.error(`crank-mem: could not scan (${facts.reason})`);
+    else {
+      if (facts.changed) console.log(scanCompleteLine(facts.files));
+      startParsing(config, facts.pending);
+    }
   } catch (err) {
     console.error(`crank-mem: could not scan (${errorMessage(err)})`);
   }
 }
 
-/**
- * The `version` the index file records; undefined when it is missing or
- * unparsable. Reads the raw file because loadIndex stamps every mismatch with
- * INDEX_VERSION.
- */
-function indexVersion(crankDir: string): unknown {
-  return readJsonObject(path.join(crankDir, INDEX_FILE))?.version;
+/** Deletes the retired anatomy files that exist and says so; the line adds the git note in commit mode. */
+function removeRetiredFiles(crankDir: string): void {
+  try {
+    const present = RETIRED_ANATOMY_FILES.filter((name) =>
+      fs.existsSync(path.join(crankDir, name)),
+    );
+    if (present.length === 0) return;
+    for (const name of present) fs.rmSync(path.join(crankDir, name), { force: true });
+    const commit = loadConfig(crankDir).git === "commit";
+    console.log(
+      `crank-mem: removed the retired anatomy files (${RETIRED_ANATOMY_FILES.join(", ")}).` +
+        (commit ? " git will show them as deleted." : ""),
+    );
+  } catch (err) {
+    console.error(`crank-mem: could not remove the retired anatomy files (${errorMessage(err)})`);
+  }
 }
 
 /** Repairs every registered project in registry order; 1 when any repair failed. */

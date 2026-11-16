@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import {
@@ -8,16 +7,7 @@ import {
   runAdvisoryHook,
   type HookPayload,
 } from "./lib/hook-io.ts";
-import {
-  CRANK_DIR,
-  errorMessage,
-  loadConfig,
-  readJsonObject,
-  type CrankConfig,
-} from "./lib/config.ts";
-import { commitIndex, INDEX_FILE, INDEX_VERSION, type AnatomyIndex } from "./lib/store.ts";
-import { indexFile } from "./lib/scanner.ts";
-import { HOOK_LOCK_BUDGET_MS } from "./lib/lock.ts";
+import { CRANK_DIR, errorMessage, loadConfig, type CrankConfig } from "./lib/config.ts";
 import { parseApplyPatch } from "./lib/apply-patch.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
 import { toPosix } from "./lib/indexable.ts";
@@ -30,10 +20,10 @@ import { readStopState } from "./lib/user-state.ts";
 import { recordUntouched } from "./lib/untouched.ts";
 import { hookActor } from "./lib/usage.ts";
 
-// PostToolUse hook: re-index of written files. Claude matcher is
+// PostToolUse hook: refresh of written files' facts in code.db. Claude matcher is
 // Write|Edit|MultiEdit (file_path in tool_input); Codex matcher is
-// apply_patch (paths parsed from the patch text; Delete drops the entry).
-// Each path goes to the anatomy of the project that owns it (owner.ts).
+// apply_patch (paths parsed from the patch text; Delete drops the file's rows).
+// Each path goes to the code.db of the project that owns it (owner.ts).
 // Exit 0 on every path.
 
 interface WriteOp {
@@ -73,12 +63,12 @@ function classifyPath(at: Session, p: string): PathClass {
     if (owner.repo !== null) at.unowned.add(owner.repo);
     return { skip: { reason: "outside-root", dir: path.dirname(abs) } };
   }
-  // A linked worktree shares its main checkout's anatomy, which describes the main's files.
+  // A linked worktree shares its main checkout's code.db, which describes the main's files.
   if (owner.kind === "worktree") return { skip: { reason: "worktree", dir: path.dirname(abs) } };
   const r = toPosix(owner.rel);
   if (!r) return { skip: { reason: "owner-root", dir: owner.root } };
   // Writes under .crank/ (cerebrum.md above all) are never indexable, so
-  // resolving them costs an index lock to learn nothing. Answer here instead.
+  // resolving them costs a store open to learn nothing. Answer here instead.
   if (r === CRANK_DIR || r.startsWith(`${CRANK_DIR}/`)) {
     return { skip: { reason: "crank-internal", dir: path.dirname(r) } };
   }
@@ -117,79 +107,7 @@ function toWriteOps(payload: HookPayload, at: Session): WriteScan {
   return { ops: [], skip: { reason: "unhandled-tool" } };
 }
 
-function dropEntry(index: AnatomyIndex, rel: string): boolean {
-  if (!index.files[rel]) return false;
-  delete index.files[rel];
-  return true;
-}
-
-/** Apply `ops` to `index`; returns it when anything changed, else null. Unindexable paths land in `skipped`. */
-function applyOps(
-  index: AnatomyIndex,
-  root: string,
-  ops: WriteOp[],
-  config: CrankConfig,
-  skipped: string[],
-): AnatomyIndex | null {
-  let dirty = false;
-  for (const op of ops) {
-    const entry = op.deleted ? null : indexFile(root, op.relPath, config);
-    if (!entry) {
-      // Deleted, or excluded, binary, oversized, or unreadable — indistinguishable
-      // here, but the path alone answers "why didn't my file get indexed?". An
-      // entry from before the write is stale; drop it as refreshIndex does.
-      dirty = dropEntry(index, op.relPath) || dirty;
-      if (!op.deleted) skipped.push(safePath(op.relPath));
-      continue;
-    }
-    // Pin the write so the next refresh keeps the file past max_files, until
-    // the churn list carries it.
-    if (!index.meta.churn?.paths.includes(op.relPath)) {
-      entry.writeCount = (index.files[op.relPath]?.writeCount ?? 0) + 1;
-    }
-    index.files[op.relPath] = entry;
-    dirty = true;
-  }
-  return dirty ? index : null;
-}
-
-/** Whether another project's anatomy may be written: absent, or at this `INDEX_VERSION`. */
-function sameIndexVersion(crankDir: string): boolean {
-  const file = path.join(crankDir, INDEX_FILE);
-  const raw = readJsonObject(file);
-  return raw === null ? !fs.existsSync(file) : raw.version === INDEX_VERSION;
-}
-
 type Start = { root: string; config: CrankConfig };
-
-/**
- * Commit `ops` into the anatomy of the project at `root` under its lock. The start project's
- * own anatomy is written at any index version; another is written only at an equal index
- * version, so a newer or older crank-mem's index is never rebuilt from nothing. A failure stays
- * with its owner.
- */
-function commitOwner(start: Start, root: string, ops: WriteOp[], tool: string | null): void {
-  const own = root === start.root;
-  const crankDir = path.join(root, CRANK_DIR);
-  try {
-    const config = own ? start.config : loadConfig(crankDir);
-    const skipped: string[] = [];
-    const committed = commitIndex(crankDir, HOOK_LOCK_BUDGET_MS, (index) =>
-      own || sameIndexVersion(crankDir) ? applyOps(index, root, ops, config, skipped) : null,
-    );
-    debugEvent("reindex", {
-      tool,
-      root: own ? null : root,
-      paths: ops.map((o) => safePath(o.relPath)),
-      deletes: ops.filter((o) => o.deleted).length,
-      skipped,
-      committed: committed !== null,
-      fileCount: committed?.meta.fileCount ?? null,
-    });
-  } catch (err) {
-    debugEvent("reindex-failed", { tool, root: own ? null : root, error: errorMessage(err) });
-  }
-}
 
 /** How long a write waits on another process's hold of a code.db. */
 const GRAPH_BUSY_MS = 500;
@@ -197,13 +115,16 @@ const GRAPH_BUSY_MS = 500;
 /**
  * Applies `ops` to the open code.db in one transaction: a delete or a path the index no longer
  * takes loses its rows, any other file's facts are upserted and its write count rises unless the
- * churn list carries it. Returns whether a written file awaits a parse.
+ * churn list carries it. A path the index does not take, other than a delete, lands in `skipped`
+ * (the path alone answers "why didn't my file get indexed?"). Returns whether a written file
+ * awaits a parse.
  */
 function writeFacts(
   db: sqlite.DatabaseSync,
   root: string,
   ops: WriteOp[],
   config: CrankConfig,
+  skipped: string[],
 ): boolean {
   const churned = new Set(readChurn(db)?.paths);
   let parseWanted = false;
@@ -212,6 +133,7 @@ function writeFacts(
       const facts = op.deleted ? null : fileFacts(root, op.relPath, config);
       if (facts === null) {
         deletePaths(db, [op.relPath]);
+        if (!op.deleted) skipped.push(safePath(op.relPath));
         continue;
       }
       upsertFileFacts(db, op.relPath, facts);
@@ -229,7 +151,7 @@ function writeFacts(
  * absent otherwise. A store that is corrupt, another version, unreadable or read-only is left
  * as it is. Returns whether a written file awaits a parse. A failure stays with its owner.
  */
-function commitFacts(start: Start, root: string, ops: WriteOp[]): boolean {
+function commitFacts(start: Start, root: string, ops: WriteOp[], tool: string | null): boolean {
   const own = root === start.root;
   try {
     const config = own ? start.config : loadConfig(path.join(root, CRANK_DIR));
@@ -247,7 +169,16 @@ function commitFacts(start: Start, root: string, ops: WriteOp[]): boolean {
       return false;
     }
     try {
-      return writeFacts(opened.db, root, ops, config);
+      const skipped: string[] = [];
+      const parseWanted = writeFacts(opened.db, root, ops, config, skipped);
+      debugEvent("reindex", {
+        tool,
+        root: own ? null : root,
+        paths: ops.map((o) => safePath(o.relPath)),
+        deletes: ops.filter((o) => o.deleted).length,
+        skipped,
+      });
+      return parseWanted;
     } finally {
       opened.db.close();
     }
@@ -277,8 +208,7 @@ async function main(): Promise<void> {
   for (const op of ops) byOwner.set(op.root, [...(byOwner.get(op.root) ?? []), op]);
   let parseWanted = false;
   for (const [root, owned] of byOwner) {
-    commitOwner(ctx, root, owned, tool);
-    parseWanted = commitFacts(ctx, root, owned) || parseWanted;
+    parseWanted = commitFacts(ctx, root, owned, tool) || parseWanted;
   }
   if (parseWanted && readStopState() === null) ensureDaemon(ctx.config);
 }

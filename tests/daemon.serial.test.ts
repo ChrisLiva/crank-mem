@@ -669,6 +669,8 @@ async function autoSetup(
   const P = tempDir("crank-auto-proj-");
   fs.writeFileSync(path.join(P, "a.ts"), "export const a = 1;\n");
   expect(runInstalled(e.home, P, ["init", "--yes"]).status).toBe(0);
+  // Parse here, so the daemon starts no graph-job ahead of the digest these tests wait on.
+  expect(runCli(P, ["scan"], { CRANK_HOME: e.home }).status).toBe(0);
   expect(runInstalled(e.home, P, ["digest", "on"]).status).toBe(0);
   const release = await releaseServer(versions);
   const bun = fakeTool("bun", "runtime");

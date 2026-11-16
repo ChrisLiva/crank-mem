@@ -310,7 +310,7 @@ export function removeIgnoreLines(file: string, block: string = IGNORE_BLOCK): v
 // backups, memory.db, usage.jsonl, the lockfile, the debug log, or another
 // tool's files.
 const CRANK_GITIGNORE =
-  "/*\n!/.gitignore\n!/config.json\n!/cerebrum.md\n!/cerebrum-archive.md\n!/journal.md\n!/anatomy.md\n!/anatomy-index.json\n!/hooks/\n";
+  "/*\n!/.gitignore\n!/config.json\n!/cerebrum.md\n!/cerebrum-archive.md\n!/journal.md\n!/hooks/\n";
 
 /**
  * Write CRANK_GITIGNORE to .crank/.gitignore unless it is already there. An

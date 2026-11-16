@@ -18,18 +18,21 @@ import {
   claudeSubagentStart,
   codexApplyPatch,
 } from "./fixtures/payloads.ts";
-import { loadIndex } from "../src/hooks/lib/store.ts";
+import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 
 const SESSION_START = "src/hooks/session-start.ts";
 const POST_WRITE = "src/hooks/post-write.ts";
 const THROWING = "tests/fixtures/throwing-hook.ts";
 
-/** Hold the index lock so the next writer times out (fresh, live-pid body). */
-function holdLock(root: string): void {
-  fs.writeFileSync(
-    path.join(root, ".crank/anatomy-index.lock"),
-    JSON.stringify({ pid: process.pid, hostname: os.hostname(), acquiredAt: Date.now() + 60_000 }),
-  );
+/** Hold code.db's write lock so the next writer times out; returns the release. */
+function holdStore(root: string): () => void {
+  const opened = openCodeDb(root, "write");
+  expect(opened.status).toBe("open");
+  opened.db!.exec("BEGIN IMMEDIATE");
+  return () => {
+    opened.db!.exec("ROLLBACK");
+    opened.db!.close();
+  };
 }
 
 describe("debug logging (black-box)", () => {
@@ -48,7 +51,7 @@ describe("debug logging (black-box)", () => {
     }
 
     // Session start records the refresh counters and the injection size.
-    const refresh = records[0]!.events.find((e: any) => e.event === "refresh");
+    const refresh = records[0]!.events.find((e: any) => e.event === "graph-refresh");
     expect(refresh.added).toBe(2);
     expect(refresh.removed).toBe(0);
     expect(refresh.partial).toBe(false);
@@ -59,9 +62,9 @@ describe("debug logging (black-box)", () => {
     // Session start never reads journal.md, so the event carries no journal counts.
     expect(Object.keys(injected).filter((k) => k.startsWith("journal"))).toEqual([]);
 
-    // A lock taken without contention commits and is not logged as a wait.
+    // A write without contention lands in code.db and is not logged as a wait.
     const writeEvents = records[1]!.events;
-    expect(writeEvents.find((e: any) => e.event === "reindex").committed).toBe(true);
+    expect(writeEvents.find((e: any) => e.event === "reindex")).toMatchObject({ paths: ["a.ts"] });
     expect(writeEvents.some((e: any) => e.event === "lock-waited")).toBe(false);
   });
 
@@ -134,20 +137,32 @@ describe("debug logging (black-box)", () => {
     expect(raw).toContain("<redacted>");
     expect(raw).not.toContain(".env");
     expect(raw).not.toContain("hunter2");
-    expect(loadIndex(path.join(root, ".crank")).files[".env"]).toBeUndefined();
+    const opened = openCodeDb(root, "read");
+    expect(opened.status).toBe("open");
+    try {
+      expect(opened.db!.prepare("SELECT path FROM files WHERE path = '.env'").all()).toEqual([]);
+    } finally {
+      opened.db!.close();
+    }
   });
 
-  test("post-write under a held lock: exit 0, records the timeout and committed=false", () => {
+  test("post-write under a held code.db: exit 0, records the skip and no reindex", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     enableDebugConfig(root);
-    holdLock(root);
+    runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
+    const release = holdStore(root);
+    try {
+      const run = runHook(POST_WRITE, JSON.stringify(claudePostWrite(root, "a.ts")));
+      expect(run.status).toBe(0);
+    } finally {
+      release();
+    }
 
-    const run = runHook(POST_WRITE, JSON.stringify(claudePostWrite(root, "a.ts")));
-    expect(run.status).toBe(0);
-
-    const events = readDebugLog(root)[0]!.events;
-    expect(events.some((e: any) => e.event === "lock-timeout")).toBe(true);
-    expect(events.find((e: any) => e.event === "reindex").committed).toBe(false);
+    const events = readDebugLog(root)[1]!.events;
+    expect(events.some((e: any) => e.event === "graph-skip" || e.event === "graph-failed")).toBe(
+      true,
+    );
+    expect(events.some((e: any) => e.event === "reindex")).toBe(false);
   });
 
   test("a throwing hook body: exit 0, stderr message, full stack in the log", () => {
@@ -186,24 +201,31 @@ describe("debug logging (black-box)", () => {
       });
       // The directory reaches the log without any filename.
       expect(fs.readFileSync(path.join(root, ".crank/debug.log"), "utf-8")).not.toContain(".env");
-      expect(fs.existsSync(path.join(root, ".crank/anatomy-index.json"))).toBe(false);
+      expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(false);
     });
 
-    test("a write under .crank/: crank-internal, and the index lock is never taken", () => {
+    test("a write under .crank/: crank-internal, and the store is never opened", () => {
       const root = makeCrankProject({ "a.ts": "const a = 1;" });
       enableDebugConfig(root);
-      // A held lock would stall any writer — reaching it at all is the failure.
-      holdLock(root);
-
-      const run = runHook(POST_WRITE, JSON.stringify(claudePostWrite(root, ".crank/cerebrum.md")));
-      expect(run.status).toBe(0);
-      expect(run.stdout).toBe("");
-
-      const events = readDebugLog(root)[0]!.events;
+      // A held store would stall any writer — reaching it at all is the failure.
+      runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
+      const release = holdStore(root);
+      let events: any[];
+      try {
+        const run = runHook(
+          POST_WRITE,
+          JSON.stringify(claudePostWrite(root, ".crank/cerebrum.md")),
+        );
+        expect(run.status).toBe(0);
+        expect(run.stdout).toBe("");
+        events = readDebugLog(root)[1]!.events;
+      } finally {
+        release();
+      }
       expect(events.find((e: any) => e.event === "no-write-ops")).toMatchObject({
         reason: "crank-internal",
       });
-      expect(events.some((e: any) => e.event === "lock-timeout")).toBe(false);
+      expect(events.some((e: any) => String(e.event).startsWith("graph"))).toBe(false);
       expect(events.some((e: any) => e.event === "reindex")).toBe(false);
     });
 

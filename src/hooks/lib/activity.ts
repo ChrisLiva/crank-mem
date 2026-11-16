@@ -4,16 +4,22 @@ import { spawnSync } from "node:child_process";
 import type * as sqlite from "node:sqlite";
 import { transaction } from "./code-db.ts";
 import type { CrankConfig } from "./config.ts";
-import { activePaths, type AnatomyIndex, type Churn, type FileEntry } from "./store.ts";
 import { debugEvent } from "./debug.ts";
 import { isIndexableName } from "./indexable.ts";
 
-// Git listing and churn-driven index activity: the walk's git listing, the churn
-// cache and the write pins it settles.
+// Git listing and churn-driven activity: the walk's git listing, the churn list and the write
+// pins it settles in code.db.
+
+interface Churn {
+  /** HEAD sha the list was computed at; a moved HEAD recomputes it. */
+  head: string;
+  /** Indexable paths changed most often in recent commits, most first. */
+  paths: string[];
+}
 
 // A large repo's ls-files listing can pass the 1 MiB default maxBuffer.
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
-// walkProject runs before the refresh deadline is checked, so git gets its own.
+// The walk runs before the refresh deadline is checked, so git gets its own.
 const GIT_TIMEOUT_MS = 500;
 
 /** Run git in rootDir; on failure, the error code or exit status instead of stdout. Never throws. */
@@ -57,7 +63,7 @@ const CHURN_COMMITS = 300;
 const CHURN_BULK_FILES = 50;
 const CHURN_KEEP = 100;
 /** Written files kept pinned; the rest lose their write count. */
-export const MAX_PINS = 100;
+const MAX_PINS = 100;
 
 /**
  * The indexable paths changed most often in the last CHURN_COMMITS commits,
@@ -104,34 +110,6 @@ function churnFor(
   return { head, paths };
 }
 
-/**
- * Refresh the churn cache, unpin files the churn list now carries or that fall
- * past MAX_PINS, and return the paths the walk takes first.
- */
-export function updateActivity(
-  rootDir: string,
-  config: CrankConfig,
-  index: AnatomyIndex,
-): string[] {
-  const churn = churnFor(rootDir, config, index.meta.churn);
-  if (churn) index.meta.churn = churn;
-  else delete index.meta.churn;
-  const inChurn = new Set(churn?.paths);
-  for (const [rel, entry] of Object.entries(index.files))
-    if (inChurn.has(rel)) delete entry.writeCount;
-  const active = activePaths(index);
-  const kept = new Set(active);
-  for (const [rel, entry] of Object.entries(index.files))
-    if (!kept.has(rel)) delete entry.writeCount;
-  return active;
-}
-
-/** A fresh entry keeps the write pin of the entry it replaces. */
-export function keepPin(entry: FileEntry, prior: FileEntry | undefined): FileEntry {
-  if (prior?.writeCount) entry.writeCount = prior.writeCount;
-  return entry;
-}
-
 const CHURN_META = "churn";
 
 /** The churn list `writeActivity` last stored in `meta`; undefined when none is stored or it does not parse. */
@@ -152,7 +130,7 @@ export function readChurn(db: sqlite.DatabaseSync): Churn | undefined {
 
 /**
  * The one writer of activity into code.db: the churn list (as `files.churn_rank` and the list
- * and its HEAD in `meta`), then the unpin rule `updateActivity` applies to the anatomy: a file the
+ * and its HEAD in `meta`), then the unpin rule: a file the
  * churn list carries, or one outside the MAX_PINS most recently modified written files, loses
  * its write count. Git runs before the write lock is taken.
  */

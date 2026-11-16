@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import {
   claudePostEdit,
@@ -9,7 +8,7 @@ import {
   codexApplyPatch,
 } from "./fixtures/payloads.ts";
 import { CRANK_DIR, defaultConfig, readJsonObject, saveConfig } from "../src/hooks/lib/config.ts";
-import { INDEX_FILE, loadIndex } from "../src/hooks/lib/store.ts";
+import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 import { projectName } from "../src/hooks/lib/owner.ts";
 import { installedStores, registerProject, rootOfName } from "../src/hooks/lib/registry.ts";
 import {
@@ -30,16 +29,36 @@ function postWrite(payload: object, home: string) {
   return runHook(POST_WRITE, JSON.stringify(payload), undefined, { CRANK_HOME: home });
 }
 
+/** What a project's code.db holds for each file, as one string; null when the project has no store. */
 function indexBytes(root: string): string | null {
+  const opened = openCodeDb(root, "read");
+  if (opened.status !== "open" || !opened.db) return null;
   try {
-    return fs.readFileSync(path.join(root, CRANK_DIR, INDEX_FILE), "utf-8");
-  } catch {
-    return null;
+    return JSON.stringify(
+      opened.db.prepare("SELECT path, size, mtime_ms, write_count FROM files ORDER BY path").all(),
+    );
+  } finally {
+    opened.db.close();
   }
 }
 
 function indexed(root: string): string[] {
-  return Object.keys(loadIndex(path.join(root, CRANK_DIR)).files);
+  const opened = openCodeDb(root, "read");
+  if (opened.status !== "open" || !opened.db) return [];
+  try {
+    return (opened.db.prepare("SELECT path FROM files").all() as { path: string }[]).map(
+      (row) => row.path,
+    );
+  } finally {
+    opened.db.close();
+  }
+}
+
+/** Gives `root` an empty code.db, as a project whose store an earlier hook or command made. */
+function createStore(root: string): void {
+  const opened = openCodeDb(root, "write");
+  expect(opened.status).toBe("open");
+  opened.db!.close();
 }
 
 /** The repo roots `<home>/untouched.json` lists, or null when the file is absent. */
@@ -156,6 +175,9 @@ describe("ownership", () => {
       storefront: ws.storefront,
       "payments-api": ws.payments,
     };
+    // Another project's store is written only once it exists; the start project's is created.
+    createStore(ws.storefront);
+    createStore(ws.payments);
     const rows: [string, Record<string, string>, string | null][] = [
       [ws.H, {}, null],
       [path.join(ws.clone, "x.ts"), {}, ws.clone],
@@ -239,27 +261,6 @@ describe("ownership", () => {
     expect(indexed(ws.storefront)).toEqual(expect.arrayContaining(["src/e.ts", "src/m.ts"]));
   });
 
-  test("post-write leaves another anatomy at another index version alone", () => {
-    const ws = workspace();
-    const file = path.join(ws.storefront, CRANK_DIR, INDEX_FILE);
-    fs.writeFileSync(file, JSON.stringify({ version: 1, meta: {}, files: {} }));
-    const before = fs.readFileSync(file, "utf-8");
-    for (const root of [ws.H, ws.storefront]) {
-      fs.writeFileSync(path.join(root, "src/n.ts"), "export const n = 1;\n");
-    }
-    const patch = [
-      "*** Begin Patch",
-      `*** Add File: ${path.join(ws.H, "src/n.ts")}`,
-      "+export const n = 1;",
-      `*** Add File: ${path.join(ws.storefront, "src/n.ts")}`,
-      "+export const n = 1;",
-      "*** End Patch",
-    ].join("\n");
-    expect(postWrite(codexApplyPatch(ws.H, patch), ws.home).status).toBe(0);
-    expect(fs.readFileSync(file, "utf-8")).toBe(before);
-    expect(indexed(ws.H)).toContain("src/n.ts");
-  });
-
   test("post-write leaves another project's code.db at another schema version alone and creates none", () => {
     const ws = workspace();
     const file = path.join(ws.storefront, CRANK_DIR, "code.db");
@@ -289,7 +290,8 @@ describe("ownership", () => {
   test("post-write exits 0 silently when another project or untouched.json cannot be written", () => {
     const ws = workspace();
     const silent = { status: 0, stdout: "", stderr: "" };
-    const anatomyMd = path.join(ws.storefront, CRANK_DIR, "anatomy.md");
+    createStore(ws.storefront);
+    const store = path.join(ws.storefront, CRANK_DIR, "code.db");
     for (const root of [ws.H, ws.storefront]) {
       fs.writeFileSync(path.join(root, "src/a2.ts"), "export const a2 = 1;\n");
     }
@@ -301,13 +303,14 @@ describe("ownership", () => {
       "+export const a2 = 1;",
       "*** End Patch",
     ].join("\n");
-    fs.mkdirSync(anatomyMd);
+    fs.chmodSync(store, 0o000);
     try {
       expect(postWrite(codexApplyPatch(ws.H, patch), ws.home)).toMatchObject(silent);
       expect(indexed(ws.H)).toContain("src/a2.ts");
     } finally {
-      fs.rmSync(anatomyMd, { recursive: true, force: true });
+      fs.chmodSync(store, 0o644);
     }
+    expect(indexed(ws.storefront)).toEqual([]);
 
     const untouched = path.join(ws.home, "untouched.json");
     fs.mkdirSync(untouched);
@@ -318,22 +321,17 @@ describe("ownership", () => {
       fs.rmSync(untouched, { recursive: true, force: true });
     }
 
-    const lock = path.join(ws.storefront, CRANK_DIR, "anatomy-index.lock");
+    // A writer holding the store past the hook's busy wait leaves it as it was.
     const before = indexBytes(ws.storefront);
-    fs.writeFileSync(
-      lock,
-      JSON.stringify({
-        pid: process.pid,
-        hostname: os.hostname(),
-        acquiredAt: Date.now() + 60_000,
-      }),
-    );
+    const holder = openCodeDb(ws.storefront, "write");
+    holder.db!.exec("BEGIN IMMEDIATE");
     try {
       const run = postWrite(claudePostWrite(ws.H, path.join(ws.storefront, "src/a.ts")), ws.home);
       expect(run).toMatchObject(silent);
-      expect(indexBytes(ws.storefront)).toBe(before);
     } finally {
-      fs.rmSync(lock, { force: true });
+      holder.db!.exec("ROLLBACK");
+      holder.db!.close();
     }
+    expect(indexBytes(ws.storefront)).toBe(before);
   }, 15_000);
 });

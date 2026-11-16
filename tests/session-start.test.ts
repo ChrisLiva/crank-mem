@@ -2,10 +2,9 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   REPO_ROOT,
-  childEnv,
   enableDebugConfig,
   fakeCloneRoot,
   git,
@@ -34,7 +33,7 @@ import { workspace } from "./workspace.ts";
 const HOOK = "src/hooks/session-start.ts";
 
 describe("session-start hook (black-box)", () => {
-  test("Claude payload: exit 0, injects context, refreshes index", () => {
+  test("Claude payload: exit 0, injects context, refreshes code.db", () => {
     const root = makeCrankProject({
       "src/app.ts": "/** App entry. */\nexport const app = 1;\n",
       "README.md": "# Demo project\n",
@@ -48,17 +47,16 @@ describe("session-start hook (black-box)", () => {
     // The scan's result reaches the model as a count and a pointer, not a listing.
     expect(ctx).toContain("`crank-mem anatomy [<dir>]` lists the project's 2 file(s) with");
     expect(ctx).not.toContain("`app.ts`");
-    // index + anatomy.md were written
-    const index = JSON.parse(
-      fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"),
-    );
-    expect(index.meta.fileCount).toBe(2);
-    expect(fs.existsSync(path.join(root, ".crank/anatomy.md"))).toBe(true);
+    // code.db was written, and no anatomy file with it
+    expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(true);
+    expect(
+      fs.readdirSync(path.join(root, ".crank")).filter((n) => n.startsWith("anatomy")),
+    ).toEqual([]);
     // Debug logging is off by default.
     expect(fs.existsSync(path.join(root, ".crank/debug.log"))).toBe(false);
   });
 
-  test("in a git repo the refresh skips gitignored files and records truncation", () => {
+  test("in a git repo the refresh skips gitignored files and counts every other file", () => {
     const root = makeCrankProject({
       ".gitignore": "reports/\n",
       "reports/mutation.html": "<html>huge</html>",
@@ -67,15 +65,12 @@ describe("session-start hook (black-box)", () => {
       "c.ts": "x",
     });
     git(root, "init", "-q");
-    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), max_files: 2 });
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
-    const index = JSON.parse(
-      fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"),
-    );
-    expect(Object.keys(index.files).sort()).toEqual(["a.ts", "b.ts"]);
-    expect(index.meta.truncated).toBe(true);
-    expect(index.meta.candidateCount).toBe(3);
+    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    expect(ctx).toContain("lists the project's 3 file(s)");
+    const listing = withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]));
+    expect(listing.stdout).not.toContain("reports/mutation.html");
   });
 
   test("the pointer names source languages with no grammar, says what is still parsing, and reads the same for both agents", () => {
@@ -130,7 +125,7 @@ describe("session-start hook (black-box)", () => {
     expect(ctx).not.toContain("file(s)");
   });
 
-  test("the most committed file stays indexed past max_files across session starts and a scan", () => {
+  test("the most committed file leads Most active files after session starts and a scan", () => {
     const root = makeCrankProject({ "a.ts": "x", "b.ts": "x", "z/hot.ts": "/** Hot path. */\n" });
     git(root, "init", "-q");
     gitCommit(root, "one");
@@ -138,24 +133,13 @@ describe("session-start hook (black-box)", () => {
       fs.appendFileSync(path.join(root, "z/hot.ts"), `export const v${n} = ${n};\n`);
       gitCommit(root, `hot ${n}`);
     }
-    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), max_files: 2 });
-    const indexed = (): string[] =>
-      Object.keys(
-        JSON.parse(fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8")).files,
-      );
+    const hot = "## Most active files\n\n- `z/hot.ts` — Hot path.";
     for (let i = 0; i < 2; i++) {
       expect(runHook(HOOK, JSON.stringify(claudeSessionStart(root))).status).toBe(0);
-      expect(indexed()).toContain("z/hot.ts");
+      expect(withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"])).stdout).toContain(hot);
     }
-    const scan = spawnSync("bun", [path.join(REPO_ROOT, "src/cli/main.ts"), "scan"], {
-      cwd: root,
-      encoding: "utf-8",
-      env: childEnv(),
-    });
-    expect(scan.status).toBe(0);
-    expect(indexed()).toContain("z/hot.ts");
-    const anatomy = fs.readFileSync(path.join(root, ".crank/anatomy.md"), "utf-8");
-    expect(anatomy).toContain("## Most active files\n\n- `z/hot.ts` — Hot path.");
+    expect(runCli(root, ["scan"]).status).toBe(0);
+    expect(runCli(root, ["anatomy"]).stdout).toContain(hot);
   });
 
   test("a .git that git rejects falls back to the directory walk and logs why", () => {
@@ -168,10 +152,8 @@ describe("session-start hook (black-box)", () => {
     enableDebugConfig(root);
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
-    const index = JSON.parse(
-      fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"),
-    );
-    expect(Object.keys(index.files).sort()).toEqual(["a.ts", "reports/r.html"]);
+    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    expect(ctx).toContain("lists the project's 2 file(s)");
     const events = readDebugLog(root).flatMap((r) => r.events);
     expect(events.find((e) => e.event === "walk-fallback")?.reason).toMatch(/^exit \d+$/);
   });
@@ -203,32 +185,6 @@ describe("session-start hook (black-box)", () => {
     const run = runHook(HOOK, "");
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("");
-  });
-
-  test("corrupt index: exit 0 and rebuilds", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    fs.writeFileSync(path.join(root, ".crank/anatomy-index.json"), "corrupt{{");
-    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain(
-      "`crank-mem anatomy [<dir>]` lists the project's 1 file(s)",
-    );
-  });
-
-  test("held lock: exit 0, injects from existing index with staleness note", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    fs.writeFileSync(
-      path.join(root, ".crank/anatomy-index.lock"),
-      JSON.stringify({
-        pid: process.pid,
-        hostname: os.hostname(),
-        acquiredAt: Date.now() + 60_000,
-      }),
-    );
-    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    const ctx = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    expect(ctx).toContain("refresh skipped");
   });
 });
 
@@ -839,13 +795,13 @@ describe("linked projects (black-box)", () => {
     expect(plain).not.toContain("Search also covers");
   });
 
-  test("a bullet citing a linked project's file reads that project's anatomy", () => {
+  test("a bullet citing a linked project's file reads that project's code.db", () => {
     const ws = workspace();
     seedMemory(ws.H, [], { links: ["payments-api"] });
     injectIn(ws.payments, ws.home);
     const bullet = "- **Pay**: see `payments-api/src/a.ts` (2020-01-01).";
     fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bullet}\n`);
-    const linkedIndex = path.join(ws.payments, ".crank/anatomy-index.json");
+    const linkedIndex = path.join(ws.payments, ".crank/code.db");
     const before = fs.readFileSync(linkedIndex);
 
     const ctx = injectIn(ws.H, ws.home);

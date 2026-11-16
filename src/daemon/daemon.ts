@@ -19,7 +19,7 @@ import {
   loadConfig,
   readJsonObject,
 } from "../hooks/lib/config.ts";
-import { openCodeDb, pendingCount } from "../hooks/lib/code-db.ts";
+import { GRAPH_READ_BUSY_MS, openCodeDb, pendingCount } from "../hooks/lib/code-db.ts";
 import { trySteal } from "../hooks/lib/lock.ts";
 import { installedStores } from "../hooks/lib/registry.ts";
 import {
@@ -317,9 +317,6 @@ class Daemon {
     this.holds.set(stem, { untilMs: Date.now() + delayMs, delayMs });
   }
 }
-
-/** How long a read of a project's code.db waits for another process's WAL recovery or checkpoint. */
-const GRAPH_READ_BUSY_MS = 1000;
 
 /**
  * True when the project's code.db opens and lists a parseable file with no current parse. The read

@@ -158,7 +158,7 @@ describe("init records the Codex choice", () => {
     expect(run.stdout).toBe(
       [
         `crank-mem ${cliVersion()} initialized (runtime: bun, git: exclude)`,
-        "  indexed 2 files → .crank/anatomy.md",
+        "  indexed 2 files → .crank/code.db",
         ...initItemLines("exclude", "trust", codexHome),
         "Next: start a Claude Code session here — project memory injects at session start.",
         "Optional: install the audit skill — npx skills add ChrisLiva/crank-mem",
@@ -601,7 +601,6 @@ test("init writes the project name", () => {
     "git",
     "injection_budget_bytes",
     "max_file_size_bytes",
-    "max_files",
     "name",
     "runtime",
     "vendored_version",
@@ -925,12 +924,12 @@ test("init leaves an existing cerebrum alone", () => {
   expect(fs.readFileSync(cerebrumPath, "utf-8")).toBe("# Mine\n");
 });
 
-test("a failing first scan stops init before wiring anything", () => {
+test("a failing first file scan stops init before wiring anything", () => {
   const { root, codexHome } = makeProject();
   const exclude = path.join(root, ".git/info/exclude");
   const before = snapshot(root);
   const excludeBefore = fs.readFileSync(exclude);
-  fs.mkdirSync(path.join(root, ".crank/anatomy-index.json"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".crank/code.db"), { recursive: true });
   const run = cli(
     root,
     codexHome,
@@ -942,7 +941,7 @@ test("a failing first scan stops init before wiring anything", () => {
     ...CODEX_FLAGS.review,
   );
   expect(run.status).toBe(1);
-  expect(run.stderr).toContain("crank-mem: EISDIR");
+  expect(run.stderr).toContain("crank-mem: could not write code.db (");
   expect(run.stderr).toContain("init failed before wiring anything — delete .crank/ and retry.\n");
   expect(fs.existsSync(configPath(root))).toBe(false);
   expect(snapshot(root)).toEqual(before);

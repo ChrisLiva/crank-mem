@@ -1,18 +1,48 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 import { makeCrankProject, runCli } from "./helpers.ts";
 
 const ONE_LINE = "export const v = 1;\n";
+
+interface GraphFile {
+  imports?: string[];
+  namespaces?: { declares?: string[]; uses?: string[] };
+}
+
+/** What `scan` left in code.db for each file: its repo imports and, for C#, its namespaces, in source order. */
+function readGraph(root: string): Record<string, any> {
+  const opened = openCodeDb(root, "read");
+  expect(opened.status).toBe("open");
+  const db = opened.db!;
+  try {
+    const files: Record<string, GraphFile> = {};
+    for (const row of db.prepare("SELECT path FROM files").all() as { path: string }[])
+      files[row.path] = {};
+    for (const row of db.prepare("SELECT from_path, to_path FROM imports ORDER BY rowid").all() as {
+      from_path: string;
+      to_path: string;
+    }[])
+      (files[row.from_path]!.imports ??= []).push(row.to_path);
+    for (const row of db
+      .prepare("SELECT path, namespace, role FROM namespaces ORDER BY rowid")
+      .all() as { path: string; namespace: string; role: "declares" | "uses" }[]) {
+      const namespaces = (files[row.path]!.namespaces ??= {});
+      (namespaces[row.role] ??= []).push(row.namespace);
+    }
+    return files;
+  } finally {
+    db.close();
+  }
+}
 
 function scanIndex(files: Record<string, string>, outside?: (root: string) => void) {
   const root = makeCrankProject(files);
   outside?.(root);
   const run = runCli(root, ["scan"]);
   expect(run.status).toBe(0);
-  const index = JSON.parse(fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"));
-  const anatomy = fs.readFileSync(path.join(root, ".crank/anatomy.md"), "utf-8");
-  return { root, index, anatomy };
+  return { root, index: { files: readGraph(root) } };
 }
 
 describe("TS/JS imports", () => {
@@ -66,12 +96,11 @@ describe("TS/JS imports", () => {
   files["src/many.ts"] = numbers.map((n) => `import "./m/f${n}";\n`).join("");
   for (const n of numbers) files[`src/m/f${n}.ts`] = ONE_LINE;
   files["src/big.ts"] = 'import { b } from "./b";\n' + "// pad\n".repeat(37450);
-  const { index, anatomy } = scanIndex(files, (root) =>
+  const { index } = scanIndex(files, (root) =>
     fs.writeFileSync(path.join(root, "..", `${outsideName}.ts`), ONE_LINE),
   );
 
   test("resolve and record in source order", () => {
-    expect(index.version).toBe(3);
     expect(index.files["src/a.ts"].imports).toEqual([
       "src/b.ts",
       "src/side.ts",
@@ -107,12 +136,6 @@ describe("TS/JS imports", () => {
     expect(files["src/big.ts"]!.length).toBeGreaterThan(262_144);
     expect(index.files["src/big.ts"]).toBeDefined();
     expect("imports" in index.files["src/big.ts"]).toBe(false);
-  });
-
-  test("anatomy.md never shows imports", () => {
-    expect(anatomy).toContain("`src/side.ts`");
-    const lines = anatomy.split("\n");
-    expect(lines.filter((l) => l.includes("src/a.ts") && l.includes("src/side.ts"))).toEqual([]);
   });
 });
 
@@ -218,11 +241,9 @@ test("an unreadable go.mod costs only the importing file its imports", () => {
     const run = runCli(root, ["scan"]);
     expect(run.status).toBe(0);
     if (process.getuid?.() === 0) return;
-    const index = JSON.parse(
-      fs.readFileSync(path.join(root, ".crank/anatomy-index.json"), "utf-8"),
-    );
-    expect(index.files["cmd/main.go"]).toBeDefined();
-    expect("imports" in index.files["cmd/main.go"]).toBe(false);
+    const files = readGraph(root);
+    expect(files["cmd/main.go"]).toBeDefined();
+    expect("imports" in files["cmd/main.go"]!).toBe(false);
   } finally {
     fs.chmodSync(goMod, 0o644);
   }

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-// One-line file descriptions for the anatomy index. First hit wins:
+// One-line file descriptions for code.db's files table. First hit wins:
 // package.json "description", known filename, any .json "description",
 // markdown heading, Python module docstring, comments above the first line of
 // code, first declaration. Reads at most HEAD_BYTES; result capped at

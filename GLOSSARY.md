@@ -7,7 +7,7 @@ Project memory for coding agents: crank-mem records what a project's files conta
 ### Projects
 
 **Project memory**:
-Everything crank-mem keeps for a project: its anatomy, its cerebrum and its store.
+Everything crank-mem keeps for a project: its code graph, its cerebrum and its store.
 _Avoid_: Memory (unqualified), context, knowledge
 
 **Project**:
@@ -80,14 +80,30 @@ _Avoid_: Visible, shown
 A live experiment against an agent that establishes how it behaves, recorded in an ADR.
 _Avoid_: Spike, manual test
 
-### Anatomy
+### Code graph
+
+**Code graph**:
+The per-project SQLite store, `.crank/code.db`, of each indexable file's description, token size, symbols with their line ranges, the repo files it imports and its call sites; the hooks keep its file facts current, and the CLI and the daemon parse the rest.
+_Avoid_: Graph db, call index, the index
 
 **Anatomy**:
-The per-file record of a project: each indexed file's description, token size, symbols with their line ranges and the repo files it imports.
+The view `crank-mem anatomy` renders from the code graph: one entry per file with its description, token size and top-level symbols.
 _Avoid_: The index, anatomy index, file map
 
+**Call site**:
+One place in a file where code calls a name, recorded with its line, the symbol that contains it and the receiver it was called on.
+_Avoid_: Call, reference, usage
+
+**Caller/Callee**:
+A caller is the symbol whose body holds a call site; the callee is the symbol that site resolves to, or the bare name when it resolves to no single definition.
+_Avoid_: Parent and child, dependent and dependency
+
+**Impact**:
+The callers of a symbol, their callers and so on to a depth, which `crank-mem impact` prints as a tree.
+_Avoid_: Blast radius, dependents
+
 **Indexable file**:
-A file that the anatomy may hold; binaries, lockfiles, tests and sensitive files are not.
+A file that the code graph may hold; binaries, lockfiles, paths a config excludes and sensitive files are not. Test files are indexable; they are left out only as candidates when a call resolves by a name defined once in the project.
 _Avoid_: Tracked file, source file
 
 **Sensitive file**:
@@ -95,11 +111,11 @@ A file that may hold secrets, which crank-mem never indexes and no setting can a
 _Avoid_: Secret file, private file
 
 **Scan**:
-A full rebuild of the anatomy from the project's files.
+A full pass that brings the code graph current: it records every indexable file and parses every file that awaits a parse, rebuilding a corrupt store.
 _Avoid_: Reindex, crawl
 
 **Refresh**:
-A time-limited pass that brings the anatomy in line with the files changed since the last one.
+A time-limited pass that brings the code graph's file facts in line with the files changed since the last one.
 _Avoid_: Rescan, sync, update
 
 **Churn**:
@@ -107,7 +123,7 @@ How often recent commits changed a file.
 _Avoid_: Activity, hotness
 
 **Active file**:
-A file the anatomy ranks first because an agent wrote it or its churn is high.
+A file the code graph ranks first because an agent wrote it or its churn is high.
 _Avoid_: Hot file, recent file
 
 ### Cerebrum
@@ -133,7 +149,7 @@ The part of the cerebrum that an injection carries when the whole does not fit.
 _Avoid_: Summary, slice
 
 **Citation**:
-A file path or basename in backticks inside a bullet, which the excerpts, consolidation and `stats` check on disk; the anatomy only places a cited basename or partial path.
+A file path or basename in backticks inside a bullet, which the excerpts, consolidation and `stats` check on disk; the code graph only places a cited basename or partial path.
 _Avoid_: Reference, file link
 
 **Cerebrum archive**:
@@ -222,7 +238,7 @@ _Avoid_: Outdated, invalid, deleted
 
 **Stale**:
 Said only of an observation that carries a stale flag.
-_Avoid_: Stale anatomy (say behind), stale hooks (say drift), stale hash (say outdated)
+_Avoid_: Stale code graph (say behind), stale hooks (say drift), stale hash (say outdated)
 
 **Consolidation**:
 The pass after a digest that checks pending proposals, stale flags and affected bullets against the code, then edits the cerebrum.

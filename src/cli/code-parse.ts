@@ -57,19 +57,19 @@ const GRAPH_JOB_MS = 60_000;
 /** SQLITE_BUSY; extended codes (261, 517) carry it in the low byte. */
 const SQLITE_BUSY = 5;
 
-function isBusy(err: unknown): boolean {
+export function isBusy(err: unknown): boolean {
   const { errcode } = err as { errcode?: unknown };
   return typeof errcode === "number" && (errcode & 0xff) === SQLITE_BUSY;
 }
 
 /** True when an open's `reason` (`errcode <n>`, as `code-db.ts` → `failure` words it) names SQLITE_BUSY. */
-function busyReason(reason: string | undefined): boolean {
+export function busyReason(reason: string | undefined): boolean {
   const code = /^errcode (\d+)$/.exec(reason ?? "")?.[1];
   return code !== undefined && isBusy({ errcode: Number(code) });
 }
 
 /** The store opened to write, rebuilt first when it is corrupt or another version. */
-function openForRefresh(root: string, busyMs: number): CodeDbOpen {
+export function openForRefresh(root: string, busyMs: number): CodeDbOpen {
   const opened = openCodeDb(root, "write", busyMs);
   if (opened.status !== "rebuild") return opened;
   deleteCodeDb(root);

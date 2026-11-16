@@ -24,14 +24,48 @@ import {
   claudeSessionStart,
 } from "./fixtures/payloads.ts";
 import { parseApplyPatch } from "../src/hooks/lib/apply-patch.ts";
-import { loadIndex } from "../src/hooks/lib/store.ts";
+import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 
 const HOOK = "src/hooks/post-write.ts";
 
 function seedIndex(root: string): void {
-  // Run session-start once to build the initial index.
+  // Run session-start once to build the initial file facts in code.db.
   runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root)));
+}
+
+interface FileRow {
+  description: string;
+  write_count: number;
+  churn_rank: number | null;
+}
+
+/** The project's code.db `files` rows by path, as the hooks left them. */
+function graphFiles(root: string): Record<string, FileRow> {
+  const opened = openCodeDb(root, "read");
+  expect(opened.status).toBe("open");
+  try {
+    const rows = opened
+      .db!.prepare("SELECT path, description, write_count, churn_rank FROM files")
+      .all() as unknown as (FileRow & { path: string })[];
+    return Object.fromEntries(rows.map((row) => [row.path, row]));
+  } finally {
+    opened.db!.close();
+  }
+}
+
+/** The repo imports code.db holds for `rel`, in source order. */
+function graphImports(root: string, rel: string): string[] {
+  const opened = openCodeDb(root, "read");
+  expect(opened.status).toBe("open");
+  try {
+    const rows = opened
+      .db!.prepare("SELECT to_path FROM imports WHERE from_path = ? ORDER BY rowid")
+      .all(rel) as { to_path: string }[];
+    return rows.map((row) => row.to_path);
+  } finally {
+    opened.db!.close();
+  }
 }
 
 describe("parseApplyPatch", () => {
@@ -81,26 +115,21 @@ describe("post-write hook (black-box)", () => {
     const run = runHook(HOOK, JSON.stringify(claudePostWrite(root, newFile)));
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("");
-    const index = loadIndex(path.join(root, ".crank"));
-    expect(index.files["src/new.ts"]!.description).toBe("Brand new module.");
+    expect(graphFiles(root)["src/new.ts"]!.description).toBe("Brand new module.");
   });
 
-  test("a written file past max_files stays indexed at the next session start", () => {
+  test("each write to a file counts once, and a session start keeps the count", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;", "b.ts": "const b = 1;" });
-    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), max_files: 2 });
     seedIndex(root);
     fs.writeFileSync(path.join(root, "z.ts"), "/** Zed. */\n");
     expect(
       runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "z.ts")))).status,
     ).toBe(0);
     runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "z.ts"))));
-    expect(loadIndex(path.join(root, ".crank")).files["z.ts"]!.writeCount).toBe(2);
+    expect(graphFiles(root)["z.ts"]!.write_count).toBe(2);
     seedIndex(root);
-    const index = loadIndex(path.join(root, ".crank"));
-    expect(Object.keys(index.files).sort()).toEqual(["a.ts", "z.ts"]);
-    expect(fs.readFileSync(path.join(root, ".crank/anatomy.md"), "utf-8")).toContain(
-      "## Most active files\n\n- `z.ts` — Zed.",
-    );
+    expect(Object.keys(graphFiles(root)).sort()).toEqual(["a.ts", "b.ts", "z.ts"]);
+    expect(graphFiles(root)["z.ts"]!.write_count).toBe(2);
   });
 
   test("a write pin clears once the file is in the churn list", () => {
@@ -109,15 +138,14 @@ describe("post-write hook (black-box)", () => {
     seedIndex(root);
     fs.writeFileSync(path.join(root, "z.ts"), "export const z = 1;\n");
     runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "z.ts"))));
-    expect(loadIndex(path.join(root, ".crank")).files["z.ts"]!.writeCount).toBe(1);
+    expect(graphFiles(root)["z.ts"]!.write_count).toBe(1);
     gitCommit(root, "z");
     seedIndex(root);
-    const index = loadIndex(path.join(root, ".crank"));
-    expect(index.meta.churn!.paths).toContain("z.ts");
-    expect(index.files["z.ts"]!.writeCount).toBeUndefined();
+    expect(graphFiles(root)["z.ts"]).toMatchObject({ write_count: 0 });
+    expect(graphFiles(root)["z.ts"]!.churn_rank).not.toBeNull();
     // Later writes to a churned file add no pin either.
     runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "z.ts"))));
-    expect(loadIndex(path.join(root, ".crank")).files["z.ts"]!.writeCount).toBeUndefined();
+    expect(graphFiles(root)["z.ts"]!.write_count).toBe(0);
   });
 
   test("Claude Edit: existing file re-indexed", () => {
@@ -126,13 +154,13 @@ describe("post-write hook (black-box)", () => {
     fs.writeFileSync(path.join(root, "a.ts"), "/** Updated alpha. */\nconst a = 2;\n");
     const run = runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "a.ts"))));
     expect(run.status).toBe(0);
-    expect(loadIndex(path.join(root, ".crank")).files["a.ts"]!.description).toBe("Updated alpha.");
+    expect(graphFiles(root)["a.ts"]!.description).toBe("Updated alpha.");
   });
 
   test("Codex apply_patch: Add and Update re-indexed, Delete dropped", () => {
     const root = makeCrankProject({ "keep.ts": "const k = 1;", "gone.ts": "const g = 1;" });
     seedIndex(root);
-    expect(loadIndex(path.join(root, ".crank")).files["gone.ts"]).toBeDefined();
+    expect(graphFiles(root)["gone.ts"]).toBeDefined();
 
     fs.writeFileSync(path.join(root, "added.ts"), "/** Added by codex. */\nexport const x = 1;\n");
     fs.writeFileSync(path.join(root, "keep.ts"), "/** Keep updated. */\nconst k = 2;\n");
@@ -152,20 +180,20 @@ describe("post-write hook (black-box)", () => {
     const run = runHook(HOOK, JSON.stringify(codexApplyPatch(root, patch)));
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("");
-    const index = loadIndex(path.join(root, ".crank"));
-    expect(index.files["added.ts"]!.description).toBe("Added by codex.");
-    expect(index.files["keep.ts"]!.description).toBe("Keep updated.");
-    expect(index.files["gone.ts"]).toBeUndefined();
+    const files = graphFiles(root);
+    expect(files["added.ts"]!.description).toBe("Added by codex.");
+    expect(files["keep.ts"]!.description).toBe("Keep updated.");
+    expect(files["gone.ts"]).toBeUndefined();
   });
 
-  test("a write refreshes the file's imports, from Claude and from Codex apply_patch", () => {
+  test("a write leaves the file to the next parse, which refreshes its imports, from Claude and from Codex apply_patch", () => {
     const root = makeCrankProject({
       "src/a.ts": 'import "./b";\n',
       "src/b.ts": "export const b = 1;\n",
       "src/c.ts": "export const c = 1;\n",
     });
     expect(runCli(root, ["scan"]).status).toBe(0);
-    const imports = () => loadIndex(path.join(root, ".crank")).files["src/a.ts"]!.imports;
+    const imports = () => graphImports(root, "src/a.ts");
     expect(imports()).toEqual(["src/b.ts"]);
 
     fs.writeFileSync(path.join(root, "src/a.ts"), 'import "./c";\n');
@@ -175,6 +203,8 @@ describe("post-write hook (black-box)", () => {
     );
     expect(claude.status).toBe(0);
     expect(claude.stdout).toBe("");
+    expect(imports()).toEqual(["src/b.ts"]);
+    expect(runCli(root, ["scan"]).status).toBe(0);
     expect(imports()).toEqual(["src/c.ts"]);
 
     fs.writeFileSync(path.join(root, "src/a.ts"), 'import "./b";\n');
@@ -189,6 +219,8 @@ describe("post-write hook (black-box)", () => {
     const codex = runHook(HOOK, JSON.stringify(codexApplyPatch(root, patch)));
     expect(codex.status).toBe(0);
     expect(codex.stdout).toBe("");
+    expect(imports()).toEqual(["src/c.ts"]);
+    expect(runCli(root, ["scan"]).status).toBe(0);
     expect(imports()).toEqual(["src/b.ts"]);
   });
 
@@ -208,29 +240,26 @@ describe("post-write hook (black-box)", () => {
     };
     const run = runHook(HOOK, JSON.stringify(payload));
     expect(run.status).toBe(0);
-    expect(loadIndex(path.join(root, ".crank")).files["sub/dir/fresh.ts"]!.description).toBe(
-      "Fresh in subdir.",
-    );
+    expect(graphFiles(root)["sub/dir/fresh.ts"]!.description).toBe("Fresh in subdir.");
   });
 
   test("overwriting an indexed file past the size cap drops its entry", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;", "grows.ts": "const g = 1;" });
     seedIndex(root);
-    const crankDir = path.join(root, ".crank");
-    const before = loadIndex(crankDir);
-    expect(before.files["grows.ts"]).toBeDefined();
+    const before = graphFiles(root);
+    expect(before["grows.ts"]).toBeDefined();
 
     fs.writeFileSync(path.join(root, "grows.ts"), "x".repeat(1024 * 1024 + 1));
     const run = runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "grows.ts"))));
     expect(run.status).toBe(0);
-    const after = loadIndex(crankDir);
-    expect(after.files["grows.ts"]).toBeUndefined();
-    expect(after.meta.fileCount).toBe(before.meta.fileCount - 1);
+    const after = graphFiles(root);
+    expect(after["grows.ts"]).toBeUndefined();
+    expect(Object.keys(after)).toHaveLength(Object.keys(before).length - 1);
 
     // A new file past the cap is never indexed.
     fs.writeFileSync(path.join(root, "huge.ts"), "x".repeat(1024 * 1024 + 1));
     runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "huge.ts"))));
-    expect(loadIndex(crankDir).files["huge.ts"]).toBeUndefined();
+    expect(graphFiles(root)["huge.ts"]).toBeUndefined();
   });
 
   test("binary content under an unlisted extension is skipped", () => {
@@ -242,7 +271,7 @@ describe("post-write hook (black-box)", () => {
       JSON.stringify(claudePostWrite(root, path.join(root, "model.weights"))),
     );
     expect(run.status).toBe(0);
-    expect(loadIndex(path.join(root, ".crank")).files["model.weights"]).toBeUndefined();
+    expect(graphFiles(root)["model.weights"]).toBeUndefined();
   });
 
   test("garbage stdin: exit 0", () => {
