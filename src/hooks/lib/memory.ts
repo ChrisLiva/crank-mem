@@ -7,6 +7,7 @@ import { worktreeMain } from "./owner.ts";
 import { migrate, SCHEMA_VERSION, userVersion } from "./memory-schema.ts";
 import * as searching from "./memory-search.ts";
 import * as writes from "./memory-write.ts";
+import type { Neighbour } from "./related-files.ts";
 import { saveCurrentStore, snapshotBeforeMigration } from "./store-upkeep.ts";
 import type {
   ConsolidationOutcome,
@@ -93,8 +94,8 @@ export type SearchQuery = {
   /** Rows linked to any of these paths; null means no file filter. */
   files: string[] | null;
   stale: boolean;
-  /** Files whose linked rows form the graph list: seeds' rows first, then neighbours'; both empty means no graph list. */
-  related: { seeds: string[]; neighbours: string[] };
+  /** Files whose linked rows form the graph list, ranked by the weight the files pass on; both empty means no graph list. */
+  related: { seeds: string[]; neighbours: Neighbour[] };
 };
 type MemoryStats = {
   observations: number;

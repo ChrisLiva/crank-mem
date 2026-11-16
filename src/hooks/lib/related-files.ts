@@ -101,11 +101,32 @@ function edges(graph: Map<string, Node>): Array<[string, string]> {
   return [...importEdges(graph), ...namespaceEdges(graph, declaringFiles(graph))];
 }
 
-/** The files a query names (seeds) and the files one import hop from them (neighbours). */
+/** Each file's distinct neighbours over both edge directions, files in the graph only. */
+function adjacency(graph: Map<string, Node>): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  const link = (a: string, b: string): void => {
+    out.set(a, (out.get(a) ?? new Set<string>()).add(b));
+  };
+  for (const [from, to] of edges(graph)) {
+    if (from === to || !graph.has(from) || !graph.has(to)) continue;
+    link(from, to);
+    link(to, from);
+  }
+  return out;
+}
+
+/** A file one hop from a seed and the share of the seeds' weight it receives. */
+export type Neighbour = { path: string; weight: number };
+
+/**
+ * The files a query names (seeds) and the files one hop from them (neighbours). Each seed holds
+ * 1/seeds and splits it evenly over all its neighbours, so a seed with many edges passes little
+ * to each; neighbours come heaviest first, ties in code-unit order.
+ */
 export function relatedFiles(
   index: AnatomyIndex,
   text: string,
-): { seeds: string[]; neighbours: string[] } {
+): { seeds: string[]; neighbours: Neighbour[] } {
   const graph = nodes(index);
   const seeds = new Set<string>();
   for (const term of terms(text)) {
@@ -115,17 +136,17 @@ export function relatedFiles(
   }
   const starting = [...seeds].slice(0, MAX_SEEDS);
   const isSeed = new Set(starting);
-  const touched = new Map<string, Set<string>>();
-  const touch = (neighbour: string, seed: string): void => {
-    if (isSeed.has(neighbour) || !graph.has(neighbour)) return;
-    touched.set(neighbour, (touched.get(neighbour) ?? new Set<string>()).add(seed));
-  };
-  for (const [from, to] of edges(graph)) {
-    if (isSeed.has(from)) touch(to, from);
-    if (isSeed.has(to)) touch(from, to);
+  const near = adjacency(graph);
+  const weights = new Map<string, number>();
+  for (const seed of starting) {
+    const around = near.get(seed) ?? new Set<string>();
+    for (const n of around) {
+      if (isSeed.has(n)) continue;
+      weights.set(n, (weights.get(n) ?? 0) + 1 / around.size / starting.length);
+    }
   }
-  const neighbours = [...touched.keys()].sort(
-    (a, b) => touched.get(b)!.size - touched.get(a)!.size || (a < b ? -1 : a > b ? 1 : 0),
-  );
+  const neighbours = [...weights]
+    .map(([path, weight]) => ({ path, weight }))
+    .sort((a, b) => b.weight - a.weight || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return { seeds: starting, neighbours: neighbours.slice(0, MAX_NEIGHBOURS) };
 }

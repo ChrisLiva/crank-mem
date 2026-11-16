@@ -1152,7 +1152,7 @@ describe("search", () => {
     expect(found.sort()).toEqual([a, b].sort());
   });
 
-  test("a graph list of rows linked to seed files, then neighbour files, fuses with the others", () => {
+  test("a graph list of rows linked to seed and neighbour files fuses with the others", () => {
     const memory = writable();
     const [k1, g1, g2, g3] = seed(memory, [
       obs({ title: "walrus tusk", narrative: "plain" }),
@@ -1165,7 +1165,7 @@ describe("search", () => {
       obs({ title: "near row", narrative: "plain", filesRead: ["src/near.ts"] }),
       obs({ title: "both row", narrative: "plain", filesRead: ["src/seed.ts", "src/near.ts"] }),
     ]) as [number, number, number, number];
-    const R = { seeds: ["src/seed.ts"], neighbours: ["src/near.ts"] };
+    const R = { seeds: ["src/seed.ts"], neighbours: [{ path: "src/near.ts", weight: 0.5 }] };
     const found = (over: Partial<SearchQuery> & { text: string }) =>
       ids(memory.search(query(over)));
     expect(found({ text: "walrus", related: R })).toEqual([k1, g3, g1, g2]);
@@ -1177,6 +1177,18 @@ describe("search", () => {
     const near = { model: "m1", values: vec(1, 0, 0) };
     expect(found({ text: "walrus", vector: near, related: R })).toEqual([g1, k1, g3, g2]);
     expect(found({ text: "walrus zzzz", vector: near, related: R })).toEqual([g1, g3, g2]);
+  });
+
+  test("a file splits its weight over its rows, so a widely linked file counts little toward each", () => {
+    const memory = writable();
+    const [lone, w1, w2, w3] = seed(memory, [
+      obs({ title: "lone row", narrative: "plain", filesRead: ["src/rare.ts"] }),
+      obs({ title: "wide one", narrative: "plain", filesRead: ["src/wide.ts"] }),
+      obs({ title: "wide two", narrative: "plain", filesModified: ["src/wide.ts"] }),
+      obs({ title: "wide three", narrative: "plain", filesRead: ["src/wide.ts"] }),
+    ]) as [number, number, number, number];
+    const related = { seeds: ["src/wide.ts"], neighbours: [{ path: "src/rare.ts", weight: 0.5 }] };
+    expect(ids(memory.search(query({ text: "nomatch", related })))).toEqual([lone, w3, w2, w1]);
   });
 
   test("the graph list honours since and stale", async () => {

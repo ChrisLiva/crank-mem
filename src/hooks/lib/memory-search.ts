@@ -1,6 +1,6 @@
 import type * as sqlite from "node:sqlite";
 import type { Memory } from "./memory.ts";
-import { all, hasVectors, LINE_COLUMNS, lineFilters, NEWEST_FIRST, toLine } from "./memory-read.ts";
+import { all, hasVectors, LINE_COLUMNS, lineFilters, toLine } from "./memory-read.ts";
 import type { ObservationLine } from "./wire.ts";
 
 // Search fuses a keyword list, a vector list and a graph list by weighted reciprocal rank,
@@ -87,17 +87,26 @@ export function search(
       params: [...terms.map((t) => ftsQuery(t, " ")), Math.min(OR_MIN_TERMS, terms.length)],
     });
   };
-  const linkedTo = (paths: string[]): string =>
-    `o.id IN (SELECT observation_id FROM observation_files WHERE path IN (${paths.map(() => "?").join(", ")}))`;
-  const linked = (paths: string[], notPaths: string[]): ObservationLine[] => {
-    if (paths.length === 0) return [];
-    const exclude = notPaths.length === 0 ? "" : ` AND NOT ${linkedTo(notPaths)}`;
+  // Each related file holds its weight (a seed's 1/seeds, a neighbour's share) and splits it evenly
+  // over the rows linked to it; a row scores the sum its files pass on, so a file linked to many
+  // rows counts for little toward any one of them.
+  const walked = (): ObservationLine[] => {
+    const { seeds, neighbours } = query.related;
+    const weighted: [string, number][] = [
+      ...seeds.map((s): [string, number] => [s, 1 / seeds.length]),
+      ...neighbours.map((n): [string, number] => [n.path, n.weight]),
+    ];
+    if (weighted.length === 0) return [];
     return all(
       db,
-      `SELECT ${LINE_COLUMNS} FROM observations o
-         WHERE ${linkedTo(paths)}${exclude}${where} ${NEWEST_FIRST} LIMIT ?`,
-      ...paths,
-      ...notPaths,
+      `WITH w(path, weight) AS (VALUES ${weighted.map(() => "(?, ?)").join(", ")}),
+         links AS (SELECT DISTINCT f.path, f.observation_id FROM observation_files f JOIN w USING (path)),
+         per AS (SELECT path, count(*) AS n FROM links GROUP BY path),
+         s AS (SELECT l.observation_id AS id, sum(w.weight / per.n) AS score
+                 FROM links l JOIN w USING (path) JOIN per USING (path) GROUP BY l.observation_id)
+       SELECT ${LINE_COLUMNS} FROM observations o JOIN s ON s.id = o.id
+         WHERE s.score > 0${where} ORDER BY s.score DESC, o.created_at DESC, o.id DESC LIMIT ?`,
+      ...weighted.flat(),
       ...params,
       LIST_DEPTH,
     ).map(toLine);
@@ -130,8 +139,7 @@ export function search(
       weight: 1,
     });
   }
-  const { seeds, neighbours } = query.related;
-  const graph = [...linked(seeds, []), ...linked(neighbours, seeds)].slice(0, LIST_DEPTH);
+  const graph = walked();
   if (graph.length > 0) lists.push({ rows: graph, weight: GRAPH_WEIGHT });
   const fused = new Map<number, { line: ObservationLine; score: number }>();
   for (const { rows, weight } of lists) {
