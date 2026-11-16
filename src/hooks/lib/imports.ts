@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { CrankConfig } from "./config.ts";
+import { isObj, type CrankConfig } from "./config.ts";
 import { isProjectFile } from "./hook-io.ts";
 import { isIndexableName, toPosix } from "./indexable.ts";
 import type { FileEntry } from "./store.ts";
@@ -15,7 +15,7 @@ const TS_JS_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", 
 // multi-line one), after a bare `import`, or inside `require(` / `import(`,
 // in source order.
 const TS_JS_SPECIFIER =
-  /\bfrom\s*["'](?<from>[^"'\n]+)["']|\bimport\s*["'](?<bare>[^"'\n]+)["']|\b(?:require|import)\s*\(\s*["'](?<call>[^"'\n]+)["']\s*\)/g;
+  /\bfrom\s*["'](?<from>[^"'\n]+)["']|\bimport\s*["'](?<bare>[^"'\n]+)["']|\b(?:require|import)\s*\(\s*["'](?<call>[^"'\n]+)["']\s*\)/dg;
 
 // `from <module> import <names>` (a parenthesized list may span lines) or
 // `import <modules>`, each anchored at a line start, in source order.
@@ -51,10 +51,17 @@ function firstUnique(values: string[]): string[] {
   return [...new Set(values)].slice(0, MAX_LINKS);
 }
 
-/** Exact path, then each extension, then `/index` + each; a `.js` specifier falls back to `.ts` then `.tsx`. */
+/** A relative specifier against the importer's directory; any other through the nearest config's aliases. */
 function resolveTsJs(rootDir: string, fromRel: string, specifier: string): string | null {
-  if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
-  const base = path.posix.join(path.posix.dirname(fromRel), specifier);
+  if (specifier.startsWith("./") || specifier.startsWith("../")) {
+    return resolveTsJsPath(rootDir, path.posix.join(path.posix.dirname(fromRel), specifier));
+  }
+  return resolveAlias(rootDir, fromRel, specifier);
+}
+
+/** Exact path, then each extension, then `/index` + each; a `.js` path falls back to `.ts` then `.tsx`. Null outside the root. */
+function resolveTsJsPath(rootDir: string, base: string): string | null {
+  if (base === ".." || base.startsWith("../") || path.posix.isAbsolute(base)) return null;
   const candidates = [
     base,
     ...TS_JS_EXTENSIONS.map((ext) => base + ext),
@@ -294,13 +301,237 @@ function csNamespaces(content: string): NonNullable<FileEntry["namespaces"]> {
 }
 
 function tsJsImports(rootDir: string, importer: string, content: string): string[] {
+  const behind = namedThroughReexports(rootDir, importer, content);
   const found: string[] = [];
   for (const m of content.matchAll(TS_JS_SPECIFIER)) {
     const { from, bare, call } = m.groups!;
     const rel = resolveTsJs(rootDir, importer, (from ?? bare ?? call)!);
-    if (rel) found.push(rel);
+    const at = m.indices!.groups!.from?.[0];
+    if (rel) found.push(rel, ...((at === undefined ? undefined : behind.get(at)) ?? []));
   }
   return found;
+}
+
+// tsconfig.json or jsconfig.json `compilerOptions.baseUrl` and `paths`, from the nearest config at
+// or above the importer. `extends` is not followed. A config is parsed once per mtime and size.
+const TS_CONFIG_NAMES = ["tsconfig.json", "jsconfig.json"];
+type Aliases = { baseUrl: string | null; pathsBase: string; paths: [string, string[]][] };
+const parsedConfigs = new Map<string, { stamp: string; aliases: Aliases | null }>();
+
+/** Drops `//` and block comments and trailing commas outside strings, as tsconfig allows them. */
+function stripJsonc(text: string): string {
+  return text
+    .replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_, str?: string) => str ?? "")
+    .replace(
+      /("(?:\\.|[^"\\])*")|,(\s*[}\]])/g,
+      (_, str?: string, close?: string) => str ?? close!,
+    );
+}
+
+/** A config's aliases, `paths` resolving against `baseUrl` when set and the config's directory otherwise. */
+function aliasesOf(configDir: string, options: unknown): Aliases | null {
+  if (!isObj(options)) return null;
+  const baseUrl =
+    typeof options.baseUrl === "string" ? path.posix.join(configDir, options.baseUrl) : null;
+  const paths: [string, string[]][] = [];
+  if (isObj(options.paths)) {
+    for (const [pattern, targets] of Object.entries(options.paths)) {
+      if (Array.isArray(targets)) {
+        paths.push([pattern, targets.filter((t): t is string => typeof t === "string")]);
+      }
+    }
+  }
+  if (baseUrl === null && paths.length === 0) return null;
+  return { baseUrl, pathsBase: baseUrl ?? configDir, paths };
+}
+
+function readAliases(rootDir: string, rel: string): Aliases | null {
+  const abs = path.join(rootDir, rel);
+  try {
+    const stat = fs.statSync(abs);
+    const stamp = `${stat.mtimeMs}:${stat.size}`;
+    const memo = parsedConfigs.get(abs);
+    if (memo?.stamp === stamp) return memo.aliases;
+    const parsed: unknown = JSON.parse(stripJsonc(fs.readFileSync(abs, "utf-8")));
+    const aliases = isObj(parsed)
+      ? aliasesOf(path.posix.dirname(rel), parsed.compilerOptions)
+      : null;
+    parsedConfigs.set(abs, { stamp, aliases });
+    return aliases;
+  } catch {
+    // Unreadable or unparsable: the config resolves nothing.
+    return null;
+  }
+}
+
+function nearestAliases(rootDir: string, importer: string): Aliases | null {
+  for (let dir = path.posix.dirname(importer); ; dir = path.posix.dirname(dir)) {
+    for (const name of TS_CONFIG_NAMES) {
+      const rel = dir === "." ? name : `${dir}/${name}`;
+      if (isProjectFile(rootDir, rel)) return readAliases(rootDir, rel);
+    }
+    if (dir === ".") return null;
+  }
+}
+
+/** The text a pattern's one `*` stands for in `specifier`, or null; a pattern without `*` matches only itself. */
+function patternCapture(pattern: string, specifier: string): string | null {
+  const star = pattern.indexOf("*");
+  if (star < 0) return pattern === specifier ? "" : null;
+  const prefix = pattern.slice(0, star);
+  const suffix = pattern.slice(star + 1);
+  const fits =
+    specifier.length >= prefix.length + suffix.length &&
+    specifier.startsWith(prefix) &&
+    specifier.endsWith(suffix);
+  return fits ? specifier.slice(prefix.length, specifier.length - suffix.length) : null;
+}
+
+/** The longest-prefix `paths` pattern's first target that resolves, else `baseUrl` + the specifier. */
+function resolveAlias(rootDir: string, importer: string, specifier: string): string | null {
+  const aliases = nearestAliases(rootDir, importer);
+  if (aliases === null) return null;
+  let best: { prefix: number; targets: string[]; capture: string } | null = null;
+  for (const [pattern, targets] of aliases.paths) {
+    const capture = patternCapture(pattern, specifier);
+    const prefix = pattern.indexOf("*") < 0 ? pattern.length : pattern.indexOf("*");
+    if (capture !== null && (best === null || prefix > best.prefix)) {
+      best = { prefix, targets, capture };
+    }
+  }
+  for (const target of best?.targets ?? []) {
+    const base = path.posix.join(aliases.pathsBase, target.replace("*", best!.capture));
+    const found = resolveTsJsPath(rootDir, base);
+    if (found) return found;
+  }
+  return aliases.baseUrl === null
+    ? null
+    : resolveTsJsPath(rootDir, path.posix.join(aliases.baseUrl, specifier));
+}
+
+// A braced import list (`import { a, b as c }`, `import type { … }`, or one after a default
+// import) and its quoted specifier.
+const TS_JS_NAMED =
+  /\bimport\s+(?:type\s+)?(?:[\w$]+\s*,\s*)?\{(?<names>[^}]*)\}\s*from\s*["'](?<spec>[^"'\n]+)["']/dg;
+// A re-export (`export { a, b as c }` or `export *`, each followed by a quoted specifier);
+// `export * as ns` names one binding.
+const TS_JS_REEXPORT =
+  /\bexport\s+(?:type\s+)?(?:\{(?<names>[^}]*)\}|\*(?:\s+as\s+(?<ns>[\w$]+))?)\s*from\s*["'](?<spec>[^"'\n]+)["']/g;
+// A declaration exported where it stands, or an `export { … }` list with no `from`.
+const TS_JS_DECLARED =
+  /\bexport\s+(?:declare\s+)?(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(?:function\*?|class|const|let|var|type|interface|enum|namespace)\s+(?<name>[\w$]+)|\bexport\s+(?:type\s+)?\{(?<list>[^}]*)\}(?!\s*from\b)/g;
+const REEXPORT_HOPS = 3;
+
+/** A module's exports as regex reads them: names it declares, names it re-exports, and its `export *` sources. */
+type ModuleExports = {
+  declared: Set<string>;
+  named: Map<string, { spec: string; source: string }>;
+  stars: string[];
+};
+const moduleExports = new Map<string, { stamp: string; exports: ModuleExports }>();
+
+/** Each `a` or `a as b` of a brace list as [source name, bound name], `type` modifiers dropped. */
+function braceNames(list: string): [string, string][] {
+  const out: [string, string][] = [];
+  for (const item of list.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "").split(",")) {
+    const m = /^\s*(?:type\s+)?([\w$]+)(?:\s+as\s+([\w$]+))?\s*$/.exec(item);
+    if (m) out.push([m[1]!, m[2] ?? m[1]!]);
+  }
+  return out;
+}
+
+function parseExports(content: string): ModuleExports {
+  const exports: ModuleExports = { declared: new Set(), named: new Map(), stars: [] };
+  for (const m of content.matchAll(TS_JS_DECLARED)) {
+    if (m.groups!.name) exports.declared.add(m.groups!.name);
+    for (const [, bound] of braceNames(m.groups!.list ?? "")) exports.declared.add(bound);
+  }
+  for (const m of content.matchAll(TS_JS_REEXPORT)) {
+    const { names, ns, spec } = m.groups!;
+    if (ns) exports.named.set(ns, { spec: spec!, source: "*" });
+    else if (names === undefined) exports.stars.push(spec!);
+    for (const [source, bound] of braceNames(names ?? "")) {
+      exports.named.set(bound, { spec: spec!, source });
+    }
+  }
+  return exports;
+}
+
+/** The module's exports, or null for a file that is unreadable or longer than the symbol limit. */
+function exportsOf(rootDir: string, rel: string): ModuleExports | null {
+  const abs = path.join(rootDir, rel);
+  try {
+    const stat = fs.statSync(abs);
+    const stamp = `${stat.mtimeMs}:${stat.size}`;
+    const memo = moduleExports.get(abs);
+    if (memo?.stamp === stamp) return memo.exports;
+    const content = fs.readFileSync(abs, "utf-8");
+    if (content.length > SYMBOL_MAX_BYTES) return null;
+    const exports = parseExports(content);
+    moduleExports.set(abs, { stamp, exports });
+    return exports;
+  } catch {
+    // Gone or unreadable since it resolved: this name links nothing more.
+    return null;
+  }
+}
+
+/**
+ * The file declaring `name` behind `rel`, following re-exports up to `hops` more modules: `rel`
+ * itself when it declares the name; for a name re-exported by name, the last module reached when
+ * no deeper one declares it; null when nothing does or two `export *` sources both do.
+ */
+function declaringFile(rootDir: string, rel: string, name: string, hops: number): string | null {
+  const exports = exportsOf(rootDir, rel);
+  if (exports === null || exports.declared.has(name)) return exports ? rel : null;
+  if (hops === 0) return null;
+  const named = exports.named.get(name);
+  if (named) {
+    const next = resolveTsJs(rootDir, rel, named.spec);
+    if (next === null || named.source === "*") return next;
+    return declaringFile(rootDir, next, named.source, hops - 1) ?? next;
+  }
+  return starDeclarer(rootDir, rel, exports.stars, name, hops - 1);
+}
+
+/** The one file declaring `name` behind `rel`'s `export *` sources, or null for none or several. */
+function starDeclarer(
+  rootDir: string,
+  rel: string,
+  stars: string[],
+  name: string,
+  hops: number,
+): string | null {
+  const found = new Set<string>();
+  for (const spec of stars) {
+    const next = resolveTsJs(rootDir, rel, spec);
+    const file = next === null ? null : declaringFile(rootDir, next, name, hops);
+    if (file) found.add(file);
+  }
+  return found.size === 1 ? [...found][0]! : null;
+}
+
+/**
+ * For each named import, keyed by its specifier's start index, the files declaring its names behind
+ * the imported module's re-exports, the module itself left out.
+ */
+function namedThroughReexports(
+  rootDir: string,
+  importer: string,
+  content: string,
+): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  for (const m of content.matchAll(TS_JS_NAMED)) {
+    const target = resolveTsJs(rootDir, importer, m.groups!.spec!);
+    if (target === null) continue;
+    const files: string[] = [];
+    for (const [source] of braceNames(m.groups!.names!)) {
+      const file = declaringFile(rootDir, target, source, REEXPORT_HOPS);
+      if (file !== null && file !== target) files.push(file);
+    }
+    out.set(m.indices!.groups!.spec![0], files);
+  }
+  return out;
 }
 
 type ImportExtractor = (rootDir: string, importer: string, content: string) => string[];

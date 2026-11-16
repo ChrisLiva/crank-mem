@@ -850,7 +850,7 @@ export function idx(files: Record<string, Partial<FileEntry>>): AnatomyIndex {
     entries[p] = { description: "", tokens: 1, size: 1, mtimeMs: 0, ...f };
   }
   return {
-    version: 2,
+    version: 3,
     files: entries,
     meta: { lastScanned: null, fileCount: Object.keys(entries).length },
   };

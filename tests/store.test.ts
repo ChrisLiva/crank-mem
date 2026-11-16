@@ -67,7 +67,7 @@ describe("index store", () => {
     fs.writeFileSync(
       path.join(dir, INDEX_FILE),
       JSON.stringify({
-        version: 2,
+        version: 3,
         meta: { lastScanned: "2026-07-16T00:00:00Z", fileCount: 1 },
         files: {
           "src/a.ts": {

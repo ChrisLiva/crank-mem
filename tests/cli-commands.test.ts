@@ -553,7 +553,7 @@ describe("upgrade", () => {
     expect(repairLast).toBeGreaterThanOrEqual(0);
     expect(lines.findIndex((l) => SCAN_LINE.test(l))).toBeGreaterThan(repairLast);
     const rebuilt = JSON.parse(fs.readFileSync(indexFile, "utf-8"));
-    expect(rebuilt.version).toBe(2);
+    expect(rebuilt.version).toBe(3);
     expect(rebuilt.files["src/a.ts"].imports).toEqual(["src/b.ts"]);
 
     const current = fs.readFileSync(indexFile);
@@ -572,7 +572,7 @@ describe("upgrade", () => {
     expect(missing.status).toBe(0);
     expect(missing.stdout).toMatch(SCAN_LINE);
     const built = JSON.parse(fs.readFileSync(indexFile, "utf-8"));
-    expect(built.version).toBe(2);
+    expect(built.version).toBe(3);
     expect(Object.keys(built.files)).not.toContain("src/b.ts");
     expect(built.files["src/a.ts"]).not.toHaveProperty("imports");
 
@@ -580,7 +580,7 @@ describe("upgrade", () => {
     const unparsable = cli(root, "upgrade");
     expect(unparsable.status).toBe(0);
     expect(unparsable.stdout).toMatch(SCAN_LINE);
-    expect(JSON.parse(fs.readFileSync(indexFile, "utf-8")).version).toBe(2);
+    expect(JSON.parse(fs.readFileSync(indexFile, "utf-8")).version).toBe(3);
   });
 
   test("a held anatomy lock skips the scan", () => {

@@ -71,7 +71,7 @@ describe("TS/JS imports", () => {
   );
 
   test("resolve and record in source order", () => {
-    expect(index.version).toBe(2);
+    expect(index.version).toBe(3);
     expect(index.files["src/a.ts"].imports).toEqual([
       "src/b.ts",
       "src/side.ts",
@@ -320,4 +320,105 @@ test("C# files record declared and used namespaces, never imports", () => {
   expect(index.files["src/Big.cs"]).toBeDefined();
   expect("namespaces" in index.files["src/Big.cs"]).toBe(false);
   for (const rel of Object.keys(files)) expect("imports" in index.files[rel]).toBe(false);
+});
+
+test("TS/JS aliases resolve through the nearest tsconfig or jsconfig paths and baseUrl", () => {
+  const tsconfig = [
+    "{",
+    "  // comments and trailing commas are allowed",
+    '  "compilerOptions": {',
+    '    "baseUrl": ".",',
+    '    "paths": {',
+    '      "@/*": ["./src/*"],',
+    '      "@/deep/*": ["./other/*"],',
+    '      "@lib/*": ["./lib/*", "./fallback/*"],',
+    '      "exact": ["./src/exact.ts"],',
+    "    },",
+    "  } /* end */,",
+    "}",
+  ].join("\n");
+  const { index } = scanIndex({
+    "web/tsconfig.json": tsconfig,
+    "web/src/app.ts": [
+      'import { api } from "@/api";',
+      'import { x } from "@/deep/x";',
+      'import { util } from "@lib/util";',
+      'import exact from "exact";',
+      'import { Button } from "components/button";',
+      'import React from "react";',
+      'import { gone } from "@/missing";',
+      'import out from "@/../../../outside";',
+      "",
+    ].join("\n"),
+    "web/src/api.ts": ONE_LINE,
+    "web/src/deep/x.ts": ONE_LINE,
+    "web/other/x.ts": ONE_LINE,
+    "web/fallback/util.ts": ONE_LINE,
+    "web/src/exact.ts": ONE_LINE,
+    "web/components/button.tsx": ONE_LINE,
+    "server/main.ts": 'import { api } from "@/api";\n',
+    "js/jsconfig.json": '{ "compilerOptions": { "paths": { "~/*": ["./lib/*"] } } }',
+    "js/main.js": 'import { x } from "~/x";\nimport y from "lib/x";\n',
+    "js/lib/x.js": ONE_LINE,
+  });
+  expect(index.files["web/src/app.ts"].imports).toEqual([
+    "web/src/api.ts",
+    "web/other/x.ts",
+    "web/fallback/util.ts",
+    "web/src/exact.ts",
+    "web/components/button.tsx",
+  ]);
+  expect(index.files["server/main.ts"]).not.toHaveProperty("imports");
+  expect(index.files["js/main.js"].imports).toEqual(["js/lib/x.js"]);
+});
+
+test("a named import also links the file declaring each name behind the module's re-exports", () => {
+  const { index } = scanIndex({
+    "src/index.ts": [
+      'export { alpha } from "./alpha";',
+      'export { beta as renamed } from "./beta";',
+      'export * from "./star";',
+      'export * from "./dup1";',
+      'export * from "./dup2";',
+      'export * as ns from "./nsmod";',
+      'export { chained } from "./hop1";',
+      "export const local = 1;",
+      "",
+    ].join("\n"),
+    "src/alpha.ts": "export function alpha() {}\n",
+    "src/beta.ts": "export const beta = 1;\n",
+    "src/star.ts": 'export { gamma } from "./deep/gamma";\nexport class Star {}\n',
+    "src/deep/gamma.ts": "export const gamma = 1;\n",
+    "src/dup1.ts": "export const twice = 1;\n",
+    "src/dup2.ts": "export const twice = 2;\n",
+    "src/nsmod.ts": ONE_LINE,
+    "src/hop1.ts": 'export { chained } from "./hop2";\n',
+    "src/hop2.ts": "const chained = 1;\nexport { chained };\n",
+    "src/use.ts": [
+      "import {",
+      "  alpha,",
+      "  renamed as r,",
+      "  Star,",
+      "  gamma,",
+      "  twice,",
+      "  ns,",
+      "  chained,",
+      "  local,",
+      '} from "./index";',
+      'import type { alpha as a2 } from "./index";',
+      'import "./from-side";',
+      "",
+    ].join("\n"),
+    "src/from-side.ts": ONE_LINE,
+  });
+  expect(index.files["src/use.ts"].imports).toEqual([
+    "src/index.ts",
+    "src/alpha.ts",
+    "src/beta.ts",
+    "src/star.ts",
+    "src/deep/gamma.ts",
+    "src/nsmod.ts",
+    "src/hop2.ts",
+    "src/from-side.ts",
+  ]);
 });

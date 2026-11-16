@@ -7,7 +7,7 @@ import type { SymbolEntry } from "./symbols.ts";
 // anatomy-index.json load/save. Corrupt or missing index degrades to empty —
 // the next full scan reconverges; nothing here may throw out of load.
 
-export const INDEX_VERSION = 2;
+export const INDEX_VERSION = 3;
 export const INDEX_FILE = "anatomy-index.json";
 export const ANATOMY_FILE = "anatomy.md";
 

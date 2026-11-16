@@ -359,7 +359,7 @@ describe("upgrade --all", () => {
     const run = upgradeAll(home, fakeTool("bun", 0));
     expect(run.status).toBe(0);
     expect(run.stdout.split("full scan complete")).toHaveLength(2);
-    expect(JSON.parse(fs.readFileSync(indexOf(b), "utf-8")).version).toBe(2);
+    expect(JSON.parse(fs.readFileSync(indexOf(b), "utf-8")).version).toBe(3);
     expect(fs.readFileSync(indexOf(a))).toEqual(aBefore);
   });
 
@@ -371,7 +371,7 @@ describe("upgrade --all", () => {
     const run = upgradeAll(home, fakeTool("bun", 0));
     expect(run.status).toBe(0);
     expect(run.stderr).toContain("crank-mem: could not scan (");
-    expect(JSON.parse(fs.readFileSync(indexOf(b), "utf-8")).version).toBe(2);
+    expect(JSON.parse(fs.readFileSync(indexOf(b), "utf-8")).version).toBe(3);
   });
 });
 
