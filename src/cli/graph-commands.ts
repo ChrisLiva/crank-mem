@@ -1,18 +1,12 @@
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
-import {
-  deleteCodeDb,
-  filesUnder,
-  openCodeDb,
-  pendingPaths,
-  refreshFileFacts,
-  type FileRow,
-} from "../hooks/lib/code-db.ts";
+import { filesUnder, openCodeDb, pendingPaths, type FileRow } from "../hooks/lib/code-db.ts";
 import { CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { toPosix } from "../hooks/lib/indexable.ts";
 import { ownerOf } from "../hooks/lib/owner.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import { CAP, checkedPath } from "./code.ts";
+import { refreshGraph } from "./code-parse.ts";
 import { COMMANDS } from "./commands.ts";
 
 // The graph commands over .crank/code.db: each opens the store, brings its file facts current
@@ -34,23 +28,15 @@ export async function anatomy(args: string[]): Promise<number> {
   }
   const scope = anatomyScope(rest[0] ?? ".");
   if (scope === null) return 1;
-  const store = openStore(scope.root);
-  if (store === null) return 1;
+  const db = await refreshedStore(scope.root, started + COMMAND_REFRESH_MS);
+  if (db === null) return 1;
   try {
-    if (store.writable) {
-      refreshFileFacts(
-        scope.root,
-        loadConfig(path.join(scope.root, CRANK_DIR)),
-        store.db,
-        started + COMMAND_REFRESH_MS,
-      );
-    }
-    const rows = filesUnder(store.db, scope.prefix, from);
-    const pending = pendingPaths(store.db);
-    process.stdout.write(anatomyPage(rows, pending, rest[0] ?? "", pending.size));
+    const rows = filesUnder(db, scope.prefix, from);
+    const pending = pendingPaths(db);
+    process.stdout.write(anatomyPage(rows, pending, rest[0] ?? "", pending.size, symbolLines(db)));
     return 0;
   } finally {
-    store.db.close();
+    db.close();
   }
 }
 
@@ -74,26 +60,49 @@ function anatomyScope(target: string): { root: string; prefix: string } | null {
 }
 
 /**
- * The store opened to write, rebuilt first when it is corrupt or another version. A store the
- * file system will not let this process write opens to read, so the command answers without
- * refreshing. Null, after printing why, when the store cannot be opened.
+ * The store brought current by `deadlineMs`, opened to read. A store the file system will not let
+ * this process write is read as it stands. Null, after printing why, when the store cannot be opened.
  */
-function openStore(root: string): { db: sqlite.DatabaseSync; writable: boolean } | null {
-  let opened = openCodeDb(root, "write", BUSY_MS);
-  if (opened.status === "rebuild") {
-    deleteCodeDb(root);
-    opened = openCodeDb(root, "write", BUSY_MS);
-  }
-  let writable = opened.status === "open";
-  if (opened.status === "readonly") {
-    opened = openCodeDb(root, "read", BUSY_MS);
-    writable = false;
-  }
-  if (opened.status === "open" && opened.db) return { db: opened.db, writable };
+async function refreshedStore(
+  root: string,
+  deadlineMs: number,
+): Promise<sqlite.DatabaseSync | null> {
+  const refreshed = await refreshGraph(root, loadConfig(path.join(root, CRANK_DIR)), {
+    deadlineMs,
+    busyMs: BUSY_MS,
+  });
+  const opened = refreshed.status === "unreadable" ? null : openCodeDb(root, "read", BUSY_MS);
+  if (opened?.status === "open" && opened.db) return opened.db;
   console.error(
-    `crank-mem: .crank/code.db is not readable (${opened.reason ?? opened.status}). Fix: crank-mem scan`,
+    `crank-mem: .crank/code.db is not readable (${refreshed.reason ?? opened?.reason ?? opened?.status}). Fix: crank-mem scan`,
   );
   return null;
+}
+
+/** A file's top-level symbols as indented entry lines, cut to CAP with a pointer to `outline` when a file has more. */
+function symbolLines(db: sqlite.DatabaseSync): (rel: string) => string {
+  const select = db.prepare(
+    `SELECT name, kind, start_line, end_line, tokens FROM symbols
+     WHERE path = ? AND parent_id IS NULL ORDER BY start_line, id`,
+  );
+  return (rel) => {
+    const symbols = select.all(rel) as {
+      name: string;
+      kind: string;
+      start_line: number;
+      end_line: number;
+      tokens: number;
+    }[];
+    let out = "";
+    for (const [i, s] of symbols.entries()) {
+      const line = `  - ${s.name} (${s.kind}, L${s.start_line}–L${s.end_line}, ~${s.tokens} tok)\n`;
+      if (out.length + line.length > CAP) {
+        return `${out}  … ${symbols.length - i} more symbols: crank-mem outline ${rel}\n`;
+      }
+      out += line;
+    }
+    return out;
+  };
 }
 
 /** One page of entries under CAP; `pending` marks the files the code reader has yet to parse. */
@@ -102,20 +111,21 @@ function anatomyPage(
   pending: Set<string>,
   dir: string,
   pendingTotal: number,
+  symbolsOf: (rel: string) => string,
 ): string {
-  const entries = rows.map(
-    (row) =>
-      `- \`${row.path}\`${row.description ? ` — ${row.description}` : ""} (~${row.tokens} tok)${pending.has(row.path) ? " (symbols pending)" : ""}\n`,
-  );
+  const entryOf = (row: FileRow) =>
+    `- \`${row.path}\`${row.description ? ` — ${row.description}` : ""} (~${row.tokens} tok)${pending.has(row.path) ? " (symbols pending)" : ""}\n${symbolsOf(row.path)}`;
   const more = (i: number) =>
     `… ${rows.length - i} more files from ${rows[i]!.path}: crank-mem anatomy${dir ? ` ${dir}` : ""} --from ${rows[i]!.path}\n`;
   const pendingLine = pendingTotal > 0 ? `(${pendingTotal} file(s) still pending parse)\n` : "";
   let out = "";
   let shown = 0;
   while (shown < rows.length) {
-    const footer = shown + 1 < rows.length ? more(shown + 1) : pendingLine;
-    if (shown > 0 && out.length + entries[shown]!.length + footer.length > CAP) break;
-    out += entries[shown++];
+    const footer = shown + 1 < rows.length ? pendingLine + more(shown + 1) : pendingLine;
+    const entry = entryOf(rows[shown]!);
+    if (shown > 0 && out.length + entry.length + footer.length > CAP) break;
+    out += entry;
+    shown++;
   }
-  return out + (shown < rows.length ? more(shown) : pendingLine);
+  return out + (shown < rows.length ? pendingLine + more(shown) : pendingLine);
 }

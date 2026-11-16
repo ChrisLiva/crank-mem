@@ -139,7 +139,7 @@ export const SOURCE_EXTENSIONS = new Set([
 ]);
 
 /** 0 first-party code, 1 other first-party, 2 and 3 the same under a demoted dir. */
-function rank(relPath: string): number {
+export function rank(relPath: string): number {
   const dirs = relPath.split("/").slice(0, -1);
   const demoted = dirs.some((d) => DEMOTED_DIRS.has(d)) ? 2 : 0;
   return demoted + (SOURCE_EXTENSIONS.has(path.extname(relPath).toLowerCase()) ? 0 : 1);

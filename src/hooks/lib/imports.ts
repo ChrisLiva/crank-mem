@@ -3,11 +3,17 @@ import * as path from "node:path";
 import { isObj, type CrankConfig } from "./config.ts";
 import { isProjectFile } from "./hook-io.ts";
 import { isIndexableName, toPosix } from "./indexable.ts";
-import type { FileEntry } from "./store.ts";
 import { PARSE_MAX_BYTES } from "./code-db.ts";
 
 // The anatomy's file-to-file links: which indexed files a file imports,
 // resolved by regex and a few stats. Never shown in anatomy.md.
+
+/** A file's links to other files: what it imports and, for C#, the namespaces it declares and uses. */
+export interface FileLinks {
+  /** Indexable files this file imports, repo-relative, in source order. */
+  imports?: string[];
+  namespaces?: { declares?: string[]; uses?: string[] };
+}
 
 const TS_JS_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 
@@ -287,14 +293,14 @@ function cImports(rootDir: string, importer: string, content: string): string[] 
   return found;
 }
 
-function csNamespaces(content: string): NonNullable<FileEntry["namespaces"]> {
+function csNamespaces(content: string): NonNullable<FileLinks["namespaces"]> {
   const declares: string[] = [];
   const uses: string[] = [];
   for (const m of content.matchAll(CS_NAMESPACE)) {
     if (m.groups!.declares !== undefined) declares.push(m.groups!.declares);
     else uses.push(m.groups!.uses!);
   }
-  const namespaces: NonNullable<FileEntry["namespaces"]> = {};
+  const namespaces: NonNullable<FileLinks["namespaces"]> = {};
   if (declares.length > 0) namespaces.declares = firstUnique(declares);
   if (uses.length > 0) namespaces.uses = firstUnique(uses);
   return namespaces;
@@ -559,7 +565,7 @@ export function fileLinks(
   relPath: string,
   content: string,
   config: CrankConfig,
-): Pick<FileEntry, "imports" | "namespaces"> {
+): FileLinks {
   try {
     const importer = toPosix(relPath);
     if (content.length > PARSE_MAX_BYTES) return {};

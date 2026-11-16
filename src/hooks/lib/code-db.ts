@@ -215,8 +215,8 @@ export function deleteCodeDb(root: string): void {
   for (const name of [file, `${file}-wal`, `${file}-shm`]) fs.rmSync(name, { force: true });
 }
 
-/** Runs `fn` in one transaction, committing when it returns and rolling back when it throws. */
-function transaction<T>(db: sqlite.DatabaseSync, fn: () => T): T {
+/** Runs `fn` in one `BEGIN IMMEDIATE` transaction, committing when it returns and rolling back when it throws. */
+export function transaction<T>(db: sqlite.DatabaseSync, fn: () => T): T {
   db.exec("BEGIN IMMEDIATE");
   try {
     const result = fn();
@@ -228,20 +228,25 @@ function transaction<T>(db: sqlite.DatabaseSync, fn: () => T): T {
   }
 }
 
-const PATH_TABLES: [table: string, column: string][] = [
+const DERIVED_TABLES: [table: string, column: string][] = [
   ["symbols", "path"],
   ["imports", "from_path"],
   ["namespaces", "path"],
   ["calls", "path"],
-  ["files", "path"],
 ];
+
+/** Deletes a path's `symbols`, `imports`, `namespaces` and `calls` rows; the caller holds the transaction. */
+export function clearDerivedFacts(db: sqlite.DatabaseSync, rel: string): void {
+  for (const [table, column] of DERIVED_TABLES) {
+    db.prepare(`DELETE FROM ${table} WHERE ${column} = ?`).run(rel);
+  }
+}
 
 /** Deletes each path's `files` row and its `symbols`, `imports`, `namespaces` and `calls` rows; the caller holds the transaction. */
 export function deletePaths(db: sqlite.DatabaseSync, paths: string[]): void {
-  for (const [table, column] of PATH_TABLES) {
-    const del = db.prepare(`DELETE FROM ${table} WHERE ${column} = ?`);
-    for (const rel of paths) del.run(rel);
-  }
+  for (const rel of paths) clearDerivedFacts(db, rel);
+  const del = db.prepare("DELETE FROM files WHERE path = ?");
+  for (const rel of paths) del.run(rel);
 }
 
 /** Writes one file's facts, keeping its write count, churn rank and parse stamp; the caller holds the transaction. */
@@ -352,30 +357,46 @@ export function filesUnder(db: sqlite.DatabaseSync, prefix: string, from = ""): 
 }
 
 /** True when a grammar reads the path's extension and the file is small enough to parse. */
-function parseable(rel: string, size: number): boolean {
+export function parseable(rel: string, size: number): boolean {
   const ext = path.extname(path.basename(rel)).toLowerCase();
   return Object.hasOwn(GRAMMARS, ext) && size <= PARSE_MAX_BYTES;
 }
 
-/** The parseable files whose size or mtime differs from their parse stamp; a null stamp differs. */
-export function pendingPaths(db: sqlite.DatabaseSync): Set<string> {
+export interface PendingFile {
+  path: string;
+  writeCount: number;
+  /** The file's place in the churn list, null outside it. */
+  churnRank: number | null;
+}
+
+/** The parseable files whose size or mtime differs from their parse stamp (a null stamp differs), in `files` order. */
+export function pendingFiles(db: sqlite.DatabaseSync): PendingFile[] {
   const rows = db
-    .prepare("SELECT path, size, mtime_ms, parsed_size, parsed_mtime_ms FROM files")
+    .prepare(
+      "SELECT path, size, mtime_ms, parsed_size, parsed_mtime_ms, write_count, churn_rank FROM files",
+    )
     .all() as {
     path: string;
     size: number;
     mtime_ms: number;
     parsed_size: number | null;
     parsed_mtime_ms: number | null;
+    write_count: number;
+    churn_rank: number | null;
   }[];
-  const pending = new Set<string>();
-  for (const row of rows) {
-    if (!parseable(row.path, row.size)) continue;
-    if (row.parsed_size !== row.size || row.parsed_mtime_ms !== row.mtime_ms) pending.add(row.path);
-  }
-  return pending;
+  return rows
+    .filter(
+      (row) =>
+        parseable(row.path, row.size) &&
+        (row.parsed_size !== row.size || row.parsed_mtime_ms !== row.mtime_ms),
+    )
+    .map((row) => ({ path: row.path, writeCount: row.write_count, churnRank: row.churn_rank }));
+}
+
+export function pendingPaths(db: sqlite.DatabaseSync): Set<string> {
+  return new Set(pendingFiles(db).map((file) => file.path));
 }
 
 export function pendingCount(db: sqlite.DatabaseSync): number {
-  return pendingPaths(db).size;
+  return pendingFiles(db).length;
 }
