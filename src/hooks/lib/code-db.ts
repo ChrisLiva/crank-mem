@@ -243,14 +243,14 @@ export function clearDerivedFacts(db: sqlite.DatabaseSync, rel: string): void {
 }
 
 /** Deletes each path's `files` row and its `symbols`, `imports`, `namespaces` and `calls` rows; the caller holds the transaction. */
-export function deletePaths(db: sqlite.DatabaseSync, paths: string[]): void {
+function deletePaths(db: sqlite.DatabaseSync, paths: string[]): void {
   for (const rel of paths) clearDerivedFacts(db, rel);
   const del = db.prepare("DELETE FROM files WHERE path = ?");
   for (const rel of paths) del.run(rel);
 }
 
 /** Writes one file's facts, keeping its write count, churn rank and parse stamp; the caller holds the transaction. */
-export function upsertFileFacts(db: sqlite.DatabaseSync, rel: string, facts: FileFacts): void {
+function upsertFileFacts(db: sqlite.DatabaseSync, rel: string, facts: FileFacts): void {
   db.prepare(
     `INSERT INTO files (path, size, mtime_ms, tokens, description, generated)
      VALUES (?, ?, ?, ?, ?, ?)
