@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import type * as sqlite from "node:sqlite";
+import { transaction } from "./code-db.ts";
 import type { CrankConfig } from "./config.ts";
 import { activePaths, type AnatomyIndex, type Churn, type FileEntry } from "./store.ts";
 import { debugEvent } from "./debug.ts";
@@ -54,6 +56,8 @@ const CHURN_COMMITS = 300;
 // work happens, and a few of them can make most of a repo's file touches.
 const CHURN_BULK_FILES = 50;
 const CHURN_KEEP = 100;
+/** Written files kept pinned; the rest lose their write count. */
+export const MAX_PINS = 100;
 
 /**
  * The indexable paths changed most often in the last CHURN_COMMITS commits,
@@ -126,4 +130,50 @@ export function updateActivity(
 export function keepPin(entry: FileEntry, prior: FileEntry | undefined): FileEntry {
   if (prior?.writeCount) entry.writeCount = prior.writeCount;
   return entry;
+}
+
+const CHURN_META = "churn";
+
+/** The churn list `writeActivity` last stored in `meta`; undefined when none is stored or it does not parse. */
+export function readChurn(db: sqlite.DatabaseSync): Churn | undefined {
+  const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(CHURN_META) as
+    | { value: string }
+    | undefined;
+  if (!row) return undefined;
+  try {
+    const churn = JSON.parse(row.value) as Partial<Churn> | null;
+    if (typeof churn?.head === "string" && Array.isArray(churn.paths))
+      return { head: churn.head, paths: churn.paths.filter((p) => typeof p === "string") };
+  } catch {
+    // An unreadable value is recomputed.
+  }
+  return undefined;
+}
+
+/**
+ * The one writer of activity into code.db: the churn list (as `files.churn_rank` and the list
+ * and its HEAD in `meta`), then the unpin rule `updateActivity` applies to the anatomy: a file the
+ * churn list carries, or one outside the MAX_PINS most recently modified written files, loses
+ * its write count. Git runs before the write lock is taken.
+ */
+export function writeActivity(db: sqlite.DatabaseSync, rootDir: string, config: CrankConfig): void {
+  const churn = churnFor(rootDir, config, readChurn(db));
+  transaction(db, () => {
+    db.exec("UPDATE files SET churn_rank = NULL WHERE churn_rank IS NOT NULL");
+    if (churn) {
+      const rank = db.prepare("UPDATE files SET churn_rank = ? WHERE path = ?");
+      for (const [i, rel] of churn.paths.entries()) rank.run(i, rel);
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+        CHURN_META,
+        JSON.stringify(churn),
+      );
+    } else {
+      db.prepare("DELETE FROM meta WHERE key = ?").run(CHURN_META);
+    }
+    db.exec("UPDATE files SET write_count = 0 WHERE write_count > 0 AND churn_rank IS NOT NULL");
+    db.prepare(
+      `UPDATE files SET write_count = 0 WHERE write_count > 0 AND path NOT IN
+         (SELECT path FROM files WHERE write_count > 0 ORDER BY mtime_ms DESC, path LIMIT ?)`,
+    ).run(MAX_PINS);
+  });
 }

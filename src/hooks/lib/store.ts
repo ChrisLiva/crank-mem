@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { readJsonObject } from "./config.ts";
 import { withLock } from "./lock.ts";
+import { MAX_PINS } from "./activity.ts";
 import type { SymbolEntry } from "./symbols.ts";
 
 // anatomy-index.json load/save. Corrupt or missing index degrades to empty —
@@ -79,7 +80,6 @@ function saveIndex(crankDir: string, index: AnatomyIndex): void {
   fs.renameSync(tmp, target);
 }
 
-const MAX_PINS = 100;
 const MOST_ACTIVE = 25;
 
 /**

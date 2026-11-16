@@ -63,7 +63,8 @@ export async function anatomy(args: string[]): Promise<number> {
     (db, scope) => {
       const rows = filesUnder(db, scope.prefix, from);
       const pending = pendingPaths(db);
-      const page = anatomyPage(rows, pending, rest[0] ?? "", pending.size, symbolLines(db));
+      const lead = rest.length === 0 && from === undefined ? mostActive(db) : "";
+      const page = anatomyPage(rows, pending, rest[0] ?? "", pending.size, symbolLines(db), lead);
       return {
         text: page.text,
         matches: page.shown,
@@ -195,20 +196,40 @@ function symbolLines(db: sqlite.DatabaseSync): (rel: string) => string {
   };
 }
 
-/** One page of entries under CAP; `pending` marks the files the code reader has yet to parse. */
+const MOST_ACTIVE = 25;
+
+/** The `## Most active files` section: written files first, then the churn list; empty when no file qualifies. */
+function mostActive(db: sqlite.DatabaseSync): string {
+  const rows = db
+    .prepare(
+      `SELECT path, description, tokens FROM files
+       WHERE write_count > 0 OR churn_rank IS NOT NULL
+       ORDER BY write_count DESC, churn_rank IS NULL, churn_rank LIMIT ?`,
+    )
+    .all(MOST_ACTIVE) as unknown as FileRow[];
+  if (rows.length === 0) return "";
+  const entries = rows.map(
+    (row) =>
+      `- \`${row.path}\`${row.description ? ` — ${row.description}` : ""} (~${row.tokens} tok)\n`,
+  );
+  return `## Most active files\n\n${entries.join("")}\n## All files\n\n`;
+}
+
+/** One page of entries under CAP after `lead`; `pending` marks the files the code reader has yet to parse. */
 function anatomyPage(
   rows: FileRow[],
   pending: Set<string>,
   dir: string,
   pendingTotal: number,
   symbolsOf: (rel: string) => string,
+  lead: string,
 ): { text: string; shown: number } {
   const entryOf = (row: FileRow) =>
     `- \`${row.path}\`${row.description ? ` — ${row.description}` : ""} (~${row.tokens} tok)${pending.has(row.path) ? " (symbols pending)" : ""}\n${symbolsOf(row.path)}`;
   const more = (i: number) =>
     `… ${rows.length - i} more files from ${rows[i]!.path}: crank-mem anatomy${dir ? ` ${dir}` : ""} --from ${rows[i]!.path}\n`;
   const pendingLine = pendingTotal > 0 ? `(${pendingTotal} file(s) still pending parse)\n` : "";
-  let out = "";
+  let out = lead;
   let shown = 0;
   while (shown < rows.length) {
     const footer = shown + 1 < rows.length ? pendingLine + more(shown + 1) : pendingLine;

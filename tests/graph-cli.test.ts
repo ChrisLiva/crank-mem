@@ -8,13 +8,18 @@ import { openCodeDb, refreshFileFacts } from "../src/hooks/lib/code-db.ts";
 import { loadConfig } from "../src/hooks/lib/config.ts";
 import {
   childEnv,
+  git,
+  gitCommit,
   makeCrankProject,
   REPO_ROOT,
   runCli,
+  runHook,
   setMtime,
   tempDir,
+  withReadOnlyCodeDb,
   type CliRun,
 } from "./helpers.ts";
+import { claudePostWrite, claudeSessionStart } from "./fixtures/payloads.ts";
 
 const MORE = /^… (\d+) more files from (\S+): crank-mem anatomy --from (\S+)$/;
 
@@ -110,6 +115,43 @@ describe("anatomy", () => {
     expect(pages).toBeGreaterThan(1);
     expect(seen).toEqual([...expected].sort());
     expect(new Set(seen).size).toBe(501);
+  });
+
+  test("Most active files lists written files, then the churn list, and a committed file stops counting as written", () => {
+    const root = makeCrankProject({
+      "a.ts": "export const a = 1;\n",
+      "b.ts": "export const b = 1;\n",
+    });
+    git(root, "init", "-q");
+    gitCommit(root, "one");
+    for (const n of [2, 3]) {
+      fs.writeFileSync(path.join(root, "b.ts"), `export const b = ${n};\n`);
+      gitCommit(root, `b ${n}`);
+    }
+    const hook = (script: string, payload: object) =>
+      expect(runHook(script, JSON.stringify(payload)).status).toBe(0);
+    const active = () =>
+      withReadOnlyCodeDb(root, () => {
+        const run = runCli(root, ["anatomy"]);
+        expect(run.status).toBe(0);
+        return run.stdout;
+      });
+    const section = (stdout: string) =>
+      [...stdout.split("## All files")[0]!.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]!);
+    hook("src/hooks/session-start.ts", claudeSessionStart(root));
+    expect(active().startsWith("## Most active files\n\n")).toBe(true);
+    expect(section(active())).toEqual(["b.ts", "a.ts"]);
+
+    fs.writeFileSync(path.join(root, "c.ts"), "export const c = 1;\n");
+    hook("src/hooks/post-write.ts", claudePostWrite(root, path.join(root, "c.ts")));
+    expect(section(active())).toEqual(["c.ts", "b.ts", "a.ts"]);
+    // A continuation page repeats no section.
+    const next = runCli(root, ["anatomy", "--from", "b.ts"]);
+    expect(next.stdout).not.toContain("## Most active files");
+
+    gitCommit(root, "c");
+    hook("src/hooks/session-start.ts", claudeSessionStart(root));
+    expect(section(active())).toEqual(["b.ts", "a.ts", "c.ts"]);
   });
 
   test("a deleted file disappears on the next run", () => {

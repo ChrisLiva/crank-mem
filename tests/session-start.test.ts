@@ -2,21 +2,27 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   REPO_ROOT,
   childEnv,
   enableDebugConfig,
+  fakeCloneRoot,
   git,
   gitCommit,
+  killDaemon,
   makeCrankHome,
   makeCrankProject,
   plantMemory,
+  readDaemon,
   readDebugLog,
+  runCli,
   runHook,
   seedMemory,
   spoolEntry,
   stopDigests,
+  tempDir,
+  withReadOnlyCodeDb,
 } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
@@ -848,5 +854,108 @@ describe("linked projects (black-box)", () => {
     );
     expect(ctx).not.toContain("[cited file missing");
     expect(fs.readFileSync(linkedIndex).equals(before)).toBe(true);
+  });
+});
+
+describe("session-start writes code.db", () => {
+  const sessionStart = (root: string, env: Record<string, string> = {}) =>
+    runHook(HOOK, JSON.stringify(claudeSessionStart(root)), undefined, env);
+  const graphEvents = (root: string) =>
+    readDebugLog(root)
+      .flatMap((r) => r.events as Array<Record<string, unknown>>)
+      .filter((e) => String(e.event).startsWith("graph"));
+  const listed = (stdout: string) => [...stdout.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]!);
+  /** A fresh crank home, so a daemon an earlier run started cannot satisfy this run's `ensureDaemon`. */
+  const freshHome = () => {
+    const home = makeCrankHome();
+    return { home, env: { CRANK_HOME: home } };
+  };
+  const startsDaemon = async (home: string): Promise<boolean> => {
+    for (let waited = 0; waited < 5000; waited += 100) {
+      if (typeof readDaemon(home)?.heartbeatMs === "number") return true;
+      await Bun.sleep(100);
+    }
+    return false;
+  };
+
+  test("a fresh project gets a code.db whose listing is the hook's work", () => {
+    const root = makeCrankProject({
+      "src/a.ts": "export const a = 1;\n",
+      "src/b.py": "def b():\n    pass\n",
+      "README.md": "# Demo\n",
+    });
+    expect(sessionStart(root).status).toBe(0);
+    expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(true);
+    // A read-only store makes `anatomy` answer without refreshing, so what it lists was written by the hook.
+    const run = withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]));
+    expect(run.status).toBe(0);
+    expect(listed(run.stdout)).toEqual(["README.md", "src/a.ts", "src/b.py"]);
+  });
+
+  test("a code.db held for 3 s costs the hook no more than its budget and one graph line", async () => {
+    const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
+    enableDebugConfig(root);
+    expect(sessionStart(root).status).toBe(0);
+    const ready = path.join(tempDir("crank-holder-"), "ready");
+    const holder = spawn(
+      process.execPath,
+      [path.join(REPO_ROOT, "tests/fixtures/graph-holder.ts"), root, "3000", ready],
+      { stdio: "ignore" },
+    );
+    try {
+      for (let waited = 0; !fs.existsSync(ready) && waited < 5000; waited += 20)
+        await Bun.sleep(20);
+      expect(fs.existsSync(ready)).toBe(true);
+      const logged = readDebugLog(root).length;
+      const started = Date.now();
+      const run = sessionStart(root);
+      expect(Date.now() - started).toBeLessThan(2500);
+      expect(run.status).toBe(0);
+      expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).not.toMatch(
+        /graph|code\.db|locked/i,
+      );
+      const events = readDebugLog(root)
+        .slice(logged)
+        .flatMap((r) => r.events as Array<Record<string, unknown>>);
+      expect(events.filter((e) => String(e.event).startsWith("graph"))).toHaveLength(1);
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  });
+
+  test("a code.db at another schema version is left byte-identical", () => {
+    const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
+    enableDebugConfig(root);
+    const file = path.join(root, ".crank/code.db");
+    const sqlite = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
+    const db = new sqlite.DatabaseSync(file);
+    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE files (x); PRAGMA user_version = 99");
+    db.close();
+    const before = fs.readFileSync(file);
+    expect(sessionStart(root).status).toBe(0);
+    expect(fs.readFileSync(file).equals(before)).toBe(true);
+    expect(graphEvents(root)).toEqual([{ event: "graph-skip", status: "rebuild" }]);
+  });
+
+  test("a pending file starts the daemon with digests off, and a stop state keeps it down", async () => {
+    const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
+    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), clone_root: REPO_ROOT });
+    const started = freshHome();
+    try {
+      expect(sessionStart(root, started.env).status).toBe(0);
+      expect(await startsDaemon(started.home)).toBe(true);
+    } finally {
+      killDaemon(started.home);
+    }
+
+    // A daemon that starts under a stop state exits without a trace, so a recording clone_root stands in.
+    const fake = fakeCloneRoot();
+    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), clone_root: fake.root });
+    const stopped = freshHome();
+    stopDigests(stopped.home);
+    expect(sessionStart(root, stopped.env).status).toBe(0);
+    await Bun.sleep(1500);
+    expect(fake.starts()).toBe(0);
+    expect(readDaemon(stopped.home)).toBeNull();
   });
 });

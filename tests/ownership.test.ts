@@ -260,6 +260,32 @@ describe("ownership", () => {
     expect(indexed(ws.H)).toContain("src/n.ts");
   });
 
+  test("post-write leaves another project's code.db at another schema version alone and creates none", () => {
+    const ws = workspace();
+    const file = path.join(ws.storefront, CRANK_DIR, "code.db");
+    const sqlite = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
+    const db = new sqlite.DatabaseSync(file);
+    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE files (x); PRAGMA user_version = 99");
+    db.close();
+    const before = fs.readFileSync(file);
+    for (const root of [ws.H, ws.storefront, ws.payments]) {
+      fs.writeFileSync(path.join(root, "src/n.ts"), "export const n = 1;\n");
+    }
+    const patch = [
+      "*** Begin Patch",
+      ...[ws.H, ws.storefront, ws.payments].flatMap((root) => [
+        `*** Add File: ${path.join(root, "src/n.ts")}`,
+        "+export const n = 1;",
+      ]),
+      "*** End Patch",
+    ].join("\n");
+    expect(postWrite(codexApplyPatch(ws.H, patch), ws.home).status).toBe(0);
+    expect(fs.readFileSync(file).equals(before)).toBe(true);
+    // The start project's store is created; another project's absent one stays absent.
+    expect(fs.existsSync(path.join(ws.H, CRANK_DIR, "code.db"))).toBe(true);
+    expect(fs.existsSync(path.join(ws.payments, CRANK_DIR, "code.db"))).toBe(false);
+  });
+
   test("post-write exits 0 silently when another project or untouched.json cannot be written", () => {
     const ws = workspace();
     const silent = { status: 0, stdout: "", stderr: "" };

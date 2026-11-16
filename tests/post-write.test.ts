@@ -1,7 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { git, gitCommit, makeCrankProject, runCli, runHook } from "./helpers.ts";
+import {
+  REPO_ROOT,
+  enableDebugConfig,
+  fakeCloneRoot,
+  git,
+  gitCommit,
+  killDaemon,
+  makeCrankHome,
+  makeCrankProject,
+  readDaemon,
+  readDebugLog,
+  runCli,
+  runHook,
+  stopDigests,
+  withReadOnlyCodeDb,
+} from "./helpers.ts";
 import {
   claudePostWrite,
   claudePostEdit,
@@ -236,5 +251,97 @@ describe("post-write hook (black-box)", () => {
 
   test("empty stdin: exit 0", () => {
     expect(runHook(HOOK, "").status).toBe(0);
+  });
+});
+
+describe("post-write writes code.db", () => {
+  const write = (root: string, rel: string, content: string, env: Record<string, string> = {}) => {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), content);
+    return runHook(
+      HOOK,
+      JSON.stringify(claudePostWrite(root, path.join(root, rel))),
+      undefined,
+      env,
+    );
+  };
+  const anatomy = (root: string) => withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]));
+  const listed = (stdout: string) => [...stdout.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]!);
+
+  test("a file written three times tops Most active files, and a deleted caller leaves the graph", () => {
+    const root = makeCrankProject({
+      "src/a.ts": "export const a = 1;\n",
+      "src/lib.ts": "export function target() {\n  return 1;\n}\n",
+      "src/caller.ts":
+        'import { target } from "./lib";\nexport function run() {\n  return target();\n}\n',
+    });
+    seedIndex(root);
+    for (let n = 1; n <= 3; n++) {
+      expect(write(root, "src/new.ts", `export const n = ${n};\n`).status).toBe(0);
+    }
+    // A read-only store makes `anatomy` answer without refreshing, so what it lists was written by the hook.
+    const active = anatomy(root);
+    expect(active.status).toBe(0);
+    expect(active.stdout.startsWith("## Most active files\n\n- `src/new.ts`")).toBe(true);
+    expect(listed(active.stdout).slice(0, 2)).toEqual(["src/new.ts", "src/a.ts"]);
+
+    // `callers` parses every file, so caller.ts has a call site in the graph before it is deleted.
+    expect(runCli(root, ["callers", "target"]).stdout).toContain("src/caller.ts");
+    fs.rmSync(path.join(root, "src/caller.ts"));
+    const patch = [
+      "*** Begin Patch",
+      `*** Delete File: ${path.join(root, "src/caller.ts")}`,
+      "*** End Patch",
+    ].join("\n");
+    expect(runHook(HOOK, JSON.stringify(codexApplyPatch(root, patch))).status).toBe(0);
+    withReadOnlyCodeDb(root, () => {
+      expect(listed(runCli(root, ["anatomy"]).stdout)).not.toContain("src/caller.ts");
+      expect(runCli(root, ["callers", "target"]).stdout).not.toContain("caller.ts");
+    });
+  });
+
+  test("a code.db at another schema version is left byte-identical", () => {
+    const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
+    enableDebugConfig(root);
+    const file = path.join(root, ".crank/code.db");
+    const sqlite = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
+    const db = new sqlite.DatabaseSync(file);
+    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE files (x); PRAGMA user_version = 99");
+    db.close();
+    const before = fs.readFileSync(file);
+    expect(write(root, "b.ts", "export const b = 1;\n").status).toBe(0);
+    expect(fs.readFileSync(file).equals(before)).toBe(true);
+    const graph = readDebugLog(root)
+      .flatMap((r) => r.events as Array<Record<string, unknown>>)
+      .filter((e) => String(e.event).startsWith("graph"));
+    expect(graph).toEqual([{ event: "graph-skip", root: null, status: "rebuild" }]);
+  });
+
+  test("a parseable write starts the daemon unless a stop state is set", async () => {
+    const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
+    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), clone_root: REPO_ROOT });
+    // Each run has its own crank home: a daemon the first started would satisfy the second's ensureDaemon.
+    const started = makeCrankHome();
+    try {
+      expect(write(root, "b.ts", "export const b = 1;\n", { CRANK_HOME: started }).status).toBe(0);
+      let alive = false;
+      for (let waited = 0; !alive && waited < 5000; waited += 100) {
+        alive = typeof readDaemon(started)?.heartbeatMs === "number";
+        if (!alive) await Bun.sleep(100);
+      }
+      expect(alive).toBe(true);
+    } finally {
+      killDaemon(started);
+    }
+
+    // A daemon that starts under a stop state exits without a trace, so a recording clone_root stands in.
+    const fake = fakeCloneRoot();
+    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), clone_root: fake.root });
+    const stopped = makeCrankHome();
+    stopDigests(stopped);
+    expect(write(root, "c.ts", "export const c = 1;\n", { CRANK_HOME: stopped }).status).toBe(0);
+    await Bun.sleep(1500);
+    expect(fake.starts()).toBe(0);
+    expect(readDaemon(stopped)).toBeNull();
   });
 });

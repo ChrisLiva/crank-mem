@@ -305,6 +305,24 @@ export function setMtime(p: string, ms: number): void {
   fs.utimesSync(p, new Date(ms), new Date(ms));
 }
 
+/**
+ * Runs `fn` with `.crank/code.db` and the WAL files beside it made read-only, then restores their
+ * modes. SQLite creates a missing `-wal` or `-shm` at the store's mode, so the restore lists the
+ * files again after `fn`.
+ */
+export function withReadOnlyCodeDb<T>(root: string, fn: () => T): T {
+  const present = () =>
+    ["code.db", "code.db-wal", "code.db-shm"]
+      .map((name) => path.join(root, ".crank", name))
+      .filter((file) => fs.existsSync(file));
+  try {
+    for (const file of present()) fs.chmodSync(file, 0o444);
+    return fn();
+  } finally {
+    for (const file of present()) fs.chmodSync(file, 0o644);
+  }
+}
+
 /** Turn on .crank/debug.log for a temp project. */
 export function enableDebugConfig(root: string): void {
   const crankDir = path.join(root, ".crank");
@@ -649,6 +667,24 @@ export function killDaemon(crankHome: string): void {
   } catch {
     // No such group: the daemon already exited.
   }
+}
+
+/**
+ * A `clone_root` whose `bin/crank-mem` only records that it ran. A daemon started under a stop
+ * state leaves no trace once it exits, so a test that no daemon started reads this record instead.
+ */
+export function fakeCloneRoot(): { root: string; starts(): number } {
+  const root = tempDir("crank-fake-clone-");
+  const calls = path.join(root, "calls");
+  fs.mkdirSync(path.join(root, "bin"));
+  fs.writeFileSync(path.join(root, "bin/crank-mem"), `#!/bin/sh\necho "$@" >> "${calls}"\n`, {
+    mode: 0o755,
+  });
+  return {
+    root,
+    starts: () =>
+      fs.existsSync(calls) ? fs.readFileSync(calls, "utf-8").split("\n").length - 1 : 0,
+  };
 }
 
 /** The model `crank-mem setup` put in the real ~/.crank/models; read only, and it throws when the model is absent. */

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type * as sqlite from "node:sqlite";
 import {
   readStdin,
   parsePayload,
@@ -21,6 +22,11 @@ import { parseApplyPatch } from "./lib/apply-patch.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
 import { toPosix } from "./lib/indexable.ts";
 import { ownerOf } from "./lib/owner.ts";
+import { deletePaths, openCodeDb, parseable, transaction, upsertFileFacts } from "./lib/code-db.ts";
+import { readChurn } from "./lib/activity.ts";
+import { fileFacts } from "./lib/scanner.ts";
+import { ensureDaemon } from "./lib/spool.ts";
+import { readStopState } from "./lib/user-state.ts";
 import { recordUntouched } from "./lib/untouched.ts";
 import { hookActor } from "./lib/usage.ts";
 
@@ -185,6 +191,72 @@ function commitOwner(start: Start, root: string, ops: WriteOp[], tool: string | 
   }
 }
 
+/** How long a write waits on another process's hold of a code.db. */
+const GRAPH_BUSY_MS = 500;
+
+/**
+ * Applies `ops` to the open code.db in one transaction: a delete or a path the index no longer
+ * takes loses its rows, any other file's facts are upserted and its write count rises unless the
+ * churn list carries it. Returns whether a written file awaits a parse.
+ */
+function writeFacts(
+  db: sqlite.DatabaseSync,
+  root: string,
+  ops: WriteOp[],
+  config: CrankConfig,
+): boolean {
+  const churned = new Set(readChurn(db)?.paths);
+  let parseWanted = false;
+  transaction(db, () => {
+    for (const op of ops) {
+      const facts = op.deleted ? null : fileFacts(root, op.relPath, config);
+      if (facts === null) {
+        deletePaths(db, [op.relPath]);
+        continue;
+      }
+      upsertFileFacts(db, op.relPath, facts);
+      if (!churned.has(op.relPath))
+        db.prepare("UPDATE files SET write_count = write_count + 1 WHERE path = ?").run(op.relPath);
+      parseWanted ||= parseable(op.relPath, facts.size);
+    }
+  });
+  return parseWanted;
+}
+
+/**
+ * Writes `ops` into the code.db of the project at `root`. The start project's store is created
+ * when absent; another project's is written only when it is open at this schema version and left
+ * absent otherwise. A store that is corrupt, another version, unreadable or read-only is left
+ * as it is. Returns whether a written file awaits a parse. A failure stays with its owner.
+ */
+function commitFacts(start: Start, root: string, ops: WriteOp[]): boolean {
+  const own = root === start.root;
+  try {
+    const config = own ? start.config : loadConfig(path.join(root, CRANK_DIR));
+    if (!own) {
+      const probe = openCodeDb(root, "read");
+      probe.db?.close();
+      if (probe.status !== "open") {
+        debugEvent("graph-skip", { root, status: probe.status });
+        return false;
+      }
+    }
+    const opened = openCodeDb(root, "write", GRAPH_BUSY_MS);
+    if (opened.status !== "open" || !opened.db) {
+      debugEvent("graph-skip", { root: own ? null : root, status: opened.status });
+      return false;
+    }
+    try {
+      return writeFacts(opened.db, root, ops, config);
+    } finally {
+      opened.db.close();
+    }
+  } catch (err) {
+    debugEvent("graph-failed", { root: own ? null : root, error: errorMessage(err) });
+    return false;
+  }
+}
+
 async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());
   if (!payload) return;
@@ -203,7 +275,12 @@ async function main(): Promise<void> {
 
   const byOwner = new Map<string, WriteOp[]>();
   for (const op of ops) byOwner.set(op.root, [...(byOwner.get(op.root) ?? []), op]);
-  for (const [root, owned] of byOwner) commitOwner(ctx, root, owned, tool);
+  let parseWanted = false;
+  for (const [root, owned] of byOwner) {
+    commitOwner(ctx, root, owned, tool);
+    parseWanted = commitFacts(ctx, root, owned) || parseWanted;
+  }
+  if (parseWanted && readStopState() === null) ensureDaemon(ctx.config);
 }
 
 await runAdvisoryHook("post-write", main);
