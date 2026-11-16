@@ -85,7 +85,22 @@ export type UsageEvent =
       capped: boolean;
       outcome: CodeOutcome;
       ms: number;
-    };
+    }
+  | ({ channel: "callers"; symbol: string } & GraphUsage)
+  | ({ channel: "callees"; symbol: string } & GraphUsage)
+  | ({ channel: "impact"; symbol: string | null } & GraphUsage)
+  | ({ channel: "anatomy"; from: string | null } & GraphUsage);
+
+/** The fields the graph commands record beside their channel: `pending` counts the files not yet parsed. */
+export type GraphUsage = {
+  path: string | null;
+  matches: number;
+  chars: number;
+  capped: boolean;
+  pending: number;
+  outcome: CodeOutcome;
+  ms: number;
+};
 
 export type UsageLine = UsageEvent & UsageActor & { v: 1; ts: number };
 
@@ -97,10 +112,10 @@ function capLists(value: unknown): unknown {
   return value;
 }
 
-/** The event with a top-level `file` or `path` whose basename is sensitive set to null. */
+/** The event with a top-level `file`, `path` or `from` whose basename is sensitive set to null. */
 function dropSensitive(event: UsageEvent): UsageEvent {
   const fields: Record<string, unknown> = { ...event };
-  for (const key of ["file", "path"]) {
+  for (const key of ["file", "path", "from"]) {
     const value = fields[key];
     if (typeof value === "string" && isSensitiveFile(path.basename(value))) fields[key] = null;
   }
@@ -131,7 +146,7 @@ function rotate(file: string, bytes: number): void {
 
 /**
  * Append one usage line for `root`'s store, rotating the file first when the line would take it
- * past USAGE_MAX_BYTES. A sensitive `file` or `path` is recorded as null. Never throws.
+ * past USAGE_MAX_BYTES. A sensitive `file`, `path` or `from` is recorded as null. Never throws.
  */
 export function recordUsage(root: string, actor: UsageActor, event: UsageEvent): void {
   try {
@@ -195,6 +210,10 @@ function isUsageLine(line: unknown): line is UsageLine {
     case "subagent-start":
     case "outline":
     case "unfold":
+    case "callers":
+    case "callees":
+    case "impact":
+    case "anatomy":
       return true;
     default:
       return false;

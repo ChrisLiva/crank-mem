@@ -14,7 +14,7 @@ They open the dashboard to answer three questions, in this order:
 
 1. **Trust check (Health).** Is capture working for this project: digests on, the daemon alive, nothing parked in the spool or stopped on a credential?
 2. **Review curation (Curation).** What did consolidation accept, reject, flag stale or archive, and why?
-3. **Cost and usage (Usage).** What do digests cost this month at list price, and do agents actually use recall (`search`, `timeline`, `get`) and code reading (`outline`, `unfold`)?
+3. **Cost and usage (Usage).** What do digests cost this month at list price, and do agents actually use recall (`search`, `timeline`, `get`) and code reading (`outline`, `unfold`, `callers`, `callees`, `impact`, `anatomy`)?
 
 Browsing stored observations (Memory) supports these jobs; users did not name it as a reason to open the dashboard.
 

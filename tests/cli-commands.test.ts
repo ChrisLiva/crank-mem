@@ -665,6 +665,10 @@ describe("upgrade", () => {
         "Bash(crank-mem get *)",
         "Bash(crank-mem outline *)",
         "Bash(crank-mem unfold *)",
+        "Bash(crank-mem callers *)",
+        "Bash(crank-mem callees *)",
+        "Bash(crank-mem impact *)",
+        "Bash(crank-mem anatomy *)",
       ],
       deny: ["x"],
     });
@@ -696,6 +700,10 @@ describe("upgrade", () => {
       "Bash(crank-mem get *)",
       "Bash(crank-mem outline *)",
       "Bash(crank-mem unfold *)",
+      "Bash(crank-mem callers *)",
+      "Bash(crank-mem callees *)",
+      "Bash(crank-mem impact *)",
+      "Bash(crank-mem anatomy *)",
     ]);
     const converged = fs.readFileSync(local);
     expect(cli(root, "upgrade").stdout).not.toContain("added the crank-mem rules");
@@ -883,6 +891,10 @@ const COMMAND_NAMES = [
   "get",
   "outline",
   "unfold",
+  "callers",
+  "callees",
+  "impact",
+  "anatomy",
   "restore-memory",
   "setup",
   "stats",

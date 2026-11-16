@@ -767,11 +767,85 @@ describe("usage capture: the outline and unfold lines", () => {
   }, 30_000);
 });
 
+describe("usage capture: the graph commands", () => {
+  test("anatomy, callers, callees and impact each record a line, and a miss, an ambiguous name and a refusal record their outcome", () => {
+    const root = makeCrankProject({
+      "src/x.ts": "export function f1() {}\nexport function f2() {}\n",
+      "src/y.ts": 'import { f1 } from "./x";\nexport function useF1() {\n  f1();\n}\n',
+      "src/a.ts": "export function save() {}\n",
+      "src/b.ts": "export function save() {}\n",
+      ".env": "SECRET=1\n",
+    });
+    const runs = [
+      claudeCli(root, ["anatomy"]),
+      claudeCli(root, ["callers", "f1"]),
+      claudeCli(root, ["callees", "useF1"]),
+      claudeCli(root, ["impact", "f1"]),
+      claudeCli(root, ["impact", "src/x.ts"]),
+      claudeCli(root, ["callers", "src/x.ts", "nope"]),
+      claudeCli(root, ["callees", "save"]),
+      claudeCli(root, ["impact", ".env", "x"]),
+      claudeCli(root, ["anatomy", "--from", ".env"]),
+    ];
+    expect(runs.map((r) => r.status)).toEqual([0, 0, 0, 0, 0, 1, 1, 1, 0]);
+    const before = lineCount(root);
+    expect(claudeCli(root, ["callers"]).status).toBe(1);
+    expect(claudeCli(root, ["impact", "f1", "--depth", "9"]).status).toBe(1);
+    expect(claudeCli(root, ["anatomy", "a", "b"]).status).toBe(1);
+    expect(lineCount(root)).toBe(before);
+
+    const lines = usageLines(root);
+    expect(lines).toHaveLength(runs.length);
+    lines.forEach((line, i) => {
+      expect(line).toMatchObject({ v: 1, agent: "claude", session: "sess-1", pending: 0 });
+      expect(line.ms).toBeGreaterThanOrEqual(0);
+      expect(line.chars).toBe(runs[i]!.stdout.length);
+    });
+    const pick = (l: Record<string, any>) => [
+      l.channel,
+      l.path,
+      "symbol" in l ? l.symbol : l.from,
+      l.matches,
+      l.outcome,
+    ];
+    expect(lines.map(pick)).toEqual([
+      ["anatomy", null, null, 4, "ok"],
+      ["callers", null, "f1", 1, "ok"],
+      ["callees", null, "useF1", 1, "ok"],
+      ["impact", null, "f1", 1, "ok"],
+      ["impact", "src/x.ts", null, 1, "ok"],
+      ["callers", "src/x.ts", "nope", 0, "not-found"],
+      ["callees", null, "save", 0, "refused"],
+      ["impact", null, "x", 0, "refused"],
+      ["anatomy", null, null, 4, "ok"],
+    ]);
+
+    const metrics = usageMetrics(lines as UsageLine[], {
+      nowMs: Date.now(),
+      days: 7,
+      manual: false,
+      titles: () => new Map(),
+      observationCount: 0,
+    });
+    const total = (channel: string) =>
+      metrics.perDay.reduce((sum, d) => sum + (d.counts as Record<string, number>)[channel]!, 0);
+    expect(["anatomy", "callers", "callees", "impact"].map(total)).toEqual([2, 2, 2, 3]);
+
+    const bare = tempDir("crank-usage-bare-");
+    expect(claudeCli(bare, ["callers", "f1"]).status).toBe(1);
+    expect(fs.readdirSync(bare)).toEqual([]);
+  }, 60_000);
+});
+
 const D = 86_400_000;
 const X = 999_999;
 const CHANNELS = [
+  "anatomy",
+  "callees",
+  "callers",
   "file-history",
   "get",
+  "impact",
   "outline",
   "search",
   "session-start",
@@ -1286,6 +1360,8 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
     expect(claude(["get", String(hit)]).status).toBe(0);
     expect(claude(["outline", "code.ts"]).status).toBe(0);
     expect(claude(["unfold", "code.ts", "one"]).status).toBe(0);
+    for (const args of [["anatomy"], ["callers", "one"], ["callees", "one"], ["impact", "one"]])
+      expect(claude(args).status).toBe(0);
     const manual = runCli(root, ["search", "epsilon"], {
       CLAUDECODE: "",
       CLAUDE_CODE_SESSION_ID: "",
@@ -1330,6 +1406,10 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
         get: 1,
         outline: 1,
         unfold: 1,
+        anatomy: 1,
+        callers: 1,
+        callees: 1,
+        impact: 1,
       }),
     );
     expect(all.zeroResultShare).toBeCloseTo(1 / 3);

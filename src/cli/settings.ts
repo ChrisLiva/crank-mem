@@ -214,6 +214,10 @@ export const CRANK_ALLOW_RULES = [
   "Bash(crank-mem get *)",
   "Bash(crank-mem outline *)",
   "Bash(crank-mem unfold *)",
+  "Bash(crank-mem callers *)",
+  "Bash(crank-mem callees *)",
+  "Bash(crank-mem impact *)",
+  "Bash(crank-mem anatomy *)",
 ] as const;
 /** The rule earlier releases wrote, which pre-approved every crank-mem subcommand. */
 const LEGACY_ALLOW_RULE = "Bash(crank-mem *)";

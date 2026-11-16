@@ -29,6 +29,13 @@ import { CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { toPosix } from "../hooks/lib/indexable.ts";
 import { ownerOf } from "../hooks/lib/owner.ts";
 import { parseArgs, stringFlag } from "./args.ts";
+import {
+  cliActor,
+  recordUsage,
+  type CodeOutcome,
+  type GraphUsage,
+  type UsageEvent,
+} from "../hooks/lib/usage.ts";
 import { CAP, checkedPath } from "./code.ts";
 import { refreshGraph } from "./code-parse.ts";
 import { COMMANDS } from "./commands.ts";
@@ -50,37 +57,96 @@ export async function anatomy(args: string[]): Promise<number> {
     console.error(COMMANDS.anatomy.usage);
     return 1;
   }
-  const scope = commandScope(rest[0] ?? ".");
+  return serve(
+    rest[0],
+    started,
+    (db, scope) => {
+      const rows = filesUnder(db, scope.prefix, from);
+      const pending = pendingPaths(db);
+      const page = anatomyPage(rows, pending, rest[0] ?? "", pending.size, symbolLines(db));
+      return {
+        text: page.text,
+        matches: page.shown,
+        capped: page.shown < rows.length,
+        outcome: "ok",
+      };
+    },
+    (usage) => ({ channel: "anatomy", from: from ?? null, ...usage }),
+  );
+}
+
+/** What a command answers: the text it prints, how many entries that holds and how the run ended. */
+type Answer = { text: string; matches: number; capped: boolean; outcome: CodeOutcome };
+
+const refusal = (outcome: Exclude<CodeOutcome, "ok">): Answer => ({
+  text: "",
+  matches: 0,
+  capped: false,
+  outcome,
+});
+
+/**
+ * Runs one graph command over `target`'s project: prints the answer, records its usage line and
+ * returns the exit status. A refused target and an unreadable store answer with a refusal.
+ * Returns 1 without a line when no installed project owns the target.
+ */
+async function serve(
+  target: string | undefined,
+  started: number,
+  answer: (db: sqlite.DatabaseSync, scope: Scope) => Answer,
+  event: (usage: GraphUsage) => UsageEvent,
+): Promise<number> {
+  const scope = commandScope(target ?? ".");
   if (scope === null) return 1;
+  const finish = (result: Answer, pending: number): number => {
+    process.stdout.write(result.text);
+    recordUsage(
+      scope.root,
+      cliActor(),
+      event({
+        path: target === undefined ? null : scope.prefix,
+        matches: result.matches,
+        chars: result.text.length,
+        capped: result.capped,
+        pending,
+        outcome: result.outcome,
+        ms: Date.now() - started,
+      }),
+    );
+    return result.outcome === "ok" ? 0 : 1;
+  };
+  if (scope.refused !== null) return finish(refusal(scope.refused), 0);
   const db = await refreshedStore(scope.root, started + COMMAND_REFRESH_MS);
-  if (db === null) return 1;
+  if (db === null) return finish(refusal("refused"), 0);
   try {
-    const rows = filesUnder(db, scope.prefix, from);
-    const pending = pendingPaths(db);
-    process.stdout.write(anatomyPage(rows, pending, rest[0] ?? "", pending.size, symbolLines(db)));
-    return 0;
+    return finish(answer(db, scope), pendingCount(db));
   } finally {
     db.close();
   }
 }
 
-/** The project that owns `target` and its path inside it, or null after printing why crank-mem refuses it. */
-function commandScope(target: string): { root: string; prefix: string } | null {
+type Scope = { root: string; prefix: string; refused: Exclude<CodeOutcome, "ok"> | null };
+
+/** The project that owns `target` and its path inside it, or null after printing that no project does. */
+function commandScope(target: string): Scope | null {
   const owner = ownerOf(path.resolve(process.cwd(), target));
   if (owner.kind === "unowned") {
     console.error(`crank-mem: ${target} is outside every installed project.`);
     return null;
   }
-  const refused = (reason: string) => {
+  const at = { root: owner.root, prefix: toPosix(owner.rel) };
+  const refuse = (reason: string, outcome: Exclude<CodeOutcome, "ok">) => {
     console.error(`crank-mem: ${reason}`);
-    return { root: owner.root, path: toPosix(owner.rel), outcome: "refused" as const };
+    return { root: owner.root, path: at.prefix, outcome };
   };
   const within = owner.kind === "worktree" ? owner.top : owner.root;
-  const real = checkedPath(target, within, refused, (e) =>
-    refused(`cannot read ${target} (${(e as NodeJS.ErrnoException).code}).`),
+  const real = checkedPath(target, within, refuse, (e) =>
+    refuse(`cannot read ${target} (${(e as NodeJS.ErrnoException).code}).`, "refused"),
   );
-  if (typeof real !== "string") return null;
-  return { root: owner.root, prefix: toPosix(owner.rel) };
+  return {
+    ...at,
+    refused: typeof real === "string" || real.outcome === "ok" ? null : real.outcome,
+  };
 }
 
 /**
@@ -136,7 +202,7 @@ function anatomyPage(
   dir: string,
   pendingTotal: number,
   symbolsOf: (rel: string) => string,
-): string {
+): { text: string; shown: number } {
   const entryOf = (row: FileRow) =>
     `- \`${row.path}\`${row.description ? ` — ${row.description}` : ""} (~${row.tokens} tok)${pending.has(row.path) ? " (symbols pending)" : ""}\n${symbolsOf(row.path)}`;
   const more = (i: number) =>
@@ -151,7 +217,7 @@ function anatomyPage(
     out += entry;
     shown++;
   }
-  return out + (shown < rows.length ? pendingLine + more(shown) : pendingLine);
+  return { text: out + (shown < rows.length ? pendingLine + more(shown) : pendingLine), shown };
 }
 
 /** `crank-mem callers [<file>] <symbol>`: the sites that call the symbol, then the sites that might. */
@@ -164,7 +230,8 @@ export function callees(args: string[]): Promise<number> {
   return symbolCommand("callees", args, calleesReport);
 }
 
-type Report = (db: sqlite.DatabaseSync, root: string, set: SymbolRow[]) => string;
+type Listing = { text: string; matches: number };
+type Report = (db: sqlite.DatabaseSync, root: string, set: SymbolRow[]) => Listing;
 
 async function symbolCommand(
   name: "callers" | "callees",
@@ -179,39 +246,42 @@ async function symbolCommand(
   }
   const file = rest.length === 2 ? rest[0] : undefined;
   const symbol = rest.at(-1)!;
-  const scope = commandScope(file ?? ".");
-  if (scope === null) return 1;
-  const db = await refreshedStore(scope.root, started + COMMAND_REFRESH_MS);
-  if (db === null) return 1;
-  try {
-    const within = file === undefined ? null : scope.prefix;
-    const set = chosenSymbol(db, symbol, within, file);
-    if (set === null) return 1;
-    process.stdout.write(report(db, scope.root, set) + pendingLine(db));
-    return 0;
-  } finally {
-    db.close();
-  }
+  return serve(
+    file,
+    started,
+    (db, scope) => {
+      const set = chosenSymbol(db, symbol, file === undefined ? null : scope.prefix, file);
+      if (!Array.isArray(set)) return set;
+      const done = report(db, scope.root, set);
+      return {
+        text: done.text + pendingLine(db),
+        matches: done.matches,
+        capped: false,
+        outcome: "ok",
+      };
+    },
+    (usage) => ({ channel: name, symbol, ...usage }),
+  );
 }
 
-/** The one symbol `symbol` names, or null after printing that it names none or several. */
+/** The one symbol `symbol` names, or the refusal after printing that it names none or several. */
 function chosenSymbol(
   db: sqlite.DatabaseSync,
   symbol: string,
   within: string | null,
   file: string | undefined,
-): SymbolRow[] | null {
+): SymbolRow[] | Answer {
   const query = within === null ? symbol : { file: within, symbol };
   const sets = symbolSets(findSymbols(db, query));
   if (sets.length === 1) return sets[0]!;
   if (sets.length === 0) {
     console.error(`crank-mem: no symbol ${symbol}${file === undefined ? "" : ` in ${file}`}.`);
     printClose(symbolSets(similarSymbols(db, symbol, within)));
-  } else {
-    console.error(`crank-mem: ${symbol} names ${sets.length} symbols.`);
-    printClose(sets);
+    return refusal("not-found");
   }
-  return null;
+  console.error(`crank-mem: ${symbol} names ${sets.length} symbols.`);
+  printClose(sets);
+  return refusal("refused");
 }
 
 const CLOSE_LIMIT = 5;
@@ -287,7 +357,7 @@ function countLine(sites: Site[], filesOf: (site: Site) => string): string {
   return `${sites.length} call sites in ${new Set(sites.map(filesOf)).size} files.\n`;
 }
 
-function callersReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]): string {
+function callersReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]): Listing {
   const sites = callersOf(db, set);
   const source = sourceReader(root);
   const rowOf = (site: Site): Row => ({
@@ -301,7 +371,7 @@ function callersReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]):
   const unresolved = sites.unresolved.map(rowOf);
   const all = [...resolved, ...unresolved];
   const first = sites.resolved.find((site) => site.caller !== null);
-  return (
+  const text =
     header(set[0]!) +
     renderRows(resolved, all) +
     countLine(sites.resolved, (site) => site.path) +
@@ -309,8 +379,8 @@ function callersReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]):
       ? `Call sites named ${set[0]!.name} with no single definition:\n${renderRows(unresolved, all)}`
       : "") +
     (first ? `Open one: crank-mem unfold ${first.path} ${first.caller!.qualified}\n` : "") +
-    `Wider: crank-mem impact ${pasteable(db, set[0]!)}\n`
-  );
+    `Wider: crank-mem impact ${pasteable(db, set[0]!)}\n`;
+  return { text, matches: resolved.length };
 }
 
 /** The resolved sites by the file defining each callee, then by the call's line. */
@@ -322,7 +392,7 @@ function byCalleeFile(sites: Site[]): Site[] {
   );
 }
 
-function calleesReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]): string {
+function calleesReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]): Listing {
   const sites = calleesOf(db, set);
   const source = sourceReader(root);
   const ordered = byCalleeFile(sites.resolved);
@@ -342,7 +412,7 @@ function calleesReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]):
   }));
   const all = [...resolved, ...unresolved];
   const first = ordered[0]?.target;
-  return (
+  const text =
     header(set[0]!) +
     renderRows(resolved, all) +
     countLine(ordered, (site) => site.target!.path) +
@@ -350,8 +420,8 @@ function calleesReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]):
       ? `Calls with no single definition:\n${renderRows(unresolved, all)}`
       : "") +
     (first ? `Open one: crank-mem unfold ${first.path} ${first.qualified}\n` : "") +
-    `Wider: crank-mem callers ${pasteable(db, set[0]!)}\n`
-  );
+    `Wider: crank-mem callers ${pasteable(db, set[0]!)}\n`;
+  return { text, matches: resolved.length };
 }
 
 /** The `--depth` value, or null when it is not a whole number from 1 to IMPACT_MAX_DEPTH. */
@@ -385,44 +455,49 @@ export async function impact(args: string[]): Promise<number> {
   }
   const lone = rest.length === 1 && isRegularFile(rest[0]!) ? rest[0] : undefined;
   const file = rest.length === 2 ? rest[0] : lone;
-  const scope = commandScope(file ?? ".");
-  if (scope === null) return 1;
-  const db = await refreshedStore(scope.root, started + COMMAND_REFRESH_MS);
-  if (db === null) return 1;
-  try {
-    const report =
-      lone !== undefined && isIndexedFile(db, scope.prefix)
-        ? fileImpact(db, scope.prefix, depth)
-        : symbolImpact(db, rest, scope.prefix, depth);
-    if (report === null) return 1;
-    process.stdout.write(report + pendingLine(db));
-    return 0;
-  } finally {
-    db.close();
-  }
+  return serve(
+    file,
+    started,
+    (db, scope) => {
+      const answer =
+        lone !== undefined && isIndexedFile(db, scope.prefix)
+          ? fileImpact(db, scope.prefix, depth)
+          : symbolImpact(db, rest, scope.prefix, depth);
+      return answer.outcome === "ok" ? { ...answer, text: answer.text + pendingLine(db) } : answer;
+    },
+    (usage) => ({ channel: "impact", symbol: lone === undefined ? rest.at(-1)! : null, ...usage }),
+  );
 }
 
-/** The tree of the one symbol the arguments name, or null after printing why they name none. */
+/** The tree of the one symbol the arguments name, or the refusal after printing why they name none. */
 function symbolImpact(
   db: sqlite.DatabaseSync,
   args: string[],
   prefix: string,
   depth: number,
-): string | null {
+): Answer {
   const named = args.length === 2;
   const set = chosenSymbol(db, args.at(-1)!, named ? prefix : null, named ? args[0] : undefined);
-  return set === null ? null : renderTree(impactOf(db, [set], depth)[0]!);
+  if (!Array.isArray(set)) return set;
+  const root = impactOf(db, [set], depth)[0]!;
+  return { text: renderTree(root), matches: callerCount(root), capped: false, outcome: "ok" };
 }
 
 /** The file, the callers of each symbol in it that has any, then the files importing it. */
-function fileImpact(db: sqlite.DatabaseSync, file: string, depth: number): string {
+function fileImpact(db: sqlite.DatabaseSync, file: string, depth: number): Answer {
   const sets = symbolSets(symbolsInFile(db, file));
   const roots = impactOf(db, sets, depth).filter((root) => root.children.length > 0 || root.shown);
   const importers = importersOf(db, file);
-  return (
+  const text =
     `${file}\n${roots.map(renderTree).join("")}` +
-    (importers.length > 0 ? `Imported by:\n${importers.join("\n")}\n` : "Imported by: none\n")
-  );
+    (importers.length > 0 ? `Imported by:\n${importers.join("\n")}\n` : "Imported by: none\n");
+  const matches = roots.reduce((sum, root) => sum + callerCount(root), 0);
+  return { text, matches, capped: false, outcome: "ok" };
+}
+
+/** The callers below `node`, at every depth. */
+function callerCount(node: ImpactNode): number {
+  return node.children.reduce((sum, child) => sum + 1 + callerCount(child), 0);
 }
 
 /** Each caller's tree prefix and name are padded to this width before its call site. */

@@ -57,7 +57,7 @@ The last check and these settings live in `~/.crank/update.json`.
 
 `crank-mem upgrade` in one project repairs that project. It adds the
 `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`,
-`Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the wired Claude settings file, adds hook wiring the install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
+`Bash(crank-mem get *)`, `Bash(crank-mem outline *)`, `Bash(crank-mem unfold *)`, `Bash(crank-mem callers *)`, `Bash(crank-mem callees *)`, `Bash(crank-mem impact *)` and `Bash(crank-mem anatomy *)` allow rules to the wired Claude settings file, adds hook wiring the install lacks (such as `SubagentStart`), rewrites hook commands crank-mem
 wrote to the current form, and removes crank hooks from the Claude settings
 file the git mode does not use, since wiring in both runs every hook twice.
 It brings every item back to the choices init recorded in `.crank/config.json`:
@@ -87,7 +87,7 @@ Requires bun, or node >= 23.6 (runs TypeScript directly).
 
 ### Commands
 
-- `crank-mem init` — wire hooks into `.claude`/`.codex`, add the `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`, `Bash(crank-mem get *)`, `Bash(crank-mem outline *)` and `Bash(crank-mem unfold *)` allow rules to the Claude settings file so agents run the recall and code-reading commands without a prompt, seed `.crank/` with the project named after its folder (`-2`, `-3`, … added when another installed project has that name; set `name` in `.crank/config.json` to change it), first scan; removes crank hooks from the other Claude settings file
+- `crank-mem init` — wire hooks into `.claude`/`.codex`, add the `Bash(crank-mem search *)`, `Bash(crank-mem timeline *)`, `Bash(crank-mem get *)`, `Bash(crank-mem outline *)`, `Bash(crank-mem unfold *)`, `Bash(crank-mem callers *)`, `Bash(crank-mem callees *)`, `Bash(crank-mem impact *)` and `Bash(crank-mem anatomy *)` allow rules to the Claude settings file so agents run the recall and code-reading commands without a prompt, seed `.crank/` with the project named after its folder (`-2`, `-3`, … added when another installed project has that name; set `name` in `.crank/config.json` to change it), first scan; removes crank hooks from the other Claude settings file
 - `crank-mem scan` — full index rebuild
 - `crank-mem digest on|off|resume` — turn background digests on or off for this checkout, a switch kept in the gitignored `.crank/config.local.json`; `resume` clears a stop and restarts the daemon
 - `crank-mem search <query>` — search stored memory by meaning or keyword (`--limit`, `--type`, `--since YYYY-MM-DD`, `--file`, `--project <name>` to search only that project's store, and `--stale` to include observations flagged stale, marked `[stale]`); keyword only until `setup` has run
@@ -95,6 +95,10 @@ Requires bun, or node >= 23.6 (runs TypeScript directly).
 - `crank-mem get <id...>` — print stored observations in full, with the date and reason of a stale flag
 - `crank-mem outline <file>` — print a source file's symbols as folded source with start-end line ranges, members under their class; a long outline ends with a `--from <line>` command for the next page
 - `crank-mem unfold <file> <symbol|line>` — print one symbol in full with line numbers and its doc comment, by bare or qualified name or by any line inside it; every match prints
+- `crank-mem callers [<file>] <symbol>` — list the call sites of a symbol, grouped by file with the calling symbol and the source line, then the sites that name it with no single definition; a call resolved by name rather than by import is marked `(inferred)`
+- `crank-mem callees [<file>] <symbol>` — list the calls made inside a symbol, grouped by the file defining each callee, then the calls with no single definition
+- `crank-mem impact [<file>] <symbol>` — the callers of a symbol, their callers and so on as a tree (`--depth` 1 to 3, default 2); given only a file, each of its symbols with callers, then the files importing it
+- `crank-mem anatomy [<dir>]` — one entry per indexed file under the directory, in path order, with its description, token count and top-level symbols; a long listing ends with a `--from <path>` command for the next page
 - `crank-mem restore-memory [<file>]` — put a `memory.db` snapshot back: the named file, or the newest one in `.crank/backups/memory/`. It checks the snapshot's integrity and schema version, saves the current store as a snapshot first so the restore can be undone, then migrates the restored store to this version
 - `crank-mem setup` — install crank-mem's packages, build the dashboard into `dashboard/dist/`, and download the local search model into `~/.crank/models`; an installed copy installs only production packages and skips the dashboard build, since its release ships one
 - `crank-mem stats` — index report; memory health (cerebrum bullets injected against total, preferences left out, the oldest bullet left out, cited paths that still exist, days since the last audit); capture health (a status line naming the first problem and the command that fixes it, digest on, off or stopped, daemon, spool waiting and parked, store counts, last digest, the month's cost at list price, pending `proposals`, `stale` rows, the last `consolidation` and its outcome, `last snapshot`, embedder); repos sessions touched that have no crank-mem install (`not installed`); whether Codex threads got the injection and whether its hook trust is current
@@ -115,7 +119,7 @@ plus `backups/cerebrum/`: the last 5 copies of cerebrum.md, taken before each
 consolidation edit and before an upgrade replaces the 0.8.1 template preamble, and `backups/memory/`: the daily snapshots of
 `memory.db`), `usage.jsonl` (the always-on usage log, kept out of git: one line
 per session start, subagent start and file read the hooks handle, and per
-`search`, `timeline`, `get`, `outline` and `unfold` run; at 4 MiB it rotates
+`search`, `timeline`, `get`, `outline`, `unfold`, `callers`, `callees`, `impact` and `anatomy` run; at 4 MiB it rotates
 to `usage.1.jsonl`, replacing the older one). A `journal.md` from an earlier
 release stays on disk, but nothing reads or writes it.
 

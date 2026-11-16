@@ -40,7 +40,12 @@ const KINDS: { key: string; label: string; color: string; channels: UsageChannel
     color: "var(--series-2)",
     channels: ["search", "timeline", "get"],
   },
-  { key: "code", label: "Code reading", color: "var(--series-3)", channels: ["outline", "unfold"] },
+  {
+    key: "code",
+    label: "Code reading",
+    color: "var(--series-3)",
+    channels: ["outline", "unfold", "callers", "callees", "impact", "anatomy"],
+  },
 ];
 
 export function UsageView({

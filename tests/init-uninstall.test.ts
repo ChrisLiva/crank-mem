@@ -89,6 +89,10 @@ describe("init → uninstall round-trip", () => {
       "Bash(crank-mem get *)",
       "Bash(crank-mem outline *)",
       "Bash(crank-mem unfold *)",
+      "Bash(crank-mem callers *)",
+      "Bash(crank-mem callees *)",
+      "Bash(crank-mem impact *)",
+      "Bash(crank-mem anatomy *)",
     ]);
     expect(settings.hooks.SessionEnd[0].hooks[0].command).toContain(".crank/hooks/session-end.ts");
     const fileHistory = settings.hooks.PostToolUse.find(
@@ -135,6 +139,10 @@ describe("init → uninstall round-trip", () => {
       "Bash(crank-mem get *)",
       "Bash(crank-mem outline *)",
       "Bash(crank-mem unfold *)",
+      "Bash(crank-mem callers *)",
+      "Bash(crank-mem callees *)",
+      "Bash(crank-mem impact *)",
+      "Bash(crank-mem anatomy *)",
     ]);
     for (const rel of [
       ".crank/cerebrum.md",

@@ -118,7 +118,7 @@ test("the usage view shows recall reach and surfaced follow-through first, and a
   const zero = Object.fromEntries(USAGE_CHANNELS.map((c) => [c, 0]));
   const perDay = Array.from({ length: 7 }, (_, i) => ({
     date: `2026-11-0${i + 1}`,
-    counts: { ...zero },
+    counts: { ...zero, ...(i === 0 ? { outline: 1, callers: 2, impact: 1, anatomy: 1 } : {}) },
   }));
   dom.history.replaceState(null, "", "?view=usage");
   try {
@@ -151,6 +151,7 @@ test("the usage view shows recall reach and surfaced follow-through first, and a
       "Search follow-through",
       "Never surfaced",
     ]);
+    expect(page.textContent).toContain("5 code reading");
     expect(tile(page, "Recall reach")).toBe("50%sessions that searched or opened memory");
     expect(tile(page, "Surfaced follow-through")).toBe("—surfaced ids the agent opened");
     expect(tile(page, "Search follow-through")).toBe("—results the agent opened");

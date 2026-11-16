@@ -225,6 +225,10 @@ export const USAGE_CHANNELS = [
   "get",
   "outline",
   "unfold",
+  "callers",
+  "callees",
+  "impact",
+  "anatomy",
 ] as const;
 export type UsageChannel = (typeof USAGE_CHANNELS)[number];
 
