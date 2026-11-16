@@ -65,6 +65,8 @@ describe("subagent-start hook (black-box)", () => {
     // Digests off, no store: no recall pointer.
     const off = context(root);
     expect(shape(off)[2]).toBe(CODE_BULLET);
+    expect(shape(off)[2]).toContain("`crank-mem callers|callees <symbol>`");
+    expect(shape(off)[2]).toContain("`crank-mem impact <file|symbol>`");
     expect(off).not.toContain(RECALL_BULLET);
     // A cited file that no longer exists is tagged.
     expect(off).toContain("[cited file missing: src/old/loader.ts]");

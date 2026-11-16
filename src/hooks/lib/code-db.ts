@@ -59,6 +59,44 @@ export const GRAMMARS: Record<string, Grammar> = {
   ".psm1": "powershell",
 };
 
+/** Extensions of first-party source: the scanner ranks them first and the session-start pointer counts the ones no grammar reads. */
+export const SOURCE_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".py",
+  ".go",
+  ".rs",
+  ".java",
+  ".kt",
+  ".scala",
+  ".swift",
+  ".c",
+  ".cc",
+  ".cpp",
+  ".cxx",
+  ".h",
+  ".hh",
+  ".hpp",
+  ".m",
+  ".mm",
+  ".cs",
+  ".rb",
+  ".php",
+  ".lua",
+  ".dart",
+  ".zig",
+  ".sh",
+  ".sql",
+  ".css",
+  ".scss",
+  ".vue",
+  ".svelte",
+]);
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS files (
   path TEXT PRIMARY KEY,
@@ -399,4 +437,24 @@ export function pendingPaths(db: sqlite.DatabaseSync): Set<string> {
 
 export function pendingCount(db: sqlite.DatabaseSync): number {
   return pendingFiles(db).length;
+}
+
+export interface GraphCounts {
+  files: number;
+  pending: number;
+  /** Source extensions no grammar reads, most files first, ties by extension. */
+  gaps: string[];
+}
+
+/** What the session-start pointer says about the graph: file count, files awaiting a parse, and the languages with no symbol ranges. */
+export function graphCounts(db: sqlite.DatabaseSync): GraphCounts {
+  const rows = db.prepare("SELECT path FROM files").all() as { path: string }[];
+  const byExt = new Map<string, number>();
+  for (const { path: rel } of rows) {
+    const ext = path.extname(path.basename(rel)).toLowerCase();
+    if (SOURCE_EXTENSIONS.has(ext) && !Object.hasOwn(GRAMMARS, ext))
+      byExt.set(ext, (byExt.get(ext) ?? 0) + 1);
+  }
+  const gaps = [...byExt].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1)).map(([ext]) => ext);
+  return { files: rows.length, pending: pendingCount(db), gaps };
 }

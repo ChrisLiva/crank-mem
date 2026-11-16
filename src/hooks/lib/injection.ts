@@ -3,8 +3,7 @@ import * as path from "node:path";
 import { estimateProseTokens } from "./tokens.ts";
 import { parseBullets } from "./bullets.ts";
 import { citationCheck, type CitationCheck } from "./citations.ts";
-import { SOURCE_EXTENSIONS } from "./scanner.ts";
-import { symbolsSupported } from "./symbols.ts";
+import { graphCounts, openCodeDb, type GraphCounts } from "./code-db.ts";
 import { CEREBRUM_FILE } from "./cerebrum-files.ts";
 import { debugEvent } from "./debug.ts";
 import { driftNote } from "./drift.ts";
@@ -17,13 +16,13 @@ import type { UsageEvent } from "./usage.ts";
 import { STORE_TEXT, type ObservationLine } from "./wire.ts";
 
 // Session-start injection: instructions (carrying a one-line pointer to the
-// file map, the code pointer, and the recall pointer when recallApplies) → staleness/drift/
+// code graph, the code pointer, and the recall pointer when recallApplies) → staleness/drift/
 // capture notes → the recall sections from memory.db (next steps, only while
 // digests run, then recent memory) → cerebrum excerpt → ADR filenames. No
 // digest state asks the agent to keep memory: the excerpt labels its sections
 // by name alone.
 //
-// The map is not injected, only a one-line pointer to it. Inlining the map
+// The file list is not injected, only a one-line pointer to `crank-mem anatomy`. Inlining it
 // cost 74% of the injection; ADR 0005 records the measurement.
 
 /** Ceiling on the whole excerpt, set to catch a runaway file. */
@@ -48,7 +47,7 @@ export const RECALL_BULLET =
   "- Past work: before you change how an area behaves, debug a failure again, or act on earlier work the user mentions, run `crank-mem search <query>`; open any `#id` shown here or in file history with `crank-mem get <id...>`, and `crank-mem timeline <id>` shows what surrounds one.";
 /** Points at the code commands; session start and SubagentStart show it ungated. */
 export const CODE_BULLET =
-  "- Code: `crank-mem outline <file>` lists a source file's symbols with line ranges, and `crank-mem unfold <file> <symbol|line>` prints one in full.";
+  "- Code: `crank-mem outline <file>` lists a source file's symbols with line ranges, and `crank-mem unfold <file> <symbol|line>` prints one in full. `crank-mem callers|callees <symbol>` and `crank-mem impact <file|symbol>` show what calls what and what a change reaches.";
 
 /**
  * Cerebrum sections read as memory bullets, lowercased. `## Memory` is the
@@ -62,44 +61,23 @@ const CEREBRUM_HEADER = "## Cerebrum (.crank/cerebrum.md)";
 
 /** Unsupported source extensions named in the pointer, most indexed files first. */
 const SYMBOL_GAPS_NAMED = 3;
+/** How long the pointer waits on another process holding `code.db`, such as a WAL recovery. */
+const GRAPH_READ_BUSY_MS = 1000;
 
 /**
- * The anatomy.md pointer, stating what the index covers. A capped index can
- * omit whole directories, so the pointer names the cap and the languages
- * without symbol ranges, which tell an agent when to fall back to search.
+ * The `crank-mem anatomy` pointer. With the graph's counts it states how many files the command
+ * lists, how many still await a parse and which languages have no symbol ranges, which tell an
+ * agent when to fall back to search; without them it drops the count and both clauses.
  */
-function anatomyPointer(index: AnatomyIndex, codex: boolean): string {
-  const { fileCount, truncated, candidateCount } = index.meta;
-  const counted =
-    truncated && candidateCount !== undefined
-      ? `${fileCount} of ${candidateCount}`
-      : `${fileCount}`;
-  // A truncated walk keeps candidateCount only when it came from git's ranked
-  // listing; the fallback directory walk stops uncounted, in path order.
-  const coverage = !truncated
-    ? "That is every indexable file in the project."
-    : `It is capped at max_files, active files first, then ${
-        candidateCount !== undefined ? "first-party source" : "by path"
-      }:\n  a file missing from it may still exist.`;
-  const gaps = new Map<string, number>();
-  for (const rel of Object.keys(index.files)) {
-    const ext = path.extname(rel).toLowerCase();
-    if (SOURCE_EXTENSIONS.has(ext) && !symbolsSupported(ext))
-      gaps.set(ext, (gaps.get(ext) ?? 0) + 1);
-  }
-  const named = [...gaps]
-    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1))
-    .slice(0, SYMBOL_GAPS_NAMED)
-    .map(([ext]) => ext);
-  const symbols = named.length ? ` (no symbol ranges for ${named.join(", ")} files)` : "";
-  const slice = codex
-    ? "`sed -n 'START,ENDp' file`"
-    : "Read with offset/limit, or `sed -n 'START,ENDp' file`";
-  return `- \`.crank/anatomy.md\` indexes ${counted} file(s) with descriptions, token sizes,
-  and per-symbol line ranges${symbols}.
-  ${coverage}
-  Use it for token sizes and symbol line ranges before slice-reading a large
-  file (${slice}).`;
+function graphPointer(graph: GraphCounts | null): string {
+  const lists = graph ? `the project's ${graph.files} file(s)` : "the project's files";
+  const pending =
+    graph && graph.pending > 0
+      ? ` (symbols for ${graph.pending} files are still being parsed)`
+      : "";
+  const named = graph?.gaps.slice(0, SYMBOL_GAPS_NAMED) ?? [];
+  const gaps = named.length ? ` (no symbol ranges for ${named.join(", ")} files)` : "";
+  return `- \`crank-mem anatomy [<dir>]\` lists ${lists} with descriptions, token sizes and symbol line ranges${pending}${gaps}; use it before slice-reading a large file.`;
 }
 
 /** Bytes of the newest digest's next steps worth a section; longer ones are left to `crank-mem get`. */
@@ -115,16 +93,11 @@ function recallBullets(linked: string[]): string[] {
     : [RECALL_BULLET];
 }
 
-function instructions(
-  index: AnatomyIndex,
-  codex: boolean,
-  recall: boolean,
-  linked: string[],
-): string {
+function instructions(graph: GraphCounts | null, recall: boolean, linked: string[]): string {
   const lead =
-    "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`.";
+    "This project keeps a code graph in `.crank/code.db` and project memory in `.crank/cerebrum.md`.";
   const bullets = [
-    anatomyPointer(index, codex),
+    graphPointer(graph),
     CODE_BULLET,
     ...(recall ? recallBullets(linked) : []),
     PROOF_AND_ADR_BULLETS,
@@ -142,11 +115,11 @@ export interface InjectionSources {
   cerebrumMd: string | null;
   adrFilenames: string[];
   index: AnatomyIndex;
+  /** What `code.db` holds, for the anatomy pointer. Absent: the pointer carries no count. */
+  graph?: GraphCounts | null;
   /** Italic notes near the top, in display order. Absent: none. */
   notes?: string[];
   adrPath: string;
-  /** Codex session: name AGENTS.md alone and no Read tool (ADR 0003). */
-  codex?: boolean;
   /** Project root; when set, the excerpt tags cited files that vanished or changed. */
   projectRoot?: string;
   /** Digests run for this session, so recall applies with no store yet. Absent: false. */
@@ -380,7 +353,7 @@ export interface Shown {
  * natural bound — is trimmed to what remains instead of quietly evicting the
  * ADRs behind it.
  *
- * The instructions are exempt: they carry the file-map pointer and the ADR protocol, so a
+ * The instructions are exempt: they carry the anatomy pointer and the ADR protocol, so a
  * budget too small to hold them is a misconfiguration, not a reason to inject a
  * headless fragment. Consequence: the result can exceed `budgetBytes`, but only
  * by the fixed size of the instructions.
@@ -398,8 +371,7 @@ export function composeInjection(
   const links = recall?.status === "open" ? recall.value.linked : [];
   const parts: string[] = [
     instructions(
-      sources.index,
-      sources.codex ?? false,
+      sources.graph ?? null,
       recallPointer,
       links.map((p) => p.name),
     ),
@@ -578,6 +550,7 @@ export function sessionStartInjection(
 ): { text: string; excerpt: Excerpt | null; usage: SessionStartUsage } {
   const gate = digestGate(config, opts.codex, root);
   const recall = readRecall(root, gate);
+  const graph = readGraph(root);
   const drift = driftNote(config);
   const notes = [opts.stalenessNote, drift, ...captureNotes(gate, recall.status)].filter(
     (note) => note !== null,
@@ -586,9 +559,9 @@ export function sessionStartInjection(
     cerebrumMd: readCerebrum(crankDir),
     adrFilenames: listAdrFilenames(root, config.adr_path),
     index,
+    graph,
     adrPath: config.adr_path,
     projectRoot: root,
-    codex: opts.codex,
     recall,
     running: gate.running,
     notes,
@@ -631,4 +604,17 @@ function readRecall(root: string, gate: DigestGate): Recall {
     recent: memory.recent(RECENT_MEMORY_ROWS),
     linked: linkedProjects(memory),
   }));
+}
+
+/** The graph's counts, or null when `code.db` does not open. */
+function readGraph(root: string): GraphCounts | null {
+  const opened = openCodeDb(root, "read", GRAPH_READ_BUSY_MS);
+  if (opened.status !== "open" || !opened.db) return null;
+  try {
+    return graphCounts(opened.db);
+  } catch {
+    return null;
+  } finally {
+    opened.db.close();
+  }
 }

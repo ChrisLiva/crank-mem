@@ -9,6 +9,7 @@ import { BINARY_SNIFF_BYTES, isIndexableName, TEST_PATH, toPosix } from "./index
 import { gitListing, keepPin, updateActivity } from "./activity.ts";
 import { fileLinks } from "./imports.ts";
 import { ownedBy } from "./owner.ts";
+import { SOURCE_EXTENSIONS } from "./code-db.ts";
 
 // Project walk + full scan + incremental refresh. Reads the filesystem and,
 // in a git repo, `git ls-files`; locking and persistence are the caller's job.
@@ -99,43 +100,6 @@ const DEMOTED_DIRS = new Set([
   "assets",
   "static",
   "public",
-]);
-
-export const SOURCE_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-  ".py",
-  ".go",
-  ".rs",
-  ".java",
-  ".kt",
-  ".scala",
-  ".swift",
-  ".c",
-  ".cc",
-  ".cpp",
-  ".cxx",
-  ".h",
-  ".hh",
-  ".hpp",
-  ".m",
-  ".mm",
-  ".cs",
-  ".rb",
-  ".php",
-  ".lua",
-  ".dart",
-  ".zig",
-  ".sh",
-  ".sql",
-  ".css",
-  ".scss",
-  ".vue",
-  ".svelte",
 ]);
 
 /** 0 first-party code, 1 other first-party, 2 and 3 the same under a demoted dir. */

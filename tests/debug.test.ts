@@ -269,7 +269,7 @@ describe("debug logging (black-box)", () => {
     const run = runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
     expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain(
-      "`.crank/anatomy.md` indexes 1 file(s)",
+      "`crank-mem anatomy [<dir>]` lists the project's 1 file(s)",
     );
   });
 

@@ -46,8 +46,7 @@ describe("session-start hook (black-box)", () => {
     const ctx: string = out.hookSpecificOutput.additionalContext;
     expect(ctx).toContain("crank-mem (project memory)");
     // The scan's result reaches the model as a count and a pointer, not a listing.
-    expect(ctx).toContain("`.crank/anatomy.md` indexes 2 file(s)");
-    expect(ctx).toContain("That is every indexable file in the project.");
+    expect(ctx).toContain("`crank-mem anatomy [<dir>]` lists the project's 2 file(s) with");
     expect(ctx).not.toContain("`app.ts`");
     // index + anatomy.md were written
     const index = JSON.parse(
@@ -77,30 +76,14 @@ describe("session-start hook (black-box)", () => {
     expect(Object.keys(index.files).sort()).toEqual(["a.ts", "b.ts"]);
     expect(index.meta.truncated).toBe(true);
     expect(index.meta.candidateCount).toBe(3);
-    // The pointer states the cap instead of claiming the whole project.
-    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    expect(ctx).toContain("`.crank/anatomy.md` indexes 2 of 3 file(s)");
-    expect(ctx).toContain(
-      "It is capped at max_files, active files first, then first-party source:",
-    );
-    expect(ctx).toContain("a file missing from it may still exist.");
-    expect(ctx).not.toContain("every indexable file");
   });
 
-  test("outside git a capped index says the walk went by path and gives no total", () => {
-    const root = makeCrankProject({ "a.ts": "x", "b.ts": "x", "c.ts": "x" });
-    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), max_files: 1 });
-    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    expect(ctx).toContain("`.crank/anatomy.md` indexes 1 file(s)");
-    expect(ctx).toContain("It is capped at max_files, active files first, then by path:");
-  });
-
-  test("the pointer names indexed languages without symbol support, and wording follows the agent", () => {
+  test("the pointer names source languages with no grammar, says what is still parsing, and reads the same for both agents", () => {
     const root = makeCrankProject({
+      "a.lua": "local a = 1\n",
+      "b.lua": "local b = 2\n",
+      "c.dart": "void main() {}\n",
       "main.c": "int main(void) { return 0; }\n",
-      "util.h": "int f(void);\n",
       "a.ts": "x",
     });
     const ctxFor = (payload: object): string => {
@@ -108,26 +91,43 @@ describe("session-start hook (black-box)", () => {
       expect(run.status).toBe(0);
       return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
     };
+    const pointer =
+      "- `crank-mem anatomy [<dir>]` lists the project's 5 file(s) with descriptions, token sizes and symbol line ranges (symbols for 2 files are still being parsed) (no symbol ranges for .lua, .dart files); use it before slice-reading a large file.";
     const codex = ctxFor(codexSessionStart(root));
-    expect(codex).toContain("`.crank/anatomy.md` indexes 3 file(s)");
-    expect(codex).toContain("(no symbol ranges for .c, .h files)");
-    // Codex has no Read tool and reads AGENTS.md (ADR 0003).
-    expect(codex).toContain("file (`sed -n 'START,ENDp' file`).");
-    expect(codex).not.toContain("offset/limit");
-    expect(codex).not.toContain("CLAUDE.md");
     const claude = ctxFor(claudeSessionStart(root));
-    expect(claude).toContain("Read with offset/limit, or `sed -n 'START,ENDp' file`");
-    // The code pointer sits between the anatomy pointer and the proof bullet.
-    const pointerEnds: [string, string][] = [
-      [codex, "file (`sed -n 'START,ENDp' file`).\n"],
-      [claude, "file (Read with offset/limit, or `sed -n 'START,ENDp' file`).\n"],
-    ];
-    for (const [ctx, pointerEnd] of pointerEnds) {
-      expect(count(ctx, CODE_BULLET)).toBe(1);
-      const at = ctx.indexOf(CODE_BULLET);
-      expect(ctx.slice(0, at).endsWith(pointerEnd)).toBe(true);
-      expect(ctx.slice(at + CODE_BULLET.length).startsWith("\n- Memory is not proof")).toBe(true);
+    // The code pointer follows the anatomy pointer and precedes the proof bullet, for both agents.
+    for (const ctx of [codex, claude]) {
+      expect(count(ctx, `${pointer}\n${CODE_BULLET}\n- Memory is not proof`)).toBe(1);
+      expect(ctx).not.toContain("offset/limit");
     }
+  });
+
+  test("the parsing clause shows only while files await a parse", () => {
+    const pendingCtx = (files: Record<string, string>): string => {
+      const root = makeCrankProject(files);
+      const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
+      expect(run.status).toBe(0);
+      return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    };
+    expect(pendingCtx({ "a.ts": "x", "b.py": "x" })).toContain(
+      "symbol line ranges (symbols for 2 files are still being parsed); use it",
+    );
+    const none = pendingCtx({ "README.md": "# Demo\n" });
+    expect(none).toContain("symbol line ranges; use it before slice-reading a large file.");
+    expect(none).not.toContain("still being parsed");
+    expect(none).not.toContain("no symbol ranges");
+  });
+
+  test("a code.db that does not open drops the count and both clauses from the pointer", () => {
+    const root = makeCrankProject({ "a.lua": "x", "b.ts": "x" });
+    fs.writeFileSync(path.join(root, ".crank/code.db"), "not a database");
+    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
+    expect(run.status).toBe(0);
+    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    expect(ctx).toContain(
+      "- `crank-mem anatomy [<dir>]` lists the project's files with descriptions, token sizes and symbol line ranges; use it before slice-reading a large file.\n",
+    );
+    expect(ctx).not.toContain("file(s)");
   });
 
   test("the most committed file stays indexed past max_files across session starts and a scan", () => {
@@ -211,7 +211,7 @@ describe("session-start hook (black-box)", () => {
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
     expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain(
-      "`.crank/anatomy.md` indexes 1 file(s)",
+      "`crank-mem anatomy [<dir>]` lists the project's 1 file(s)",
     );
   });
 
@@ -679,7 +679,7 @@ const UPKEEP = [
   "journal.md",
 ];
 const LEAD =
-  "This project keeps a token-annotated file index in `.crank/anatomy.md` and\nproject memory in `.crank/cerebrum.md`.";
+  "This project keeps a code graph in `.crank/code.db` and project memory in `.crank/cerebrum.md`.";
 
 describe("no upkeep prompt in any digest state (black-box)", () => {
   const states: Array<{
@@ -912,7 +912,7 @@ describe("session-start writes code.db", () => {
       expect(Date.now() - started).toBeLessThan(2500);
       expect(run.status).toBe(0);
       expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).not.toMatch(
-        /graph|code\.db|locked/i,
+        /locked|busy|errcode|SQLITE/i,
       );
       const events = readDebugLog(root)
         .slice(logged)
