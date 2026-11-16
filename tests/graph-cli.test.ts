@@ -534,7 +534,7 @@ describe("callers and callees", () => {
 
   test("a sensitive file and a path outside every project are refused", () => {
     const root = makeCrankProject({ ".env": "TOKEN=secret\n", "a.ts": "export const a = 1;\n" });
-    for (const command of ["callers", "callees"]) {
+    for (const command of ["callers", "callees", "impact"]) {
       const sensitive = runCli(root, [command, ".env", "a"]);
       expect(sensitive.status).toBe(1);
       expect(sensitive.stderr).toContain("is a sensitive file; crank-mem does not read it.");
@@ -543,6 +543,31 @@ describe("callers and callees", () => {
       expect(outside.status).toBe(1);
       expect(outside.stderr).toContain("is outside every installed project.");
     }
+    const lone = runCli(root, ["impact", ".env"]);
+    expect(lone.status).toBe(1);
+    expect(lone.stderr).toContain(
+      "crank-mem: .env is a sensitive file; crank-mem does not read it.",
+    );
+    expect(lone.stdout).toBe("");
+    const stray = path.join(tempDir("crank-outside-"), "x.ts");
+    fs.writeFileSync(stray, "export const x = 1;\n");
+    const strayRun = runCli(root, ["impact", stray]);
+    expect(strayRun.status).toBe(1);
+    expect(strayRun.stderr).toContain("is outside every installed project.");
+  });
+
+  test("a path in another installed project answers from that project's store", () => {
+    const payments = makeCrankProject({
+      "src/p.ts": "export function pay() {}\n",
+      "src/u.ts": 'import { pay } from "./p";\nexport function checkout() {\n  pay();\n}\n',
+    });
+    const home = makeCrankProject({ "src/h.ts": "export const h = 1;\n" });
+    const file = path.join(payments, "src/p.ts");
+    expect(listed(callers(home, file, "pay").stdout).resolved).toEqual(["src/u.ts:3 checkout"]);
+    const run = runCli(home, ["impact", file, "pay"]);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("└─ checkout");
+    expect(run.stdout).toContain("src/u.ts:3");
   });
 
   test("a store the file system will not let it write answers from what it holds and counts the files still pending", () => {
@@ -567,9 +592,240 @@ describe("callers and callees", () => {
       expect(run.status).toBe(0);
       expect(listed(run.stdout).resolved).toEqual(["src/user.ts:3 use"]);
       expect(run.stdout.trimEnd().split("\n").at(-1)).toBe("(1 file(s) still pending parse)");
+      const tree = runCli(root, ["impact", "target"]);
+      expect(tree.status).toBe(0);
+      expect(tree.stdout).toContain("└─ use");
+      expect(tree.stdout.trimEnd().split("\n").at(-1)).toBe("(1 file(s) still pending parse)");
     } finally {
       restore();
     }
     expect(callers(root, "target").stdout).not.toContain("pending");
+  });
+});
+
+describe("impact", () => {
+  const impact = (root: string, ...args: string[]) => runCli(root, ["impact", ...args]);
+  const lines = (...rows: string[]) => `${rows.join("\n")}\n`;
+
+  test("it prints each caller's callers down to the depth: two levels by default, up to three", () => {
+    const root = makeCrankProject({
+      "src/chain.ts": [
+        "export function leaf() {}",
+        "export function mid() {",
+        "  leaf();",
+        "}",
+        "export function top() {",
+        "  mid();",
+        "}",
+        "export function outer() {",
+        "  top();",
+        "}",
+        "",
+      ].join("\n"),
+    });
+    expect(impact(root, "leaf").stdout).toBe(
+      lines(
+        "leaf  src/chain.ts:1",
+        "└─ mid                src/chain.ts:3",
+        "   └─ top             src/chain.ts:6",
+      ),
+    );
+    expect(impact(root, "leaf", "--depth", "3").stdout).toBe(
+      lines(
+        "leaf  src/chain.ts:1",
+        "└─ mid                src/chain.ts:3",
+        "   └─ top             src/chain.ts:6",
+        "      └─ outer        src/chain.ts:9",
+      ),
+    );
+    expect(impact(root, "--depth", "1", "leaf").stdout).toBe(
+      lines("leaf  src/chain.ts:1", "└─ mid                src/chain.ts:3"),
+    );
+    // Nothing calls outer: the root line stands alone.
+    expect(impact(root, "src/chain.ts", "outer").stdout).toBe("outer  src/chain.ts:8\n");
+  });
+
+  test("a depth outside 1 to 3, a missing value and a wrong argument count print the usage line", () => {
+    const root = makeCrankProject({ "a.ts": "export function a() {}\n" });
+    for (const args of [
+      ["a", "--depth", "0"],
+      ["a", "--depth", "4"],
+      ["a", "--depth", "x"],
+      ["a", "--depth"],
+      [],
+      ["a.ts", "a", "b"],
+    ]) {
+      const run = impact(root, ...args);
+      expect(run.status).toBe(1);
+      expect(run.stdout).toBe("");
+      expect(run.stderr).toContain("Usage: crank-mem impact");
+    }
+  });
+
+  test("a cycle stops where it returns to a symbol on its path", () => {
+    const root = makeCrankProject({
+      "src/cycle.ts": "export function a() {\n  b();\n}\nexport function b() {\n  a();\n}\n",
+    });
+    const run = impact(root, "a", "--depth", "3");
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe(
+      lines(
+        "a  src/cycle.ts:1",
+        "└─ b                  src/cycle.ts:5",
+        "   └─ a               src/cycle.ts:2 (shown above)",
+      ),
+    );
+  });
+
+  test("a symbol reached twice prints its callers once and later says where", () => {
+    const root = makeCrankProject({
+      "src/diamond.ts": [
+        "export function r() {}",
+        "export function p() {",
+        "  r();",
+        "}",
+        "export function q() {",
+        "  r();",
+        "}",
+        "export function s() {",
+        "  p();",
+        "  q();",
+        "}",
+        "export function t() {",
+        "  s();",
+        "}",
+        "",
+      ].join("\n"),
+    });
+    expect(impact(root, "r", "--depth", "3").stdout).toBe(
+      lines(
+        "r  src/diamond.ts:1",
+        "├─ p                  src/diamond.ts:3",
+        "│  └─ s               src/diamond.ts:9",
+        "│     └─ t            src/diamond.ts:13",
+        "└─ q                  src/diamond.ts:6",
+        "   └─ s               src/diamond.ts:10 (shown above)",
+      ),
+    );
+  });
+
+  test("a symbol with more than 50 callers prints its count and no subtree", () => {
+    const build = (callers: number) =>
+      makeCrankProject({
+        "src/hub.ts": [
+          "export function root() {}",
+          "export function hub() {",
+          "  root();",
+          "}",
+          ...Array.from({ length: callers }, (_, n) => `export function c${n}() {\n  hub();\n}`),
+          "",
+        ].join("\n"),
+      });
+    const hub = impact(build(51), "root");
+    expect(hub.status).toBe(0);
+    expect(hub.stdout).toBe(
+      lines("root  src/hub.ts:1", "└─ hub                src/hub.ts:3 (51 callers, not expanded)"),
+    );
+    const edge = impact(build(50), "root").stdout.split("\n");
+    expect(edge).toHaveLength(53);
+    expect(edge[1]).toBe("└─ hub                src/hub.ts:3");
+    expect(edge[2]).toBe("   ├─ c0              src/hub.ts:6");
+  });
+
+  describe("the printed layout", () => {
+    const files = {
+      "src/lib/memory.ts": [
+        "export function readStoreSync(root: string, fn: (m: string) => string): string {",
+        "  return fn(root);",
+        "}",
+        "export function storeStatus(root: string): string {",
+        "  return readStoreSync(root, (memory) => memory);",
+        "}",
+        "",
+      ].join("\n"),
+      "src/cli/stats.ts": [
+        'import { readStoreSync } from "../lib/memory.ts";',
+        "",
+        "export function captureSummary(root: string): string {",
+        "  return readStoreSync(root, (m) => m);",
+        "}",
+        "export function captureRows(root: string): string {",
+        "  return captureSummary(root);",
+        "}",
+        "",
+      ].join("\n"),
+      "src/cli/server.ts": [
+        'import { captureSummary } from "./stats.ts";',
+        'import { storeStatus } from "../lib/memory.ts";',
+        "export function health(root: string): string {",
+        "  return captureSummary(root);",
+        "}",
+        "export function projectsBody(root: string): string {",
+        "  return storeStatus(root);",
+        "}",
+        "",
+      ].join("\n"),
+      "src/lib/citations.ts": [
+        'import { readStoreSync } from "./memory.ts";',
+        "export function storeLinks(root: string): string {",
+        "  return readStoreSync(root, (m) => m);",
+        "}",
+        "export function citationCheck(root: string): string {",
+        "  return storeLinks(root);",
+        "}",
+        "",
+      ].join("\n"),
+      "src/lib/injection.ts": [
+        'import { readStoreSync, storeStatus } from "./memory.ts";',
+        "export function readRecall(root: string): string {",
+        "  return readStoreSync(root, (memory) => memory);",
+        "}",
+        "export function subagentInjection(root: string): string {",
+        "  return storeStatus(root);",
+        "}",
+        "",
+      ].join("\n"),
+    };
+
+    test("a symbol's tree lays out its callers with tree lines, padded names and call sites", () => {
+      const run = impact(makeCrankProject(files), "readStoreSync");
+      expect(run.status).toBe(0);
+      expect(run.stdout).toBe(
+        lines(
+          "readStoreSync  src/lib/memory.ts:1",
+          "├─ captureSummary     src/cli/stats.ts:4",
+          "│  ├─ health          src/cli/server.ts:4",
+          "│  └─ captureRows     src/cli/stats.ts:7",
+          "├─ storeLinks         src/lib/citations.ts:3",
+          "│  └─ citationCheck   src/lib/citations.ts:6",
+          "├─ readRecall         src/lib/injection.ts:3",
+          "└─ storeStatus        src/lib/memory.ts:5",
+          "   ├─ projectsBody    src/cli/server.ts:7",
+          "   └─ subagentInjection  src/lib/injection.ts:6",
+        ),
+      );
+    });
+
+    test("a file lists the callers of each of its symbols, then the files that import it", () => {
+      const root = makeCrankProject({
+        "src/x.ts": "export function f1() {}\nexport function f2() {}\nexport function f3() {}\n",
+        "src/y.ts": 'import { f1 } from "./x";\nexport function useF1() {\n  f1();\n}\n',
+        "src/z.ts": 'import { f2 } from "./x";\nexport function useF2() {\n  f2();\n}\n',
+      });
+      const run = impact(root, "src/x.ts");
+      expect(run.status).toBe(0);
+      expect(run.stdout).toBe(
+        lines(
+          "src/x.ts",
+          "f1  src/x.ts:1",
+          "└─ useF1              src/y.ts:3",
+          "f2  src/x.ts:2",
+          "└─ useF2              src/z.ts:3",
+          "Imported by:",
+          "src/y.ts",
+          "src/z.ts",
+        ),
+      );
+    });
   });
 });

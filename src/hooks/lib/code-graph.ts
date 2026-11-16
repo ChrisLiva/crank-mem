@@ -43,6 +43,9 @@ export interface Sites {
   unresolved: Site[];
 }
 
+/** The name a call site outside every symbol goes by. */
+export const TOP_LEVEL = "(top level)";
+
 /** A bare name or `Class.method`, or a name looked up in one file. */
 export type SymbolQuery = string | { file: string; symbol: string };
 
@@ -257,4 +260,130 @@ export function calleesOf(db: sqlite.DatabaseSync, set: SymbolRow[]): Sites {
     (resolution === null ? sites.unresolved : sites.resolved).push(siteOf(db, call, resolution));
   }
   return sites;
+}
+
+export const IMPACT_DEFAULT_DEPTH = 2;
+export const IMPACT_MAX_DEPTH = 3;
+/** A symbol with more callers than this prints its count and no subtree. */
+const HUB_CALLERS = 50;
+
+/** One line of the impact tree: a symbol, and for a caller the call site that reaches its parent. */
+export interface ImpactNode {
+  name: string;
+  path: string;
+  line: number;
+  /** True when this symbol's callers already printed under an earlier node. */
+  shown: boolean;
+  /** The caller count of a symbol left unexpanded for having more than HUB_CALLERS, else null. */
+  hub: number | null;
+  children: ImpactNode[];
+}
+
+const symbolKey = (row: SymbolRow) => `${row.path}\0${row.qualified}`;
+
+/** The first site of each distinct caller, in site order; a file's top-level sites count as one caller. */
+function distinctCallers(sites: Site[]): Site[] {
+  const seen = new Set<string>();
+  return sites.filter((site) => {
+    const key = site.caller === null ? `${site.path}\0${TOP_LEVEL}` : symbolKey(site.caller);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+interface Walk {
+  db: sqlite.DatabaseSync;
+  /** The symbols whose callers are printed, which includes every symbol on the walk's current path. */
+  expanded: Set<string>;
+}
+
+function callerNode(walk: Walk, site: Site, levelsLeft: number): ImpactNode {
+  const node: ImpactNode = {
+    name: site.caller?.qualified ?? TOP_LEVEL,
+    path: site.path,
+    line: site.line,
+    shown: false,
+    hub: null,
+    children: [],
+  };
+  if (site.caller === null) return node;
+  const key = symbolKey(site.caller);
+  if (walk.expanded.has(key)) node.shown = true;
+  else if (levelsLeft > 0) {
+    const caller = site.caller;
+    const set = findSymbols(walk.db, { file: caller.path, symbol: caller.qualified }).filter(
+      (row) => row.qualified === caller.qualified,
+    );
+    expandInto(walk, node, key, distinctCallers(callersOf(walk.db, set).resolved), levelsLeft);
+  }
+  return node;
+}
+
+function expandInto(
+  walk: Walk,
+  node: ImpactNode,
+  key: string,
+  callers: Site[],
+  levelsLeft: number,
+): void {
+  if (callers.length > HUB_CALLERS) node.hub = callers.length;
+  else if (callers.length > 0) {
+    walk.expanded.add(key);
+    node.children = callers.map((site) => callerNode(walk, site, levelsLeft - 1));
+  }
+}
+
+/**
+ * The callers of each symbol set, then their callers, `depth` levels down, through resolved sites
+ * only. The sets share one walk: a symbol's callers print under the first node reaching it, and
+ * every later node for it, a cycle's repeat included, stops with `shown` set.
+ */
+export function impactOf(
+  db: sqlite.DatabaseSync,
+  sets: SymbolRow[][],
+  depth: number,
+): ImpactNode[] {
+  const walk: Walk = { db, expanded: new Set() };
+  return sets.map((set) => {
+    const row = set[0]!;
+    const key = symbolKey(row);
+    const node: ImpactNode = {
+      name: row.qualified,
+      path: row.path,
+      line: row.start,
+      shown: walk.expanded.has(key),
+      hub: null,
+      children: [],
+    };
+    if (!node.shown) {
+      const callers = distinctCallers(callersOf(db, set).resolved);
+      if (callers.length > 0) {
+        walk.expanded.add(key);
+        node.children = callers.map((site) => callerNode(walk, site, depth - 1));
+      }
+    }
+    return node;
+  });
+}
+
+/** Every symbol of a file, containers before their members. */
+export function symbolsInFile(db: sqlite.DatabaseSync, file: string): SymbolRow[] {
+  return db
+    .prepare(`SELECT ${SYMBOL_COLUMNS} FROM symbols WHERE path = ? ${SYMBOL_ORDER}`)
+    .all(file) as unknown as SymbolRow[];
+}
+
+/** True when `files` lists the path. */
+export function isIndexedFile(db: sqlite.DatabaseSync, file: string): boolean {
+  return db.prepare("SELECT 1 FROM files WHERE path = ?").get(file) !== undefined;
+}
+
+/** The files whose imports point at `file`, in path order. */
+export function importersOf(db: sqlite.DatabaseSync, file: string): string[] {
+  return (
+    db.prepare("SELECT from_path FROM imports WHERE to_path = ? ORDER BY from_path").all(file) as {
+      from_path: string;
+    }[]
+  ).map((row) => row.from_path);
 }

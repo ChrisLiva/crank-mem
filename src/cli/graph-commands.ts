@@ -5,8 +5,16 @@ import {
   calleesOf,
   callersOf,
   findSymbols,
+  IMPACT_DEFAULT_DEPTH,
+  IMPACT_MAX_DEPTH,
+  impactOf,
+  importersOf,
+  isIndexedFile,
   similarSymbols,
   symbolSets,
+  symbolsInFile,
+  TOP_LEVEL,
+  type ImpactNode,
   type Site,
   type SymbolRow,
 } from "../hooks/lib/code-graph.ts";
@@ -226,7 +234,6 @@ function pendingLine(db: sqlite.DatabaseSync): string {
   return pending > 0 ? `(${pending} file(s) still pending parse)\n` : "";
 }
 
-const TOP_LEVEL = "(top level)";
 const GUTTER_MIN = 6;
 const SOURCE_LINE_CAP = 200;
 
@@ -345,4 +352,98 @@ function calleesReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]):
     (first ? `Open one: crank-mem unfold ${first.path} ${first.qualified}\n` : "") +
     `Wider: crank-mem callers ${pasteable(db, set[0]!)}\n`
   );
+}
+
+/** The `--depth` value, or null when it is not a whole number from 1 to IMPACT_MAX_DEPTH. */
+function depthOf(value: string | boolean | undefined): number | null {
+  if (value === undefined) return IMPACT_DEFAULT_DEPTH;
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const depth = Number(value);
+  return depth >= 1 && depth <= IMPACT_MAX_DEPTH ? depth : null;
+}
+
+function isRegularFile(target: string): boolean {
+  try {
+    return fs.statSync(path.resolve(process.cwd(), target)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `crank-mem impact [<file>] <symbol>`: the callers of the symbol, their callers and so on.
+ * A lone argument that names an indexed file lists every symbol of that file with callers,
+ * then the files importing it.
+ */
+export async function impact(args: string[]): Promise<number> {
+  const started = Date.now();
+  const { flags, rest } = parseArgs(args, COMMANDS.impact.value);
+  const depth = depthOf(flags.depth);
+  if (depth === null || rest.length < 1 || rest.length > 2 || rest.includes("")) {
+    console.error(COMMANDS.impact.usage);
+    return 1;
+  }
+  const lone = rest.length === 1 && isRegularFile(rest[0]!) ? rest[0] : undefined;
+  const file = rest.length === 2 ? rest[0] : lone;
+  const scope = commandScope(file ?? ".");
+  if (scope === null) return 1;
+  const db = await refreshedStore(scope.root, started + COMMAND_REFRESH_MS);
+  if (db === null) return 1;
+  try {
+    const report =
+      lone !== undefined && isIndexedFile(db, scope.prefix)
+        ? fileImpact(db, scope.prefix, depth)
+        : symbolImpact(db, rest, scope.prefix, depth);
+    if (report === null) return 1;
+    process.stdout.write(report + pendingLine(db));
+    return 0;
+  } finally {
+    db.close();
+  }
+}
+
+/** The tree of the one symbol the arguments name, or null after printing why they name none. */
+function symbolImpact(
+  db: sqlite.DatabaseSync,
+  args: string[],
+  prefix: string,
+  depth: number,
+): string | null {
+  const named = args.length === 2;
+  const set = chosenSymbol(db, args.at(-1)!, named ? prefix : null, named ? args[0] : undefined);
+  return set === null ? null : renderTree(impactOf(db, [set], depth)[0]!);
+}
+
+/** The file, the callers of each symbol in it that has any, then the files importing it. */
+function fileImpact(db: sqlite.DatabaseSync, file: string, depth: number): string {
+  const sets = symbolSets(symbolsInFile(db, file));
+  const roots = impactOf(db, sets, depth).filter((root) => root.children.length > 0 || root.shown);
+  const importers = importersOf(db, file);
+  return (
+    `${file}\n${roots.map(renderTree).join("")}` +
+    (importers.length > 0 ? `Imported by:\n${importers.join("\n")}\n` : "Imported by: none\n")
+  );
+}
+
+/** Each caller's tree prefix and name are padded to this width before its call site. */
+const TREE_NAME_WIDTH = 20;
+
+function notesOf(node: ImpactNode): string {
+  if (node.shown) return " (shown above)";
+  return node.hub === null ? "" : ` (${node.hub} callers, not expanded)`;
+}
+
+/** The root line, then its callers drawn as a tree, one line per caller. */
+function renderTree(root: ImpactNode): string {
+  const lines = [`${root.name}  ${root.path}:${root.line}${notesOf(root)}`];
+  const draw = (node: ImpactNode, indent: string) => {
+    node.children.forEach((child, i) => {
+      const last = i === node.children.length - 1;
+      const head = `${indent}${last ? "└─" : "├─"} ${child.name}`;
+      lines.push(`${head.padEnd(TREE_NAME_WIDTH)}  ${child.path}:${child.line}${notesOf(child)}`);
+      draw(child, indent + (last ? "   " : "│  "));
+    });
+  };
+  draw(root, "");
+  return `${lines.join("\n")}\n`;
 }

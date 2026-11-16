@@ -84,6 +84,12 @@ export const COMMANDS = {
     value: [],
     bool: [],
   },
+  impact: {
+    summary: "Show what calls a function, method or file, and what calls those",
+    usage: "Usage: crank-mem impact <file> | [<file>] <symbol> [--depth <1-3>]",
+    value: ["depth"],
+    bool: [],
+  },
   "restore-memory": {
     summary: "Put a memory.db snapshot back",
     usage: "Usage: crank-mem restore-memory [<file>]",
