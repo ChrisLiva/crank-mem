@@ -5,7 +5,8 @@ import * as path from "node:path";
 import { citationCheck, fileCitations, storeLinks } from "../src/hooks/lib/citations.ts";
 import { projectName } from "../src/hooks/lib/owner.ts";
 import { registerProject } from "../src/hooks/lib/registry.ts";
-import { idx, inZone, makeCrankProject, plantMemory, seedMemory, ZONES } from "./helpers.ts";
+import { deleteCodeDb } from "../src/hooks/lib/code-db.ts";
+import { buildGraph, inZone, makeCrankProject, plantMemory, seedMemory, ZONES } from "./helpers.ts";
 
 /** Writes a file whose mtime on disk is 2000 ms past the epoch. */
 function write(root: string, rel: string, text = "x\n"): void {
@@ -15,34 +16,30 @@ function write(root: string, rel: string, text = "x\n"): void {
   fs.utimesSync(file, new Date(2000), new Date(2000));
 }
 
-const HOME_INDEX = {
-  "src/a.ts": { mtimeMs: 2000 },
-  "src/ghost.ts": { mtimeMs: 2000 },
-  "lib/deep/widget.ts": { mtimeMs: 2000 },
-  "a/shared/dup.ts": { mtimeMs: 2000 },
-  "b/shared/dup.ts": { mtimeMs: 2000 },
-  "vendored/x.ts": { mtimeMs: 2000 },
-};
-
 /**
- * A home root, a linked `pay` with an anatomy, a linked `broken` without one, a linked `vendored`
- * that home also holds as a directory, and a counted `links`.
+ * A home root, a linked `pay` with a `code.db`, a linked `broken` without one, a linked `vendored`
+ * that home also holds as a directory, and a counted `links`. Home's `src/ghost.ts` is in its
+ * `code.db` and gone from disk.
  */
 function fixture() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "crank-citations-"));
-  const home = path.join(tmp, "home");
-  const payRoot = path.join(tmp, "pay");
-  const brokenRoot = path.join(tmp, "broken");
-  for (const rel of ["src/a.ts", "lib/deep/widget.ts", "docs/onDisk.md", "vendored/x.ts"])
+  const home = makeCrankProject();
+  const payRoot = makeCrankProject();
+  const brokenRoot = makeCrankProject();
+  for (const rel of [
+    "src/a.ts",
+    "src/ghost.ts",
+    "lib/deep/widget.ts",
+    "a/shared/dup.ts",
+    "b/shared/dup.ts",
+    "docs/onDisk.md",
+    "vendored/x.ts",
+  ])
     write(home, rel);
   for (const rel of ["src/p.ts", "lib/q/r.ts", "notes/raw.md"]) write(payRoot, rel);
   write(brokenRoot, "src/k.ts");
-  const payIndex = path.join(payRoot, ".crank", "anatomy-index.json");
-  write(
-    payRoot,
-    ".crank/anatomy-index.json",
-    JSON.stringify(idx({ "src/p.ts": { mtimeMs: 2000 }, "lib/q/r.ts": { mtimeMs: 2000 } })),
-  );
+  buildGraph(home);
+  buildGraph(payRoot);
+  fs.rmSync(path.join(home, "src/ghost.ts"));
   let calls = 0;
   const links = () => {
     calls++;
@@ -52,15 +49,15 @@ function fixture() {
       { name: "vendored", root: payRoot },
     ];
   };
-  const homeIndex = idx(HOME_INDEX);
   return {
     home,
-    payIndex,
+    payRoot,
     brokenRoot,
+    payDb: path.join(payRoot, ".crank", "code.db"),
     links,
     calls: () => calls,
-    resolve: (index = homeIndex) => citationCheck({ root: home, index }, { resolve: links }),
-    ignore: () => citationCheck({ root: home, index: homeIndex }, { ignore: links }),
+    resolve: () => citationCheck({ root: home }, { resolve: links }),
+    ignore: () => citationCheck({ root: home }, { ignore: links }),
   };
 }
 
@@ -174,18 +171,18 @@ describe("a citation whose first segment names a linked project", () => {
     }
   });
 
-  test("reads the linked anatomy once per checker and never writes it", () => {
+  test("reads the linked code.db once per checker and never writes it", () => {
     const f = fixture();
-    const before = fs.readFileSync(f.payIndex);
+    const before = fs.readFileSync(f.payDb);
     const check = f.resolve();
     expect(check.status("`pay/p.ts`", 1000)).toEqual(modified("pay/p.ts"));
-    expect(fs.readFileSync(f.payIndex).equals(before)).toBe(true);
-    fs.writeFileSync(f.payIndex, JSON.stringify(idx({})));
+    expect(fs.readFileSync(f.payDb).equals(before)).toBe(true);
+    deleteCodeDb(f.payRoot);
     expect(check.status("`pay/p.ts`", 1000)).toEqual(modified("pay/p.ts"));
     expect(f.resolve().status("`pay/p.ts`", 1000)).toEqual(none);
   });
 
-  test("checks the disk alone when the linked anatomy is absent or corrupt", () => {
+  test("checks the disk alone when the linked code.db is absent or corrupt", () => {
     const f = fixture();
     const rows = () => {
       const check = f.resolve();
@@ -197,7 +194,7 @@ describe("a citation whose first segment names a linked project", () => {
     };
     const expected = [modified("broken/src/k.ts"), missing("broken/src/none.ts"), none];
     expect(rows()).toEqual(expected);
-    write(f.brokenRoot, ".crank/anatomy-index.json", "not json");
+    write(f.brokenRoot, ".crank/code.db", "not a database");
     expect(rows()).toEqual(expected);
   });
 });

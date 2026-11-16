@@ -7,23 +7,7 @@ import {
   MEMORY_RECENT_COUNT,
   PREFS_TOKEN_CAP,
 } from "../src/hooks/lib/injection.ts";
-import { emptyIndex, type AnatomyIndex } from "../src/hooks/lib/store.ts";
 import { estimateProseTokens } from "../src/hooks/lib/tokens.ts";
-
-function fixtureIndex(fileCount: number): AnatomyIndex {
-  const idx = emptyIndex();
-  for (let i = 0; i < fileCount; i++) {
-    idx.files[`src/dir${i % 5}/file${i}.ts`] = {
-      description: `Module ${i} that does a reasonably descriptive thing`,
-      tokens: 100 + i,
-      size: 400,
-      mtimeMs: 1,
-      symbols: [{ name: `f${i}`, kind: "fn", startLine: 1, endLine: 10, tokens: 90 }],
-    };
-  }
-  idx.meta.fileCount = fileCount;
-  return idx;
-}
 
 const CEREBRUM = `# Cerebrum
 
@@ -250,7 +234,6 @@ describe("composeInjection", () => {
       { length: 25 },
       (_, i) => `${String(i + 1).padStart(4, "0")}-decision-${i + 1}.md`,
     ),
-    index: fixtureIndex(30),
     graph: { files: 30, pending: 0, gaps: [] as string[] },
     adrPath: "docs/adr",
   };
@@ -275,12 +258,11 @@ describe("composeInjection", () => {
 
   test("points at `crank-mem anatomy` with a file count instead of listing files", () => {
     const graph = { files: 200, pending: 0, gaps: [] as string[] };
-    const out = composeInjection({ ...sources, index: fixtureIndex(200), graph }, 8192).text;
+    const out = composeInjection({ ...sources, graph }, 8192).text;
     expect(out).toContain(
       "- `crank-mem anatomy [<dir>]` lists the project's 200 file(s) with descriptions, token sizes and symbol line ranges; use it before slice-reading a large file.\n",
     );
-    // The file list itself must not be recited: no indexed filename, no token annotation.
-    expect(out).not.toContain("file7.ts");
+    // The file list itself must not be recited: no token annotation.
     expect(out).not.toMatch(/~\d+ tok/);
   });
 
@@ -307,14 +289,8 @@ describe("composeInjection", () => {
   // so size must not track file count.
   test("stays small and near-constant as the project grows", () => {
     const counts = (files: number) => ({ files, pending: 0, gaps: [] as string[] });
-    const small = composeInjection(
-      { ...sources, index: fixtureIndex(3), graph: counts(3) },
-      8192,
-    ).text;
-    const large = composeInjection(
-      { ...sources, index: fixtureIndex(5000), graph: counts(5000) },
-      8192,
-    ).text;
+    const small = composeInjection({ ...sources, graph: counts(3) }, 8192).text;
+    const large = composeInjection({ ...sources, graph: counts(5000) }, 8192).text;
     expect(Buffer.byteLength(large, "utf-8")).toBeLessThan(4096);
     expect(Buffer.byteLength(large) - Buffer.byteLength(small)).toBeLessThan(64);
   });
@@ -435,7 +411,6 @@ describe("composeInjection", () => {
       {
         cerebrumMd: null,
         adrFilenames: [],
-        index: fixtureIndex(3),
         graph: { files: 3, pending: 0, gaps: [] },
         adrPath: "docs/adr",
       },

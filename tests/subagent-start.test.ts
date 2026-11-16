@@ -70,8 +70,8 @@ describe("subagent-start hook (black-box)", () => {
     expect(off).not.toContain(RECALL_BULLET);
     // A cited file that no longer exists is tagged.
     expect(off).toContain("[cited file missing: src/old/loader.ts]");
-    // Read-only: a subagent spawn does not refresh the index.
-    expect(fs.existsSync(path.join(root, ".crank/anatomy-index.json"))).toBe(false);
+    // Read-only: a subagent spawn creates no code.db.
+    expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(false);
 
     // Digests on, no store: the recall pointer follows the code pointer.
     setDigest(root, true);
@@ -135,7 +135,7 @@ describe("subagent-start hook (black-box)", () => {
     expect(context(noCerebrum)).toBe(`${INJECTION_HEADING}\n${CODE_BULLET}\n${RECALL_BULLET}`);
   });
 
-  test("a bullet citing a linked project's file reads that project's anatomy", () => {
+  test("a bullet citing a linked project's file reads that project's code.db", () => {
     const ws = workspace();
     seedMemory(ws.H, [], { links: ["payments-api"] });
     const env = { CRANK_HOME: ws.home };

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  buildGraph,
   git,
   gitCommit,
   initedCopy,
@@ -12,6 +13,7 @@ import {
   tempDir,
   ZONES,
 } from "./helpers.ts";
+import { deleteCodeDb } from "../src/hooks/lib/code-db.ts";
 import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
 
@@ -51,6 +53,7 @@ describe("graph search", () => {
       "src/a.ts": 'import { b } from "./b";\nexport const a = b;\n',
       "src/b.ts": "export const b = 1;\n",
     });
+    buildGraph(root);
     const [o1] = seedMemory(root, [
       { title: "Lock budget raised", narrative: "budget", filesModified: ["src/b.ts"] },
     ]) as [number];
@@ -66,10 +69,15 @@ describe("graph search", () => {
     const ids = (stdout: string) => [...stdout.matchAll(/^#(\d+) /gm)].map((m) => Number(m[1]));
     expect(ids(runCli(root, ["search", "src/a.ts"]).stdout)).toEqual([o2, o1]);
 
-    fs.writeFileSync(path.join(root, ".crank", "anatomy-index.json"), "{not json");
+    fs.writeFileSync(path.join(root, ".crank", "code.db"), "not a database");
     const corrupt = runCli(root, ["search", "src/a.ts"]);
     expect(corrupt.status).toBe(0);
     expect(ids(corrupt.stdout)).toEqual([o2]);
+
+    deleteCodeDb(root);
+    const absent = runCli(root, ["search", "src/a.ts"]);
+    expect(absent.status).toBe(0);
+    expect(ids(absent.stdout)).toEqual([o2]);
   });
 });
 

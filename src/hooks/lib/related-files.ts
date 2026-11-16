@@ -1,6 +1,5 @@
 import * as path from "node:path";
-import { isObj } from "./config.ts";
-import type { AnatomyIndex } from "./store.ts";
+import type * as sqlite from "node:sqlite";
 
 const MAX_TERM_FILES = 5;
 /** Path-like (`.`, `/`) or identifier-shaped (`_`, a lowercase-then-uppercase pair); plain words seed nothing. */
@@ -17,28 +16,28 @@ interface Node {
   uses: string[];
 }
 
-function strings(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
-}
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** `loadIndex` checks only the top-level shape, so every entry field is read defensively. */
-function nodes(index: AnatomyIndex): Map<string, Node> {
+/** Each file `code.db` holds, in code-unit path order, with its imports, lowercased symbol names and C# namespaces. */
+function nodes(db: sqlite.DatabaseSync): Map<string, Node> {
   const out = new Map<string, Node>();
-  const paths = Object.keys(index.files).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  for (const file of paths) {
-    const entry: unknown = index.files[file];
-    if (!isObj(entry)) continue;
-    const symbols = Array.isArray(entry.symbols) ? entry.symbols : [];
-    const namespaces = isObj(entry.namespaces) ? entry.namespaces : {};
-    out.set(file, {
-      imports: strings(entry.imports),
-      symbols: strings(symbols.map((s: unknown) => (isObj(s) ? s.name : undefined))).map((s) =>
-        s.toLowerCase(),
-      ),
-      declares: strings(namespaces.declares),
-      uses: strings(namespaces.uses),
-    });
+  const files = db.prepare("SELECT path FROM files").all() as { path: string }[];
+  for (const { path: file } of files.sort((a, b) => byCodeUnit(a.path, b.path))) {
+    out.set(file, { imports: [], symbols: [], declares: [], uses: [] });
   }
+  const fill = (sql: string, add: (node: Node, a: string, b: string) => void): void => {
+    for (const row of db.prepare(sql).all() as { file: string; a: string; b: string }[]) {
+      const node = out.get(row.file);
+      if (node) add(node, row.a, row.b);
+    }
+  };
+  fill("SELECT from_path AS file, to_path AS a, '' AS b FROM imports", (n, a) => n.imports.push(a));
+  fill("SELECT path AS file, name AS a, '' AS b FROM symbols", (n, a) =>
+    n.symbols.push(a.toLowerCase()),
+  );
+  fill("SELECT path AS file, namespace AS a, role AS b FROM namespaces", (n, a, role) =>
+    (role === "declares" ? n.declares : n.uses).push(a),
+  );
   return out;
 }
 
@@ -124,10 +123,11 @@ export type Neighbour = { path: string; weight: number };
  * to each; neighbours come heaviest first, ties in code-unit order.
  */
 export function relatedFiles(
-  index: AnatomyIndex,
+  db: sqlite.DatabaseSync | null,
   text: string,
 ): { seeds: string[]; neighbours: Neighbour[] } {
-  const graph = nodes(index);
+  if (db === null) return { seeds: [], neighbours: [] };
+  const graph = nodes(db);
   const seeds = new Set<string>();
   for (const term of terms(text)) {
     const hits = [...graph].filter(([file, node]) => matches(term, file, node));
@@ -147,6 +147,6 @@ export function relatedFiles(
   }
   const neighbours = [...weights]
     .map(([path, weight]) => ({ path, weight }))
-    .sort((a, b) => b.weight - a.weight || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    .sort((a, b) => b.weight - a.weight || byCodeUnit(a.path, b.path));
   return { seeds: starting, neighbours: neighbours.slice(0, MAX_NEIGHBOURS) };
 }

@@ -1,8 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { openProject } from "./project.ts";
-import { loadIndex, INDEX_FILE, type AnatomyIndex } from "../hooks/lib/store.ts";
-import { walkProject } from "../hooks/lib/scanner.ts";
+import { codeDbPath, graphHealth } from "../hooks/lib/code-db.ts";
 import type { CrankConfig } from "../hooks/lib/config.ts";
 import { citationCheck, fileCitations, type CitationCheck } from "../hooks/lib/citations.ts";
 import { readCerebrum, sessionStartInjection, type Excerpt } from "../hooks/lib/injection.ts";
@@ -45,19 +44,14 @@ const ageOf = (ms: number): string => age(new Date(ms).toISOString());
  * composing the injection a Claude session start would get, minus the
  * staleness note, so the budget that cuts bullets is the real one.
  */
-function memoryLines(
-  root: string,
-  crankDir: string,
-  config: CrankConfig,
-  index: AnatomyIndex,
-): string[] {
+function memoryLines(root: string, crankDir: string, config: CrankConfig): string[] {
   const cerebrumMd = readCerebrum(crankDir);
-  const { excerpt: e } = sessionStartInjection(root, crankDir, config, index, {
+  const { excerpt: e } = sessionStartInjection(root, crankDir, config, {
     codex: false,
     source: null,
     stalenessNote: null,
   });
-  const check = citationCheck({ root, index });
+  const check = citationCheck({ root });
   const lines = e
     ? excerptRows(cerebrumMd, e, check)
     : [row("cerebrum", cerebrumMd === null ? "missing" : "empty")];
@@ -122,6 +116,12 @@ function updateValue(): string {
   return "not checked yet";
 }
 
+/** `HealthSummary.graph` from the project's `code.db`. */
+function graphSummary(root: string): HealthSummary["graph"] {
+  const { status, files, pending } = graphHealth(root);
+  return { status, files, pending };
+}
+
 /**
  * Whether digests run, what waits for them from this project, what the store holds,
  * and whether search by meaning works: the dashboard's Health view reads it, and
@@ -152,6 +152,7 @@ export async function captureSummary(root: string, config: CrankConfig): Promise
     daemonAlive: daemonAlive(),
     spool: { waiting: ours(readSpool()).length, parked: ours(readParked()).length },
     store: read.status,
+    graph: graphSummary(root),
     memory,
     lastSnapshotMs: latestSnapshot(memoryPath(root))?.atMs ?? null,
     embedderReady: await embedderReady(),
@@ -199,31 +200,25 @@ async function captureRows(
   return rows;
 }
 
-/** The index rows: files indexed, coverage of the uncapped walk, last scan, size and config. */
-function indexLines(
-  root: string,
-  crankDir: string,
-  config: CrankConfig,
-  index: AnatomyIndex,
-): string[] {
-  // Uncapped: the hooks' walk stops at max_files, so its count cannot show
-  // how much of the project the cap leaves out. stats has no time budget.
-  const walked = walkProject(root, { ...config, max_files: Infinity }).files;
-  const indexed = Object.keys(index.files).length;
-  const coverage = walked.length === 0 ? 100 : Math.round((100 * indexed) / walked.length);
-  let indexSize = 0;
+/** The code graph rows: files, the share parsed, pending, last refresh, `code.db` size, then config. */
+function indexLines(root: string, config: CrankConfig): string[] {
+  const graph = graphHealth(root);
+  let dbSize = 0;
   try {
-    indexSize = fs.statSync(path.join(crankDir, INDEX_FILE)).size;
+    dbSize = fs.statSync(codeDbPath(root)).size;
   } catch {
-    // No index yet: the size reads 0.
+    // No code.db yet: the size reads 0.
   }
+  const parsed = graph.parseable - graph.pending;
+  const share = graph.parseable === 0 ? 100 : Math.round((100 * parsed) / graph.parseable);
   return [
-    `  files indexed:    ${indexed}${index.meta.truncated ? ` (capped at max_files ${config.max_files})` : ""}`,
-    `  indexable files:  ${walked.length} (coverage ${coverage}%)`,
-    `  last scan:        ${age(index.meta.lastScanned)}${index.meta.partial ? " (partial)" : ""}`,
-    `  index size:       ${(indexSize / 1024).toFixed(1)} KB`,
-    `  runtime:          ${config.runtime} (vendored ${config.vendored_version})`,
-    `  injection budget: ${config.injection_budget_bytes} bytes`,
+    row("files", String(graph.files)),
+    row("parsed", `${share}% (${parsed} of ${graph.parseable} parseable)`),
+    row("pending", String(graph.pending)),
+    row("last refresh", age(graph.lastRefresh)),
+    row("code.db size", `${(dbSize / 1024).toFixed(1)} KB`),
+    row("runtime", `${config.runtime} (vendored ${config.vendored_version})`),
+    row("injection budget", `${config.injection_budget_bytes} bytes`),
   ];
 }
 
@@ -272,11 +267,10 @@ export async function run(_args: string[]): Promise<number> {
   const project = openProject();
   if (!project) return 1;
   const { root, crankDir, config } = project;
-  const index = loadIndex(crankDir);
   console.log(`crank-mem stats`);
-  for (const line of indexLines(root, crankDir, config, index)) console.log(line);
+  for (const line of indexLines(root, config)) console.log(line);
   if (installedCopy()) console.log(row("update", updateValue()));
-  for (const line of memoryLines(root, crankDir, config, index)) console.log(line);
+  for (const line of memoryLines(root, crankDir, config)) console.log(line);
   for (const [label, value] of await captureRows(root, config)) console.log(row(label, value));
   for (const line of untouchedLines()) console.log(line);
   for (const line of codexLines(root, crankDir, installPaths(root).codexHooks)) console.log(line);

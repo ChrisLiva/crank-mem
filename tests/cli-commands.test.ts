@@ -3,6 +3,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type * as sqlite from "node:sqlite";
 import {
   initedCopy,
   makeCrankHome,
@@ -19,6 +20,8 @@ import {
 import { claudeSessionStart } from "./fixtures/payloads.ts";
 import { crankHooks } from "../src/cli/settings.ts";
 import { crankTrust } from "../src/cli/codex-trust.ts";
+import { openCodeDb, refreshFileFacts } from "../src/hooks/lib/code-db.ts";
+import { loadConfig } from "../src/hooks/lib/config.ts";
 import { openStoreForWrite } from "../src/hooks/lib/memory.ts";
 import { unknownFlag } from "../src/cli/args.ts";
 import { COMMANDS, commandHelp, commandSpec } from "../src/cli/commands.ts";
@@ -67,22 +70,55 @@ describe("scan", () => {
 });
 
 describe("stats", () => {
-  test("counts every indexable file past the cap, so coverage shows what the cap left out", () => {
+  /** Opens `root`'s code.db for write and runs `fn` on it, for a state no command produces. */
+  function withWritableGraph(root: string, fn: (db: sqlite.DatabaseSync) => void): void {
+    const opened = openCodeDb(root, "write");
+    expect(opened.status).toBe("open");
+    try {
+      fn(opened.db!);
+    } finally {
+      opened.db!.close();
+    }
+  }
+
+  test("prints the code graph rows, and a code.db it cannot use reports crank-mem scan", () => {
     const root = initedCopy(ALPHA);
-    const uncapped = cli(root, "stats");
-    expect(uncapped.status).toBe(0);
-    expect(uncapped.stdout).toContain("files indexed:    1\n");
-    expect(uncapped.stdout).toContain("indexable files:  1 (coverage 100%)");
-    expect(uncapped.stdout).toMatch(/runtime: {10}(bun|node)/);
-    const configPath = path.join(root, ".crank/config.json");
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    fs.writeFileSync(configPath, JSON.stringify({ ...config, max_files: 1 }, null, 2));
+    expect(cli(root, "anatomy").status).toBe(0);
+    const ok = cli(root, "stats");
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toContain("files:            1\n");
+    expect(ok.stdout).toContain("parsed:           100% (1 of 1 parseable)\n");
+    expect(ok.stdout).toContain("pending:          0\n");
+    expect(ok.stdout).toMatch(/last refresh: +\d+s ago\n/);
+    expect(ok.stdout).toMatch(/code\.db size: +\d+\.\d KB\n/);
+    expect(ok.stdout).toMatch(/runtime: {10}(bun|node)/);
+    expect(ok.stdout).toMatch(/injection budget: \d+ bytes\n/);
+    expect(ok.stdout).not.toContain("Code graph needs a look");
+
+    // A file the hooks listed but nobody parsed yet is pending.
     fs.writeFileSync(path.join(root, "b.ts"), "export const b = 2;\n");
-    expect(cli(root, "scan").status).toBe(0);
-    const run = cli(root, "stats");
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("files indexed:    1 (capped at max_files 1)");
-    expect(run.stdout).toContain("indexable files:  2 (coverage 50%)");
+    withWritableGraph(root, (db) =>
+      refreshFileFacts(root, loadConfig(path.join(root, ".crank")), db, Infinity),
+    );
+    const pending = cli(root, "stats");
+    expect(pending.stdout).toContain("files:            2\n");
+    expect(pending.stdout).toContain("parsed:           50% (1 of 2 parseable)\n");
+    expect(pending.stdout).toContain("pending:          1\n");
+
+    const status = /^ {2}status: +(.*)$/m;
+    const dbFile = path.join(root, ".crank/code.db");
+    fs.chmodSync(dbFile, 0o000);
+    try {
+      expect(cli(root, "stats").stdout.match(status)?.[1]).toBe(
+        "Code graph needs a look — code.db is not a readable database. Run: crank-mem scan",
+      );
+    } finally {
+      fs.chmodSync(dbFile, 0o644);
+    }
+    withWritableGraph(root, (db) => db.exec("PRAGMA user_version = 99"));
+    expect(cli(root, "stats").stdout.match(status)?.[1]).toBe(
+      "Code graph needs a look — code.db is corrupt or from another version. Run: crank-mem scan",
+    );
   });
 });
 

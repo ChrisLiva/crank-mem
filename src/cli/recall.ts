@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { EMBED_MODEL, embed, modelPresent } from "../daemon/embedder.ts";
 import { redact } from "../daemon/redact.ts";
-import { CRANK_DIR } from "../hooks/lib/config.ts";
+import { readCodeDb } from "../hooks/lib/code-db.ts";
 import {
   formatLine,
   localDate,
@@ -14,7 +14,6 @@ import { toPosix } from "../hooks/lib/indexable.ts";
 import { ownerOf, projectName } from "../hooks/lib/owner.ts";
 import { linkedProjects, rootsOfName } from "../hooks/lib/registry.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
-import { loadIndex } from "../hooks/lib/store.ts";
 import { cliActor, recordUsage, type UsageEvent } from "../hooks/lib/usage.ts";
 import {
   isObservationType,
@@ -234,7 +233,7 @@ function namedStore(name: string, current: string): Target | null {
   return { name, root };
 }
 
-/** Each store the scope reads, with its graph list: its own anatomy's, or a linked store's pairs with the current seeds. */
+/** Each store the scope reads, with its graph list: its own code graph's, or a linked store's pairs with the current seeds. */
 function searchTargets(
   memory: MemoryReader,
   current: string,
@@ -243,7 +242,7 @@ function searchTargets(
 ): (Target & { related: SearchQuery["related"] })[] {
   const own = (t: Target) => ({
     ...t,
-    related: relatedFiles(loadIndex(path.join(t.root, CRANK_DIR)), text),
+    related: readCodeDb(t.root, (db) => relatedFiles(db, text)),
   });
   if (only !== null) return [own(only)];
   const home = own({ name: "", root: current });

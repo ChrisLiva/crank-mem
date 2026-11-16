@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { CRANK_DIR, type CrankConfig } from "./config.ts";
 import { fileFacts, walkProject, type FileFacts } from "./scanner.ts";
+import type { GraphStatus } from "./wire.ts";
 
 // .crank/code.db: the project's code graph. This module owns the schema, every open and the
 // file-fact refresh the hooks and the CLI share. The store is derived data: a corrupt or
@@ -165,7 +166,7 @@ const READONLY = 8;
 const READONLY_DIRECTORY = 1544;
 const FS_DENIED = new Set(["EACCES", "EPERM", "EROFS"]);
 
-function codeDbPath(root: string): string {
+export function codeDbPath(root: string): string {
   return path.join(root, CRANK_DIR, CODE_DB);
 }
 
@@ -229,6 +230,26 @@ export function openCodeDb(root: string, mode: "read" | "write", busyMs = 0): Co
       // The failure already says why the open failed.
     }
     return failure(err);
+  }
+}
+
+/** How long a read waits on a writer (WAL recovery reports busy for a moment). */
+const GRAPH_READ_BUSY_MS = 1000;
+
+/**
+ * Runs `fn` over the project's `code.db`, opened for read and closed after. A store that is
+ * missing, will not open, or throws mid-read reads as absent: `fn` gets null, so every reader
+ * answers "no graph" the same way. The linked projects' stores read through here too, never for write.
+ */
+export function readCodeDb<T>(root: string, fn: (db: sqlite.DatabaseSync | null) => T): T {
+  const opened = openCodeDb(root, "read", GRAPH_READ_BUSY_MS);
+  if (opened.status !== "open" || !opened.db) return fn(null);
+  try {
+    return fn(opened.db);
+  } catch {
+    return fn(null);
+  } finally {
+    opened.db.close();
   }
 }
 
@@ -457,4 +478,43 @@ export function graphCounts(db: sqlite.DatabaseSync): GraphCounts {
   }
   const gaps = [...byExt].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1)).map(([ext]) => ext);
   return { files: rows.length, pending: pendingCount(db), gaps };
+}
+
+export interface GraphHealth {
+  status: GraphStatus;
+  files: number;
+  /** Parseable files, pending or not. */
+  parseable: number;
+  pending: number;
+  /** ISO time of the last file-fact refresh, null before one. */
+  lastRefresh: string | null;
+}
+
+/** What `stats` and `/health` report of the graph; a store that is not `open` reports zero counts. */
+export function graphHealth(root: string): GraphHealth {
+  const none = { files: 0, parseable: 0, pending: 0, lastRefresh: null };
+  const opened = openCodeDb(root, "read", GRAPH_READ_BUSY_MS);
+  if (opened.status !== "open" || !opened.db) {
+    return { status: opened.status === "readonly" ? "unreadable" : opened.status, ...none };
+  }
+  try {
+    const rows = opened.db.prepare("SELECT path, size FROM files").all() as {
+      path: string;
+      size: number;
+    }[];
+    const meta = opened.db.prepare("SELECT value FROM meta WHERE key = 'last_refresh'").get() as
+      | { value: string }
+      | undefined;
+    return {
+      status: "open",
+      files: rows.length,
+      parseable: rows.filter((r) => parseable(r.path, r.size)).length,
+      pending: pendingCount(opened.db),
+      lastRefresh: meta?.value ?? null,
+    };
+  } catch {
+    return { status: "unreadable", ...none };
+  } finally {
+    opened.db.close();
+  }
 }

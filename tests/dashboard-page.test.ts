@@ -64,6 +64,7 @@ const HEALTHY = {
   daemonAlive: true,
   spool: { waiting: 0, parked: 0 },
   store: "open",
+  graph: { status: "open", files: 261, pending: 0 },
   memory: {
     observations: 7,
     unembedded: 0,
@@ -112,6 +113,26 @@ test("the focused project's tiles name its digest state and whether its observat
     expect(`${name}: ${tile(page, "Observations")}`).toContain(observations);
     await unmount();
   }
+});
+
+test("a project whose code graph needs a rebuild shows the status and the command that fixes it", async () => {
+  serve({
+    "/api/projects": { projects: [PROJECT] },
+    "/api/projects/p/health": {
+      ...HEALTHY,
+      graph: { status: "rebuild", files: 0, pending: 0 },
+      status: {
+        tone: "bad",
+        label: "Code graph needs a look",
+        fix: { text: "code.db is corrupt or from another version.", command: "crank-mem scan" },
+      },
+    },
+  });
+  const { page, unmount } = await openPage();
+  expect(page.textContent).toContain("Code graph needs a look");
+  expect(page.textContent).toContain("code.db is corrupt or from another version.");
+  expect(page.textContent).toContain("crank-mem scan");
+  await unmount();
 });
 
 test("the usage view shows recall reach and surfaced follow-through first, and a null figure as a dash", async () => {

@@ -4,12 +4,11 @@
 // A dev script: it writes nothing and records no usage line.
 
 import * as fs from "node:fs";
-import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { parseArgs, stringFlag } from "../src/cli/args.ts";
 import { openNearestProject } from "../src/cli/project.ts";
 import { queryVector } from "../src/cli/recall.ts";
-import { CRANK_DIR } from "../src/hooks/lib/config.ts";
+import { readCodeDb } from "../src/hooks/lib/code-db.ts";
 import {
   memoryPath,
   readStore,
@@ -17,7 +16,6 @@ import {
   type SearchQuery,
 } from "../src/hooks/lib/memory.ts";
 import { relatedFiles } from "../src/hooks/lib/related-files.ts";
-import { loadIndex } from "../src/hooks/lib/store.ts";
 import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 
 type Query = { label: number; text: string; relevant: Set<number> };
@@ -93,11 +91,18 @@ function runArm(
   };
 }
 
-/** The mode line, one line per query, both arms' means and the lost line; `no queries` for an empty list. */
-async function evaluate(root: string, memory: MemoryReader, list: Query[]): Promise<string[]> {
-  if (list.length === 0) return ["no queries"];
-  const index = loadIndex(path.join(root, CRANK_DIR));
+/**
+ * The mode line, one line per query, both arms' means and the lost line; `no queries` for an
+ * empty list. `seeded` counts the queries whose graph list named at least one seed file.
+ */
+async function evaluate(
+  root: string,
+  memory: MemoryReader,
+  list: Query[],
+): Promise<{ lines: string[]; seeded: number }> {
+  if (list.length === 0) return { lines: ["no queries"], seeded: 0 };
   const lines: string[] = [];
+  let seeded = 0;
   const base: Arm[] = [];
   const graph: Arm[] = [];
   let lost = 0;
@@ -106,7 +111,9 @@ async function evaluate(root: string, memory: MemoryReader, list: Query[]): Prom
     const vector = await queryVector(memory, q.text);
     if (vector === null) hybrid = false;
     const b = runArm(memory, q, vector, { seeds: [], neighbours: [] });
-    const g = runArm(memory, q, vector, relatedFiles(index, q.text));
+    const related = readCodeDb(root, (db) => relatedFiles(db, q.text));
+    if (related.seeds.length > 0) seeded++;
+    const g = runArm(memory, q, vector, related);
     base.push(b);
     graph.push(g);
     if (b.top10.some((id) => q.relevant.has(id) && !g.top10.includes(id))) lost++;
@@ -121,7 +128,7 @@ async function evaluate(root: string, memory: MemoryReader, list: Query[]): Prom
     );
   }
   lines.push(`lost ${lost} of ${list.length} queries`);
-  return [`mode ${hybrid ? "hybrid" : "keyword"}`, ...lines];
+  return { lines: [`mode ${hybrid ? "hybrid" : "keyword"}`, ...lines], seeded };
 }
 
 type Question = { id: number; query: string };
@@ -170,8 +177,12 @@ async function replaySet(root: string, memory: MemoryReader, set: Question[]): P
       list.push({ label: id, text: query, relevant: new Set([id]) });
     }
   }
-  const lines = await evaluate(root, memory, list);
-  return [...lines, `skipped ${set.length - list.length} of ${set.length} questions`];
+  const { lines, seeded } = await evaluate(root, memory, list);
+  return [
+    ...lines,
+    `skipped ${set.length - list.length} of ${set.length} questions`,
+    ...(list.length === 0 ? [] : [`seeded ${seeded} of ${list.length} queries`]),
+  ];
 }
 
 const { flags } = parseArgs(process.argv.slice(2), ["root", "set"]);
@@ -189,7 +200,9 @@ if (typeof set === "string") {
   process.exit(1);
 }
 const result = await readStore(root, (memory) =>
-  set ? replaySet(root, memory, set) : evaluate(root, memory, queries(memoryPath(root))),
+  set
+    ? replaySet(root, memory, set)
+    : evaluate(root, memory, queries(memoryPath(root))).then((r) => r.lines),
 );
 if (result.status === "open") {
   for (const line of result.value) console.log(line);

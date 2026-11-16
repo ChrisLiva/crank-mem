@@ -5,7 +5,6 @@ import { citationCheck, type CitationCheck } from "../hooks/lib/citations.ts";
 import { CRANK_DIR } from "../hooks/lib/config.ts";
 import { localDate, type Memory, type PendingWork } from "../hooks/lib/memory.ts";
 import { linkedProjects } from "../hooks/lib/registry.ts";
-import { loadIndex } from "../hooks/lib/store.ts";
 import { writeTextAtomic } from "../hooks/lib/user-state.ts";
 import type { ConsolidationOutcome } from "../hooks/lib/wire.ts";
 import { applyEdits, numberBullets, type CerebrumEdit } from "./cerebrum-edit.ts";
@@ -223,10 +222,7 @@ export async function consolidate(
   if (!fs.existsSync(file)) return "not-due";
   const md = fs.readFileSync(file, "utf8");
   const work = memory.pending(PENDING_LIMIT);
-  const check = citationCheck(
-    { root, index: loadIndex(crankDir) },
-    { ignore: () => linkedProjects(memory) },
-  );
+  const check = citationCheck({ root }, { ignore: () => linkedProjects(memory) });
   const due = dueBullets(md, work.lastOkStartMs, check);
   if (work.proposals.length === 0 && work.stale.length === 0 && due.size === 0) return "not-due";
   if (work.lastStartMs !== null && Date.now() - work.lastStartMs < opts.everyMs) return "not-due";

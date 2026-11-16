@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { childEnv, initedCopy, REPO_ROOT, seedMemory, tempDir } from "./helpers.ts";
+import { buildGraph, childEnv, initedCopy, REPO_ROOT, seedMemory, tempDir } from "./helpers.ts";
 
 const SCRIPT = path.join(REPO_ROOT, "scripts/recall-eval.ts");
 const FILES = {
@@ -35,6 +35,7 @@ function snapshot(root: string): Record<string, Buffer | null> {
 describe("recall-eval", () => {
   test("prints each query's recall@10 with and without the graph, then the means, and writes nothing", () => {
     const root = initedCopy(FILES);
+    buildGraph(root);
     seedMemory(root, [{ title: "kiwi fruit", narrative: "plain" }], { request: "kiwi" });
     seedMemory(
       root,
@@ -75,6 +76,7 @@ describe("recall-eval", () => {
 
   test("lost counts the queries whose graph top 10 drops a relevant id the baseline holds", () => {
     const root = initedCopy(FILES);
+    buildGraph(root);
     seedMemory(
       root,
       Array.from({ length: 9 }, (_, i) => ({ title: `kiwi kiwi filler ${i}`, narrative: "plain" })),
@@ -100,6 +102,7 @@ describe("recall-eval", () => {
 
   test("replays a labelled set's questions, skipping stale and unknown ids, and writes nothing", () => {
     const root = initedCopy(FILES);
+    buildGraph(root);
     seedMemory(
       root,
       [
@@ -125,7 +128,7 @@ describe("recall-eval", () => {
         '{"id": 3, "query": "zebra"}',
         '{"id": 99, "query": "kiwi"}',
         '{"id": 1, "query": "kiwi fruit", "note": "other keys are ignored"}',
-        '{"id": 2, "query": "kiwi jam"}',
+        '{"id": 2, "query": "src/a.ts kiwi jam"}',
       ].join("\n") + "\n",
     );
     const expected =
@@ -138,7 +141,8 @@ describe("recall-eval", () => {
       "base recall@5 0.80 recall@10 0.80 mrr 0.70\n" +
       "graph recall@5 0.80 recall@10 0.80 mrr 0.70\n" +
       "lost 0 of 5 queries\n" +
-      "skipped 2 of 7 questions\n";
+      "skipped 2 of 7 questions\n" +
+      "seeded 1 of 5 queries\n";
     const before = snapshot(root);
     for (const [cwd, args] of [
       [root, ["--root", root, "--set", "set.jsonl"]],

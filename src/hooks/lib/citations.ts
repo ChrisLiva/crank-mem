@@ -1,10 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ISO_DATE } from "./bullets.ts";
-import { CRANK_DIR } from "./config.ts";
+import { readCodeDb } from "./code-db.ts";
 import { readStoreSync } from "./memory.ts";
 import { linkedProjects } from "./registry.ts";
-import { loadIndex, type AnatomyIndex } from "./store.ts";
 
 /** The linked projects a checker may consult. */
 type Links = () => { name: string; root: string }[];
@@ -14,36 +13,47 @@ export interface CitationCheck {
   status(text: string, sinceMs: number | null): { missing: string[]; modified: string[] };
 }
 
-interface Anatomy {
+/** A project's file paths from its `code.db`, read on the first lookup; none when the store is absent. */
+interface Placement {
   root: string;
-  index: AnatomyIndex;
-  byName: () => Map<string, string[]>;
+  has(rel: string): boolean;
+  /** The paths whose basename is `name`. */
+  named(name: string): string[];
 }
 
-function anatomy(root: string, index: AnatomyIndex): Anatomy {
-  let byName: Map<string, string[]> | undefined;
-  return { root, index, byName: () => (byName ??= basenameIndex(index)) };
+function placement(root: string): Placement {
+  let known: { paths: Set<string>; byName: Map<string, string[]> } | undefined;
+  const load = () =>
+    (known ??= (() => {
+      const rows = readCodeDb(root, (db) =>
+        db ? (db.prepare("SELECT path FROM files").all() as { path: string }[]) : [],
+      );
+      return { paths: new Set(rows.map((r) => r.path)), byName: basenameIndex(rows) };
+    })());
+  return {
+    root,
+    has: (rel) => load().paths.has(rel),
+    named: (name) => load().byName.get(name) ?? [],
+  };
 }
 
 /**
- * Linked projects' anatomies: `links` listed on the first lookup, each anatomy read on the first
- * citation that resolves in it, none written.
+ * Linked projects' placements: `links` listed on the first lookup, each `code.db` opened on the
+ * first citation that resolves in it, for read only.
  */
-interface LinkedAnatomies {
+interface LinkedPlacements {
   rootOf(name: string): string | undefined;
-  at(root: string): Anatomy;
+  at(root: string): Placement;
 }
 
-function linkedAnatomies(links: Links): LinkedAnatomies {
+function linkedPlacements(links: Links): LinkedPlacements {
   let roots: Map<string, string> | undefined;
-  const anatomies = new Map<string, Anatomy>();
+  const placements = new Map<string, Placement>();
   return {
     rootOf: (name) => (roots ??= new Map(links().map((p) => [p.name, p.root]))).get(name),
     at: (root) => {
-      let linked = anatomies.get(root);
-      if (!linked) {
-        anatomies.set(root, (linked = anatomy(root, loadIndex(path.join(root, CRANK_DIR)))));
-      }
+      let linked = placements.get(root);
+      if (!linked) placements.set(root, (linked = placement(root)));
       return linked;
     },
   };
@@ -52,12 +62,12 @@ function linkedAnatomies(links: Links): LinkedAnatomies {
 /**
  * A checker of the files a text cites. Missing: a cited file not on disk. Modified: a cited file
  * whose mtime on disk is past `sinceMs`, or, with `sinceMs` null, past the end of the text's latest
- * date; an undated text then has none. The index only places a cited name: a caller's index may be
+ * date; an undated text then has none. `code.db` only places a cited name: its rows may be
  * stale, so the disk alone answers whether the file exists and when it changed.
  *
- * A basename resolves by a unique suffix match against the index, because agents cite
+ * A basename resolves by a unique suffix match against the project's `code.db` files, because agents cite
  * `geometry.py` far more often than its full path. An unresolved basename is never checked:
- * the index omits files past max_files and unindexable ones, and a dotted symbol such as
+ * `code.db` omits unindexable files, and a dotted symbol such as
  * `fs.statSync` reads the same.
  *
  * A citation whose first segment names a linked project, where `home.root` holds no entry of that
@@ -65,19 +75,19 @@ function linkedAnatomies(links: Links): LinkedAnatomies {
  * `ignore`. The policy defaults to resolving the home store's links.
  */
 export function citationCheck(
-  home: { root: string; index: AnatomyIndex },
+  home: { root: string },
   linked: { resolve: Links } | { ignore: Links } = { resolve: () => storeLinks(home.root) },
 ): CitationCheck {
   const resolve = "resolve" in linked;
-  const anatomies = linkedAnatomies(resolve ? linked.resolve : linked.ignore);
-  const own = anatomy(home.root, home.index);
+  const placements = linkedPlacements(resolve ? linked.resolve : linked.ignore);
+  const own = placement(home.root);
   return {
     status(text, sinceMs) {
       const cutoffMs = sinceMs ?? latestDateEnd(text);
       const missing = new Set<string>();
       const modified = new Set<string>();
       for (const rel of fileCitations(text)) {
-        const status = resolveCitation(rel, own, anatomies, resolve, cutoffMs);
+        const status = resolveCitation(rel, own, placements, resolve, cutoffMs);
         if (status === "missing") missing.add(rel);
         else if (status === "modified") modified.add(rel);
       }
@@ -89,9 +99,9 @@ export function citationCheck(
 /** A backticked file citation: a path or basename with an extension, then an optional `:line`. */
 const FILE_CITATION = /^([^\s*=:]+\.[A-Za-z]\w*)(?::\d+(?:-\d+)?)?$/;
 
-function basenameIndex(index: AnatomyIndex): Map<string, string[]> {
+function basenameIndex(rows: { path: string }[]): Map<string, string[]> {
   const byName = new Map<string, string[]>();
-  for (const rel of Object.keys(index.files)) {
+  for (const { path: rel } of rows) {
     const name = path.posix.basename(rel);
     byName.set(name, [...(byName.get(name) ?? []), rel]);
   }
@@ -111,27 +121,27 @@ function latestDateEnd(text: string): number | null {
 /** An entry in `home.root` named like a linked project keeps the citation at home. */
 function resolveCitation(
   rel: string,
-  home: Anatomy,
-  anatomies: LinkedAnatomies,
+  home: Placement,
+  placements: LinkedPlacements,
   resolve: boolean,
   cutoffMs: number | null,
 ): "missing" | "modified" | null {
   const slash = rel.indexOf("/");
   const head = rel.slice(0, Math.max(slash, 0));
   const root =
-    head && !fs.existsSync(path.join(home.root, head)) ? anatomies.rootOf(head) : undefined;
+    head && !fs.existsSync(path.join(home.root, head)) ? placements.rootOf(head) : undefined;
   if (root === undefined) return resolveIn(rel, home, cutoffMs);
-  return resolve ? resolveIn(rel.slice(slash + 1), anatomies.at(root), cutoffMs) : null;
+  return resolve ? resolveIn(rel.slice(slash + 1), placements.at(root), cutoffMs) : null;
 }
 
 function resolveIn(
   rel: string,
-  cited: Anatomy,
+  cited: Placement,
   cutoffMs: number | null,
 ): "missing" | "modified" | null {
-  const hits = cited.index.files[rel]
+  const hits = cited.has(rel)
     ? [rel]
-    : (cited.byName().get(path.posix.basename(rel)) ?? []).filter((c) => c.endsWith("/" + rel));
+    : cited.named(path.posix.basename(rel)).filter((c) => c.endsWith("/" + rel));
   if (hits.length > 1 || (!hits.length && !rel.includes("/"))) return null;
   const mtimeMs = diskMtime(path.join(cited.root, hits[0] ?? rel));
   if (mtimeMs === null) return "missing";

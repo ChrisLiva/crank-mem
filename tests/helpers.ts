@@ -14,7 +14,6 @@ import {
   type Position,
 } from "../src/hooks/lib/memory.ts";
 import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
-import type { AnatomyIndex, FileEntry } from "../src/hooks/lib/store.ts";
 import { DAEMON_FILE, type DaemonState, type SpoolEntry } from "../src/hooks/lib/spool.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
@@ -42,6 +41,21 @@ export function makeCrankProject(files: Record<string, string> = {}): string {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
   }
+  return root;
+}
+
+/** Fills and fully parses `root`'s `code.db` through `crank-mem anatomy`. */
+export function buildGraph(root: string): void {
+  const run = runCli(root, ["anatomy"]);
+  if (run.status !== 0 || run.stdout.includes("still pending parse")) {
+    throw new Error(`anatomy did not build the graph: ${run.stderr}${run.stdout}`);
+  }
+}
+
+/** A crank project holding `files` whose `code.db` `crank-mem anatomy` has filled and fully parsed. */
+export function graphProject(files: Record<string, string>): string {
+  const root = makeCrankProject(files);
+  buildGraph(root);
   return root;
 }
 
@@ -877,19 +891,6 @@ export function inZone<T>(zone: string, fn: () => T): T {
   } finally {
     process.env.TZ = "UTC";
   }
-}
-
-/** An anatomy index of `files`, each entry filled out with placeholder fields. */
-export function idx(files: Record<string, Partial<FileEntry>>): AnatomyIndex {
-  const entries: Record<string, FileEntry> = {};
-  for (const [p, f] of Object.entries(files)) {
-    entries[p] = { description: "", tokens: 1, size: 1, mtimeMs: 0, ...f };
-  }
-  return {
-    version: 3,
-    files: entries,
-    meta: { lastScanned: null, fileCount: Object.keys(entries).length },
-  };
 }
 
 const STARTUP_LINE = /^crank-mem dashboard: (http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]+))\n/;

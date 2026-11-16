@@ -9,6 +9,7 @@ const base: Input = {
   daemonAlive: true,
   spool: { waiting: 0, parked: 0 },
   store: "open",
+  graph: { status: "open", files: 3, pending: 0 },
   memory: null,
   lastSnapshotMs: null,
   embedderReady: true,
@@ -98,6 +99,33 @@ describe("projectStatus", () => {
         label: "Keyword search only",
         fix: { text: "The local search model is not installed.", command: "crank-mem setup" },
       },
+    ],
+    [
+      "a graph to rebuild beats digests off and a missing store",
+      { digest: "off", store: "missing", graph: { status: "rebuild", files: 0, pending: 0 } },
+      {
+        tone: "bad",
+        label: "Code graph needs a look",
+        fix: { text: "code.db is corrupt or from another version.", command: "crank-mem scan" },
+      },
+    ],
+    [
+      "an unreadable graph names crank-mem scan, even when digests are stopped",
+      {
+        digest: "stopped",
+        stopReason: "login",
+        graph: { status: "unreadable", files: 0, pending: 0 },
+      },
+      {
+        tone: "bad",
+        label: "Code graph needs a look",
+        fix: { text: "code.db is not a readable database.", command: "crank-mem scan" },
+      },
+    ],
+    [
+      "a missing graph or a pending parse is not a problem",
+      { graph: { status: "missing", files: 0, pending: 0 } },
+      HEALTHY,
     ],
     ["healthy", {}, HEALTHY],
     ["a dead daemon with nothing waiting is healthy", { daemonAlive: false }, HEALTHY],

@@ -99,7 +99,7 @@ async function main(): Promise<void> {
   }
   writeGraph(root, config, refreshDeadline);
 
-  const result = sessionStartInjection(root, crankDir, config, index, {
+  const result = sessionStartInjection(root, crankDir, config, {
     codex: isCodexPayload(payload),
     source: typeof payload.source === "string" ? payload.source : null,
     stalenessNote,

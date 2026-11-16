@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { estimateProseTokens } from "./tokens.ts";
 import { parseBullets } from "./bullets.ts";
 import { citationCheck, type CitationCheck } from "./citations.ts";
-import { graphCounts, openCodeDb, type GraphCounts } from "./code-db.ts";
+import { graphCounts, readCodeDb, type GraphCounts } from "./code-db.ts";
 import { CEREBRUM_FILE } from "./cerebrum-files.ts";
 import { debugEvent } from "./debug.ts";
 import { driftNote } from "./drift.ts";
@@ -11,7 +11,6 @@ import { formatLine, readStoreSync, storeStatus, type StoreRead } from "./memory
 import { linkedProjects } from "./registry.ts";
 import { digestGate, type DigestGate } from "./spool.ts";
 import type { CrankConfig } from "./config.ts";
-import { loadIndex, type AnatomyIndex } from "./store.ts";
 import type { UsageEvent } from "./usage.ts";
 import { STORE_TEXT, type ObservationLine } from "./wire.ts";
 
@@ -61,8 +60,6 @@ const CEREBRUM_HEADER = "## Cerebrum (.crank/cerebrum.md)";
 
 /** Unsupported source extensions named in the pointer, most indexed files first. */
 const SYMBOL_GAPS_NAMED = 3;
-/** How long the pointer waits on another process holding `code.db`, such as a WAL recovery. */
-const GRAPH_READ_BUSY_MS = 1000;
 
 /**
  * The `crank-mem anatomy` pointer. With the graph's counts it states how many files the command
@@ -114,7 +111,6 @@ const PROOF_AND_ADR_BULLETS = `- Memory is not proof of current behavior; verify
 export interface InjectionSources {
   cerebrumMd: string | null;
   adrFilenames: string[];
-  index: AnatomyIndex;
   /** What `code.db` holds, for the anatomy pointer. Absent: the pointer carries no count. */
   graph?: GraphCounts | null;
   /** Italic notes near the top, in display order. Absent: none. */
@@ -411,10 +407,7 @@ export function composeInjection(
       sources.cerebrumMd,
       budgetBytes - used - adrReserve - bytes(SEP),
       sources.projectRoot
-        ? citationCheck(
-            { root: sources.projectRoot, index: sources.index },
-            { resolve: () => links },
-          )
+        ? citationCheck({ root: sources.projectRoot }, { resolve: () => links })
         : undefined,
     );
     if (excerpt.text) shown.cerebrum = fit(excerpt.text);
@@ -500,12 +493,7 @@ export function subagentInjection(
   const md = readCerebrum(crankDir);
   // Balanced: at this budget the session-start order leaves no room for memory.
   const excerpt = md
-    ? excerptOf(
-        md,
-        SUBAGENT_EXCERPT_BYTES,
-        citationCheck({ root, index: loadIndex(crankDir) }),
-        true,
-      ).text
+    ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, citationCheck({ root }), true).text
     : "";
 
   const lines = [INJECTION_HEADING];
@@ -545,7 +533,6 @@ export function sessionStartInjection(
   root: string,
   crankDir: string,
   config: CrankConfig,
-  index: AnatomyIndex,
   opts: { codex: boolean; source: string | null; stalenessNote: string | null },
 ): { text: string; excerpt: Excerpt | null; usage: SessionStartUsage } {
   const gate = digestGate(config, opts.codex, root);
@@ -558,7 +545,6 @@ export function sessionStartInjection(
   const sources = {
     cerebrumMd: readCerebrum(crankDir),
     adrFilenames: listAdrFilenames(root, config.adr_path),
-    index,
     graph,
     adrPath: config.adr_path,
     projectRoot: root,
@@ -569,7 +555,7 @@ export function sessionStartInjection(
   const { text, excerpt, shown } = composeInjection(sources, config.injection_budget_bytes);
   debugEvent("injected", {
     source: opts.source,
-    fileCount: index.meta.fileCount,
+    fileCount: graph?.files ?? null,
     injectionTokens: estimateProseTokens(text),
     // Bytes bind, not tokens: see injection_budget_bytes in config.ts.
     injectionBytes: bytes(text),
@@ -608,13 +594,5 @@ function readRecall(root: string, gate: DigestGate): Recall {
 
 /** The graph's counts, or null when `code.db` does not open. */
 function readGraph(root: string): GraphCounts | null {
-  const opened = openCodeDb(root, "read", GRAPH_READ_BUSY_MS);
-  if (opened.status !== "open" || !opened.db) return null;
-  try {
-    return graphCounts(opened.db);
-  } catch {
-    return null;
-  } finally {
-    opened.db.close();
-  }
+  return readCodeDb(root, (db) => (db ? graphCounts(db) : null));
 }

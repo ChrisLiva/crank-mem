@@ -79,6 +79,9 @@ export function formatUsd(usd: number): string {
 /** What a project's capture needs; `fix` is null when nothing does. */
 export type Status = { tone: Tone; label: string; fix: { text: string; command?: string } | null };
 
+/** Whether a project's `code.db` serves: `rebuild` is a corrupt file or another schema version. */
+export type GraphStatus = "open" | "missing" | "rebuild" | "unreadable";
+
 /**
  * One project's capture health; its spool counts only this project's entries. `memory` is
  * null unless the store opened; `monthCostUsd` is digests plus consolidations since the
@@ -90,6 +93,8 @@ export type HealthSummary = {
   daemonAlive: boolean;
   spool: { waiting: number; parked: number };
   store: StoreStatus;
+  /** The code graph: its status, the files it holds and the parseable files still awaiting a parse. */
+  graph: { status: GraphStatus; files: number; pending: number };
   memory: {
     observations: number;
     unembedded: number;
@@ -145,12 +150,31 @@ export const STORE_TEXT = {
   },
 } as const;
 
+/** The status a code graph that cannot serve gives the project; null when it serves or is absent. */
+function graphProblem(status: GraphStatus): Status | null {
+  if (status !== "rebuild" && status !== "unreadable") return null;
+  return {
+    tone: "bad",
+    label: "Code graph needs a look",
+    fix: {
+      text:
+        status === "rebuild"
+          ? "code.db is corrupt or from another version."
+          : "code.db is not a readable database.",
+      command: "crank-mem scan",
+    },
+  };
+}
+
 /**
- * The first problem in order of how much capture it stops: digests off or stopped,
+ * The first problem in order of how much it stops: a code graph that needs a rebuild or
+ * cannot be read (hooks and commands use it with digests off), digests off or stopped,
  * a store that does not open, a daemon that is down while entries wait, parked
  * entries, an embedder that is not ready.
  */
 export function projectStatus(h: Omit<HealthSummary, "status">): Status {
+  const graph = graphProblem(h.graph.status);
+  if (graph) return graph;
   if (h.digest === "off")
     return {
       tone: "off",

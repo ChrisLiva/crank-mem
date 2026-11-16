@@ -1173,8 +1173,8 @@ describe("cross-repo memory", () => {
     sessionStart(ws, ws.storefront);
     const bullet = "- **Front**: see `storefront/src/a.ts` (2020-01-01).";
     fs.appendFileSync(path.join(ws.payments, ".crank/cerebrum.md"), `${bullet}\n`);
-    const anatomy = path.join(ws.storefront, ".crank/anatomy-index.json");
-    const before = fs.readFileSync(anatomy);
+    const codeDb = path.join(ws.storefront, ".crank/code.db");
+    const before = fs.readFileSync(codeDb);
 
     const run = runHook(
       "src/hooks/post-read.ts",
@@ -1189,7 +1189,7 @@ describe("cross-repo memory", () => {
       `${bullet} [cited file modified after this note; check: storefront/src/a.ts]`,
     );
     expect(ctx).not.toContain("[cited file missing");
-    expect(fs.readFileSync(anatomy)).toEqual(before);
+    expect(fs.readFileSync(codeDb)).toEqual(before);
   });
 
   test("stats counts cited paths as the excerpt tags them, with and without the store", () => {

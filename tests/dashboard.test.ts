@@ -9,6 +9,7 @@ import { UNTOUCHED_FILE } from "../src/hooks/lib/untouched.ts";
 import { STORE_TEXT, type UpdateStatus } from "../src/hooks/lib/wire.ts";
 import { memoryPath, openStoreForWrite, type Memory } from "../src/hooks/lib/memory.ts";
 import {
+  buildGraph,
   cleanup,
   dashboardFixture,
   git,
@@ -545,6 +546,7 @@ describe("memory view", () => {
       "src/a.ts": 'import { b } from "./b";\nexport const a = b;\n',
       "src/b.ts": "export const b = 1;\n",
     });
+    buildGraph(root);
     const [o1] = seedMemory(root, [
       { title: "Lock budget raised", narrative: "budget", filesModified: ["src/b.ts"] },
     ]);

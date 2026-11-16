@@ -99,6 +99,9 @@ The probe ran twice with cwd at S, and once with cwd at the common parent of S a
   written (`src/hooks/lib/citations.ts` → `citationCheck`, under the `resolve` link policy), so
   the agent sees a cross-repo bullet that may be out of date.
 
+Amended 2026-11-16: a linked project's `code.db`, opened read-only, replaces its anatomy for
+citation placement; it is never written.
+
 ## Consequences
 
 - The common-parent cwd is rejected: it would let the run read every repo under the parent,

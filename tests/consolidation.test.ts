@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { consolidationRequest } from "../src/daemon/consolidate.ts";
 import { isSensitiveFile } from "../src/hooks/lib/config.ts";
 import {
+  buildGraph,
   FIXTURE,
   TOKEN,
   appendRecords,
@@ -397,7 +398,7 @@ describe("bullets whose cited files changed", () => {
     const root = digestProject({}, temps);
     fs.mkdirSync(path.join(root, "src"));
     fs.writeFileSync(path.join(root, "src/a.ts"), "export const a = 1;\n");
-    expect(runCli(root, ["scan"]).status).toBe(0);
+    buildGraph(root);
     fs.writeFileSync(
       path.join(root, ".crank/cerebrum.md"),
       "# Cerebrum\n\n## User Preferences\n\n## Memory\n\n" +

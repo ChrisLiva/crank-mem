@@ -6,8 +6,8 @@ import * as path from "node:path";
 import { CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { isProjectFile } from "../hooks/lib/hook-io.ts";
 import { memoryPath, type MemoryReader, readStore, storeStatus } from "../hooks/lib/memory.ts";
+import { readCodeDb } from "../hooks/lib/code-db.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
-import { loadIndex } from "../hooks/lib/store.ts";
 import { readUsage } from "../hooks/lib/usage.ts";
 import {
   ACTIVITY_DAYS,
@@ -178,7 +178,7 @@ async function observations(root: string, params: URLSearchParams): Promise<Answ
         vector,
         sinceMs: null,
         limit: PAGE,
-        related: relatedFiles(loadIndex(path.join(root, CRANK_DIR)), q),
+        related: readCodeDb(root, (db) => relatedFiles(db, q)),
       });
       return {
         rows: hits.map((hit) => hit.line),
