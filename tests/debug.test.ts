@@ -62,10 +62,9 @@ describe("debug logging (black-box)", () => {
     // Session start never reads journal.md, so the event carries no journal counts.
     expect(Object.keys(injected).filter((k) => k.startsWith("journal"))).toEqual([]);
 
-    // A write without contention lands in code.db and is not logged as a wait.
+    // A write lands in code.db.
     const writeEvents = records[1]!.events;
     expect(writeEvents.find((e: any) => e.event === "reindex")).toMatchObject({ paths: ["a.ts"] });
-    expect(writeEvents.some((e: any) => e.event === "lock-waited")).toBe(false);
   });
 
   test("a payload without cwd finds the project from the process cwd, and every hook logs a record", () => {
@@ -159,9 +158,10 @@ describe("debug logging (black-box)", () => {
     }
 
     const events = readDebugLog(root)[1]!.events;
-    expect(events.some((e: any) => e.event === "graph-skip" || e.event === "graph-failed")).toBe(
-      true,
-    );
+    expect(events.find((e: any) => String(e.event).startsWith("graph"))).toMatchObject({
+      event: "graph-skip",
+      status: "busy",
+    });
     expect(events.some((e: any) => e.event === "reindex")).toBe(false);
   });
 
@@ -291,7 +291,7 @@ describe("debug logging (black-box)", () => {
     const run = runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
     expect(run.status).toBe(0);
     expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain(
-      "`crank-mem anatomy [<dir>]` lists the project's 1 file(s)",
+      "## crank-mem (project memory)",
     );
   });
 

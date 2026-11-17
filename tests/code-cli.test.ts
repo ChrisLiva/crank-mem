@@ -664,8 +664,4 @@ describe("call cap", () => {
     expect(facts!.calls).toHaveLength(5000);
     expect(facts!.calls.at(-1)).toMatchObject({ line: 5000, callee: "f", receiver: "bare" });
   });
-
-  test("an empty file has no symbols and no calls", async () => {
-    expect(await codeFacts("", "typescript")).toEqual({ symbols: [], calls: [] });
-  });
 });

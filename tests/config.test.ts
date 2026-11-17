@@ -56,18 +56,15 @@ describe("loadConfig sanitization", () => {
     expect(config.my_own_key).toBe("kept"); // unknown keys still survive
   });
 
-  test("non-finite numbers rejected", () => {
-    const dir = dirWithConfig(`{"max_file_size_bytes": 1e999}`);
-    expect(loadConfig(dir).max_file_size_bytes).toBe(defaultConfig().max_file_size_bytes);
-  });
-
-  test("zero and negative numbers rejected", () => {
+  test("zero, negative and non-finite numbers rejected", () => {
     const dir = dirWithConfig(
       JSON.stringify({ injection_budget_bytes: -1, max_file_size_bytes: 0 }),
     );
     const config = loadConfig(dir);
     expect(config.injection_budget_bytes).toBe(defaultConfig().injection_budget_bytes);
     expect(config.max_file_size_bytes).toBe(defaultConfig().max_file_size_bytes);
+    const infinite = dirWithConfig(`{"max_file_size_bytes": 1e999}`);
+    expect(loadConfig(infinite).max_file_size_bytes).toBe(defaultConfig().max_file_size_bytes);
   });
 
   test("enum fields reject unknown values", () => {

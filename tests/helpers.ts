@@ -23,6 +23,19 @@ import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dir, "..");
 
+/** The permissions.allow rules `crank-mem init` writes, in order: the hand-written oracle for `CRANK_ALLOW_RULES`. */
+export const ALLOW_RULES = [
+  "Bash(crank-mem search *)",
+  "Bash(crank-mem timeline *)",
+  "Bash(crank-mem get *)",
+  "Bash(crank-mem outline *)",
+  "Bash(crank-mem unfold *)",
+  "Bash(crank-mem callers *)",
+  "Bash(crank-mem callees *)",
+  "Bash(crank-mem impact *)",
+  "Bash(crank-mem anatomy *)",
+];
+
 // Every child that inherits process.env checks for a release against a closed local port, never
 // GitHub, unless its test passes a release server.
 process.env.CRANK_RELEASE_URL ??= "http://127.0.0.1:9";

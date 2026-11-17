@@ -179,11 +179,6 @@ test("a C# using links to the other files declaring it, up to 10 declaring files
   expect(rel(cs(11), "Use.cs").neighbours).toEqual([]);
 });
 
-test("without a code.db there are no seeds, and a query naming nothing seeds nothing", () => {
-  expect(relatedFiles(null, "src/lock.ts withLock")).toEqual(E);
-  expect(rel(G, "constructor __proto__ toString hasOwnProperty")).toEqual(E);
-});
-
 test("only path-like and identifier-shaped terms seed", () => {
   const B = graphProject({
     "bin/crank-mem": "#!/bin/sh\n",

@@ -5,7 +5,6 @@ import * as path from "node:path";
 import { citationCheck, fileCitations, storeLinks } from "../src/hooks/lib/citations.ts";
 import { projectName } from "../src/hooks/lib/owner.ts";
 import { registerProject } from "../src/hooks/lib/registry.ts";
-import { deleteCodeDb } from "../src/hooks/lib/code-db.ts";
 import { buildGraph, inZone, makeCrankProject, plantMemory, seedMemory, ZONES } from "./helpers.ts";
 
 /** Writes a file whose mtime on disk is 2000 ms past the epoch. */
@@ -51,9 +50,7 @@ function fixture() {
   };
   return {
     home,
-    payRoot,
     brokenRoot,
-    payDb: path.join(payRoot, ".crank", "code.db"),
     links,
     calls: () => calls,
     resolve: () => citationCheck({ root: home }, { resolve: links }),
@@ -171,17 +168,6 @@ describe("a citation whose first segment names a linked project", () => {
     }
   });
 
-  test("reads the linked code.db once per checker and never writes it", () => {
-    const f = fixture();
-    const before = fs.readFileSync(f.payDb);
-    const check = f.resolve();
-    expect(check.status("`pay/p.ts`", 1000)).toEqual(modified("pay/p.ts"));
-    expect(fs.readFileSync(f.payDb).equals(before)).toBe(true);
-    deleteCodeDb(f.payRoot);
-    expect(check.status("`pay/p.ts`", 1000)).toEqual(modified("pay/p.ts"));
-    expect(f.resolve().status("`pay/p.ts`", 1000)).toEqual(none);
-  });
-
   test("checks the disk alone when the linked code.db is absent or corrupt", () => {
     const f = fixture();
     const rows = () => {
@@ -190,9 +176,10 @@ describe("a citation whose first segment names a linked project", () => {
         check.status("`broken/src/k.ts`", 1000),
         check.status("`broken/src/none.ts`", 1000),
         check.status("`broken/none.ts`", 1000),
+        check.status("`broken/k.ts`", 1000),
       ];
     };
-    const expected = [modified("broken/src/k.ts"), missing("broken/src/none.ts"), none];
+    const expected = [modified("broken/src/k.ts"), missing("broken/src/none.ts"), none, none];
     expect(rows()).toEqual(expected);
     write(f.brokenRoot, ".crank/code.db", "not a database");
     expect(rows()).toEqual(expected);

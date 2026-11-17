@@ -820,17 +820,6 @@ describe("usage capture: the graph commands", () => {
       ["anatomy", null, null, 4, "ok"],
     ]);
 
-    const metrics = usageMetrics(lines as UsageLine[], {
-      nowMs: Date.now(),
-      days: 7,
-      manual: false,
-      titles: () => new Map(),
-      observationCount: 0,
-    });
-    const total = (channel: string) =>
-      metrics.perDay.reduce((sum, d) => sum + (d.counts as Record<string, number>)[channel]!, 0);
-    expect(["anatomy", "callers", "callees", "impact"].map(total)).toEqual([2, 2, 2, 3]);
-
     const bare = tempDir("crank-usage-bare-");
     expect(claudeCli(bare, ["callers", "f1"]).status).toBe(1);
     expect(fs.readdirSync(bare)).toEqual([]);

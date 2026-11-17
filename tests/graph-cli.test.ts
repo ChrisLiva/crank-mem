@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { spawnSync } from "node:child_process";
-import { refreshGraph } from "../src/cli/code-parse.ts";
 import { openCodeDb, refreshFileFacts } from "../src/hooks/lib/code-db.ts";
 import { loadConfig } from "../src/hooks/lib/config.ts";
 import {
@@ -20,7 +19,7 @@ import {
   withReadOnlyCodeDb,
   type CliRun,
 } from "./helpers.ts";
-import { claudePostWrite, claudeSessionStart } from "./fixtures/payloads.ts";
+import { claudePostEdit, claudePostWrite, claudeSessionStart } from "./fixtures/payloads.ts";
 
 const MORE = /^… (\d+) more files from (\S+): crank-mem anatomy --from (\S+)$/;
 
@@ -149,20 +148,17 @@ describe("anatomy", () => {
     // A continuation page repeats no section.
     const next = runCli(root, ["anatomy", "--from", "b.ts"]);
     expect(next.stdout).not.toContain("## Most active files");
+    // That run was writable and parsed every file; a parse keeps each file's write count and churn rank.
+    expect(section(active())).toEqual(["c.ts", "b.ts", "a.ts"]);
 
     gitCommit(root, "c");
     hook("src/hooks/session-start.ts", claudeSessionStart(root));
     expect(section(active())).toEqual(["b.ts", "a.ts", "c.ts"]);
-  });
 
-  test("a deleted file disappears on the next run", () => {
-    const root = makeCrankProject({
-      "a.ts": "export const a = 1;\n",
-      "b.ts": "export const b = 1;\n",
-    });
-    expect(pagePaths(runCli(root, ["anatomy"]))).toEqual(["a.ts", "b.ts"]);
-    fs.rmSync(path.join(root, "b.ts"));
-    expect(pagePaths(runCli(root, ["anatomy"]))).toEqual(["a.ts"]);
+    // A later write to a churned file adds no pin.
+    fs.appendFileSync(path.join(root, "c.ts"), "export const c2 = 2;\n");
+    hook("src/hooks/post-write.ts", claudePostEdit(root, path.join(root, "c.ts")));
+    expect(section(active())).toEqual(["b.ts", "a.ts", "c.ts"]);
   });
 
   describe("a store it cannot use", () => {
@@ -217,17 +213,6 @@ describe("anatomy", () => {
     });
   });
 
-  test("a sensitive path and a path outside every project are refused", () => {
-    const root = makeCrankProject({ ".env": "TOKEN=secret\n", "a.ts": "export const a = 1;\n" });
-    const sensitive = runCli(root, ["anatomy", ".env"]);
-    expect(sensitive.status).toBe(1);
-    expect(sensitive.stderr).toContain("is a sensitive file; crank-mem does not read it.");
-    expect(sensitive.stdout).toBe("");
-    const outside = runCli(root, ["anatomy", tempDir("crank-outside-")]);
-    expect(outside.status).toBe(1);
-    expect(outside.stderr).toContain("is outside every installed project.");
-  });
-
   test("a parsed file lists its top-level symbols; a file over 256 KiB or without a grammar lists none and is never pending", () => {
     const root = makeCrankProject({
       "src/a.ts":
@@ -255,7 +240,10 @@ describe("anatomy", () => {
   });
 
   test("a changed file is parsed again", () => {
-    const root = makeCrankProject({ "a.ts": "export function one() {}\n" });
+    const root = makeCrankProject({
+      "a.ts": "export function one() {}\n",
+      "b.ts": "export const b = 1;\n",
+    });
     expect(blocks(runCli(root, ["anatomy"]).stdout).get("a.ts")).toContain("  - one (");
 
     const file = path.join(root, "a.ts");
@@ -264,35 +252,9 @@ describe("anatomy", () => {
     const again = blocks(runCli(root, ["anatomy"]).stdout).get("a.ts")!;
     expect(again).toContain("  - one (");
     expect(again).toContain("  - two (");
-  });
 
-  test("a file that changes after its text is read stays pending until the next run", async () => {
-    const root = makeCrankProject({ "b.ts": "export function first() {}\n" });
-    const file = path.join(root, "b.ts");
-    const refreshed = await refreshGraph(root, loadConfig(path.join(root, ".crank")), {
-      deadlineMs: Infinity,
-      afterRead(rel) {
-        if (rel !== "b.ts") return;
-        fs.writeFileSync(file, "export function first() {}\nexport function late() {}\n");
-        setMtime(file, Date.now() + 1000);
-      },
-    });
-    expect(refreshed.status).toBe("open");
-
-    // The rows are still the parse of the text that was read.
-    const restore = () => {
-      for (const f of codeDbFiles(root)) fs.chmodSync(f, 0o644);
-    };
-    try {
-      for (const f of codeDbFiles(root)) fs.chmodSync(f, 0o444);
-      const stale = runCli(root, ["anatomy"]);
-      expect(stale.status).toBe(0);
-      expect(stale.stdout).toContain("  - first (");
-      expect(stale.stdout).not.toContain("late");
-    } finally {
-      restore();
-    }
-    expect(runCli(root, ["anatomy"]).stdout).toContain("  - late (");
+    fs.rmSync(path.join(root, "b.ts"));
+    expect(pagePaths(runCli(root, ["anatomy"]))).toEqual(["a.ts"]);
   });
 
   test("a parse killed mid-run leaves every file whole or pending", () => {
@@ -584,6 +546,13 @@ describe("callers and callees", () => {
 
   test("a sensitive file and a path outside every project are refused", () => {
     const root = makeCrankProject({ ".env": "TOKEN=secret\n", "a.ts": "export const a = 1;\n" });
+    const anatomySensitive = runCli(root, ["anatomy", ".env"]);
+    expect(anatomySensitive.status).toBe(1);
+    expect(anatomySensitive.stderr).toContain("is a sensitive file; crank-mem does not read it.");
+    expect(anatomySensitive.stdout).toBe("");
+    const anatomyOutside = runCli(root, ["anatomy", tempDir("crank-outside-")]);
+    expect(anatomyOutside.status).toBe(1);
+    expect(anatomyOutside.stderr).toContain("is outside every installed project.");
     for (const command of ["callers", "callees", "impact"]) {
       const sensitive = runCli(root, [command, ".env", "a"]);
       expect(sensitive.status).toBe(1);

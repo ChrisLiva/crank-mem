@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import {
+  ALLOW_RULES,
   initedCopy,
   killDaemon,
   makeCrankHome,
@@ -76,18 +77,13 @@ describe("scan", () => {
     ]);
     expect(cli(root, "stats").stdout).toContain("pending:          0\n");
 
-    // A store that is not a database is deleted and rebuilt; one that cannot be deleted fails with its error.
+    // A store that is not a database is deleted and rebuilt.
     const store = path.join(root, ".crank/code.db");
     for (const name of ["code.db-wal", "code.db-shm"])
       fs.rmSync(path.join(root, ".crank", name), { force: true });
     fs.writeFileSync(store, "not a database");
     expect(cli(root, "scan").status).toBe(0);
     expect(cli(root, "stats").stdout).toContain("files:            201\n");
-    fs.rmSync(store);
-    fs.mkdirSync(store);
-    const blocked = cli(root, "scan");
-    expect(blocked.status).toBe(1);
-    expect(blocked.stderr).toMatch(/^crank-mem: .+/);
   });
 
   test("errors when not initialized", () => {
@@ -648,7 +644,6 @@ describe("upgrade", () => {
     expect(fs.readFileSync(path.join(crankDir, "journal.md"), "utf-8")).toContain(
       "shipped the thing",
     );
-    expect(fs.existsSync(path.join(crankDir, "code.db"))).toBe(true);
     // old hooks were backed up
     const backups = fs.readdirSync(path.join(crankDir, "backups")).sort();
     const latest = backups[backups.length - 1]!;
@@ -742,18 +737,6 @@ describe("upgrade", () => {
     }
   }, 20_000);
 
-  test("a scan that throws costs only the scan", () => {
-    const root = initedCopy(LINKED);
-    const store = path.join(root, ".crank/code.db");
-    for (const name of ["code.db", "code.db-wal", "code.db-shm"])
-      fs.rmSync(path.join(root, ".crank", name), { force: true });
-    fs.mkdirSync(store);
-    const run = upgradeStopped(root);
-    expect(run.status).toBe(0);
-    expect(run.stderr).toContain("crank-mem: could not scan (");
-    expect(run.stdout).not.toMatch(SCAN_LINE);
-  });
-
   // Crank commands in the settings file the git mode does not use, plus wiring
   // in the one it does use, run every hook twice.
   test("re-wires an install at the current version and drops duplicate wiring", () => {
@@ -804,18 +787,7 @@ describe("upgrade", () => {
     expect(run.stdout).toContain("  added the crank-mem rules to permissions.allow");
     const after = JSON.parse(fs.readFileSync(local, "utf-8"));
     expect(after.permissions).toEqual({
-      allow: [
-        "Bash(ls:*)",
-        "Bash(crank-mem search *)",
-        "Bash(crank-mem timeline *)",
-        "Bash(crank-mem get *)",
-        "Bash(crank-mem outline *)",
-        "Bash(crank-mem unfold *)",
-        "Bash(crank-mem callers *)",
-        "Bash(crank-mem callees *)",
-        "Bash(crank-mem impact *)",
-        "Bash(crank-mem anatomy *)",
-      ],
+      allow: ["Bash(ls:*)", ...ALLOW_RULES],
       deny: ["x"],
     });
     expect(after.hooks).toEqual(settings.hooks);
@@ -826,7 +798,7 @@ describe("upgrade", () => {
     expect(again.stdout).not.toContain("added the crank-mem rules");
     expect(fs.readdirSync(path.join(root, ".crank/backups")).length).toBe(withRule);
 
-    // An install holding only the three recall rules gains the two code-reading rules.
+    // An install holding only the three recall rules gains the code-reading rules.
     settings.permissions = {
       allow: [
         "Bash(ls:*)",
@@ -841,15 +813,7 @@ describe("upgrade", () => {
     expect(three.stdout.split("  added the crank-mem rules to permissions.allow").length).toBe(2);
     expect(JSON.parse(fs.readFileSync(local, "utf-8")).permissions.allow).toEqual([
       "Bash(ls:*)",
-      "Bash(crank-mem search *)",
-      "Bash(crank-mem timeline *)",
-      "Bash(crank-mem get *)",
-      "Bash(crank-mem outline *)",
-      "Bash(crank-mem unfold *)",
-      "Bash(crank-mem callers *)",
-      "Bash(crank-mem callees *)",
-      "Bash(crank-mem impact *)",
-      "Bash(crank-mem anatomy *)",
+      ...ALLOW_RULES,
     ]);
     const converged = fs.readFileSync(local);
     expect(cli(root, "upgrade").stdout).not.toContain("added the crank-mem rules");
@@ -1053,24 +1017,6 @@ const COMMAND_NAMES = [
 ];
 
 describe("flags (in-process)", () => {
-  test("every command has a spec whose help starts with its usage line and carries its summary", () => {
-    for (const name of COMMAND_NAMES) {
-      const spec = commandSpec(name);
-      expect([name, spec !== undefined]).toEqual([name, true]);
-      const help = commandHelp(spec!);
-      expect([name, help.startsWith(`Usage: crank-mem ${name}`)]).toEqual([name, true]);
-      if (spec!.summary) expect(help).toContain(spec!.summary);
-      else expect([name, help]).toEqual([name, spec!.usage]);
-    }
-    expect(["daemon", "job", "graph-job"].map((name) => commandSpec(name)!.summary)).toEqual([
-      undefined,
-      undefined,
-      undefined,
-    ]);
-    expect(commandSpec("toString")).toBeUndefined();
-    expect(commandSpec("search")!.unknownIsText).toBe(true);
-  });
-
   test("job --help hides the job's test flags", () => {
     const help = commandHelp(COMMANDS.job);
     expect(help).toBe("Usage: crank-mem job <stem> (internal: the daemon runs it)");

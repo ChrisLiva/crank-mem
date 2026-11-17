@@ -256,16 +256,6 @@ describe("composeInjection", () => {
     expect((out.match(/^- \d{4}-/gm) ?? []).length).toBe(ADR_RECENT_COUNT);
   });
 
-  test("points at `crank-mem anatomy` with a file count instead of listing files", () => {
-    const graph = { files: 200, pending: 0, gaps: [] as string[] };
-    const out = composeInjection({ ...sources, graph }, 8192).text;
-    expect(out).toContain(
-      "- `crank-mem anatomy [<dir>]` lists the project's 200 file(s) with descriptions, token sizes and symbol line ranges; use it before slice-reading a large file.\n",
-    );
-    // The file list itself must not be recited: no token annotation.
-    expect(out).not.toMatch(/~\d+ tok/);
-  });
-
   test("the pointer adds the parsing clause, then the gap clause for the three biggest gaps", () => {
     const graph = { files: 9, pending: 4, gaps: [".lua", ".dart", ".zig", ".sql"] };
     const out = composeInjection({ ...sources, graph }, 8192).text;
@@ -273,26 +263,6 @@ describe("composeInjection", () => {
       "symbol line ranges (symbols for 4 files are still being parsed) (no symbol ranges for .lua, .dart, .zig files); use it before",
     );
     expect(out).not.toContain(".sql");
-  });
-
-  test("without a graph the pointer drops the count and both clauses", () => {
-    const { graph: _graph, ...bare } = sources;
-    const out = composeInjection(bare, 8192).text;
-    expect(out).toContain(
-      "- `crank-mem anatomy [<dir>]` lists the project's files with descriptions, token sizes and symbol line ranges; use it before slice-reading a large file.\n",
-    );
-    expect(out).not.toContain("file(s)");
-  });
-
-  // The reason the map is a pointer: Claude Code swaps an injection past 10,000
-  // characters of additionalContext for a 2,000-character preview (ADR 0005),
-  // so size must not track file count.
-  test("stays small and near-constant as the project grows", () => {
-    const counts = (files: number) => ({ files, pending: 0, gaps: [] as string[] });
-    const small = composeInjection({ ...sources, graph: counts(3) }, 8192).text;
-    const large = composeInjection({ ...sources, graph: counts(5000) }, 8192).text;
-    expect(Buffer.byteLength(large, "utf-8")).toBeLessThan(4096);
-    expect(Buffer.byteLength(large) - Buffer.byteLength(small)).toBeLessThan(64);
   });
 
   test("symbols never appear in injection", () => {

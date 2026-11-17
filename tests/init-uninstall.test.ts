@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
+  ALLOW_RULES,
   makeCrankHome,
   makeProject,
   runCli,
@@ -14,7 +15,6 @@ import {
   type CliRun,
 } from "./helpers.ts";
 import { claudeSessionStart, claudeStop, codexApplyPatch } from "./fixtures/payloads.ts";
-import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 
 // Smoke: init into a temp project, check the wiring, uninstall, then expect a
 // byte-identical restore and no crank residue.
@@ -88,17 +88,7 @@ describe("init → uninstall round-trip", () => {
     expect(settings.hooks.SessionStart[0].hooks[0].command).toContain(
       ".crank/hooks/session-start.ts",
     );
-    expect(settings.permissions.allow).toEqual([
-      "Bash(crank-mem search *)",
-      "Bash(crank-mem timeline *)",
-      "Bash(crank-mem get *)",
-      "Bash(crank-mem outline *)",
-      "Bash(crank-mem unfold *)",
-      "Bash(crank-mem callers *)",
-      "Bash(crank-mem callees *)",
-      "Bash(crank-mem impact *)",
-      "Bash(crank-mem anatomy *)",
-    ]);
+    expect(settings.permissions.allow).toEqual(ALLOW_RULES);
     expect(settings.hooks.SessionEnd[0].hooks[0].command).toContain(".crank/hooks/session-end.ts");
     const fileHistory = settings.hooks.PostToolUse.find(
       (g: { matcher?: string }) => g.matcher === "Read|Bash",
@@ -122,14 +112,6 @@ describe("init → uninstall round-trip", () => {
     );
     expect(fs.existsSync(path.join(root, ".crank/journal.md"))).toBe(false);
     expect(fs.existsSync(path.join(root, ".crank/hooks/lib/scanner.ts"))).toBe(true);
-    const opened = openCodeDb(root, "read");
-    expect(opened.status).toBe("open");
-    try {
-      const counted = opened.db!.prepare("SELECT COUNT(*) AS n FROM files").get() as { n: number };
-      expect(counted.n).toBeGreaterThanOrEqual(2);
-    } finally {
-      opened.db!.close();
-    }
 
     const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
     expect(un.status).toBe(0);
@@ -144,17 +126,7 @@ describe("init → uninstall round-trip", () => {
     cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
     expect(fs.existsSync(path.join(root, ".claude/settings.local.json"))).toBe(false);
     const shared = JSON.parse(fs.readFileSync(path.join(root, ".claude/settings.json"), "utf-8"));
-    expect(shared.permissions.allow).toEqual([
-      "Bash(crank-mem search *)",
-      "Bash(crank-mem timeline *)",
-      "Bash(crank-mem get *)",
-      "Bash(crank-mem outline *)",
-      "Bash(crank-mem unfold *)",
-      "Bash(crank-mem callers *)",
-      "Bash(crank-mem callees *)",
-      "Bash(crank-mem impact *)",
-      "Bash(crank-mem anatomy *)",
-    ]);
+    expect(shared.permissions.allow).toEqual(ALLOW_RULES);
     for (const rel of [
       ".crank/cerebrum.md",
       ".crank/cerebrum-archive.md",

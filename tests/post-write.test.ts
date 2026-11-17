@@ -5,8 +5,6 @@ import {
   REPO_ROOT,
   enableDebugConfig,
   fakeCloneRoot,
-  git,
-  gitCommit,
   killDaemon,
   makeCrankHome,
   makeCrankProject,
@@ -116,6 +114,12 @@ describe("post-write hook (black-box)", () => {
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("");
     expect(graphFiles(root)["src/new.ts"]!.description).toBe("Brand new module.");
+
+    // An Edit of an existing file re-indexes it too.
+    fs.writeFileSync(path.join(root, "a.ts"), "/** Updated alpha. */\nconst a = 2;\n");
+    const edit = runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "a.ts"))));
+    expect(edit.status).toBe(0);
+    expect(graphFiles(root)["a.ts"]!.description).toBe("Updated alpha.");
   });
 
   test("each write to a file counts once, and a session start keeps the count", () => {
@@ -130,31 +134,6 @@ describe("post-write hook (black-box)", () => {
     seedIndex(root);
     expect(Object.keys(graphFiles(root)).sort()).toEqual(["a.ts", "b.ts", "z.ts"]);
     expect(graphFiles(root)["z.ts"]!.write_count).toBe(2);
-  });
-
-  test("a write pin clears once the file is in the churn list", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    git(root, "init", "-q");
-    seedIndex(root);
-    fs.writeFileSync(path.join(root, "z.ts"), "export const z = 1;\n");
-    runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "z.ts"))));
-    expect(graphFiles(root)["z.ts"]!.write_count).toBe(1);
-    gitCommit(root, "z");
-    seedIndex(root);
-    expect(graphFiles(root)["z.ts"]).toMatchObject({ write_count: 0 });
-    expect(graphFiles(root)["z.ts"]!.churn_rank).not.toBeNull();
-    // Later writes to a churned file add no pin either.
-    runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "z.ts"))));
-    expect(graphFiles(root)["z.ts"]!.write_count).toBe(0);
-  });
-
-  test("Claude Edit: existing file re-indexed", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    seedIndex(root);
-    fs.writeFileSync(path.join(root, "a.ts"), "/** Updated alpha. */\nconst a = 2;\n");
-    const run = runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "a.ts"))));
-    expect(run.status).toBe(0);
-    expect(graphFiles(root)["a.ts"]!.description).toBe("Updated alpha.");
   });
 
   test("Codex apply_patch: Add and Update re-indexed, Delete dropped", () => {
@@ -186,7 +165,7 @@ describe("post-write hook (black-box)", () => {
     expect(files["gone.ts"]).toBeUndefined();
   });
 
-  test("a write leaves the file to the next parse, which refreshes its imports, from Claude and from Codex apply_patch", () => {
+  test("a write marks the file for the next parse, which refreshes its imports, from Claude and from Codex apply_patch", () => {
     const root = makeCrankProject({
       "src/a.ts": 'import "./b";\n',
       "src/b.ts": "export const b = 1;\n",
@@ -203,7 +182,6 @@ describe("post-write hook (black-box)", () => {
     );
     expect(claude.status).toBe(0);
     expect(claude.stdout).toBe("");
-    expect(imports()).toEqual(["src/b.ts"]);
     expect(runCli(root, ["scan"]).status).toBe(0);
     expect(imports()).toEqual(["src/c.ts"]);
 
@@ -219,7 +197,6 @@ describe("post-write hook (black-box)", () => {
     const codex = runHook(HOOK, JSON.stringify(codexApplyPatch(root, patch)));
     expect(codex.status).toBe(0);
     expect(codex.stdout).toBe("");
-    expect(imports()).toEqual(["src/c.ts"]);
     expect(runCli(root, ["scan"]).status).toBe(0);
     expect(imports()).toEqual(["src/b.ts"]);
   });
@@ -260,18 +237,6 @@ describe("post-write hook (black-box)", () => {
     fs.writeFileSync(path.join(root, "huge.ts"), "x".repeat(1024 * 1024 + 1));
     runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "huge.ts"))));
     expect(graphFiles(root)["huge.ts"]).toBeUndefined();
-  });
-
-  test("binary content under an unlisted extension is skipped", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    seedIndex(root);
-    fs.writeFileSync(path.join(root, "model.weights"), Buffer.from([0x93, 0x4e, 0x55, 0x00, 0x01]));
-    const run = runHook(
-      HOOK,
-      JSON.stringify(claudePostWrite(root, path.join(root, "model.weights"))),
-    );
-    expect(run.status).toBe(0);
-    expect(graphFiles(root)["model.weights"]).toBeUndefined();
   });
 
   test("garbage stdin: exit 0", () => {

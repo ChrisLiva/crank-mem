@@ -16,7 +16,7 @@ import {
   removeAllowRule,
 } from "../src/cli/settings.ts";
 import { vendorHooks } from "../src/cli/vendor.ts";
-import { childEnv, makeCrankProject } from "./helpers.ts";
+import { ALLOW_RULES, childEnv, makeCrankProject } from "./helpers.ts";
 import { claudeSessionStart } from "./fixtures/payloads.ts";
 
 function tmpFile(name = "settings.json"): string {
@@ -235,18 +235,7 @@ describe("addAllowRule", () => {
     expect(after).toEqual({
       model: "opus",
       permissions: {
-        allow: [
-          "Bash(ls:*)",
-          "Bash(crank-mem search *)",
-          "Bash(crank-mem timeline *)",
-          "Bash(crank-mem get *)",
-          "Bash(crank-mem outline *)",
-          "Bash(crank-mem unfold *)",
-          "Bash(crank-mem callers *)",
-          "Bash(crank-mem callees *)",
-          "Bash(crank-mem impact *)",
-          "Bash(crank-mem anatomy *)",
-        ],
+        allow: ["Bash(ls:*)", ...ALLOW_RULES],
         deny: ["x"],
       },
     });
@@ -267,17 +256,7 @@ describe("addAllowRule", () => {
     expect(addAllowRule(missingFile)).toBe(true);
     expect(JSON.parse(fs.readFileSync(missingFile, "utf-8"))).toEqual({
       permissions: {
-        allow: [
-          "Bash(crank-mem search *)",
-          "Bash(crank-mem timeline *)",
-          "Bash(crank-mem get *)",
-          "Bash(crank-mem outline *)",
-          "Bash(crank-mem unfold *)",
-          "Bash(crank-mem callers *)",
-          "Bash(crank-mem callees *)",
-          "Bash(crank-mem impact *)",
-          "Bash(crank-mem anatomy *)",
-        ],
+        allow: ALLOW_RULES,
       },
     });
     const noAllow = writeSettings({ permissions: { deny: ["x"] } });
@@ -285,17 +264,7 @@ describe("addAllowRule", () => {
     expect(JSON.parse(fs.readFileSync(noAllow, "utf-8"))).toEqual({
       permissions: {
         deny: ["x"],
-        allow: [
-          "Bash(crank-mem search *)",
-          "Bash(crank-mem timeline *)",
-          "Bash(crank-mem get *)",
-          "Bash(crank-mem outline *)",
-          "Bash(crank-mem unfold *)",
-          "Bash(crank-mem callers *)",
-          "Bash(crank-mem callees *)",
-          "Bash(crank-mem impact *)",
-          "Bash(crank-mem anatomy *)",
-        ],
+        allow: ALLOW_RULES,
       },
     });
   });
@@ -306,19 +275,7 @@ describe("addAllowRule", () => {
     expect(addAllowRule(f)).toBe(true);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({
       permissions: {
-        allow: [
-          "Bash(ls:*)",
-          "Bash(git *)",
-          "Bash(crank-mem search *)",
-          "Bash(crank-mem timeline *)",
-          "Bash(crank-mem get *)",
-          "Bash(crank-mem outline *)",
-          "Bash(crank-mem unfold *)",
-          "Bash(crank-mem callers *)",
-          "Bash(crank-mem callees *)",
-          "Bash(crank-mem impact *)",
-          "Bash(crank-mem anatomy *)",
-        ],
+        allow: ["Bash(ls:*)", "Bash(git *)", ...ALLOW_RULES],
       },
     });
   });
@@ -373,17 +330,7 @@ describe("removeAllowRule", () => {
   test("keeps permissions when other keys remain", () => {
     const f = writeSettings({
       permissions: {
-        allow: [
-          "Bash(crank-mem search *)",
-          "Bash(crank-mem timeline *)",
-          "Bash(crank-mem get *)",
-          "Bash(crank-mem outline *)",
-          "Bash(crank-mem unfold *)",
-          "Bash(crank-mem callers *)",
-          "Bash(crank-mem callees *)",
-          "Bash(crank-mem impact *)",
-          "Bash(crank-mem anatomy *)",
-        ],
+        allow: ALLOW_RULES,
         deny: ["x"],
       },
     });
@@ -393,19 +340,7 @@ describe("removeAllowRule", () => {
   test("drops the legacy rule alongside the crank-mem rules", () => {
     const f = writeSettings({
       permissions: {
-        allow: [
-          "Bash(ls:*)",
-          "Bash(crank-mem *)",
-          "Bash(crank-mem search *)",
-          "Bash(crank-mem timeline *)",
-          "Bash(crank-mem get *)",
-          "Bash(crank-mem outline *)",
-          "Bash(crank-mem unfold *)",
-          "Bash(crank-mem callers *)",
-          "Bash(crank-mem callees *)",
-          "Bash(crank-mem impact *)",
-          "Bash(crank-mem anatomy *)",
-        ],
+        allow: ["Bash(ls:*)", "Bash(crank-mem *)", ...ALLOW_RULES],
       },
     });
     expect(removeAllowRule(f)).toBe(true);

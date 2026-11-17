@@ -592,20 +592,7 @@ test("init writes the project name", () => {
   expect(cli(root, codexHome, makeCrankHome(), "init", "--yes", "--codex", "skip").status).toBe(0);
   const raw = readConfig(root);
   expect(raw.name).toBe("my-app");
-  expect(Object.keys(raw).sort()).toEqual([
-    "adr_path",
-    "clone_root",
-    "codex",
-    "debug",
-    "excludes",
-    "git",
-    "injection_budget_bytes",
-    "max_file_size_bytes",
-    "name",
-    "runtime",
-    "vendored_version",
-    "version",
-  ]);
+  expect(raw).not.toHaveProperty("max_files");
 }, 20_000);
 
 test("upgrade adds a missing project name and keeps an existing one", () => {

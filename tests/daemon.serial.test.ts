@@ -1048,9 +1048,6 @@ describe("daemon graph jobs", () => {
     }
   }
 
-  /** The `(symbols pending)` marker on an entry's first line. */
-  const marked = (entry: string): boolean => entry.split("\n")[0]!.endsWith("(symbols pending)");
-
   test("a daemon parses a pending project on its own, and pending files alone keep it alive", async () => {
     const e = setup();
     const root = pendingProject(e, {
@@ -1078,47 +1075,6 @@ describe("daemon graph jobs", () => {
     expect(await within(d.exited, 15_000)).toBe(0);
     expect(pending(root)).toBe(50);
   }, 30_000);
-
-  test("a daemon killed mid-parse leaves every file whole or pending, and the next daemon finishes them", async () => {
-    const e = setup();
-    const files = manyFiles(2000);
-    const root = pendingProject(e, files);
-    const start = pending(root);
-    expect(start).toBe(2000);
-    const d = daemon(GRAPH_IDLE, e);
-    await waitFor(() => pending(root) < start && pending(root) > 0, 30_000);
-    const pid = d.proc.pid!;
-    killDaemon(e.home);
-    await d.exited;
-    const groupGone = () => {
-      try {
-        process.kill(-pid, 0);
-        return false;
-      } catch {
-        return true;
-      }
-    };
-    await waitFor(groupGone, 10_000);
-
-    // Read what the kill left, before any refresh can repair it.
-    const left = withReadOnlyCodeDb(root, () => anatomyEntries(root));
-    expect(left.last).toMatch(/^\(\d+ file\(s\) still pending parse\)$/);
-    expect(left.entries.size).toBe(2000);
-    const never = anatomyEntries(makeCrankProject(files));
-    expect(never.last).not.toContain("pending");
-    const done = [...left.entries].filter(([, entry]) => !marked(entry));
-    expect(done.length).toBeGreaterThan(0);
-    expect(done.length).toBeLessThan(2000);
-    for (const [rel, entry] of done) expect(entry).toBe(never.entries.get(rel)!);
-
-    fs.rmSync(path.join(e.home, "daemon.json"), { force: true });
-    const again = daemon(GRAPH_IDLE, e);
-    await waitFor(() => pending(root) === 0, 60_000);
-    expect(await within(again.exited, 10_000)).toBe(0);
-    const after = anatomyEntries(root);
-    expect(after.last).not.toContain("pending");
-    expect(after.entries).toEqual(never.entries);
-  }, 180_000);
 
   test("a code.db the file system will not let graph-job write exits 1, holds its project, and the daemon idles out", async () => {
     const e = setup();

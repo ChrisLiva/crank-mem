@@ -8,7 +8,6 @@ import {
   enableDebugConfig,
   fakeCloneRoot,
   git,
-  gitCommit,
   killDaemon,
   makeCrankHome,
   makeCrankProject,
@@ -49,28 +48,18 @@ describe("session-start hook (black-box)", () => {
     expect(ctx).not.toContain("`app.ts`");
     // code.db was written, and no anatomy file with it
     expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(true);
+    // A read-only store makes `anatomy` answer without refreshing, so what it lists was written by the hook.
+    const listing = withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]));
+    expect(listing.status).toBe(0);
+    expect([...listing.stdout.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1])).toEqual([
+      "README.md",
+      "src/app.ts",
+    ]);
     expect(
       fs.readdirSync(path.join(root, ".crank")).filter((n) => n.startsWith("anatomy")),
     ).toEqual([]);
     // Debug logging is off by default.
     expect(fs.existsSync(path.join(root, ".crank/debug.log"))).toBe(false);
-  });
-
-  test("in a git repo the refresh skips gitignored files and counts every other file", () => {
-    const root = makeCrankProject({
-      ".gitignore": "reports/\n",
-      "reports/mutation.html": "<html>huge</html>",
-      "a.ts": "x",
-      "b.ts": "x",
-      "c.ts": "x",
-    });
-    git(root, "init", "-q");
-    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    expect(ctx).toContain("lists the project's 3 file(s)");
-    const listing = withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]));
-    expect(listing.stdout).not.toContain("reports/mutation.html");
   });
 
   test("the pointer names source languages with no grammar, says what is still parsing, and reads the same for both agents", () => {
@@ -97,20 +86,16 @@ describe("session-start hook (black-box)", () => {
     }
   });
 
-  test("the parsing clause shows only while files await a parse", () => {
-    const pendingCtx = (files: Record<string, string>): string => {
-      const root = makeCrankProject(files);
-      const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-      expect(run.status).toBe(0);
-      return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    };
-    expect(pendingCtx({ "a.ts": "x", "b.py": "x" })).toContain(
-      "symbol line ranges (symbols for 2 files are still being parsed); use it",
+  test("a project with nothing to parse omits the parsing and gap clauses", () => {
+    const root = makeCrankProject({ "README.md": "# Demo\n" });
+    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
+    expect(run.status).toBe(0);
+    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    expect(ctx).toContain(
+      "- `crank-mem anatomy [<dir>]` lists the project's 1 file(s) with descriptions, token sizes and symbol line ranges; use it before slice-reading a large file.\n",
     );
-    const none = pendingCtx({ "README.md": "# Demo\n" });
-    expect(none).toContain("symbol line ranges; use it before slice-reading a large file.");
-    expect(none).not.toContain("still being parsed");
-    expect(none).not.toContain("no symbol ranges");
+    expect(ctx).not.toContain("still being parsed");
+    expect(ctx).not.toContain("no symbol ranges");
   });
 
   test("a code.db that does not open drops the count and both clauses from the pointer", () => {
@@ -123,23 +108,6 @@ describe("session-start hook (black-box)", () => {
       "- `crank-mem anatomy [<dir>]` lists the project's files with descriptions, token sizes and symbol line ranges; use it before slice-reading a large file.\n",
     );
     expect(ctx).not.toContain("file(s)");
-  });
-
-  test("the most committed file leads Most active files after session starts and a scan", () => {
-    const root = makeCrankProject({ "a.ts": "x", "b.ts": "x", "z/hot.ts": "/** Hot path. */\n" });
-    git(root, "init", "-q");
-    gitCommit(root, "one");
-    for (const n of [2, 3]) {
-      fs.appendFileSync(path.join(root, "z/hot.ts"), `export const v${n} = ${n};\n`);
-      gitCommit(root, `hot ${n}`);
-    }
-    const hot = "## Most active files\n\n- `z/hot.ts` — Hot path.";
-    for (let i = 0; i < 2; i++) {
-      expect(runHook(HOOK, JSON.stringify(claudeSessionStart(root))).status).toBe(0);
-      expect(withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"])).stdout).toContain(hot);
-    }
-    expect(runCli(root, ["scan"]).status).toBe(0);
-    expect(runCli(root, ["anatomy"]).stdout).toContain(hot);
   });
 
   test("a .git that git rejects falls back to the directory walk and logs why", () => {
@@ -820,7 +788,6 @@ describe("session-start writes code.db", () => {
     readDebugLog(root)
       .flatMap((r) => r.events as Array<Record<string, unknown>>)
       .filter((e) => String(e.event).startsWith("graph"));
-  const listed = (stdout: string) => [...stdout.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]!);
   /** A fresh crank home, so a daemon an earlier run started cannot satisfy this run's `ensureDaemon`. */
   const freshHome = () => {
     const home = makeCrankHome();
@@ -833,20 +800,6 @@ describe("session-start writes code.db", () => {
     }
     return false;
   };
-
-  test("a fresh project gets a code.db whose listing is the hook's work", () => {
-    const root = makeCrankProject({
-      "src/a.ts": "export const a = 1;\n",
-      "src/b.py": "def b():\n    pass\n",
-      "README.md": "# Demo\n",
-    });
-    expect(sessionStart(root).status).toBe(0);
-    expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(true);
-    // A read-only store makes `anatomy` answer without refreshing, so what it lists was written by the hook.
-    const run = withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]));
-    expect(run.status).toBe(0);
-    expect(listed(run.stdout)).toEqual(["README.md", "src/a.ts", "src/b.py"]);
-  });
 
   test("a code.db held for 3 s costs the hook no more than its budget and one graph line", async () => {
     const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });

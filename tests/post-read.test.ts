@@ -362,8 +362,11 @@ describe("post-read Used by", () => {
       context(run(long, claudePostRead(long, path.join(long, "src/lib.ts"), TRANSCRIPT))),
     )!;
     expect(Buffer.byteLength(cut)).toBeLessThanOrEqual(512);
-    expect(cut.split("\n").length).toBeGreaterThan(1);
-    expect(cut.split("\n").length).toBeLessThan(6);
+    // The header is 38 B and each line 131 B: three lines and their newlines take 434 B, a fourth would reach 566 B.
+    expect(cut.split("\n")).toEqual([
+      "Used by (crank-mem impact src/lib.ts):",
+      ...names.slice(0, 3).map((n) => `- src/${deep}/${n}.ts (1 call)`),
+    ]);
   }, 20_000);
 
   test("history, Used by and another project's excerpt print in that order under 4,096 bytes, and an unreadable code.db drops only Used by", () => {

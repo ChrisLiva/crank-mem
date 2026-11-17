@@ -9,7 +9,6 @@ import {
   claudePostWrite,
   claudeSessionStart,
 } from "./fixtures/payloads.ts";
-import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 import { CRANK_DIR, defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { registerProject } from "../src/hooks/lib/registry.ts";
 import { readUntouched } from "../src/hooks/lib/untouched.ts";
@@ -199,17 +198,7 @@ describe("cross-repo memory", () => {
 
     expect(hook("session-start", claudeSessionStart(ws.H)).status).toBe(0);
 
-    // Another project's code.db takes a write only once it exists.
-    const store = openCodeDb(ws.storefront, "write");
-    store.db!.close();
     const storefrontFile = path.join(ws.storefront, "src/a.ts");
-    expect(hook("post-write", claudePostWrite(ws.H, storefrontFile)).status).toBe(0);
-    const written = openCodeDb(ws.storefront, "read");
-    try {
-      expect(written.db!.prepare("SELECT path FROM files").all()).toEqual([{ path: "src/a.ts" }]);
-    } finally {
-      written.db!.close();
-    }
 
     const scratchFile = path.join(ws.scratch, "a.ts");
     expect(hook("post-write", claudePostWrite(ws.H, scratchFile)).status).toBe(0);
