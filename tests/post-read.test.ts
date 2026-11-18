@@ -486,3 +486,192 @@ describe("post-read journey: init to Used by", () => {
     }
   }, 60_000);
 });
+
+const LOOKUP_LIB = [
+  "export function loadConfig() {}",
+  "export function saveConfig() {}",
+  "export function unusedThing() {}",
+  "export function dupName() {}",
+  "export interface ConfigShape {}",
+  "",
+].join("\n");
+
+/** A graphed project where two files call `loadConfig`, one calls `saveConfig`, and `dupName` has two definitions. */
+function lookupProject(extra: Record<string, string> = {}, rows = 0): string {
+  return graphed(
+    {
+      "src/lib.ts": LOOKUP_LIB,
+      "src/other.ts": "export function dupName() {}\n",
+      "src/a.ts": caller(["loadConfig"]),
+      "src/b.ts": caller(["loadConfig", "saveConfig"]),
+      ...extra,
+    },
+    rows,
+  );
+}
+
+const callersLine = (name: string, counts: string, at: string) =>
+  `Callers of ${name} (crank-mem callers ${name}): ${counts}; defined at ${at}.`;
+const LOAD = callersLine("loadConfig", "2 call sites in 2 files", "src/lib.ts:1-1");
+const SAVE = callersLine("saveConfig", "1 call site in 1 file", "src/lib.ts:2-2");
+
+/** The project's symbol-lookup usage lines, oldest first, without their time. */
+function lookups(root: string): Array<Record<string, unknown>> {
+  const file = path.join(root, ".crank/usage.jsonl");
+  if (!fs.existsSync(file)) return [];
+  return fs
+    .readFileSync(file, "utf-8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((line) => line.channel === "symbol-lookup")
+    .map(({ ts: _ts, ...rest }) => rest);
+}
+
+const SESSION = "551be959-1111-2222-3333-444455556666";
+const lookupLine = (symbols: string[], shown: string[], bytes: number) => ({
+  v: 1,
+  agent: "claude",
+  session: SESSION,
+  channel: "symbol-lookup",
+  tool: "Bash",
+  symbols,
+  shown,
+  bytes,
+});
+
+describe("post-read callers pointer", () => {
+  test("a grep for a function name adds its callers line with the counts callers prints, once per agent per session", () => {
+    const root = lookupProject();
+    const env = { CRANK_HOME: makeCrankHome() };
+    const grep = (command: string, extra: object = {}) =>
+      run(root, { ...claudePostBash(root, command, TRANSCRIPT), ...extra }, env);
+
+    const first = grep('rg -n "loadConfig" src');
+    expect([first.status, first.stderr]).toEqual([0, ""]);
+    expect(context(first)).toBe(LOAD);
+    const cli = runCli(root, ["callers", "loadConfig"]);
+    expect(cli.status).toBe(0);
+    expect(cli.stdout).toContain("2 call sites in 2 files.");
+
+    expect(grep("git grep -n loadConfig").stdout).toBe("");
+    expect(context(grep("grep -rn 'saveConfig(' src"))).toBe(SAVE);
+    const sub = { agent_id: "sub1", agent_type: "general-purpose" };
+    expect(context(grep("rg loadConfig", sub))).toBe(LOAD);
+    expect(grep("rg loadConfig", sub).stdout).toBe("");
+
+    expect(lookups(root)).toEqual([
+      lookupLine(["loadConfig"], ["loadConfig"], Buffer.byteLength(LOAD)),
+      lookupLine(["loadConfig"], [], 0),
+      lookupLine(["saveConfig"], ["saveConfig"], Buffer.byteLength(SAVE)),
+      lookupLine(["loadConfig"], ["loadConfig"], Buffer.byteLength(LOAD)),
+      lookupLine(["loadConfig"], [], 0),
+    ]);
+  }, 20_000);
+
+  test("names print in pattern order, and an ambiguous, uncalled or stale name prints no line but is recorded", () => {
+    const root = lookupProject();
+    const grep = (command: string) =>
+      run(root, claudePostBash(root, command, TRANSCRIPT), { CRANK_HOME: makeCrankHome() });
+
+    expect(context(grep('rg "\\bsaveConfig\\b|loadConfig" src; rg unusedThing'))).toBe(
+      `${SAVE}\n${LOAD}`,
+    );
+    expect(grep("rg dupName src").stdout).toBe("");
+    expect(grep("rg unusedThing src").stdout).toBe("");
+    expect(runCli(root, ["callers", "unusedThing"]).stdout).toContain("0 call sites in 0 files.");
+
+    const lib = path.join(root, "src/lib.ts");
+    setMtime(lib, fs.statSync(lib).mtimeMs + 5000);
+    const stale = grep("rg loadConfig src");
+    expect([stale.status, stale.stdout, stale.stderr]).toEqual([0, "", ""]);
+
+    expect(lookups(root)).toEqual([
+      lookupLine(
+        ["saveConfig", "loadConfig", "unusedThing"],
+        ["saveConfig", "loadConfig"],
+        Buffer.byteLength(`${SAVE}\n${LOAD}`),
+      ),
+      lookupLine(["dupName"], [], 0),
+      lookupLine(["unusedThing"], [], 0),
+      lookupLine(["loadConfig"], [], 0),
+    ]);
+  }, 20_000);
+
+  test("a grep that names no function, method or class of the graph is silent and records nothing", () => {
+    const root = lookupProject();
+    const commands = [
+      "rg notASymbol src",
+      'rg "loadConfig|notASymbol" src',
+      "rg ConfigShape src",
+      "bun test | grep loadConfig",
+      'rg "function loadConfig" src',
+    ];
+    for (const command of commands) {
+      const r = run(root, claudePostBash(root, command, TRANSCRIPT));
+      expect([command, r.status, r.stdout, r.stderr]).toEqual([command, 0, "", ""]);
+    }
+    const read = run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT));
+    expect([read.status, read.stderr]).toEqual([0, ""]);
+    expect(lookups(root)).toEqual([]);
+
+    const bare = makeCrankProject({ "src/lib.ts": LOOKUP_LIB, "src/a.ts": caller(["loadConfig"]) });
+    const none = run(bare, claudePostBash(bare, "rg loadConfig src", TRANSCRIPT));
+    expect([none.status, none.stdout, none.stderr]).toEqual([0, "", ""]);
+    expect(lookups(bare)).toEqual([]);
+    expect(fs.existsSync(path.join(bare, ".crank/code.db"))).toBe(false);
+  }, 20_000);
+
+  test("a call that reads a file and greps a symbol shows the file's sections, then the callers section", () => {
+    const root = lookupProject({}, 2);
+    const r = run(
+      root,
+      claudePostBash(root, "sed -n 1,5p src/lib.ts; rg -n loadConfig src", TRANSCRIPT),
+    );
+    const sections = context(r).split("\n\n");
+    expect(sections).toHaveLength(3);
+    expect(sections[0]).toStartWith(HISTORY);
+    expect(sections[1]).toStartWith("Used by (crank-mem impact src/lib.ts):\n");
+    expect(sections[2]).toBe(LOAD);
+    expect(lookups(root)).toEqual([
+      lookupLine(["loadConfig"], ["loadConfig"], Buffer.byteLength(LOAD)),
+    ]);
+  }, 20_000);
+
+  test("the section holds only the lines that fit in 512 bytes, and is dropped whole when the call would reach 4,096", () => {
+    const long = [1, 2, 3, 4].map((n) => `longName${n}${"X".repeat(60)}`);
+    const libs = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `l${n}`);
+    const deep = "d".repeat(110);
+    const files: Record<string, string> = {
+      "src/names.ts": long.map((n) => `export function ${n}() {}\n`).join(""),
+      "src/uses.ts": caller(long, "./names"),
+    };
+    for (const lib of libs) {
+      files[`src/${lib}.ts`] = `export function ${lib}Helper() {}\n`;
+      for (const c of [1, 2, 3])
+        files[`src/${deep}/${lib}c${c}.ts`] = caller([`${lib}Helper`], `../${lib}`);
+    }
+    const root = lookupProject(files);
+    const line = (i: number) =>
+      callersLine(long[i]!, "1 call site in 1 file", `src/names.ts:${i + 1}-${i + 1}`);
+    const greps = long.map((n) => `rg ${n} src`).join("; ");
+
+    const fit = context(run(root, claudePostBash(root, greps, TRANSCRIPT)));
+    // Each line is 223 B: two and their newline take 447 B, a third would reach 671 B.
+    expect(fit).toBe(`${line(0)}\n${line(1)}`);
+    expect(Buffer.byteLength(fit)).toBeLessThanOrEqual(512);
+
+    const reads = libs.map((lib) => `sed -n 1p src/${lib}.ts`).join("; ");
+    const alone = context(run(root, claudePostBash(root, reads, TRANSCRIPT)));
+    expect(alone.split("\n\n")).toHaveLength(libs.length);
+    // The fixture must leave no room: the reads' sections plus the callers section reach the cap.
+    expect(Buffer.byteLength(`${alone}\n\n${fit}`)).toBeGreaterThanOrEqual(4096);
+    const both = context(run(root, claudePostBash(root, `${reads}; ${greps}`, TRANSCRIPT)));
+    expect(both).toBe(alone);
+
+    expect(lookups(root)).toEqual([
+      lookupLine(long, long.slice(0, 2), Buffer.byteLength(fit)),
+      lookupLine(long, [], 0),
+    ]);
+  }, 30_000);
+});

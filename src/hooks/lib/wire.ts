@@ -244,6 +244,7 @@ export const USAGE_CHANNELS = [
   "session-start",
   "subagent-start",
   "file-history",
+  "symbol-lookup",
   "search",
   "timeline",
   "get",
@@ -264,6 +265,10 @@ export type UsageMetrics = {
   followThrough: number | null;
   recallReach: number | null;
   surfacedFollowThrough: number | null;
+  /** Callers, callees and impact commands over those commands plus symbol lookups. */
+  graphShare: number | null;
+  /** The share of symbols shown a callers line that the session then asked the graph about. */
+  symbolFollowThrough: number | null;
   topQueries: {
     query: string;
     count: number;

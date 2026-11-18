@@ -271,7 +271,7 @@ Said of an observation that crank-mem has shown to an agent.
 _Avoid_: Hit, returned
 
 **Usage channel**:
-One of the routes by which project memory reaches an agent, which the usage log counts: an injection, file history, or a recall or code-reading command.
+One of the routes by which project memory reaches an agent, which the usage log counts: an injection, file history, the callers section after a symbol lookup, or a recall or code-reading command.
 _Avoid_: Channel (unqualified), source
 
 **Usage log**:
@@ -285,6 +285,18 @@ _Avoid_: Recall rate, adoption
 **Surfaced follow-through**:
 The share of observations surfaced to a Claude session that the session later opened with get or timeline.
 _Avoid_: Follow-through, open rate
+
+**Symbol lookup**:
+A grep an agent runs whose pattern holds only the names of functions, methods or classes in the code graph.
+_Avoid_: Symbol grep, missed call
+
+**Graph share**:
+The share of an agent's symbol questions it put to the code graph: callers, callees and impact commands over those commands plus symbol lookups.
+_Avoid_: Graph adoption, graph rate
+
+**Symbol follow-through**:
+The share of symbols shown a callers pointer to a Claude session that the session later asked the code graph about.
+_Avoid_: Follow-through, hint rate
 
 ### Install
 

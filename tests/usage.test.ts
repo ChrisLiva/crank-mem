@@ -839,6 +839,7 @@ const CHANNELS = [
   "search",
   "session-start",
   "subagent-start",
+  "symbol-lookup",
   "timeline",
   "unfold",
 ];
@@ -1189,6 +1190,8 @@ describe("usageMetrics (in-process)", () => {
       followThrough: null,
       recallReach: null,
       surfacedFollowThrough: null,
+      graphShare: null,
+      symbolFollowThrough: null,
       topQueries: [],
       surfaced: [],
       neverSurfacedShare: 1,
@@ -1312,6 +1315,49 @@ describe("usageMetrics (in-process)", () => {
     expect(metricsOf(lines, 7, true).surfacedFollowThrough).toBe(0.5);
   });
 
+  test("graph share and symbol follow-through count graph questions against symbol lookups", () => {
+    const T = NOW - D;
+    let tick = 0;
+    const line = (session: string | null, rest: object, agent = "claude") => ({
+      v: 1,
+      agent,
+      session,
+      ts: T + 60_000 * tick++,
+      ...rest,
+    });
+    const graph = { path: null, matches: 1, chars: 1, capped: false, pending: 0, outcome: "ok" };
+    const ask = (channel: string, symbol: string | null) => ({ channel, symbol, ...graph, ms: 1 });
+    const lookup = (shown: string[], symbols = shown) => ({
+      channel: "symbol-lookup",
+      tool: "Bash",
+      symbols,
+      shown,
+      bytes: 1,
+    });
+    const lines = [
+      line("S1", ask("callers", "early")),
+      line("S1", lookup(["early", "fooBar", "bazQux"], ["early", "fooBar", "bazQux", "dupName"])),
+      line("S1", lookup(["fooBar"])),
+      line("S1", ask("callers", "fooBar")),
+      line("S1", ask("impact", "Store.bazQux")),
+      line("S1", ask("impact", null)),
+      line("S1", { channel: "anatomy", from: null, ...graph, ms: 1 }),
+      line("S2", ask("callees", "early")),
+      line("S2", lookup(["other"])),
+      line(null, lookup(["noSession"])),
+      line(null, ask("callers", "other"), "manual"),
+    ];
+    // Claude lines: 5 callers, callees and impact against 4 symbol lookups.
+    expect(metricsOf(lines, 7).graphShare).toBeCloseTo(5 / 9);
+    expect(metricsOf(lines, 7, true).graphShare).toBeCloseTo(5 / 9);
+    // Shown pairs: S1 early, fooBar and bazQux, S2 other. S1 then asked about fooBar and bazQux.
+    expect(metricsOf(lines, 7).symbolFollowThrough).toBe(0.5);
+    expect(metricsOf(lines, 7, true).symbolFollowThrough).toBe(0.5);
+    expect(totals(metricsOf(lines, 7))).toEqual(
+      channelCounts({ callers: 2, callees: 1, impact: 2, anatomy: 1, "symbol-lookup": 4 }),
+    );
+  });
+
   test("a child started after a zone test runs in the system zone, or the zone it is given", () => {
     inZone("Asia/Tokyo", () => undefined);
     const zoneOf = (env: NodeJS.ProcessEnv) =>
@@ -1330,6 +1376,7 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
     const home = makeCrankHome();
     const root = registeredCopy(home);
     fs.writeFileSync(path.join(root, "code.ts"), THREE);
+    fs.writeFileSync(path.join(root, "shaped.ts"), "export function shapedName() {}\n");
     const hit = seedMemory(root, [{ title: "Epsilon finding", filesRead: ["a.ts"] }])[0]!;
     const hook = (file: string, payload: object) =>
       runHook(file, JSON.stringify(payload), root, { CRANK_HOME: home });
@@ -1351,6 +1398,7 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
     expect(claude(["unfold", "code.ts", "one"]).status).toBe(0);
     for (const args of [["anatomy"], ["callers", "one"], ["callees", "one"], ["impact", "one"]])
       expect(claude(args).status).toBe(0);
+    expect(hook(READ_HOOK, claudePostBash(root, "rg -n shapedName .", TRANSCRIPT)).status).toBe(0);
     const manual = runCli(root, ["search", "epsilon"], {
       CLAUDECODE: "",
       CLAUDE_CODE_SESSION_ID: "",
@@ -1376,6 +1424,8 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
       { channel: "file-history", shown: [], empty: [{}] },
       { channel: "file-history", shown: [{ path: 7, ids: [hit] }], empty: [] },
       { channel: "search", query: "q", ids: [], session: undefined },
+      { channel: "symbol-lookup", symbols: ["shapedName"] },
+      { channel: "symbol-lookup", symbols: ["shapedName"], shown: [7] },
       { channel: "bogus", ids: [hit] },
     ];
     fs.appendFileSync(
@@ -1390,6 +1440,7 @@ describe("usage capture: the journey's lines reach the usage endpoint", () => {
         "session-start": 1,
         "subagent-start": 1,
         "file-history": 1,
+        "symbol-lookup": 1,
         search: 3,
         timeline: 1,
         get: 1,

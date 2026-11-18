@@ -135,13 +135,15 @@ test("a project whose code graph needs a rebuild shows the status and the comman
   await unmount();
 });
 
-test("the usage view shows recall reach and surfaced follow-through first, and a null figure as a dash", async () => {
+test("the usage view shows the recall tiles, then the graph tiles in a grid of their own, and a null figure as a dash", async () => {
   const zero = Object.fromEntries(USAGE_CHANNELS.map((c) => [c, 0]));
   const perDay = Array.from({ length: 7 }, (_, i) => ({
     date: `2026-11-0${i + 1}`,
     counts: {
       ...zero,
-      ...(i === 0 ? { outline: 1, callers: 2, callees: 1, impact: 1, anatomy: 1 } : {}),
+      ...(i === 0
+        ? { outline: 1, callers: 2, callees: 1, impact: 1, anatomy: 1, "symbol-lookup": 3 }
+        : {}),
     },
   }));
   dom.history.replaceState(null, "", "?view=usage");
@@ -156,6 +158,8 @@ test("the usage view shows recall reach and surfaced follow-through first, and a
         followThrough: null,
         recallReach: 0.5,
         surfacedFollowThrough: null,
+        graphShare: 0.25,
+        symbolFollowThrough: null,
         topQueries: [],
         surfaced: [],
         neverSurfacedShare: null,
@@ -163,10 +167,18 @@ test("the usage view shows recall reach and surfaced follow-through first, and a
       },
     });
     const { page, unmount } = await openPage();
-    const labels = [...tileOf(page, "Searches").parentElement.children].map(
-      (c: any) => c.firstElementChild.textContent,
+    const labelsBeside = (label: string) =>
+      [...tileOf(page, label).parentElement.children].map(
+        (c: any) => c.firstElementChild.textContent,
+      );
+    expect(labelsBeside("Graph share")).toEqual(["Graph share", "Symbol follow-through"]);
+    expect(tileOf(page, "Graph share").parentElement.className).toBe(
+      tileOf(page, "Searches").parentElement.className,
     );
-    expect(labels).toEqual([
+    expect(tile(page, "Graph share")).toBe("25%symbol questions put to the code graph");
+    expect(tile(page, "Symbol follow-through")).toBe("—shown symbols the agent then asked about");
+    expect(page.textContent).toContain("3 injected");
+    expect(labelsBeside("Searches")).toEqual([
       "Recall reach",
       "Surfaced follow-through",
       "Searches",

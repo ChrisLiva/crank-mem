@@ -32,7 +32,7 @@ const KINDS: { key: string; label: string; color: string; channels: UsageChannel
     key: "injected",
     label: "Injected",
     color: "var(--series-1)",
-    channels: ["session-start", "subagent-start", "file-history"],
+    channels: ["session-start", "subagent-start", "file-history", "symbol-lookup"],
   },
   {
     key: "recall",
@@ -158,9 +158,32 @@ export function UsageView({
   );
 }
 
+const STAT_GRID = "grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7";
+
+/** The recall figures, then the code graph's in a grid of their own on the same columns. */
 function Shares({ metrics: m }: { metrics: UsageMetrics }) {
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+    <div className="grid gap-3">
+      <RecallShares metrics={m} />
+      <div className={STAT_GRID}>
+        <Stat
+          label="Graph share"
+          value={percent(m.graphShare)}
+          detail="symbol questions put to the code graph"
+        />
+        <Stat
+          label="Symbol follow-through"
+          value={percent(m.symbolFollowThrough)}
+          detail="shown symbols the agent then asked about"
+        />
+      </div>
+    </div>
+  );
+}
+
+function RecallShares({ metrics: m }: { metrics: UsageMetrics }) {
+  return (
+    <div className={STAT_GRID}>
       <Stat
         label="Recall reach"
         value={percent(m.recallReach)}

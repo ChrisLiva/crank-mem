@@ -159,13 +159,13 @@ function recallReach(lines: UsageLine[]): number | null {
   return share(recalled.size, started.size);
 }
 
-function addId(map: Map<string, Set<number>>, session: string, id: number): void {
+function addId<T>(map: Map<string, Set<T>>, session: string, id: T): void {
   const ids = map.get(session);
   if (ids) ids.add(id);
   else map.set(session, new Set([id]));
 }
 
-function pairCount(map: Map<string, Set<number>>): number {
+function pairCount<T>(map: Map<string, Set<T>>): number {
   return [...map.values()].reduce((n, ids) => n + ids.size, 0);
 }
 
@@ -191,6 +191,39 @@ function surfacedFollowThrough(lines: UsageLine[]): number | null {
 }
 
 /** Searches grouped by normalized query, most run first. */
+type GraphQuestion = Line<"callers"> | Line<"callees"> | Line<"impact">;
+
+/** Whether a line is a command that asks the code graph about a symbol or file: callers, callees or impact. */
+function isGraphQuestion(l: UsageLine): l is GraphQuestion {
+  return l.channel === "callers" || l.channel === "callees" || l.channel === "impact";
+}
+
+/** The share of a Claude agent's symbol questions put to the code graph: graph questions over those plus symbol lookups. */
+function graphShare(lines: UsageLine[]): number | null {
+  const claude = lines.filter((l) => l.agent === "claude");
+  const asked = claude.filter(isGraphQuestion).length;
+  return share(asked, asked + ofChannel(claude, "symbol-lookup").length);
+}
+
+/** The names among `shown` that a line asks the graph about: its symbol as typed, bare or as the last part of a qualified name. */
+function askedNames(l: UsageLine, shown: Set<string> | undefined): string[] {
+  if (!shown || !isGraphQuestion(l) || l.symbol === null) return [];
+  const symbol = l.symbol;
+  return [...shown].filter((name) => symbol === name || symbol.endsWith(`.${name}`));
+}
+
+/** The share of distinct (session, name) pairs shown a callers line that a later graph question in the session asked about. */
+function symbolFollowThrough(lines: UsageLine[]): number | null {
+  const shown = new Map<string, Set<string>>();
+  const asked = new Map<string, Set<string>>();
+  for (const l of lines) {
+    if (l.agent !== "claude" || l.session === null) continue;
+    for (const name of askedNames(l, shown.get(l.session))) addId(asked, l.session, name);
+    for (const name of l.channel === "symbol-lookup" ? l.shown : []) addId(shown, l.session, name);
+  }
+  return share(pairCount(asked), pairCount(shown));
+}
+
 function topQueries(searches: Line<"search">[]): UsageMetrics["topQueries"] {
   const groups = new Map<string, Line<"search">[]>();
   for (const s of searches) {
@@ -257,6 +290,8 @@ export function usageMetrics(events: UsageLine[], opts: MetricsOptions): UsageMe
     followThrough: followed,
     recallReach: recallReach(lines),
     surfacedFollowThrough: surfacedFollowThrough(lines),
+    graphShare: graphShare(lines),
+    symbolFollowThrough: symbolFollowThrough(lines),
     topQueries: queries,
     surfaced,
     neverSurfacedShare: share(opts.observationCount - titles.size, opts.observationCount),

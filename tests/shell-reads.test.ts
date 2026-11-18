@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { shellReadPaths } from "../src/hooks/lib/shell-reads.ts";
+import { shellGrepNames, shellReadPaths } from "../src/hooks/lib/shell-reads.ts";
 
 describe("shellReadPaths", () => {
   test("names the files a read-only shell command reads", () => {
@@ -43,5 +43,43 @@ describe("shellReadPaths", () => {
     ];
     for (const [command, paths] of table)
       expect([command, shellReadPaths(command)]).toEqual([command, paths]);
+  });
+});
+
+describe("shellGrepNames", () => {
+  test("names the identifiers each grep searches for, when its pattern holds nothing else", () => {
+    const table: Array<[string, string[][]]> = [
+      ['rg -n "subagentInjection" src', [["subagentInjection"]]],
+      ["grep -rn 'subagentInjection(' src", [["subagentInjection"]]],
+      ["grep -rn 'subagentInjection\\(' src", [["subagentInjection"]]],
+      ["git grep -n subagentInjection", [["subagentInjection"]]],
+      ["rg \"\\bfooBar\\b|bazQux\" -g '*.ts'", [["fooBar", "bazQux"]]],
+      ["grep -n 'fooBar\\|bazQux\\|read_store' src", [["fooBar", "bazQux", "read_store"]]],
+      ["rg -t ts -e subagentInjection", [["subagentInjection"]]],
+      ["rg -g '*.ts' -A 3 --max-count 5 subagentInjection src", [["subagentInjection"]]],
+      ["rg '^fooBar$'", [["fooBar"]]],
+      ["grep -r fooBar src", [["fooBar"]]],
+      ["cd src && rg fooBar; grep -n bazQux a.ts", [["fooBar"], ["bazQux"]]],
+      ["rg fooBar | head -5", [["fooBar"]]],
+      ["bun test | grep subagentInjection", []],
+      ["cat a.ts | rg fooBar", []],
+      ["bun test || rg fooBar", [["fooBar"]]],
+      ['rg "function subagentInjection"', []],
+      ["rg main", []],
+      ["rg found src", []],
+      ["rg a1B", []],
+      ["rg 'fooBar|plain'", []],
+      ["rg 'aaBb|ccDd|eeFf|ggHh'", []],
+      ["rg 'fooBar.*bazQux'", []],
+      ["rg -g fooBar", []],
+      ["rg", []],
+      ["git log --grep fooBar", []],
+      ["echo 'rg fooBar'", []],
+      ["cat <<'EOF'\nrg fooBar\nEOF", []],
+      ["crank-mem callers fooBar", []],
+      ["", []],
+    ];
+    for (const [command, names] of table)
+      expect([command, shellGrepNames(command)]).toEqual([command, names]);
   });
 });

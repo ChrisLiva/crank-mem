@@ -53,6 +53,15 @@ export type UsageEvent =
       bytes: number;
     }
   | {
+      channel: "symbol-lookup";
+      tool: string;
+      /** Every name the call's greps asked about, in order. */
+      symbols: string[];
+      /** The names whose callers line reached the context. */
+      shown: string[];
+      bytes: number;
+    }
+  | {
       channel: "search";
       query: string;
       limit: number;
@@ -184,7 +193,7 @@ export function cliActor(): UsageActor {
 
 const isIds = (value: unknown): value is number[] =>
   Array.isArray(value) && value.every((id) => typeof id === "number");
-const isPaths = (value: unknown): value is string[] =>
+const isStrings = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((p) => typeof p === "string");
 
 /** Whether a parsed line is a `v: 1` line whose channel is known and whose read fields hold their types. */
@@ -203,10 +212,12 @@ function isUsageLine(line: unknown): line is UsageLine {
       return isIds(line.requested) && isIds(line.found);
     case "file-history":
       return (
-        isPaths(line.empty) &&
+        isStrings(line.empty) &&
         Array.isArray(line.shown) &&
         line.shown.every((s) => isObj(s) && typeof s.path === "string" && isIds(s.ids))
       );
+    case "symbol-lookup":
+      return isStrings(line.symbols) && isStrings(line.shown);
     case "subagent-start":
     case "outline":
     case "unfold":

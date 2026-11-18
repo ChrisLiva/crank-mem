@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type * as sqlite from "node:sqlite";
 import {
   readStdin,
   parsePayload,
@@ -15,13 +16,13 @@ import { CRANK_DIR } from "./lib/config.ts";
 import { debugEvent, safePath } from "./lib/debug.ts";
 import { citationCheck } from "./lib/citations.ts";
 import { readCodeDb } from "./lib/code-db.ts";
-import { callerFiles, parsedAt } from "./lib/code-graph.ts";
+import { callerFiles, callersOf, findSymbols, parsedAt, symbolSets } from "./lib/code-graph.ts";
 import { excerptOf, readCerebrum } from "./lib/injection.ts";
 import { formatLine, memoryPath, readStore, type MemoryReader } from "./lib/memory.ts";
 import { ownerOf, projectName } from "./lib/owner.ts";
 import { rootOfName } from "./lib/registry.ts";
 import { recordUntouched } from "./lib/untouched.ts";
-import { shellReadPaths } from "./lib/shell-reads.ts";
+import { shellGrepNames, shellReadPaths } from "./lib/shell-reads.ts";
 import { transcriptStem } from "./lib/spool.ts";
 import { SEEN_DIR, crankHome } from "./lib/user-state.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
@@ -34,9 +35,11 @@ import type { ObservationLine } from "./lib/wire.ts";
 // for the other projects' files its observations cite, read from those projects'
 // stores and never marked seen. Each read's history and pairs are followed by its
 // "Used by" section (`usedBySection`), the caller files from the owner's code.db,
-// which needs no memory.db and counts toward MAX_CALL_BYTES only. Last comes at
-// most one other project's cerebrum excerpt (`excerptBlock`), once per project per
-// agent per session.
+// which needs no memory.db and counts toward MAX_CALL_BYTES only. After the reads
+// comes the callers section (`symbolLookup`): one line for each function, method or
+// class of the start project's code.db that a Bash grep searched for by name, once
+// per name per agent per session. Last comes at most one other project's cerebrum
+// excerpt (`excerptBlock`), once per project per agent per session.
 // Every path exits 0.
 
 const HISTORY_LINES = 5;
@@ -51,6 +54,11 @@ const USED_BY_BYTES = 512;
 const CEREBRUM_MARK = "cerebrum:";
 /** Marker line prefix for a file whose "Used by" section was shown. */
 const GRAPH_MARK = "graph:";
+const CALLERS_BYTES = 512;
+/** Marker line prefix for a symbol whose callers line was shown. */
+const SYMBOL_MARK = "symbol:";
+/** The symbol kinds whose call sites `crank-mem callers` lists. */
+const CALLABLE_KINDS = new Set(["fn", "method", "class"]);
 
 function readPaths(payload: HookPayload): string[] {
   const input = payload.tool_input ?? {};
@@ -59,6 +67,12 @@ function readPaths(payload: HookPayload): string[] {
   if (payload.tool_name === "Bash")
     return typeof input.command === "string" ? shellReadPaths(input.command) : [];
   return [];
+}
+
+/** The names each grep of a Bash call searches for; none for any other tool. */
+function grepNames(payload: HookPayload): string[][] {
+  const command = payload.tool_name === "Bash" ? payload.tool_input?.command : undefined;
+  return typeof command === "string" ? shellGrepNames(command) : [];
 }
 
 /** The paths a marker holds, one per line; a missing marker holds none. */
@@ -360,6 +374,80 @@ function withUsedBy(
   return { sections, marks };
 }
 
+const counted = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
+/**
+ * `name`'s callers line, with the counts `crank-mem callers <name>` prints. Null when the name has
+ * several definitions (which that command refuses), no resolved call site, or a defining file
+ * whose size or mtime differs from its parse stamp.
+ */
+function callersLine(db: sqlite.DatabaseSync, root: string, name: string): string | null {
+  const sets = symbolSets(findSymbols(db, name));
+  if (sets.length !== 1) return null;
+  const set = sets[0]!;
+  const { path: file, start, end } = set[0]!;
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(path.join(root, file));
+  } catch {
+    return null;
+  }
+  if (!parsedAt(db, file, stat)) return null;
+  const sites = callersOf(db, set).resolved;
+  if (sites.length === 0) return null;
+  const files = new Set(sites.map((site) => site.path)).size;
+  return (
+    `Callers of ${name} (crank-mem callers ${name}): ${counted(sites.length, "call site")} in ` +
+    `${counted(files, "file")}; defined at ${file}:${start}-${end}.`
+  );
+}
+
+/** A call's symbol lookup: every name asked about, the names whose line is shown, and the section. */
+type Lookup = { symbols: string[]; shown: string[]; text: string | null };
+
+/**
+ * The symbol lookup `greps` make in `root`'s code.db: a grep counts when every name it searches for
+ * is a function, method or class there. The section holds the unseen names' callers lines, in
+ * order, until the next would pass CALLERS_BYTES. Null when no grep counts or the store does not open.
+ */
+function symbolLookup(root: string, greps: string[][], seen: string[]): Lookup | null {
+  if (greps.length === 0) return null;
+  return readCodeDb(root, (db) => {
+    if (!db) return null;
+    const callable = (name: string) =>
+      findSymbols(db, name).some((row) => CALLABLE_KINDS.has(row.kind));
+    const symbols = [...new Set(greps.filter((names) => names.every(callable)).flat())];
+    if (symbols.length === 0) return null;
+    const lines: string[] = [];
+    const shown: string[] = [];
+    for (const name of symbols) {
+      const line = seen.includes(SYMBOL_MARK + name) ? null : callersLine(db, root, name);
+      if (line === null) continue;
+      if (Buffer.byteLength([...lines, line].join("\n")) > CALLERS_BYTES) break;
+      lines.push(line);
+      shown.push(name);
+    }
+    return { symbols, shown, text: lines.length > 0 ? lines.join("\n") : null };
+  });
+}
+
+/** The lookup as the call shows it: nothing shown when its section would take the call to MAX_CALL_BYTES. */
+function placeLookup(lookup: Lookup | null, sections: string[]): Lookup | null {
+  if (!lookup || lookup.text === null) return lookup;
+  const fits = Buffer.byteLength([...sections, lookup.text].join(SEP)) < MAX_CALL_BYTES;
+  return fits ? lookup : { ...lookup, shown: [], text: null };
+}
+
+function recordLookup(payload: HookPayload, root: string, lookup: Lookup): void {
+  recordUsage(root, hookActor(payload), {
+    channel: "symbol-lookup",
+    tool: payload.tool_name!,
+    symbols: lookup.symbols,
+    shown: lookup.shown,
+    bytes: lookup.text === null ? 0 : Buffer.byteLength(lookup.text, "utf-8"),
+  });
+}
+
 /** One usage line per store, each with its own paths, bare ids and bytes; the start project always gets one. */
 function recordTallies(
   payload: HookPayload,
@@ -427,7 +515,8 @@ async function main(): Promise<void> {
   if (!payload) return;
 
   const paths = readPaths(payload);
-  if (paths.length === 0) return;
+  const greps = grepNames(payload);
+  if (paths.length === 0 && greps.length === 0) return;
 
   const ctx = projectContext(payload);
   if (!ctx) return;
@@ -436,10 +525,11 @@ async function main(): Promise<void> {
   if (!stem) return;
 
   const reads = resolveReads(ctx.cwd, paths, hookActor(payload).session);
-  if (reads.length === 0) return;
-
   const seenFile = path.join(crankHome(), SEEN_DIR, `${stem}-${agentOf(payload)}.seen`);
   const seen = readSeen(seenFile);
+  const lookup = symbolLookup(ctx.root, greps, seen);
+  if (reads.length === 0 && lookup === null) return;
+
   const isSeen = (r: Read) => seen.includes(r.abs);
   const found = await fetchHistories(reads, isSeen);
 
@@ -447,15 +537,23 @@ async function main(): Promise<void> {
   const pairStores = await fetchPairs(found);
   const assembled = assemble(startStore, reads, found, pairStores, isSeen);
   const { tallies, marked } = assembled;
-  const { sections, marks } = withUsedBy(ctx.root, reads, assembled, seen);
+  const used = withUsedBy(ctx.root, reads, assembled, seen);
+  const callers = placeLookup(lookup, used.sections);
+  const sections = callers?.text ? [...used.sections, callers.text] : used.sections;
   const block = excerptBlock(ctx.root, reads, seen, sections);
   const shown = block ? [...sections, block.text] : sections;
   if (shown.length > 0) {
-    markSeen(seenFile, [...marked.map((r) => r.abs), ...marks, ...(block ? [block.mark] : [])]);
+    markSeen(seenFile, [
+      ...marked.map((r) => r.abs),
+      ...used.marks,
+      ...(callers?.shown ?? []).map((name) => SYMBOL_MARK + name),
+      ...(block ? [block.mark] : []),
+    ]);
     emitAdditionalContext("PostToolUse", shown.join(SEP));
     debugEvent("file-history", { paths: marked.map((r) => safePath(r.rel)) });
   }
   if (found.size > 0) recordTallies(payload, { root: ctx.root, store: startStore }, tallies);
+  if (callers) recordLookup(payload, ctx.root, callers);
 }
 
 await runAdvisoryHook("post-read", main);
