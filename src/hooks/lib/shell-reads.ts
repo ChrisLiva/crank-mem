@@ -72,14 +72,16 @@ const IDENTIFIER_SHAPED = /^[A-Za-z_](?=[A-Za-z0-9_]*[A-Z0-9_])[A-Za-z0-9_]{3,}$
 /** The command with each heredoc body, terminator line included, removed. */
 function dropHeredocs(command: string): string {
   const kept: string[] = [];
-  const pending: string[] = [];
+  const pending: Array<{ terminator: string; stripTabs: boolean }> = [];
   for (const line of command.split("\n")) {
     if (pending.length > 0) {
-      if (line === pending[0]) pending.shift();
+      const { terminator, stripTabs } = pending[0]!;
+      if ((stripTabs ? line.replace(/^\t+/, "") : line) === terminator) pending.shift();
       continue;
     }
     kept.push(line);
-    for (const m of line.matchAll(/<<-?\s*(['"]?)([\w.-]+)\1/g)) pending.push(m[2]!);
+    for (const m of line.matchAll(/(?<!<)<<(-?)(?!<)\s*(['"]?)([\w.-]+)\2/g))
+      pending.push({ terminator: m[3]!, stripTabs: m[1] === "-" });
   }
   return kept.join("\n");
 }
@@ -151,7 +153,7 @@ function readerArgs(rest: string[]): string[] {
   const args: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i]!;
-    if (BARE_REDIRECT.test(w) || w === "<<") i++;
+    if (BARE_REDIRECT.test(w) || w === "<<" || w === "<<<") i++;
     else if (ATTACHED_REDIRECT.test(w) || w === "<" || w.startsWith("<<") || w.startsWith("-"))
       continue;
     else args.push(w);
