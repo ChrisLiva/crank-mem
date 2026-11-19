@@ -7,6 +7,8 @@ import {
   makeCrankHome,
   runHook,
   enableDebugConfig,
+  holdCodeDb,
+  queryCodeDb,
   readDebugLog,
   type DebugRecord,
 } from "./helpers.ts";
@@ -19,22 +21,10 @@ import {
   claudeSubagentStart,
   codexApplyPatch,
 } from "./fixtures/payloads.ts";
-import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 
 const SESSION_START = "src/hooks/session-start.ts";
 const POST_WRITE = "src/hooks/post-write.ts";
 const THROWING = "tests/fixtures/throwing-hook.ts";
-
-/** Hold code.db's write lock so the next writer times out; returns the release. */
-function holdStore(root: string): () => void {
-  const opened = openCodeDb(root, "write");
-  expect(opened.status).toBe("open");
-  opened.db!.exec("BEGIN IMMEDIATE");
-  return () => {
-    opened.db!.exec("ROLLBACK");
-    opened.db!.close();
-  };
-}
 
 describe("debug logging (black-box)", () => {
   test("enabled: one record per hook run, with outcome and duration", () => {
@@ -135,20 +125,14 @@ describe("debug logging (black-box)", () => {
     expect(raw).toContain("<redacted>");
     expect(raw).not.toContain(".env");
     expect(raw).not.toContain("hunter2");
-    const opened = openCodeDb(root, "read");
-    expect(opened.status).toBe("open");
-    try {
-      expect(opened.db!.prepare("SELECT path FROM files WHERE path = '.env'").all()).toEqual([]);
-    } finally {
-      opened.db!.close();
-    }
+    expect(queryCodeDb(root, "SELECT path FROM files WHERE path = '.env'")).toEqual([]);
   });
 
   test("post-write under a held code.db: exit 0, records the skip and no reindex", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     enableDebugConfig(root);
     runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
-    const release = holdStore(root);
+    const release = holdCodeDb(root);
     try {
       const run = runHook(POST_WRITE, JSON.stringify(claudePostWrite(root, "a.ts")));
       expect(run.status).toBe(0);
@@ -245,7 +229,7 @@ describe("debug logging (black-box)", () => {
       enableDebugConfig(root);
       // A held store would stall any writer — reaching it at all is the failure.
       runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
-      const release = holdStore(root);
+      const release = holdCodeDb(root);
       let events: DebugRecord["events"];
       try {
         const run = runHook(

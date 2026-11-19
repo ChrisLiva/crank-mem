@@ -11,6 +11,7 @@ import {
   gitCommit,
   graphProject,
   makeCrankProject,
+  plantCodeDb,
   REPO_ROOT,
   runCli,
   runHook,
@@ -162,15 +163,12 @@ describe("anatomy", () => {
   });
 
   describe("a store it cannot use", () => {
-    const sqliteModule = () => process.getBuiltinModule("node:sqlite") as typeof sqlite;
     const project = () => makeCrankProject({ "a.ts": "export const a = 1;\n" });
 
     test("a store at another schema version, or a garbage one, is rebuilt and the command answers", () => {
       const root = project();
       const file = path.join(root, ".crank/code.db");
-      const db = new (sqliteModule().DatabaseSync)(file);
-      db.exec("PRAGMA journal_mode=WAL; CREATE TABLE files (x); PRAGMA user_version = 99");
-      db.close();
+      plantCodeDb(root, "newer");
       const run = runCli(root, ["anatomy"]);
       expect(run.status).toBe(0);
       expect(pagePaths(run)).toEqual(["a.ts"]);

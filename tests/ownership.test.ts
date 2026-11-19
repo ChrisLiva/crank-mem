@@ -12,8 +12,10 @@ import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 import { projectName } from "../src/hooks/lib/owner.ts";
 import { installedStores, registerProject, rootOfName } from "../src/hooks/lib/registry.ts";
 import {
+  holdCodeDb,
   makeCrankHome,
   makeCrankProject,
+  plantCodeDb,
   runCli,
   runHook,
   seedMemory,
@@ -264,10 +266,7 @@ describe("ownership", () => {
   test("post-write leaves another project's code.db at another schema version alone and creates none", () => {
     const ws = workspace();
     const file = path.join(ws.storefront, CRANK_DIR, "code.db");
-    const sqlite = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
-    const db = new sqlite.DatabaseSync(file);
-    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE files (x); PRAGMA user_version = 99");
-    db.close();
+    plantCodeDb(ws.storefront, "newer");
     const before = fs.readFileSync(file);
     for (const root of [ws.H, ws.storefront, ws.payments]) {
       fs.writeFileSync(path.join(root, "src/n.ts"), "export const n = 1;\n");
@@ -323,14 +322,12 @@ describe("ownership", () => {
 
     // A writer holding the store past the hook's busy wait leaves it as it was.
     const before = indexBytes(ws.storefront);
-    const holder = openCodeDb(ws.storefront, "write");
-    holder.db!.exec("BEGIN IMMEDIATE");
+    const release = holdCodeDb(ws.storefront);
     try {
       const run = postWrite(claudePostWrite(ws.H, path.join(ws.storefront, "src/a.ts")), ws.home);
       expect(run).toMatchObject(silent);
     } finally {
-      holder.db!.exec("ROLLBACK");
-      holder.db!.close();
+      release();
     }
     expect(indexBytes(ws.storefront)).toBe(before);
   }, 15_000);

@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type * as sqlite from "node:sqlite";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 import {
   memoryPath,
   openStoreForWrite,
@@ -373,6 +374,39 @@ export function withReadOnlyCodeDb<T>(root: string, fn: () => T): T {
   } finally {
     for (const file of present()) fs.chmodSync(file, 0o644);
   }
+}
+
+/** The rows `sql` returns from the project's code.db, which must open. */
+export function queryCodeDb<T>(root: string, sql: string, ...params: sqlite.SQLInputValue[]): T[] {
+  const opened = openCodeDb(root, "read");
+  expect(opened.status).toBe("open");
+  try {
+    return opened.db!.prepare(sql).all(...params) as T[];
+  } finally {
+    opened.db!.close();
+  }
+}
+
+/** Plant a WAL code.db at a user_version no crank-mem reads, so every hook and command must leave it alone. */
+export function plantCodeDb(root: string, state: "newer"): void {
+  const file = path.join(root, ".crank", "code.db");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const mod = process.getBuiltinModule("node:sqlite") as typeof sqlite;
+  const db = new mod.DatabaseSync(file);
+  if (state === "newer")
+    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE files (x); PRAGMA user_version = 99");
+  db.close();
+}
+
+/** Hold code.db's write lock so the next writer times out; returns the release. */
+export function holdCodeDb(root: string): () => void {
+  const opened = openCodeDb(root, "write");
+  expect(opened.status).toBe("open");
+  opened.db!.exec("BEGIN IMMEDIATE");
+  return () => {
+    opened.db!.exec("ROLLBACK");
+    opened.db!.close();
+  };
 }
 
 /** Turn on .crank/debug.log for a temp project. */

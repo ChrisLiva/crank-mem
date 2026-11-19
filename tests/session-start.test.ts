@@ -10,6 +10,7 @@ import {
   killDaemon,
   makeCrankHome,
   makeCrankProject,
+  plantCodeDb,
   plantMemory,
   readDaemon,
   readDebugLog,
@@ -725,10 +726,7 @@ describe("session-start writes code.db", () => {
     const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
     enableDebugConfig(root);
     const file = path.join(root, ".crank/code.db");
-    const sqlite = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
-    const db = new sqlite.DatabaseSync(file);
-    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE files (x); PRAGMA user_version = 99");
-    db.close();
+    plantCodeDb(root, "newer");
     const before = fs.readFileSync(file);
     expect(sessionStart(root).status).toBe(0);
     expect(fs.readFileSync(file).equals(before)).toBe(true);

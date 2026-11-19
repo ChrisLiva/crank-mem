@@ -8,6 +8,8 @@ import {
   killDaemon,
   makeCrankHome,
   makeCrankProject,
+  plantCodeDb,
+  queryCodeDb,
   readDaemon,
   readDebugLog,
   runCli,
@@ -21,7 +23,6 @@ import {
   codexApplyPatch,
   claudeSessionStart,
 } from "./fixtures/payloads.ts";
-import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 
 const HOOK = "src/hooks/post-write.ts";
@@ -39,30 +40,20 @@ interface FileRow {
 
 /** The project's code.db `files` rows by path, as the hooks left them. */
 function graphFiles(root: string): Record<string, FileRow> {
-  const opened = openCodeDb(root, "read");
-  expect(opened.status).toBe("open");
-  try {
-    const rows = opened
-      .db!.prepare("SELECT path, description, write_count, churn_rank FROM files")
-      .all() as unknown as (FileRow & { path: string })[];
-    return Object.fromEntries(rows.map((row) => [row.path, row]));
-  } finally {
-    opened.db!.close();
-  }
+  const rows = queryCodeDb<FileRow & { path: string }>(
+    root,
+    "SELECT path, description, write_count, churn_rank FROM files",
+  );
+  return Object.fromEntries(rows.map((row) => [row.path, row]));
 }
 
 /** The repo imports code.db holds for `rel`, in source order. */
 function graphImports(root: string, rel: string): string[] {
-  const opened = openCodeDb(root, "read");
-  expect(opened.status).toBe("open");
-  try {
-    const rows = opened
-      .db!.prepare("SELECT to_path FROM imports WHERE from_path = ? ORDER BY rowid")
-      .all(rel) as { to_path: string }[];
-    return rows.map((row) => row.to_path);
-  } finally {
-    opened.db!.close();
-  }
+  return queryCodeDb<{ to_path: string }>(
+    root,
+    "SELECT to_path FROM imports WHERE from_path = ? ORDER BY rowid",
+    rel,
+  ).map((row) => row.to_path);
 }
 
 describe("post-write hook (black-box)", () => {
@@ -266,10 +257,7 @@ describe("post-write writes code.db", () => {
     const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
     enableDebugConfig(root);
     const file = path.join(root, ".crank/code.db");
-    const sqlite = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
-    const db = new sqlite.DatabaseSync(file);
-    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE files (x); PRAGMA user_version = 99");
-    db.close();
+    plantCodeDb(root, "newer");
     const before = fs.readFileSync(file);
     expect(write(root, "b.ts", "export const b = 1;\n").status).toBe(0);
     expect(fs.readFileSync(file).equals(before)).toBe(true);

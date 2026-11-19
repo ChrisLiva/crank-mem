@@ -6,6 +6,7 @@ import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import {
   ALLOW_RULES,
+  holdCodeDb,
   initedCopy,
   killDaemon,
   makeCrankHome,
@@ -707,16 +708,14 @@ describe("upgrade", () => {
 
   test("a code.db held past its busy wait skips the scan", () => {
     const root = initedCopy(LINKED);
-    const holder = openCodeDb(root, "write");
-    holder.db!.exec("BEGIN IMMEDIATE");
+    const release = holdCodeDb(root);
     try {
       const run = upgradeStopped(root);
       expect(run.status).toBe(0);
       expect(run.stderr.split("\n")).toContain("crank-mem: code.db busy, scan skipped");
       expect(run.stdout).not.toMatch(SCAN_LINE);
     } finally {
-      holder.db!.exec("ROLLBACK");
-      holder.db!.close();
+      release();
     }
   }, 20_000);
 
