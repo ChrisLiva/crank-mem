@@ -95,6 +95,16 @@ const KEYED_ROWS: [string, string][] = [
   ["x-api-key: abc123", "x-api-key: [redacted]"],
   ["MY_APP_SECRET=v4lue", "MY_APP_SECRET=[redacted]"],
   ["SLACK_BOT_TOKEN=v4lue", "SLACK_BOT_TOKEN=[redacted]"],
+  ['password: "correct horse battery staple"', 'password: "[redacted]"'],
+  ["api_key: 'a b'", "api_key: '[redacted]'"],
+  ['{"password": "a b", "user": "bob"}', '{"password": "[redacted]", "user": "bob"}'],
+  ['"token": "x y z"', '"token": "[redacted]"'],
+  ["PGPASSWORD=hunter2 psql", "PGPASSWORD=[redacted] psql"],
+  ["private_key=abc", "private_key=[redacted]"],
+  ["passphrase: abc", "passphrase: [redacted]"],
+  ["CLIENTSECRET=abc", "CLIENTSECRET=[redacted]"],
+  ['password: "abc def', 'password: "[redacted]'],
+  ['password: "abc\nnext line', 'password: "[redacted]\nnext line'],
 ];
 
 describe("redact keyed values", () => {
@@ -119,6 +129,8 @@ describe("redact leaves near-misses alone", () => {
     "refresh_token_ttl=30",
     "input_tokens=12",
     "token-limit: 5",
+    "password_reset_url: https://x.com/a",
+    "tokens: 5",
     "",
   ])("%j", (input) => {
     expect(redact(input)).toBe(input);

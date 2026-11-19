@@ -33,9 +33,11 @@ const PEM =
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g;
 
 // Each keeps group 1 (the key and its punctuation) and masks group 2 (the value).
-// A value runs to the next whitespace, quote, backslash, comma or semicolon.
+// A quoted value runs to its closing quote, a backslash or the end of the line; an
+// unquoted one runs to the next whitespace, quote, backslash, comma or semicolon.
+// Only password, passwd, passphrase and secret take a prefix with no separator (PGPASSWORD).
 const KEYED_VALUES: RegExp[] = [
-  /\b((?:[a-z0-9]+[_-])*(?:password|passwd|pwd|secret|api_key|apikey|api-key|access_token|auth_token|token|aws_secret_access_key|aws_session_token)(?:[_-]key)?\b\\?["']?\s*[:=]\s*\\?["']?)([^\s"'\\,;]+)/gi,
+  /\b((?:[a-z0-9]+[_-])*(?:[a-z0-9]*(?:password|passwd|passphrase|secret)|pwd|private_key|api_key|apikey|api-key|access_token|auth_token|token|aws_secret_access_key|aws_session_token)(?:[_-]key)?\b\\?["']?\s*[:=]\s*\\?["']?)((?<=")[^"\\\r\n]+|(?<=')[^'\\\r\n]+|[^\s"'\\,;]+)/gi,
   /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)([^\s@/]+)(?=@)/gi,
   /\b(authorization\s*:\s*(?:(?:bearer|basic|token|digest)\s+)?)([^\s"'\\,;]+)/gi,
 ];
