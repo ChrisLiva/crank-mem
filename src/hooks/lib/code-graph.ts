@@ -78,23 +78,16 @@ function statements(db: sqlite.DatabaseSync): Statements {
     const stmt = db.prepare(`SELECT ${SYMBOL_COLUMNS} FROM symbols WHERE ${where} ${SYMBOL_ORDER}`);
     return (...args: Arg[]) => stmt.all(...args) as unknown as SymbolRow[];
   };
-  const byId = symbols("id = ?");
-  const inFile = symbols("path = ? AND name = ?");
-  const members = symbols("parent_id = ? AND name = ?");
-  const imported = symbols(
-    "name = ? AND path IN (SELECT to_path FROM imports WHERE from_path = ?)",
-  );
-  const named = symbols("name = ?");
   const sharing = db.prepare(
     `SELECT DISTINCT d.path FROM namespaces d JOIN namespaces c ON c.namespace = d.namespace
      WHERE d.role = 'declares' AND c.path = ?`,
   );
   const made: Statements = {
-    byId: (id) => byId(id),
-    inFile: (file, name) => inFile(file, name),
-    members: (parentId, name) => members(parentId, name),
-    imported: (name, from) => imported(name, from),
-    named: (name) => named(name),
+    byId: symbols("id = ?"),
+    inFile: symbols("path = ? AND name = ?"),
+    members: symbols("parent_id = ? AND name = ?"),
+    imported: symbols("name = ? AND path IN (SELECT to_path FROM imports WHERE from_path = ?)"),
+    named: symbols("name = ?"),
     sharingNamespace: (file) => (sharing.all(file) as { path: string }[]).map((r) => r.path),
   };
   prepared.set(db, made);
@@ -203,33 +196,21 @@ function uniqueDefinition(s: Statements, call: CallRow): Found | null {
 }
 
 /**
- * The one definition a call reaches. The first of its steps with any candidate decides: two or
- * more distinct `(path, qualified)` candidates there resolve nothing.
+ * The call site with the one definition it reaches. The first of the resolution steps with any
+ * candidate decides: two or more distinct `(path, qualified)` candidates there resolve nothing.
  */
-function resolveCall(
-  db: sqlite.DatabaseSync,
-  call: CallRow,
-): { target: SymbolRow; how: How } | null {
+function resolveCall(db: sqlite.DatabaseSync, call: CallRow): Site {
   const s = statements(db);
   const caller = call.callerId === null ? null : (s.byId(call.callerId)[0] ?? null);
   const decided = sameFile(s, call, caller) ?? viaImports(s, call) ?? uniqueDefinition(s, call);
-  if (decided === null || decided.sets.length !== 1) return null;
-  return { target: decided.sets[0]![0]!, how: decided.how };
-}
-
-function siteOf(
-  db: sqlite.DatabaseSync,
-  call: CallRow,
-  resolution: { target: SymbolRow; how: How } | null,
-): Site {
-  const caller = call.callerId === null ? null : (statements(db).byId(call.callerId)[0] ?? null);
+  const resolved = decided?.sets.length === 1 ? decided : null;
   return {
     path: call.path,
     line: call.line,
     caller,
     callee: call.callee,
-    target: resolution?.target ?? null,
-    how: resolution?.how ?? null,
+    target: resolved?.sets[0]![0]! ?? null,
+    how: resolved?.how ?? null,
   };
 }
 
@@ -241,13 +222,10 @@ export function callersOf(db: sqlite.DatabaseSync, set: SymbolRow[]): Sites {
     .all(symbol.name) as unknown as CallRow[];
   const sites: Sites = { resolved: [], unresolved: [] };
   for (const call of calls) {
-    const resolution = resolveCall(db, call);
-    if (resolution === null) sites.unresolved.push(siteOf(db, call, null));
-    else if (
-      resolution.target.path === symbol.path &&
-      resolution.target.qualified === symbol.qualified
-    )
-      sites.resolved.push(siteOf(db, call, resolution));
+    const site = resolveCall(db, call);
+    if (site.target === null) sites.unresolved.push(site);
+    else if (site.target.path === symbol.path && site.target.qualified === symbol.qualified)
+      sites.resolved.push(site);
   }
   return sites;
 }
@@ -266,8 +244,8 @@ export function calleesOf(db: sqlite.DatabaseSync, set: SymbolRow[]): Sites {
     .all(...set.map((row) => row.id)) as unknown as CallRow[];
   const sites: Sites = { resolved: [], unresolved: [] };
   for (const call of calls) {
-    const resolution = resolveCall(db, call);
-    (resolution === null ? sites.unresolved : sites.resolved).push(siteOf(db, call, resolution));
+    const site = resolveCall(db, call);
+    (site.target === null ? sites.unresolved : sites.resolved).push(site);
   }
   return sites;
 }
