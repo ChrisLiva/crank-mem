@@ -49,6 +49,8 @@ export interface GraphRefresh {
   reason?: string;
   /** Parseable files still unparsed; 0 when the store was not opened to write. */
   pending: number;
+  /** False when git's listing outlasted its budget, so the file list was not refreshed. */
+  listed?: boolean;
 }
 
 const DEFAULT_BUSY_MS = 2000;
@@ -91,9 +93,13 @@ export async function refreshGraph(
     return { status, reason: opened.reason ?? opened.status, pending: 0 };
   }
   try {
-    refreshFileFacts(root, config, db, options.deadlineMs);
+    const { listed } = refreshFileFacts(root, config, db, options.deadlineMs);
     const outcome = await parsePending(root, config, db, options);
-    return { status: outcome === "no-parser" ? "no-parser" : "open", pending: pendingCount(db) };
+    return {
+      status: outcome === "no-parser" ? "no-parser" : "open",
+      pending: pendingCount(db),
+      listed,
+    };
   } catch (err) {
     // A writer held the lock past the busy wait: the files not yet committed stay pending.
     if (!isBusy(err)) throw err;

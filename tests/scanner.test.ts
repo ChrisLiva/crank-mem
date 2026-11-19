@@ -156,7 +156,7 @@ describe("walkProject in a git repo", () => {
       const before = filesIn(db);
       expect(before).toContain("a.ts");
       const result = withSlowLsFiles(() => refreshFileFacts(root, config, db, Date.now() + 1000));
-      expect(result).toEqual({ changed: 0, added: 0, removed: 0, partial: true });
+      expect(result).toEqual({ changed: 0, added: 0, removed: 0, partial: true, listed: false });
       expect(filesIn(db)).toEqual(before);
     } finally {
       db.close();
@@ -314,6 +314,7 @@ describe("refreshFileFacts", () => {
         added: 2,
         removed: 1,
         partial: false,
+        listed: true,
       });
       expect(filesIn(db)).toEqual(["a.ts", "c.ts", "d.ts"]);
     } finally {

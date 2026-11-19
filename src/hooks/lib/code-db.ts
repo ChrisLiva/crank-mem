@@ -284,6 +284,8 @@ export interface FactsRefresh {
   removed: number;
   /** True when the deadline passed before every new or changed file was read. */
   partial: boolean;
+  /** False when git's listing outlasted its budget, so no row was touched. */
+  listed: boolean;
 }
 
 /**
@@ -299,7 +301,7 @@ export function refreshFileFacts(
   deadlineMs: number,
 ): FactsRefresh {
   const walked = walkProject(root, config, deadlineMs);
-  if (!walked) return { changed: 0, added: 0, removed: 0, partial: true };
+  if (!walked) return { changed: 0, added: 0, removed: 0, partial: true, listed: false };
   const known = new Map<string, { size: number; mtimeMs: number }>();
   const rows = db.prepare("SELECT path, size, mtime_ms FROM files").all() as {
     path: string;
@@ -310,7 +312,13 @@ export function refreshFileFacts(
   const listed = new Set(walked);
   const gone = [...known.keys()].filter((rel) => !listed.has(rel));
   if (gone.length > 0) transaction(db, () => deletePaths(db, gone));
-  const result: FactsRefresh = { changed: 0, added: 0, removed: gone.length, partial: false };
+  const result: FactsRefresh = {
+    changed: 0,
+    added: 0,
+    removed: gone.length,
+    partial: false,
+    listed: true,
+  };
   transaction(db, () => {
     for (const rel of walked) {
       if (Date.now() >= deadlineMs) {

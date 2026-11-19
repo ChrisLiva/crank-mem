@@ -43,6 +43,12 @@ export async function run(_args: string[]): Promise<number> {
       console.error(`crank-mem: .crank/code.db is not writable (${refreshed.reason})`);
       return 1;
     }
+    if (refreshed.listed === false) {
+      console.error(
+        "crank-mem: git ls-files timed out, so the file list was not refreshed — try again.",
+      );
+      return 1;
+    }
     if (refreshed.status === "no-parser") {
       // The file facts are recorded; like `outline`, only the parse needs the packages, so scan still succeeds.
       console.error(
