@@ -9,7 +9,8 @@ import { isObj, type CrankConfig } from "../hooks/lib/config.ts";
 // command references .crank/hooks/. Files are written as 2-space JSON.
 //
 // Every function here that takes `beforeWrite` calls it before any write, writes
-// only when something changed, and returns whether it wrote.
+// only when something changed, and returns whether it wrote. The one exception:
+// `ensureCrankGitignore` passes only an existing file to `beforeWrite`.
 
 export const CRANK_HOOK_MARKER = ".crank/hooks/";
 

@@ -71,7 +71,7 @@ export function toPosix(p: string): string {
   return p.split(path.sep).join("/");
 }
 
-/** Orders strings by UTF-16 code unit, the one order every sorted list of paths and names here keeps. */
+/** Orders strings by UTF-16 code unit, independent of locale. */
 export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Stat-free name gate: excluded, binary or lockfile paths are never indexable. */

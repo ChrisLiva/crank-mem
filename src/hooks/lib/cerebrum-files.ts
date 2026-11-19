@@ -13,12 +13,12 @@ import { debugEvent } from "./debug.ts";
 export const PRUNE_LINE_LIMIT = 150;
 export const PRUNE_TOKEN_LIMIT = 3000;
 
+export const BACKUPS_DIR = "backups";
+export const MANIFEST_FILE = "manifest.json";
 // backupCerebrum copies cerebrum.md here so an edit that cuts a load-bearing
 // entry can be undone. No manifest.json, so `uninstall --restore` never
 // mistakes this dir for an init/upgrade backup (cli/backups.ts);
 // `uninstall --delete-crank` removes it by name.
-export const BACKUPS_DIR = "backups";
-export const MANIFEST_FILE = "manifest.json";
 export const BACKUP_DIR = path.join(BACKUPS_DIR, "cerebrum");
 export const CEREBRUM_FILE = "cerebrum.md";
 // Where superseded entries go; never injected.
