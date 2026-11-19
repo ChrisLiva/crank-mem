@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { openCodeDb } from "../src/hooks/lib/code-db.ts";
-import { makeCrankProject, runCli } from "./helpers.ts";
+import { makeCrankProject, queryCodeDb, runCli } from "./helpers.ts";
 
 const ONE_LINE = "export const v = 1;\n";
 
@@ -12,29 +11,23 @@ interface GraphFile {
 }
 
 /** What `scan` left in code.db for each file: its repo imports and, for C#, its namespaces, in source order. */
-function readGraph(root: string): Record<string, any> {
-  const opened = openCodeDb(root, "read");
-  expect(opened.status).toBe("open");
-  const db = opened.db!;
-  try {
-    const files: Record<string, GraphFile> = {};
-    for (const row of db.prepare("SELECT path FROM files").all() as { path: string }[])
-      files[row.path] = {};
-    for (const row of db.prepare("SELECT from_path, to_path FROM imports ORDER BY rowid").all() as {
-      from_path: string;
-      to_path: string;
-    }[])
-      (files[row.from_path]!.imports ??= []).push(row.to_path);
-    for (const row of db
-      .prepare("SELECT path, namespace, role FROM namespaces ORDER BY rowid")
-      .all() as { path: string; namespace: string; role: "declares" | "uses" }[]) {
-      const namespaces = (files[row.path]!.namespaces ??= {});
-      (namespaces[row.role] ??= []).push(row.namespace);
-    }
-    return files;
-  } finally {
-    db.close();
+function readGraph(root: string): Record<string, GraphFile> {
+  const files: Record<string, GraphFile> = {};
+  for (const row of queryCodeDb<{ path: string }>(root, "SELECT path FROM files"))
+    files[row.path] = {};
+  for (const row of queryCodeDb<{ from_path: string; to_path: string }>(
+    root,
+    "SELECT from_path, to_path FROM imports ORDER BY rowid",
+  ))
+    (files[row.from_path]!.imports ??= []).push(row.to_path);
+  for (const row of queryCodeDb<{ path: string; namespace: string; role: "declares" | "uses" }>(
+    root,
+    "SELECT path, namespace, role FROM namespaces ORDER BY rowid",
+  )) {
+    const namespaces = (files[row.path]!.namespaces ??= {});
+    (namespaces[row.role] ??= []).push(row.namespace);
   }
+  return files;
 }
 
 function scanIndex(files: Record<string, string>, outside?: (root: string) => void) {
@@ -42,7 +35,7 @@ function scanIndex(files: Record<string, string>, outside?: (root: string) => vo
   outside?.(root);
   const run = runCli(root, ["scan"]);
   expect(run.status).toBe(0);
-  return { root, index: { files: readGraph(root) } };
+  return readGraph(root);
 }
 
 describe("TS/JS imports", () => {
@@ -96,12 +89,12 @@ describe("TS/JS imports", () => {
   files["src/many.ts"] = numbers.map((n) => `import "./m/f${n}";\n`).join("");
   for (const n of numbers) files[`src/m/f${n}.ts`] = ONE_LINE;
   files["src/big.ts"] = 'import { b } from "./b";\n' + "// pad\n".repeat(37450);
-  const { index } = scanIndex(files, (root) =>
+  const graph = scanIndex(files, (root) =>
     fs.writeFileSync(path.join(root, "..", `${outsideName}.ts`), ONE_LINE),
   );
 
   test("resolve and record in source order, and a file with nothing to resolve records none", () => {
-    expect(index.files["src/a.ts"].imports).toEqual([
+    expect(graph["src/a.ts"]?.imports).toEqual([
       "src/b.ts",
       "src/side.ts",
       "lib/util/index.ts",
@@ -112,38 +105,38 @@ describe("TS/JS imports", () => {
       "src/both.js",
       "src/view.tsx",
     ]);
-    expect(index.files["tests/x.test.ts"].imports).toEqual(["src/b.ts"]);
-    expect(index.files["gen/g.ts"].imports).toEqual(["src/b.ts"]);
-    expect(index.files["src/c.cjs"].imports).toEqual(["src/b.ts"]);
-    expect(index.files["src/d.mjs"].imports).toEqual(["src/b.ts"]);
+    expect(graph["tests/x.test.ts"]?.imports).toEqual(["src/b.ts"]);
+    expect(graph["gen/g.ts"]?.imports).toEqual(["src/b.ts"]);
+    expect(graph["src/c.cjs"]?.imports).toEqual(["src/b.ts"]);
+    expect(graph["src/d.mjs"]?.imports).toEqual(["src/b.ts"]);
     // A file with no resolvable imports, or of an unsupported extension, carries no imports key.
-    expect(index.files["src/b.ts"]).toBeDefined();
-    expect("imports" in index.files["src/b.ts"]).toBe(false);
-    expect(index.files["notes.md"]).toBeDefined();
-    expect("imports" in index.files["notes.md"]).toBe(false);
+    expect(graph["src/b.ts"]).toBeDefined();
+    expect(graph["src/b.ts"]).not.toHaveProperty("imports");
+    expect(graph["notes.md"]).toBeDefined();
+    expect(graph["notes.md"]).not.toHaveProperty("imports");
   });
 
   test("at most 50 entries, the first 50 in source order", () => {
-    const imports = index.files["src/many.ts"].imports;
+    const imports = graph["src/many.ts"]?.imports;
     expect(imports).toHaveLength(50);
-    expect(imports[0]).toBe("src/m/f01.ts");
-    expect(imports[49]).toBe("src/m/f50.ts");
+    expect(imports?.[0]).toBe("src/m/f01.ts");
+    expect(imports?.[49]).toBe("src/m/f50.ts");
   });
 
   test("a file longer than 262,144 UTF-16 code units records no imports", () => {
     expect(files["src/big.ts"]!.length).toBeGreaterThan(262_144);
-    expect(index.files["src/big.ts"]).toBeDefined();
-    expect("imports" in index.files["src/big.ts"]).toBe(false);
+    expect(graph["src/big.ts"]).toBeDefined();
+    expect(graph["src/big.ts"]).not.toHaveProperty("imports");
   });
 });
 
 test("a specifier through a regular file costs only that specifier", () => {
-  const { index } = scanIndex({
+  const graph = scanIndex({
     "src/a.ts": 'import { b } from "./b";\nimport { x } from "./data/x";\n',
     "src/b.ts": ONE_LINE,
     "src/data": "not a directory\n",
   });
-  expect(index.files["src/a.ts"].imports).toEqual(["src/b.ts"]);
+  expect(graph["src/a.ts"]?.imports).toEqual(["src/b.ts"]);
 });
 
 test("Python imports resolve relative and absolute modules, falling back to the package", () => {
@@ -172,8 +165,8 @@ test("Python imports resolve relative and absolute modules, falling back to the 
   ]) {
     files[rel] = "x = 1\n";
   }
-  const { index } = scanIndex(files);
-  expect(index.files["pkg/mod.py"].imports).toEqual([
+  const graph = scanIndex(files);
+  expect(graph["pkg/mod.py"]?.imports).toEqual([
     "pkg/sib.py",
     "top.py",
     "pkg/sub.py",
@@ -182,8 +175,8 @@ test("Python imports resolve relative and absolute modules, falling back to the 
     "pkg/deep/__init__.py",
     "pkg/__init__.py",
   ]);
-  expect(index.files["pkg/sib.py"]).toBeDefined();
-  expect("imports" in index.files["pkg/sib.py"]).toBe(false);
+  expect(graph["pkg/sib.py"]).toBeDefined();
+  expect(graph["pkg/sib.py"]).not.toHaveProperty("imports");
 });
 
 test("Go imports link every non-test file of a module package of at most 10 files", () => {
@@ -210,21 +203,21 @@ test("Go imports link every non-test file of a module package of at most 10 file
   const ten = Array.from({ length: 10 }, (_, i) => `ten/f${String(i).padStart(2, "0")}.go`);
   for (const rel of ten) files[rel] = "package x\n";
   for (let i = 0; i <= 10; i++) files[`big/f${String(i).padStart(2, "0")}.go`] = "package x\n";
-  const { index } = scanIndex(files);
-  expect(index.files["util/a_test.go"]).toBeDefined();
-  expect(index.files["cmd/main.go"].imports).toEqual(["util/a.go", "util/b.go", ...ten]);
-  expect(index.files["sub/x/x.go"].imports).toEqual(["sub/y/y.go"]);
+  const graph = scanIndex(files);
+  expect(graph["util/a_test.go"]).toBeDefined();
+  expect(graph["cmd/main.go"]?.imports).toEqual(["util/a.go", "util/b.go", ...ten]);
+  expect(graph["sub/x/x.go"]?.imports).toEqual(["sub/y/y.go"]);
 });
 
 test("a Go import path through a regular file costs only that import path", () => {
-  const { index } = scanIndex({
+  const graph = scanIndex({
     "go.mod": "module example.com/app\n",
     "pkg/p.go": "package p\n",
     data: "not a directory\n",
     "cmd/main.go":
       'package main\nimport (\n    "example.com/app/data/x"\n    "example.com/app/pkg"\n)\n',
   });
-  expect(index.files["cmd/main.go"].imports).toEqual(["pkg/p.go"]);
+  expect(graph["cmd/main.go"]?.imports).toEqual(["pkg/p.go"]);
 });
 
 test("an unreadable go.mod costs only the importing file its imports", () => {
@@ -241,7 +234,7 @@ test("an unreadable go.mod costs only the importing file its imports", () => {
     if (process.getuid?.() === 0) return;
     const files = readGraph(root);
     expect(files["cmd/main.go"]).toBeDefined();
-    expect("imports" in files["cmd/main.go"]!).toBe(false);
+    expect(files["cmd/main.go"]).not.toHaveProperty("imports");
   } finally {
     fs.chmodSync(goMod, 0o644);
   }
@@ -273,17 +266,17 @@ test("Rust mod declarations and crate paths resolve to the module files", () => 
   ]) {
     files[rel] = "pub fn f() {}\n";
   }
-  const { index } = scanIndex(files);
-  expect(index.files["src/lib.rs"].imports).toEqual([
+  const graph = scanIndex(files);
+  expect(graph["src/lib.rs"]?.imports).toEqual([
     "src/net/mod.rs",
     "src/util.rs",
     "src/util/helpers.rs",
     "src/net/tcp.rs",
     "src/net/udp.rs",
   ]);
-  expect(index.files["src/util.rs"].imports).toEqual(["src/util/helpers.rs"]);
-  expect(index.files["src/net/mod.rs"].imports).toEqual(["src/net/tcp.rs"]);
-  expect(index.files["crates/k/src/main.rs"].imports).toEqual(["crates/k/src/m.rs"]);
+  expect(graph["src/util.rs"]?.imports).toEqual(["src/util/helpers.rs"]);
+  expect(graph["src/net/mod.rs"]?.imports).toEqual(["src/net/tcp.rs"]);
+  expect(graph["crates/k/src/main.rs"]?.imports).toEqual(["crates/k/src/m.rs"]);
 });
 
 test("C/C++ quoted includes resolve beside the file, else from the project root", () => {
@@ -298,9 +291,9 @@ test("C/C++ quoted includes resolve beside the file, else from the project root"
     "src/x.cpp": '#include "x.hpp"\n',
   };
   for (const rel of ["src/util.h", "include/api.h", "src/x.hpp"]) files[rel] = "int f(void);\n";
-  const { index } = scanIndex(files);
-  expect(index.files["src/main.c"].imports).toEqual(["src/util.h", "include/api.h"]);
-  expect(index.files["src/x.cpp"].imports).toEqual(["src/x.hpp"]);
+  const graph = scanIndex(files);
+  expect(graph["src/main.c"]?.imports).toEqual(["src/util.h", "include/api.h"]);
+  expect(graph["src/x.cpp"]?.imports).toEqual(["src/x.hpp"]);
 });
 
 test("C# files record declared and used namespaces, never imports", () => {
@@ -323,22 +316,22 @@ test("C# files record declared and used namespaces, never imports", () => {
     "src/Many.cs": numbers.map((n) => `using N${n};\n`).join(""),
     "src/Big.cs": "using App.Core;\n" + "// pad\n".repeat(37450),
   };
-  const { index } = scanIndex(files);
+  const graph = scanIndex(files);
   expect(files["src/Big.cs"]!.length).toBe(262_166);
-  expect(index.files["src/Core/A.cs"].namespaces).toEqual({ declares: ["App.Core"] });
-  expect(index.files["src/Data/B.cs"].namespaces).toEqual({
+  expect(graph["src/Core/A.cs"]?.namespaces).toEqual({ declares: ["App.Core"] });
+  expect(graph["src/Data/B.cs"]?.namespaces).toEqual({
     declares: ["App.Data"],
     uses: ["App.Core", "App.Util"],
   });
-  expect(index.files["src/C.cs"].namespaces).toEqual({ uses: ["System"] });
-  expect(index.files["src/D.cs"]).toBeDefined();
-  expect("namespaces" in index.files["src/D.cs"]).toBe(false);
-  const many = index.files["src/Many.cs"].namespaces.uses;
+  expect(graph["src/C.cs"]?.namespaces).toEqual({ uses: ["System"] });
+  expect(graph["src/D.cs"]).toBeDefined();
+  expect(graph["src/D.cs"]).not.toHaveProperty("namespaces");
+  const many = graph["src/Many.cs"]?.namespaces?.uses;
   expect(many).toHaveLength(50);
-  expect(many[49]).toBe("N50");
-  expect(index.files["src/Big.cs"]).toBeDefined();
-  expect("namespaces" in index.files["src/Big.cs"]).toBe(false);
-  for (const rel of Object.keys(files)) expect("imports" in index.files[rel]).toBe(false);
+  expect(many?.[49]).toBe("N50");
+  expect(graph["src/Big.cs"]).toBeDefined();
+  expect(graph["src/Big.cs"]).not.toHaveProperty("namespaces");
+  for (const rel of Object.keys(files)) expect(graph[rel]).not.toHaveProperty("imports");
 });
 
 test("TS/JS aliases resolve through the nearest tsconfig or jsconfig paths and baseUrl", () => {
@@ -356,7 +349,7 @@ test("TS/JS aliases resolve through the nearest tsconfig or jsconfig paths and b
     "  } /* end */,",
     "}",
   ].join("\n");
-  const { index } = scanIndex({
+  const graph = scanIndex({
     "web/tsconfig.json": tsconfig,
     "web/src/app.ts": [
       'import { api } from "@/api";',
@@ -380,19 +373,19 @@ test("TS/JS aliases resolve through the nearest tsconfig or jsconfig paths and b
     "js/main.js": 'import { x } from "~/x";\nimport y from "lib/x";\n',
     "js/lib/x.js": ONE_LINE,
   });
-  expect(index.files["web/src/app.ts"].imports).toEqual([
+  expect(graph["web/src/app.ts"]?.imports).toEqual([
     "web/src/api.ts",
     "web/other/x.ts",
     "web/fallback/util.ts",
     "web/src/exact.ts",
     "web/components/button.tsx",
   ]);
-  expect(index.files["server/main.ts"]).not.toHaveProperty("imports");
-  expect(index.files["js/main.js"].imports).toEqual(["js/lib/x.js"]);
+  expect(graph["server/main.ts"]).not.toHaveProperty("imports");
+  expect(graph["js/main.js"]?.imports).toEqual(["js/lib/x.js"]);
 });
 
 test("a named import also links the file declaring each name behind the module's re-exports", () => {
-  const { index } = scanIndex({
+  const graph = scanIndex({
     "src/index.ts": [
       'export { alpha } from "./alpha";',
       'export { beta as renamed } from "./beta";',
@@ -430,7 +423,7 @@ test("a named import also links the file declaring each name behind the module's
     ].join("\n"),
     "src/from-side.ts": ONE_LINE,
   });
-  expect(index.files["src/use.ts"].imports).toEqual([
+  expect(graph["src/use.ts"]?.imports).toEqual([
     "src/index.ts",
     "src/alpha.ts",
     "src/beta.ts",
