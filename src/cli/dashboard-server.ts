@@ -283,19 +283,19 @@ async function usage(root: string, params: URLSearchParams): Promise<Answer> {
       : line,
   );
   const opts = { nowMs: Date.now(), days, manual: manual === "1" };
-  const body = await storeBody(root, (memory) =>
+  const read = await readStore(root, (memory) =>
     usageMetrics(events, {
       ...opts,
       titles: (ids) => new Map(memory.get(ids).map((o) => [o.id, o.title])),
       observationCount: memory.stats(EMBED_MODEL, 0).observations,
     }),
   );
-  if (!("note" in body)) return { status: 200, body };
+  if (read.status === "open") return { status: 200, body: read.value };
   return {
     status: 200,
     body: {
       ...usageMetrics(events, { ...opts, titles: () => new Map(), observationCount: 0 }),
-      note: body.note,
+      note: STORE_TEXT[read.status].note,
     },
   };
 }
