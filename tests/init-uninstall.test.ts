@@ -98,9 +98,7 @@ describe("init → uninstall round-trip", () => {
       expect(fs.existsSync(path.join(root, ".crank/hooks", hook))).toBe(true);
     const codexHooks = JSON.parse(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf-8"));
     expect(codexHooks.hooks.PostToolUse[0].matcher).toBe("apply_patch");
-    expect(fs.readFileSync(path.join(root, ".codex/config.toml"), "utf-8")).toContain(
-      "hooks = true",
-    );
+    expect(fs.existsSync(path.join(root, ".codex/config.toml"))).toBe(false);
     expect(fs.readFileSync(path.join(root, ".git/info/exclude"), "utf-8")).toContain(".crank/");
     // data dir
     expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(true);
@@ -598,29 +596,25 @@ describe("init → uninstall round-trip", () => {
     );
   });
 
-  test("surgical uninstall deletes a now-empty .gitignore and .codex/config.toml crank-mem created", () => {
+  test("surgical uninstall deletes a now-empty .gitignore crank-mem created", () => {
     const { root, codexHome } = makeProject();
     const before = snapshot(root);
     expect(
       cli(root, codexHome, "init", "--yes", "--git", "ignore", "--codex", "merge").status,
     ).toBe(0);
     const r = fs.realpathSync(root);
-    // A later record saying both files existed: only the earliest entry may decide.
+    // A later record saying the file existed: only the earliest entry may decide.
     plantLaterManifest(
       root,
       JSON.stringify({
         createdAt: "2999-01-01T00-00-00-000Z",
-        entries: [
-          { original: path.join(r, ".gitignore"), backupFile: "0-.gitignore" },
-          { original: path.join(r, ".codex/config.toml"), backupFile: "1-config.toml" },
-        ],
+        entries: [{ original: path.join(r, ".gitignore"), backupFile: "0-.gitignore" }],
       }),
     );
     const un = cli(root, codexHome, "uninstall", "--yes", "--delete-crank");
     expect(un.status).toBe(0);
     expect(snapshot(root)).toEqual(before);
     expect(un.stdout).toContain("  deleted now-empty .gitignore\n");
-    expect(un.stdout).toContain("  deleted now-empty .codex/config.toml\n");
   }, 20_000);
 
   test("surgical uninstall keeps a blank .gitignore and .codex/config.toml that existed before install", () => {

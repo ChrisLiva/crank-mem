@@ -526,9 +526,17 @@ const repairCases: {
   },
   {
     name: "Codex [features]",
-    damage: (root) => fs.rmSync(path.join(root, ".codex/config.toml")),
-    files: (root) => [path.join(root, ".codex/config.toml")],
-    line: "  added the crank-mem [features] snippet to .codex/config.toml",
+    damage: (root) =>
+      fs.writeFileSync(
+        path.join(root, ".codex/config.toml"),
+        "[features]\nhooks = false\n\n# crank-mem\n[features]\nhooks = true\n",
+      ),
+    files: () => [],
+    line: "  removed the old crank-mem [features] snippet from .codex/config.toml",
+    extra: (root) =>
+      expect(fs.readFileSync(path.join(root, ".codex/config.toml"), "utf-8")).toBe(
+        "[features]\nhooks = false\n",
+      ),
   },
   {
     name: "Codex trust",
@@ -725,12 +733,9 @@ test("upgrade leaves current trust entries alone and sweeps an orphan", () => {
 test("upgrade after uninstall --keep-crank reinstalls every item", () => {
   const p = project();
   initIn(p);
-  const files = [
-    ".claude/settings.local.json",
-    ".codex/hooks.json",
-    ".codex/config.toml",
-    ".git/info/exclude",
-  ].map((rel) => path.join(p.root, rel));
+  const files = [".claude/settings.local.json", ".codex/hooks.json", ".git/info/exclude"].map(
+    (rel) => path.join(p.root, rel),
+  );
   const recorded = files.map((f) => fs.readFileSync(f));
   expect(uninstallIn(p).failed).toBe(false);
   expect(upgradeIn(p).failed).toBe(false);

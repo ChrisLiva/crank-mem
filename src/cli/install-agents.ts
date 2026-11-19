@@ -2,7 +2,6 @@ import * as path from "node:path";
 import {
   addAllowRule,
   crankHooks,
-  ensureCodexFeatures,
   hasCrankHooks,
   isCrankHookCommand,
   mergeHooksIntoFile,
@@ -103,19 +102,22 @@ export const claudeWiring: InstallItem = {
   },
 };
 
+// Strips the [features] snippet older releases appended to .codex/config.toml.
 // Trust is rewritten only when an entry is missing or outdated or an older
 // release's PascalCase orphan is present, so an install already trusted keeps
 // its config.toml untouched. Callers skip this for a skip install.
 function ensureCodexWiring(ctx: InstallContext): {
   merged: boolean;
-  featured: boolean;
+  unfeatured: boolean;
+  emptied: string | null;
   trusted: boolean;
 } {
-  const { root, config } = ctx;
+  const { root, crankDir, config } = ctx;
   const backup = backupWith(ctx);
   const { codexHooks, codexConfig } = installPaths(root);
   const merged = mergeHooksIntoFile(codexHooks, crankHooks(config.runtime, "codex"), backup);
-  const featured = ensureCodexFeatures(codexConfig, backup);
+  const unfeatured = removeCodexFeatures(codexConfig, backup);
+  const emptied = unfeatured ? deleteNowEmpty(root, crankDir, codexConfig, isBlank) : null;
   let trusted = false;
   if (config.codex === "trust") {
     const s = codexTrustStatus(userCodexConfigPath(), root, codexHooks);
@@ -125,7 +127,7 @@ function ensureCodexWiring(ctx: InstallContext): {
       trusted = true;
     }
   }
-  return { merged, featured, trusted };
+  return { merged, unfeatured, emptied, trusted };
 }
 
 export const codexWiring: InstallItem = {
@@ -146,15 +148,16 @@ export const codexWiring: InstallItem = {
     if (config.codex === "skip") return r;
     const { codexHooks, codexConfig } = installPaths(root);
     attemptRepair(r, "re-wire Codex hooks", () => {
-      const { merged, featured, trusted } = ensureCodexWiring(ctx);
+      const { merged, unfeatured, emptied, trusted } = ensureCodexWiring(ctx);
       if (merged) {
         r.lines.push(`  re-wired Codex hooks in ${path.relative(root, codexHooks)}`);
         if (config.codex === "review") r.lines.push(...CODEX_REVIEW_HINT);
       }
-      if (featured)
+      if (unfeatured)
         r.lines.push(
-          `  added the crank-mem [features] snippet to ${path.relative(root, codexConfig)}`,
+          `  removed the old crank-mem [features] snippet from ${path.relative(root, codexConfig)}`,
         );
+      pushLine(r.lines, emptied);
       if (trusted) r.lines.push("  recomputed Codex trusted_hash entries");
     });
     return r;

@@ -62,8 +62,8 @@ The last check and these settings live in `~/.crank/update.json`.
 wrote to the current form, and removes crank hooks from the Claude settings
 file the git mode does not use, since wiring in both runs every hook twice.
 It brings every item back to the choices init recorded in `.crank/config.json`:
-when init wired Codex it re-wires `.codex/hooks.json` and the `[features]`
-snippet in `.codex/config.toml`, it re-vendors `.crank/hooks/` whenever it differs from the running crank-mem,
+when init wired Codex it re-wires `.codex/hooks.json` and removes the `[features]`
+snippet older releases appended to `.codex/config.toml`, it re-vendors `.crank/hooks/` whenever it differs from the running crank-mem,
 and it re-seeds a missing `cerebrum.md`. When init recorded `--codex-trust write`, it
 recomputes the trusted hashes only when one is missing or outdated. A failed
 repair prints a warning, every other repair still runs, and the upgrade exits 1.

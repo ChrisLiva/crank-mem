@@ -10,7 +10,6 @@ import {
   removeCrankHooksFromFile,
   addIgnoreLines,
   removeIgnoreLines,
-  ensureCodexFeatures,
   removeCodexFeatures,
   addAllowRule,
   removeAllowRule,
@@ -395,20 +394,13 @@ describe("ignore lines", () => {
 });
 
 describe("codex features toml", () => {
-  test("appends and removes exactly our snippet", () => {
+  test("removes exactly the old snippet and leaves the user's [features] table", () => {
     const f = tmpFile("config.toml");
-    fs.writeFileSync(f, 'model = "gpt-5.6"\n');
-    ensureCodexFeatures(f);
-    expect(fs.readFileSync(f, "utf-8")).toContain("[features]\nhooks = true");
-    ensureCodexFeatures(f); // idempotent
-    expect(fs.readFileSync(f, "utf-8").match(/hooks = true/g)!.length).toBe(1);
-    removeCodexFeatures(f);
-    expect(fs.readFileSync(f, "utf-8")).toBe('model = "gpt-5.6"\n');
-  });
-  test("respects pre-existing hooks = true", () => {
-    const f = tmpFile("config.toml");
-    fs.writeFileSync(f, "[features]\nhooks = true\n");
-    ensureCodexFeatures(f);
-    expect(fs.readFileSync(f, "utf-8")).toBe("[features]\nhooks = true\n");
+    const user = "[features]\nweb_search = true\n";
+    fs.writeFileSync(f, user + "\n# crank-mem\n[features]\nhooks = true\n");
+    expect(removeCodexFeatures(f)).toBe(true);
+    expect(fs.readFileSync(f, "utf-8")).toBe(user);
+    expect(removeCodexFeatures(f)).toBe(false);
+    expect(fs.readFileSync(f, "utf-8")).toBe(user);
   });
 });

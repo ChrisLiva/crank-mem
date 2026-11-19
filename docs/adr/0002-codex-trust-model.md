@@ -5,6 +5,7 @@ Amended 2026-07-19 against rust-v0.144.6 source (byte-identical to 0.144.5 in
 `hooks/`, `config/`, `features/`): the original `[features]` finding and two
 hash-formula key names were wrong; corrected below, and `codex-trust.ts`
 fixed to match.
+Amended 2026-11-18: crank-mem no longer writes the `[features]` snippet and `upgrade` removes the old one; see Findings item 1.
 Amended 2026-11-07: `uninstall --restore` no longer replays `~/.codex/config.toml`; see Decision.
 
 ## Findings
@@ -21,6 +22,16 @@ or repo root, not only the exact dir). Hooks additionally require:
    these versions (kept as a harmless belt-and-suspenders; `features` is
    not on the project-layer config denylist, so the project file can
    toggle it either way once trusted).
+   **Amended 2026-11-18:** the snippet was not harmless. Codex 0.169.0
+   fails to load a config with two `[features]` tables (`duplicate key`),
+   which the snippet causes beside a user's own `[features]` table, and an
+   explicit `[features] hooks = false` turns hooks off (`codex features
+   list` shows `hooks stable false`). So crank-mem no longer writes the
+   snippet, and `upgrade` removes the old one. Method:
+   `CODEX_HOME=<tmp> codex features list` over each config. Version floor:
+   the `hooks` feature is `default_enabled: true` from 0.144.5 (the
+   2026-07-19 amendment above), so a Codex older than 0.144.5 needs
+   `[features] hooks = true` added by hand.
 2. Per-hook trust in the USER config.toml (only the user/session layers can
    supply trust — `hooks/src/config_rules.rs`):
    `[hooks.state."<abs hooks.json path>:<event_key>:<group_idx>:<handler_idx>"]
