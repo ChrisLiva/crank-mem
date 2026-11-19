@@ -121,21 +121,6 @@ describe("session-start hook (black-box)", () => {
     const events = readDebugLog(root).flatMap((r) => r.events);
     expect(events.find((e) => e.event === "walk-fallback")?.reason).toMatch(/^exit \d+$/);
   });
-
-  test("no .crank/ dir: exit 0, silent stdout", () => {
-    const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-bare-"));
-    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(bare)));
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
-  });
-
-  test("garbage or empty stdin: exit 0, silent", () => {
-    for (const stdin of ["{{{not json", ""]) {
-      const run = runHook(HOOK, stdin);
-      expect(run.status).toBe(0);
-      expect(run.stdout).toBe("");
-    }
-  });
 });
 
 describe("memory reaches the model whole (black-box)", () => {

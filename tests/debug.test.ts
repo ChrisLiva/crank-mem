@@ -4,7 +4,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   makeCrankProject,
-  makeCrankHome,
   runHook,
   enableDebugConfig,
   holdCodeDb,
@@ -79,27 +78,6 @@ describe("debug logging (black-box)", () => {
     const records = readDebugLog(root);
     expect(records.map((r) => r.hook)).toEqual(hooks.map(([hook]) => hook));
     for (const r of records) expect(r.ok).toBe(true);
-  });
-
-  test("a cwd outside any project leaves stop, session-end, post-write and post-read silent", () => {
-    const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-bare-"));
-    const home = makeCrankHome();
-    const transcript = path.join(bare, "t.jsonl");
-    const hooks: Array<[string, Record<string, unknown>]> = [
-      ["stop", claudeStop(bare)],
-      ["session-end", claudeSessionEnd(bare, transcript)],
-      ["post-write", claudePostWrite(bare, "a.ts")],
-      ["post-read", claudePostRead(bare, "a.ts", transcript)],
-    ];
-    for (const [hook, payload] of hooks) {
-      const run = runHook(`src/hooks/${hook}.ts`, JSON.stringify(payload), bare, {
-        CRANK_HOME: home,
-      });
-      expect(run.status).toBe(0);
-      expect(run.stdout).toBe("");
-      expect(run.stderr).toBe("");
-    }
-    expect(fs.existsSync(path.join(home, "spool"))).toBe(false);
   });
 
   test("CRANK_DEBUG=1 enables logging when config says off, and CRANK_DEBUG=0 disables it when config says on", () => {

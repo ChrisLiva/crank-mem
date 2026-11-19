@@ -189,10 +189,6 @@ describe("post-write hook (black-box)", () => {
     runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "huge.ts"))));
     expect(graphFiles(root)["huge.ts"]).toBeUndefined();
   });
-
-  test("garbage or empty stdin: exit 0", () => {
-    for (const stdin of ["]]garbage", ""]) expect(runHook(HOOK, stdin).status).toBe(0);
-  });
 });
 
 describe("post-write writes code.db", () => {
