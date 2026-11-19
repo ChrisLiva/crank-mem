@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { errorMessage, readJsonObject } from "../hooks/lib/config.ts";
-import { pidAlive } from "../hooks/lib/lock.ts";
+import { pidAlive, release, stealIfBody } from "../hooks/lib/lock.ts";
 import { daemonAlive, readDaemonState } from "../hooks/lib/spool.ts";
 import { crankHome, ensureCrankHome } from "../hooks/lib/user-state.ts";
 import { TOKEN_FILE } from "./dashboard.ts";
@@ -26,23 +26,26 @@ export const DEFAULT_BIN_DIR = path.join(os.homedir(), ".local/bin");
 /** A version usable as a dir name under `versions/`, the same test install.sh applies. */
 const VERSION_NAME = /^[0-9A-Za-z][0-9A-Za-z.+-]*$/;
 
-/** Creates the lock holding this pid; replaces a lock whose pid is dead or unreadable. */
+/**
+ * Creates the lock holding this pid; replaces a lock whose pid is dead or unreadable. Three
+ * attempts let a lone caller clear an abandoned steal marker, steal, then create.
+ */
 function takeLock(file: string): boolean {
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       fs.writeFileSync(file, String(process.pid), { flag: "wx" });
       return true;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
-    let holder = NaN;
+    let seen: string;
     try {
-      holder = Number(fs.readFileSync(file, "utf-8").trim());
+      seen = fs.readFileSync(file, "utf-8");
     } catch {
-      // Gone between the create and the read: the next attempt takes it.
+      continue; // Gone between the create and the read: the next attempt takes it.
     }
-    if (pidAlive(holder)) return false;
-    fs.rmSync(file, { force: true });
+    if (pidAlive(Number(seen.trim()))) return false;
+    stealIfBody(file, seen);
   }
   return false;
 }
@@ -54,7 +57,7 @@ async function withToolLock<T>(fn: () => Promise<T>): Promise<T | "locked"> {
   try {
     return await fn();
   } finally {
-    fs.rmSync(file, { force: true });
+    release(file, String(process.pid));
   }
 }
 

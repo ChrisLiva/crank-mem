@@ -100,6 +100,34 @@ export function trySteal(lockPath: string): void {
 }
 
 /**
+ * Remove a lock only while it still holds `seen`, the body the caller judged stale. Stealers
+ * take `<lock>.steal` with "wx" first, so one at a time reads and removes: while the marker is
+ * held, nothing else can replace a dead owner's lock, and a stealer that saw an older body finds
+ * the new one and leaves it. A marker older than STALE_MS belongs to a stealer that died; it is
+ * removed and this call steals nothing, so the caller retries.
+ */
+export function stealIfBody(lockPath: string, seen: string): void {
+  const marker = `${lockPath}.steal`;
+  try {
+    fs.writeFileSync(marker, String(process.pid), { flag: "wx" });
+  } catch {
+    try {
+      if (Date.now() - fs.statSync(marker).mtimeMs > STALE_MS) trySteal(marker);
+    } catch {}
+    return; // Another stealer is at work, or the marker was abandoned.
+  }
+  try {
+    if (fs.readFileSync(lockPath, "utf-8") === seen) fs.unlinkSync(lockPath);
+  } catch {
+    // Gone: nothing to steal.
+  } finally {
+    try {
+      fs.unlinkSync(marker);
+    } catch {}
+  }
+}
+
+/**
  * Run `fn` while holding `lockFile` in `crankDir`. Returns fn's result, or
  * null if the lock could not be acquired within `budgetMs` (caller must
  * degrade gracefully — skip the update, never block).
@@ -149,7 +177,7 @@ export function withLock<T>(
 }
 
 /** Removes the lock only while it holds `ours`; a lock another process took stays with it. */
-function release(lockPath: string, ours: string): void {
+export function release(lockPath: string, ours: string): void {
   try {
     if (fs.readFileSync(lockPath, "utf-8") !== ours) return;
   } catch {

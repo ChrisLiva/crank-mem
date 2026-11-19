@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { withLock } from "../src/hooks/lib/lock.ts";
+import { stealIfBody, withLock } from "../src/hooks/lib/lock.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "crank-lock-"));
@@ -96,5 +96,17 @@ describe("withLock", () => {
     const old = new Date(Date.now() - 60_000);
     fs.utimesSync(lockPath, old, old);
     expect(withLock(dir, 2000, () => "stolen", LOCK)).toBe("stolen");
+  });
+
+  test("stealIfBody keeps a lock whose body is not the one seen, and removes one that is", () => {
+    const dir = tmpDir();
+    const lockPath = path.join(dir, LOCK);
+    fs.writeFileSync(lockPath, String(process.ppid));
+    stealIfBody(lockPath, "999999");
+    expect(fs.readFileSync(lockPath, "utf-8")).toBe(String(process.ppid));
+    expect(fs.readdirSync(dir)).toEqual([LOCK]);
+    fs.writeFileSync(lockPath, "999999");
+    stealIfBody(lockPath, "999999");
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 });
