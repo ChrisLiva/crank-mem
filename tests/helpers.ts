@@ -791,8 +791,8 @@ export function killDaemon(crankHome: string): void {
 }
 
 /**
- * A `clone_root` whose `bin/crank-mem` only records that it ran. A daemon started under a stop
- * state leaves no trace once it exits, so a test that no daemon started reads this record instead.
+ * A `clone_root` whose `bin/crank-mem` only records that it ran. A daemon that starts under a
+ * stop state exits without a trace, so a test that no daemon started reads this record instead.
  */
 export function fakeCloneRoot(): { root: string; starts(): number } {
   const root = tempDir("crank-fake-clone-");

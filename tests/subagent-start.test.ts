@@ -12,8 +12,8 @@ import {
 } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, INJECTION_HEADING, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
-import { claudeSessionStart, claudeSubagentStart } from "./fixtures/payloads.ts";
-import { workspace } from "./workspace.ts";
+import { claudeSubagentStart } from "./fixtures/payloads.ts";
+import { linkedProjectCitationScenario } from "./hook-scenarios.ts";
 
 const HOOK = "src/hooks/subagent-start.ts";
 
@@ -133,25 +133,10 @@ describe("subagent-start hook (black-box)", () => {
   });
 
   test("a bullet citing a linked project's file reads that project's code.db", () => {
-    const ws = workspace();
-    seedMemory(ws.H, [], { links: ["payments-api"] });
-    const env = { CRANK_HOME: ws.home };
-    const start = runHook(
-      "src/hooks/session-start.ts",
-      JSON.stringify(claudeSessionStart(ws.payments)),
-      ws.payments,
-      env,
+    linkedProjectCitationScenario(
+      (root, env) => runHook(HOOK, JSON.stringify(claudeSubagentStart(root, "Explore")), root, env),
+      { linkedIndexUnchanged: false },
     );
-    expect(start.status).toBe(0);
-    const bullet = "- **Pay**: see `payments-api/src/a.ts` (2020-01-01).";
-    fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bullet}\n`);
-
-    const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(ws.H, "Explore")), ws.H, env);
-    const ctx = hookContext(run);
-    expect(ctx).toContain(
-      `${bullet} [cited file modified after this note; check: payments-api/src/a.ts]`,
-    );
-    expect(ctx).not.toContain("[cited file missing");
   });
 
   test("a store whose queries throw after it opens still prints the excerpt, its citations read at home, and no recall pointer", () => {

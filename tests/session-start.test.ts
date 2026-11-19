@@ -6,14 +6,10 @@ import { spawn } from "node:child_process";
 import {
   REPO_ROOT,
   enableDebugConfig,
-  fakeCloneRoot,
   hookContext,
-  killDaemon,
   makeCrankHome,
   makeCrankProject,
-  plantCodeDb,
   plantMemory,
-  readDaemon,
   readDebugLog,
   runCli,
   runHook,
@@ -21,6 +17,7 @@ import {
   spoolEntry,
   stopDigests,
   tempDir,
+  waitFor,
   withReadOnlyCodeDb,
 } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
@@ -29,6 +26,11 @@ import { openStoreForWrite } from "../src/hooks/lib/memory.ts";
 import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import { claudeSessionStart, claudeSubagentStart, codexSessionStart } from "./fixtures/payloads.ts";
 import { workspace } from "./workspace.ts";
+import {
+  codeDbAtNewerVersionIsLeftAlone,
+  linkedProjectCitationScenario,
+  parseableWriteStartsDaemonUnlessStopped,
+} from "./hook-scenarios.ts";
 
 const HOOK = "src/hooks/session-start.ts";
 
@@ -640,42 +642,17 @@ describe("linked projects (black-box)", () => {
   });
 
   test("a bullet citing a linked project's file reads that project's code.db", () => {
-    const ws = workspace();
-    seedMemory(ws.H, [], { links: ["payments-api"] });
-    injectIn(ws.payments, ws.home);
-    const bullet = "- **Pay**: see `payments-api/src/a.ts` (2020-01-01).";
-    fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bullet}\n`);
-    const linkedIndex = path.join(ws.payments, ".crank/code.db");
-    const before = fs.readFileSync(linkedIndex);
-
-    const ctx = injectIn(ws.H, ws.home);
-    expect(ctx).toContain(
-      `${bullet} [cited file modified after this note; check: payments-api/src/a.ts]`,
+    linkedProjectCitationScenario(
+      (root, env) =>
+        runHook(HOOK, JSON.stringify(claudeSessionStart(root)), root, { ...env, TZ: "UTC" }),
+      { linkedIndexUnchanged: true },
     );
-    expect(ctx).not.toContain("[cited file missing");
-    expect(fs.readFileSync(linkedIndex).equals(before)).toBe(true);
   });
 });
 
 describe("session-start writes code.db", () => {
   const sessionStart = (root: string, env: Record<string, string> = {}) =>
     runHook(HOOK, JSON.stringify(claudeSessionStart(root)), undefined, env);
-  const graphEvents = (root: string) =>
-    readDebugLog(root)
-      .flatMap((r) => r.events)
-      .filter((e) => String(e.event).startsWith("graph"));
-  /** A fresh crank home, so a daemon an earlier run started cannot satisfy this run's `ensureDaemon`. */
-  const freshHome = () => {
-    const home = makeCrankHome();
-    return { home, env: { CRANK_HOME: home } };
-  };
-  const startsDaemon = async (home: string): Promise<boolean> => {
-    for (let waited = 0; waited < 5000; waited += 100) {
-      if (typeof readDaemon(home)?.heartbeatMs === "number") return true;
-      await Bun.sleep(100);
-    }
-    return false;
-  };
 
   test("a code.db held for 3 s costs the hook no more than its budget and one graph line", async () => {
     const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
@@ -688,9 +665,7 @@ describe("session-start writes code.db", () => {
       { stdio: "ignore" },
     );
     try {
-      for (let waited = 0; !fs.existsSync(ready) && waited < 5000; waited += 20)
-        await Bun.sleep(20);
-      expect(fs.existsSync(ready)).toBe(true);
+      await waitFor(() => fs.existsSync(ready), 5000);
       const logged = readDebugLog(root).length;
       const started = Date.now();
       const run = sessionStart(root);
@@ -706,37 +681,10 @@ describe("session-start writes code.db", () => {
   });
 
   test("a code.db at another schema version is left byte-identical", () => {
-    const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
-    enableDebugConfig(root);
-    const file = path.join(root, ".crank/code.db");
-    plantCodeDb(root, "newer");
-    const before = fs.readFileSync(file);
-    expect(sessionStart(root).status).toBe(0);
-    expect(fs.readFileSync(file).equals(before)).toBe(true);
-    const events = graphEvents(root);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ event: "graph-skip", status: "rebuild" });
+    codeDbAtNewerVersionIsLeftAlone(sessionStart);
   });
 
   test("a pending file starts the daemon with digests off, and a stop state keeps it down", async () => {
-    const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
-    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), clone_root: REPO_ROOT });
-    const started = freshHome();
-    try {
-      expect(sessionStart(root, started.env).status).toBe(0);
-      expect(await startsDaemon(started.home)).toBe(true);
-    } finally {
-      killDaemon(started.home);
-    }
-
-    // A daemon that starts under a stop state exits without a trace, so a recording clone_root stands in.
-    const fake = fakeCloneRoot();
-    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), clone_root: fake.root });
-    const stopped = freshHome();
-    stopDigests(stopped.home);
-    expect(sessionStart(root, stopped.env).status).toBe(0);
-    await Bun.sleep(1500);
-    expect(fake.starts()).toBe(0);
-    expect(readDaemon(stopped.home)).toBeNull();
+    await parseableWriteStartsDaemonUnlessStopped(sessionStart);
   });
 });

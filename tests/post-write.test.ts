@@ -1,29 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import {
-  REPO_ROOT,
-  enableDebugConfig,
-  fakeCloneRoot,
-  killDaemon,
-  makeCrankHome,
-  makeCrankProject,
-  plantCodeDb,
-  queryCodeDb,
-  readDaemon,
-  readDebugLog,
-  runCli,
-  runHook,
-  stopDigests,
-  withReadOnlyCodeDb,
-} from "./helpers.ts";
+import { makeCrankProject, queryCodeDb, runCli, runHook, withReadOnlyCodeDb } from "./helpers.ts";
 import {
   claudePostWrite,
   claudePostEdit,
   codexApplyPatch,
   claudeSessionStart,
 } from "./fixtures/payloads.ts";
-import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
+import {
+  codeDbAtNewerVersionIsLeftAlone,
+  parseableWriteStartsDaemonUnlessStopped,
+} from "./hook-scenarios.ts";
 
 const HOOK = "src/hooks/post-write.ts";
 
@@ -254,45 +242,15 @@ describe("post-write writes code.db", () => {
   });
 
   test("a code.db at another schema version is left byte-identical", () => {
-    const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
-    enableDebugConfig(root);
-    const file = path.join(root, ".crank/code.db");
-    plantCodeDb(root, "newer");
-    const before = fs.readFileSync(file);
-    expect(write(root, "b.ts", "export const b = 1;\n").status).toBe(0);
-    expect(fs.readFileSync(file).equals(before)).toBe(true);
-    const graph = readDebugLog(root)
-      .flatMap((r) => r.events)
-      .filter((e) => String(e.event).startsWith("graph"));
-    expect(graph).toHaveLength(1);
-    expect(graph[0]).toMatchObject({ event: "graph-skip", status: "rebuild" });
+    codeDbAtNewerVersionIsLeftAlone((root, env) =>
+      write(root, "b.ts", "export const b = 1;\n", env),
+    );
   });
 
   test("a parseable write starts the daemon unless a stop state is set", async () => {
-    const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
-    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), clone_root: REPO_ROOT });
-    // Each run has its own crank home: a daemon the first started would satisfy the second's ensureDaemon.
-    const started = makeCrankHome();
-    try {
-      expect(write(root, "b.ts", "export const b = 1;\n", { CRANK_HOME: started }).status).toBe(0);
-      let alive = false;
-      for (let waited = 0; !alive && waited < 5000; waited += 100) {
-        alive = typeof readDaemon(started)?.heartbeatMs === "number";
-        if (!alive) await Bun.sleep(100);
-      }
-      expect(alive).toBe(true);
-    } finally {
-      killDaemon(started);
-    }
-
-    // A daemon that starts under a stop state exits without a trace, so a recording clone_root stands in.
-    const fake = fakeCloneRoot();
-    saveConfig(path.join(root, ".crank"), { ...defaultConfig(), clone_root: fake.root });
-    const stopped = makeCrankHome();
-    stopDigests(stopped);
-    expect(write(root, "c.ts", "export const c = 1;\n", { CRANK_HOME: stopped }).status).toBe(0);
-    await Bun.sleep(1500);
-    expect(fake.starts()).toBe(0);
-    expect(readDaemon(stopped)).toBeNull();
+    let written = 0;
+    await parseableWriteStartsDaemonUnlessStopped((root, env) =>
+      write(root, `w${written++}.ts`, "export const w = 1;\n", env),
+    );
   });
 });
