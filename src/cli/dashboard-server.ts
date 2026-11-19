@@ -44,6 +44,7 @@ const COOKIE = "crank_dashboard";
 const UNAUTHORIZED_BODY = "crank-mem dashboard: open the URL that `crank-mem dashboard` printed.\n";
 const FORBIDDEN_HOST_BODY = "crank-mem dashboard: forbidden host.\n";
 const INTERNAL_ERROR_BODY = "crank-mem dashboard: internal error.\n";
+const BAD_REQUEST_BODY = "crank-mem dashboard: bad request.\n";
 const SECURITY_HEADERS = {
   "X-Frame-Options": "DENY",
   "X-Content-Type-Options": "nosniff",
@@ -330,6 +331,20 @@ function unauthorized(res: http.ServerResponse): void {
   res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" }).end(UNAUTHORIZED_BODY);
 }
 
+function answerInternalError(res: http.ServerResponse): void {
+  if (res.headersSent) return void res.destroy();
+  res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" }).end(INTERNAL_ERROR_BODY);
+}
+
+/** The request target as a URL, or null when it is none, such as `//`. */
+function parseUrl(req: http.IncomingMessage): URL | null {
+  try {
+    return new URL(req.url ?? "/", "http://127.0.0.1");
+  } catch {
+    return null;
+  }
+}
+
 function refuseHost(req: http.IncomingMessage, res: http.ServerResponse, port: number): boolean {
   if (req.headers.host === `127.0.0.1:${port}` || req.headers.host === `localhost:${port}`) {
     return false;
@@ -416,10 +431,7 @@ function serveProjectRoute(res: http.ServerResponse, url: URL): boolean {
   }
   projectRoute(project, scoped[2]!, url.searchParams)
     .then((answer) => sendAnswer(res, answer ?? { status: 404 }))
-    .catch(() => {
-      if (res.headersSent) return res.destroy();
-      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" }).end(INTERNAL_ERROR_BODY);
-    });
+    .catch(() => answerInternalError(res));
   return true;
 }
 
@@ -433,7 +445,8 @@ function serveStatic(res: http.ServerResponse, url: URL, distDir: string): void 
   if (file === path.join(path.resolve(distDir), "index.html")) {
     res.setHeader("Cache-Control", "no-store");
   }
-  res.writeHead(200, { "Content-Type": type }).end(fs.readFileSync(file));
+  const body = fs.readFileSync(file);
+  res.writeHead(200, { "Content-Type": type }).end(body);
 }
 
 export async function serveDashboard(opts: {
@@ -442,13 +455,17 @@ export async function serveDashboard(opts: {
   token: string;
   checkEveryMs: number;
 }): Promise<{ port: number; close(): Promise<void> }> {
-  const server = http.createServer((req, res) => {
+  const handle = (req: http.IncomingMessage, res: http.ServerResponse) => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
     if ((req.url ?? "").startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
     const port = (server.address() as AddressInfo).port;
     if (refuseHost(req, res, port)) return;
     if (refuseMethod(req, res)) return;
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const url = parseUrl(req);
+    if (url === null) {
+      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" }).end(BAD_REQUEST_BODY);
+      return;
+    }
     if (tradeToken(res, url, opts.token)) return;
     if (refuseCookie(req, res, opts.token)) return;
     if (serveProjects(res, url)) return;
@@ -456,6 +473,13 @@ export async function serveDashboard(opts: {
     if (serveUntouched(res, url)) return;
     if (serveProjectRoute(res, url)) return;
     serveStatic(res, url, opts.distDir);
+  };
+  const server = http.createServer((req, res) => {
+    try {
+      handle(req, res);
+    } catch {
+      answerInternalError(res);
+    }
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

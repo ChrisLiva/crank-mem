@@ -772,6 +772,38 @@ describe("memory view", () => {
       expect((await dash.get("/api/projects")).status).toBe(200);
     }
   }, 20_000);
+
+  test("a request target that is no URL answers 400, an unreadable static file answers 500, and the server keeps serving", async () => {
+    const dir = dashboardFixture(cliVersion());
+    const index = path.join(dir, "dist/index.html");
+    const dash = await startDashboard(makeCrankHome(), ["--port", "0"], { dashboardDir: dir });
+    const port = portOf(dash.url);
+    const raw = await new Promise<string>((resolve, reject) => {
+      const socket = net.connect(port, "127.0.0.1", () => {
+        socket.write(`GET // HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`);
+      });
+      let data = "";
+      socket.on("data", (chunk) => (data += chunk.toString()));
+      socket.on("end", () => resolve(data));
+      socket.on("error", reject);
+    });
+    expect(raw.split("\r\n")[0]).toBe("HTTP/1.1 400 Bad Request");
+    expect(raw.toLowerCase()).toContain("x-frame-options: deny");
+    expect(raw).toContain("crank-mem dashboard: bad request.\n");
+    expect((await dash.get("/api/projects")).status).toBe(200);
+    if (process.getuid?.() === 0) return;
+    fs.chmodSync(index, 0o000);
+    try {
+      const res = await dash.get("/");
+      expect([res.status, await res.text()]).toEqual([
+        500,
+        "crank-mem dashboard: internal error.\n",
+      ]);
+      expect((await dash.get("/api/projects")).status).toBe(200);
+    } finally {
+      fs.chmodSync(index, 0o644);
+    }
+  }, 20_000);
 });
 
 type ProposalJson = {
