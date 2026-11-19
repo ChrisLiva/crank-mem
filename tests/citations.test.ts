@@ -51,6 +51,10 @@ function fixture() {
   };
 }
 
+let built: ReturnType<typeof fixture> | undefined;
+/** One fixture for the rows that only read it; the zone tests and the corrupt-db test write, so they build their own. */
+const shared = () => (built ??= fixture());
+
 const none = { missing: [], modified: [] };
 const missing = (...m: string[]) => ({ missing: m, modified: [] });
 const modified = (...d: string[]) => ({ missing: [], modified: d });
@@ -78,12 +82,12 @@ describe("a home citation", () => {
     ["`docs/onDisk.md`", 5000, none],
     ["`ep/widget.ts`", 1000, missing("ep/widget.ts")],
   ])("%s past %d", (text, sinceMs, expected) => {
-    expect(fixture().resolve().status(text, sinceMs)).toEqual(expected);
+    expect(shared().resolve().status(text, sinceMs)).toEqual(expected);
   });
 
   test("each file is listed once, as cited", () => {
     const text = "`./src/gone.ts:12` and `src/gone.ts` and `src/a.ts:3-9` and `src/a.ts`";
-    expect(fixture().resolve().status(text, 1000)).toEqual({
+    expect(shared().resolve().status(text, 1000)).toEqual({
       missing: ["src/gone.ts"],
       modified: ["src/a.ts"],
     });
@@ -124,7 +128,7 @@ describe("a citation whose first segment names a linked project", () => {
     ["`pay/notes/raw.md`", modified("pay/notes/raw.md")],
     ["`pay/zzz.ts`", none],
   ])("resolves %s in that project", (text, expected) => {
-    expect(fixture().resolve().status(text, 1000)).toEqual(expected);
+    expect(shared().resolve().status(text, 1000)).toEqual(expected);
   });
 
   for (const policy of ["resolve", "ignore"] as const) {
@@ -135,13 +139,13 @@ describe("a citation whose first segment names a linked project", () => {
     ])(
       `under ${policy}, resolves %s at home when home holds the entry or no link names it`,
       (text, expected) => {
-        expect(fixture()[policy]().status(text, 1000)).toEqual(expected);
+        expect(shared()[policy]().status(text, 1000)).toEqual(expected);
       },
     );
   }
 
   test("is skipped under ignore", () => {
-    expect(fixture().ignore().status("`pay/src/p.ts` and `pay/src/none.ts`", 1000)).toEqual(none);
+    expect(shared().ignore().status("`pay/src/p.ts` and `pay/src/none.ts`", 1000)).toEqual(none);
   });
 
   test("checks the disk alone when the linked code.db is absent or corrupt", () => {
