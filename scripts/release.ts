@@ -1,6 +1,6 @@
 // `bun scripts/release.ts <patch|minor|major|X.Y.Z> [--yes]` (or `bun run release …`):
 // cut a release from the repo in the current directory. It refuses unless `main` is checked
-// out, clean and not behind origin, and the new tag is unused; asks before anything changes
+// out with no tracked changes and not behind origin, and the new tag is unused; asks before anything changes
 // (`--yes` answers); runs the gates; bumps `package.json` → `version`, commits, tags
 // `v<version>`, and pushes the commit and the tag together, which runs
 // `.github/workflows/release.yml`.

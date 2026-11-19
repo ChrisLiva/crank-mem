@@ -1,9 +1,9 @@
 import * as path from "node:path";
 import { isExcluded, type CrankConfig } from "./config.ts";
 
-// Which relative paths the index may hold: the binary, lockfile, test-path and name gates.
+// Which relative paths the index may hold: the binary, lockfile and name gates.
 
-// Fast path ahead of the NUL sniff in indexFile, which catches the rest.
+// Fast path ahead of the NUL sniff in `scanner.ts` → `fileFacts`, which catches the rest.
 const BINARY_EXTENSIONS = new Set([
   ".png",
   ".jpg",
@@ -62,7 +62,8 @@ const LOCKFILE = /(^|\/)(package-lock\.json|[^/]*-lock\.yaml)$/;
 // git's binary heuristic: a NUL byte within the first 8,000 bytes.
 export const BINARY_SNIFF_BYTES = 8000;
 
-// Test and spec files get no symbols: their names list cases, not an API.
+// Test and spec paths never count as the single definition a bare call name resolves to
+// (`code-graph.ts` → `uniqueDefinition`).
 export const TEST_PATH =
   /(^|\/)(__tests__|tests?|specs?)\/|(^|\/)test_[^/]*$|[._-](test|spec)\.[^/]+$/;
 

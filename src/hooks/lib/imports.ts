@@ -558,7 +558,7 @@ function importTargets(rootDir: string, importer: string, ext: string, content: 
 /**
  * The files `relPath` imports, as repo-relative paths in source order, or for
  * C# the namespaces it declares and uses. `{}` when nothing resolves; never
- * throws, since indexFile must not.
+ * throws, since one bad file must not stop a parse run in `src/cli/code-parse.ts`.
  */
 export function fileLinks(
   rootDir: string,
