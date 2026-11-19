@@ -172,9 +172,34 @@ export function hasCrankHooks(file: string): boolean {
 }
 
 /**
- * Remove every hook group whose command references .crank/hooks/. Drops empty
- * event arrays and an empty hooks object, calling `beforeWrite` before it
- * writes; returns false if nothing matched, the file does not exist or parsing
+ * The groups without the handlers `matches` selects, or undefined when none
+ * matched. A group the removal emptied is dropped; a group that was already
+ * empty stays.
+ */
+function withoutHandlers(
+  groups: HookGroup[],
+  matches: (command: string | undefined) => boolean,
+): HookGroup[] | undefined {
+  let removed = false;
+  const kept: HookGroup[] = [];
+  for (const g of groups) {
+    const handlers = g.hooks ?? [];
+    const left = handlers.filter((h) => !matches(h.command));
+    if (left.length === handlers.length) {
+      kept.push(g);
+      continue;
+    }
+    removed = true;
+    if (left.length > 0) kept.push({ ...g, hooks: left });
+  }
+  return removed ? kept : undefined;
+}
+
+/**
+ * Remove every handler whose command references .crank/hooks/, keeping the
+ * user's other handlers in the same group. Drops a group the removal emptied,
+ * an event left with no group and an empty hooks object, calling `beforeWrite`
+ * before it writes; returns false if nothing matched, the file does not exist or parsing
  * failed (leave it alone).
  */
 export function removeCrankHooksFromFile(
@@ -194,12 +219,11 @@ export function removeCrankHooksFromFile(
   let changed = false;
   for (const [event, groups] of Object.entries(hooks)) {
     if (!Array.isArray(groups)) continue;
-    const kept = groups.filter((g) => !(g.hooks ?? []).some((h) => matches(h.command)));
-    if (kept.length !== groups.length) {
-      changed = true;
-      if (kept.length === 0) delete hooks[event];
-      else hooks[event] = kept;
-    }
+    const kept = withoutHandlers(groups, matches);
+    if (!kept) continue;
+    changed = true;
+    if (kept.length === 0) delete hooks[event];
+    else hooks[event] = kept;
   }
   if (Object.keys(hooks).length === 0) delete root.hooks;
   if (!changed) return false;

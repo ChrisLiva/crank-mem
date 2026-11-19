@@ -217,6 +217,23 @@ describe("removeCrankHooksFromFile", () => {
     removeCrankHooksFromFile(f);
     expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({});
   });
+  test("a mixed group keeps the user's handler", () => {
+    const mine = { type: "command", command: "echo mine" };
+    const crank = { type: "command", command: 'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts' };
+    const emptyUserGroup = { hooks: [] };
+    const f = writeSettings({
+      model: "opus",
+      hooks: { Stop: [{ hooks: [mine, crank] }, { hooks: [crank] }, emptyUserGroup] },
+    });
+    expect(removeCrankHooksFromFile(f)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({
+      model: "opus",
+      hooks: { Stop: [{ hooks: [mine] }, emptyUserGroup] },
+    });
+    const bytes = fs.readFileSync(f, "utf-8");
+    expect(removeCrankHooksFromFile(f)).toBe(false);
+    expect(fs.readFileSync(f, "utf-8")).toBe(bytes);
+  });
 });
 
 /** Write `value` the way settings.ts writes JSON, so byte comparisons hold. */
