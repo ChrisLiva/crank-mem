@@ -21,7 +21,6 @@ import {
   codexApplyPatch,
   claudeSessionStart,
 } from "./fixtures/payloads.ts";
-import { parseApplyPatch } from "../src/hooks/lib/apply-patch.ts";
 import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 
@@ -66,42 +65,6 @@ function graphImports(root: string, rel: string): string[] {
   }
 }
 
-describe("parseApplyPatch", () => {
-  test("parses Add, Update, Delete", () => {
-    const patch = [
-      "*** Begin Patch",
-      "*** Add File: /abs/path/greeting.txt",
-      "+hello",
-      "*** Update File: src/main.ts",
-      "@@ -1 +1 @@",
-      "-a",
-      "+b",
-      "*** Delete File: old.ts",
-      "*** End Patch",
-    ].join("\n");
-    expect(parseApplyPatch(patch)).toEqual([
-      { path: "/abs/path/greeting.txt", deleted: false },
-      { path: "src/main.ts", deleted: false },
-      { path: "old.ts", deleted: true },
-    ]);
-  });
-  test("garbage patch yields no ops", () => {
-    expect(parseApplyPatch("not a patch")).toEqual([]);
-  });
-  test("Move to: old path dropped, new path indexed", () => {
-    const patch = [
-      "*** Begin Patch",
-      "*** Update File: src/old-name.ts",
-      "*** Move to: src/new-name.ts",
-      "*** End Patch",
-    ].join("\n");
-    expect(parseApplyPatch(patch)).toEqual([
-      { path: "src/old-name.ts", deleted: true },
-      { path: "src/new-name.ts", deleted: false },
-    ]);
-  });
-});
-
 describe("post-write hook (black-box)", () => {
   test("Claude Write: new file gets indexed, stdout silent", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
@@ -137,13 +100,18 @@ describe("post-write hook (black-box)", () => {
   });
 
   test("Codex apply_patch: Add and Update re-indexed, Delete dropped", () => {
-    const root = makeCrankProject({ "keep.ts": "const k = 1;", "gone.ts": "const g = 1;" });
+    const root = makeCrankProject({
+      "keep.ts": "const k = 1;",
+      "gone.ts": "const g = 1;",
+      "old-name.ts": "const o = 1;",
+    });
     seedIndex(root);
     expect(graphFiles(root)["gone.ts"]).toBeDefined();
 
     fs.writeFileSync(path.join(root, "added.ts"), "/** Added by codex. */\nexport const x = 1;\n");
     fs.writeFileSync(path.join(root, "keep.ts"), "/** Keep updated. */\nconst k = 2;\n");
     fs.unlinkSync(path.join(root, "gone.ts"));
+    fs.renameSync(path.join(root, "old-name.ts"), path.join(root, "new-name.ts"));
 
     const patch = [
       "*** Begin Patch",
@@ -152,6 +120,8 @@ describe("post-write hook (black-box)", () => {
       "*** Update File: keep.ts",
       "+k",
       "*** Delete File: gone.ts",
+      "*** Update File: old-name.ts",
+      "*** Move to: new-name.ts",
       "*** Update File: .crank/cerebrum.md",
       "+x",
       "*** End Patch",
@@ -163,6 +133,8 @@ describe("post-write hook (black-box)", () => {
     expect(files["added.ts"]!.description).toBe("Added by codex.");
     expect(files["keep.ts"]!.description).toBe("Keep updated.");
     expect(files["gone.ts"]).toBeUndefined();
+    expect(files["old-name.ts"]).toBeUndefined();
+    expect(files["new-name.ts"]).toBeDefined();
   });
 
   test("a write marks the file for the next parse, which refreshes its imports, from Claude and from Codex apply_patch", () => {
@@ -239,12 +211,8 @@ describe("post-write hook (black-box)", () => {
     expect(graphFiles(root)["huge.ts"]).toBeUndefined();
   });
 
-  test("garbage stdin: exit 0", () => {
-    expect(runHook(HOOK, "]]garbage").status).toBe(0);
-  });
-
-  test("empty stdin: exit 0", () => {
-    expect(runHook(HOOK, "").status).toBe(0);
+  test("garbage or empty stdin: exit 0", () => {
+    for (const stdin of ["]]garbage", ""]) expect(runHook(HOOK, stdin).status).toBe(0);
   });
 });
 

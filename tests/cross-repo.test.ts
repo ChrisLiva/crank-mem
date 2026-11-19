@@ -451,9 +451,6 @@ describe("cross-repo memory", () => {
     expect(fake.calls().filter((c) => c.argv.includes("-p"))).toHaveLength(1);
     expect(sessionStart(ws, ws.H)).toContain("- Search also covers linked projects: storefront.");
     expect(searchIds(ws, ws.H, "Front edit")).toEqual([]);
-    const stats = runCli(ws.storefront, ["stats"], { CRANK_HOME: ws.home }).stdout;
-    expect(stats).toContain("  month cost:       $0.00 (list price)");
-    expect(stats).toMatch(/ {2}last digest: {6}\d+s ago\n/);
   }, 30_000);
 
   test("each written store is embedded and snapshotted", () => {
@@ -494,21 +491,6 @@ describe("cross-repo memory", () => {
       .filter((c) => c.argv.includes("-p") && c.cwd === fs.realpathSync(ws.storefront));
     expect(front).toHaveLength(1);
     expect(front[0]!.stdin).toContain("Front only");
-  }, 30_000);
-
-  test("a share already at the session's position is not written twice", () => {
-    const ws = workspace();
-    const { transcript, last } = crossTranscript(ws);
-    seedMemory(ws.storefront, [], { session: "s1", next: last });
-    const { job } = journey(ws.H, [{ lines: okStream(crossDigest(ws)) }], {
-      home: ws.home,
-      cwd: ws.H,
-      transcript,
-    });
-    expect(job.status).toBe(0);
-    expect(searchIds(ws, ws.storefront, "Cross fix")).toEqual([]);
-    expect(searchIds(ws, ws.H, "Cross fix")).toHaveLength(1);
-    expect(searchIds(ws, ws.payments, "Cross fix")).toHaveLength(1);
   }, 30_000);
 
   test("an entry store that will not open writes no share", () => {
@@ -622,7 +604,7 @@ describe("cross-repo memory", () => {
     const skipLine = (stderr: string, reason: string) =>
       stderr
         .split("\n")
-        .filter((l) => l === `crank-mem: share for storefront skipped (${reason}).`);
+        .filter((l) => l.includes("share for storefront skipped") && l.includes(reason));
     const unreadable = run((ws) => {
       plantMemory(ws.storefront, "unreadable");
       return () => {};
@@ -644,30 +626,48 @@ describe("cross-repo memory", () => {
     expect([readOnly.hits(readOnly.ws.H), readOnly.hits(readOnly.ws.payments)]).toEqual([1, 1]);
   }, 90_000);
 
-  test("an observation only a skipped project's files cite stays in the entry store", () => {
-    const run = (setUp: (ws: Ws, last: { uuid: string; timestamp: string }) => void) => {
+  test("an observation only a skipped project's files cite stays in the entry store, and a share already at the session's position is not written twice", () => {
+    const run = (
+      setUp: (ws: Ws, last: { uuid: string; timestamp: string }) => void,
+      digest: (ws: Ws) => Digest = (ws) =>
+        digestOf([observation("Front fix", [path.join(ws.storefront, "src/a.ts")])]),
+    ) => {
       const ws = workspace();
       const { transcript, last } = crossTranscript(ws);
       setUp(ws, last);
-      const output = digestOf([observation("Front fix", [path.join(ws.storefront, "src/a.ts")])]);
-      const { job } = journey(ws.H, [{ lines: okStream(output) }], {
+      const { job } = journey(ws.H, [{ lines: okStream(digest(ws)) }], {
         home: ws.home,
         cwd: ws.H,
         transcript,
       });
       expect(job.status).toBe(0);
-      return searchIds(ws, ws.H, "Front fix").length;
+      return { ws, hits: (root: string, query = "Front fix") => searchIds(ws, root, query).length };
     };
+    const holdAt = (ws: Ws, last: { uuid: string; timestamp: string }) =>
+      seedMemory(ws.storefront, [], { session: "s1", next: last });
     const off = run((ws) => fs.rmSync(path.join(ws.storefront, ".crank/config.local.json")));
     const unreadable = run((ws) => plantMemory(ws.storefront, "unreadable"));
     const written = run(() => {});
-    const held = run((ws, last) => seedMemory(ws.storefront, [], { session: "s1", next: last }));
-    expect({ off, unreadable, written, held }).toEqual({
+    const held = run(holdAt);
+    expect({
+      off: off.hits(off.ws.H),
+      unreadable: unreadable.hits(unreadable.ws.H),
+      written: written.hits(written.ws.H),
+      held: held.hits(held.ws.H),
+    }).toEqual({
       off: 1,
       unreadable: 1,
       written: 0,
       held: 0,
     });
+
+    // A share already at the session's position is not written twice: the other projects still get theirs.
+    const twice = run(holdAt, crossDigest);
+    expect([
+      twice.hits(twice.ws.storefront, "Cross fix"),
+      twice.hits(twice.ws.H, "Cross fix"),
+      twice.hits(twice.ws.payments, "Cross fix"),
+    ]).toEqual([0, 1, 1]);
   }, 90_000);
 
   test("search --project still gives the current project its line when the named store will not open", () => {

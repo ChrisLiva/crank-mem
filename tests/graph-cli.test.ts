@@ -165,7 +165,7 @@ describe("anatomy", () => {
     const sqliteModule = () => process.getBuiltinModule("node:sqlite") as typeof sqlite;
     const project = () => makeCrankProject({ "a.ts": "export const a = 1;\n" });
 
-    test("a store at another schema version is rebuilt and the command answers", () => {
+    test("a store at another schema version, or a garbage one, is rebuilt and the command answers", () => {
       const root = project();
       const file = path.join(root, ".crank/code.db");
       const db = new (sqliteModule().DatabaseSync)(file);
@@ -175,14 +175,13 @@ describe("anatomy", () => {
       expect(run.status).toBe(0);
       expect(pagePaths(run)).toEqual(["a.ts"]);
       expect(pagePaths(runCli(root, ["anatomy"]))).toEqual(["a.ts"]);
-    });
 
-    test("a garbage store is rebuilt and the command answers", () => {
-      const root = project();
-      fs.writeFileSync(path.join(root, ".crank/code.db"), "this is not a database\n".repeat(200));
-      const run = runCli(root, ["anatomy"]);
-      expect(run.status).toBe(0);
-      expect(pagePaths(run)).toEqual(["a.ts"]);
+      fs.rmSync(file);
+      for (const f of codeDbFiles(root)) fs.rmSync(f);
+      fs.writeFileSync(file, "this is not a database\n".repeat(200));
+      const garbage = runCli(root, ["anatomy"]);
+      expect(garbage.status).toBe(0);
+      expect(pagePaths(garbage)).toEqual(["a.ts"]);
     });
 
     test("an unreadable store exits 1 with the fix, and a read-only one answers without refreshing", () => {
@@ -239,7 +238,7 @@ describe("anatomy", () => {
     expect(run.stdout).not.toContain("pending");
   });
 
-  test("a changed file is parsed again", () => {
+  test("a changed file is parsed again, a new file listed and a deleted one dropped", () => {
     const root = makeCrankProject({
       "a.ts": "export function one() {}\n",
       "b.ts": "export const b = 1;\n",
@@ -253,8 +252,11 @@ describe("anatomy", () => {
     expect(again).toContain("  - one (");
     expect(again).toContain("  - two (");
 
+    fs.writeFileSync(path.join(root, "c.ts"), "export const c = 1;\n");
+    expect(pagePaths(runCli(root, ["anatomy"]))).toEqual(["a.ts", "b.ts", "c.ts"]);
+
     fs.rmSync(path.join(root, "b.ts"));
-    expect(pagePaths(runCli(root, ["anatomy"]))).toEqual(["a.ts"]);
+    expect(pagePaths(runCli(root, ["anatomy"]))).toEqual(["a.ts", "c.ts"]);
   });
 
   test("a parse killed mid-run leaves every file whole or pending", () => {
@@ -390,6 +392,17 @@ describe("callers and callees", () => {
       resolved: ["src/e1.ts:3 e1 (inferred)"],
       unresolved: ["src/e2.ts:4 e2"],
     });
+
+    // Two files that each define a name give each importer its own.
+    const own = makeCrankProject({
+      "src/a.ts": "export function save() {}\n",
+      "src/b.ts": "export function save() {}\n",
+      "src/ua.ts": 'import { save } from "./a";\nexport function useA() {\n  save();\n}\n',
+      "src/ub.ts": 'import { save } from "./b";\nexport function useB() {\n  save();\n}\n',
+    });
+    const a = callers(own, "src/a.ts", "save");
+    expect(listed(a.stdout)).toEqual({ resolved: ["src/ua.ts:3 useA"], unresolved: [] });
+    expect(a.stdout).not.toContain("src/ub.ts");
   });
 
   test("Java resolves a name unique in the project but never to a test file; C# also needs a shared namespace", () => {
@@ -414,18 +427,6 @@ describe("callers and callees", () => {
       "src/App/Runner.cs:5 Tool.Runner.Go (inferred)",
     ]);
     expect(listed(callers(root, "src/Models/Thing.cs", "Persist").stdout).resolved).toEqual([]);
-  });
-
-  test("two files that each define a name give each importer its own", () => {
-    const root = makeCrankProject({
-      "src/a.ts": "export function save() {}\n",
-      "src/b.ts": "export function save() {}\n",
-      "src/ua.ts": 'import { save } from "./a";\nexport function useA() {\n  save();\n}\n',
-      "src/ub.ts": 'import { save } from "./b";\nexport function useB() {\n  save();\n}\n',
-    });
-    const a = callers(root, "src/a.ts", "save");
-    expect(listed(a.stdout)).toEqual({ resolved: ["src/ua.ts:3 useA"], unresolved: [] });
-    expect(a.stdout).not.toContain("src/ub.ts");
   });
 
   test("an ambiguous name is refused with pasteable candidates, a miss offers close names, and every spelling of one symbol answers alike", () => {

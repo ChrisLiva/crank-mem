@@ -49,14 +49,6 @@ function cloneRoot(root: string): unknown {
 }
 
 describe("clone_root", () => {
-  test("init run through an installed copy records the stable current link", () => {
-    const home = installedHome();
-    const root = gitProject();
-    const run = runInstalled(home, root, ["init", "--yes"]);
-    expect(run.status).toBe(0);
-    expect(cloneRoot(root)).toBe(path.join(home, "current"));
-  });
-
   test("upgrade run through an installed copy rewrites a clone path to the stable current link", () => {
     const home = installedHome();
     const root = gitProject();
@@ -217,7 +209,15 @@ describe("the update notice", () => {
     expect(S.requests()).toEqual([]);
   }, 60_000);
 
-  test("agent-facing commands never print it", () => {
+  test("a clone prints no notice", () => {
+    const run = runCli(P, ["stats"], { ...env, CRANK_HOME: H });
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toMatch(/^  update:/m);
+    expect(run.stderr).not.toContain("is available");
+    expect(S.requests()).toEqual([]);
+  });
+
+  test("agent-facing commands and the session-start hook never carry it", () => {
     const runs = [
       ["search", "anything"],
       ["timeline", "1"],
@@ -227,30 +227,19 @@ describe("the update notice", () => {
     ];
     for (const args of runs) {
       const run = runInstalled(H, P, args, env);
-      expect({ args, stderr: run.stderr }).not.toEqual({
+      expect({ args, notice: run.stderr.includes("is available") }).toEqual({
         args,
-        stderr: expect.stringContaining("is available"),
+        notice: false,
       });
     }
     expect(S.requests()).toEqual([]);
-  }, 60_000);
-
-  test("a clone prints no notice", () => {
-    const run = runCli(P, ["stats"], { ...env, CRANK_HOME: H });
-    expect(run.status).toBe(0);
-    expect(run.stdout).not.toMatch(/^  update:/m);
-    expect(run.stderr).not.toContain("is available");
-    expect(S.requests()).toEqual([]);
-  });
-
-  test("the session-start hook never carries it", () => {
-    const run = runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(P)), P, {
+    // The hook may start the daemon, whose own release check is its business, so no request assertion follows.
+    const hook = runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(P)), P, {
       ...env,
       CRANK_HOME: H,
     });
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("additionalContext");
-    expect(run.stdout).not.toContain("is available");
-    expect(S.requests()).toEqual([]);
-  });
+    expect(hook.status).toBe(0);
+    expect(hook.stdout).toContain("additionalContext");
+    expect(hook.stdout).not.toContain("is available");
+  }, 60_000);
 });

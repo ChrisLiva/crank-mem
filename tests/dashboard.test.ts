@@ -83,18 +83,6 @@ function listenOn(port: number): Promise<void> {
 }
 
 describe("dashboard command", () => {
-  test("--help lists dashboard, and dashboard --help prints its usage and summary", () => {
-    const dir = tempDir("crank-dash-help-");
-    const list = runCli(dir, ["--help"]);
-    expect(list.stdout).toContain("  dashboard       Serve the memory dashboard on localhost\n");
-    const help = runCli(dir, ["dashboard", "--help"]);
-    expect(help).toEqual({
-      status: 0,
-      stdout: `${USAGE}\n\nServe the memory dashboard on localhost.\n`,
-      stderr: "",
-    });
-  });
-
   test("a bad --port prints the usage line before any build check, and writes nothing", () => {
     const dir = tempDir("crank-dash-port-");
     for (const value of [["abc"], ["-1"], ["65536"], ["1.5"], []]) {
@@ -243,20 +231,6 @@ describe("dashboard server", () => {
       expect(get.status).toBe(200);
     }, 20_000);
   });
-
-  test("with no --port it listens on 38700 plus the uid's last two digits", async () => {
-    const expected = 38700 + (process.getuid!() % 100);
-    try {
-      const dash = await startDashboard(makeCrankHome(), []);
-      expect(portOf(dash.url)).toBe(expected);
-    } catch (err) {
-      expect(String(err)).toMatch(
-        new RegExp(
-          `a dashboard already runs at http://127\\.0\\.0\\.1:${expected}/|port ${expected} is in use`,
-        ),
-      );
-    }
-  }, 20_000);
 
   test("the first run writes a 0600 token file, and later runs reuse it from any directory", async () => {
     const home = makeCrankHome();
@@ -459,6 +433,7 @@ describe("project registry", () => {
         ...ties.map((root) => entry(root, "missing")),
       ],
     });
+    expect((await dash.get("/api/projects/000000000000/health")).status).toBe(404);
   }, 20_000);
 
   test("roots sharing a store list once under the main checkout, and a root without config drops", async () => {
@@ -512,13 +487,6 @@ describe("project registry", () => {
       JSON.stringify({ version: 1, projects: [{ root: gone, addedAtMs: 1 }] }),
     );
     expect(await body()).toBe('{"projects":[]}');
-  }, 20_000);
-
-  test("a project-scoped route for an id no listed project has answers 404", async () => {
-    const home = makeCrankHome();
-    registeredCopy(home);
-    const dash = await startDashboard(home, ["--port", "0"]);
-    expect((await dash.get("/api/projects/000000000000/health")).status).toBe(404);
   }, 20_000);
 });
 

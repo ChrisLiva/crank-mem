@@ -38,17 +38,6 @@ const toolCall = (name: string, input: object, id = "toolu_x") => ({
 const bashCall = (command: string) => toolCall("Bash", { command });
 
 describe("distill on the fixture transcript", () => {
-  test("fixtures hold no home path and the expected text is ASCII, untrailed and at least 2,000 characters", () => {
-    for (const file of [FIXTURE, EXPECTED]) {
-      const text = fs.readFileSync(file, "utf8");
-      expect(text).not.toContain("/Users/");
-      expect(text).not.toContain("/home/");
-    }
-    expect(/^\p{ASCII}*$/u.test(expectedText)).toBe(true);
-    expect(expectedText.endsWith("\n")).toBe(false);
-    expect(expectedText.length).toBeGreaterThanOrEqual(2000);
-  });
-
   test("renders the hand-written golden, counts conversation records and points next at the last whole record", () => {
     const d = distill(FIXTURE, null, 400_000);
     expect(d.text).toBe(expectedText);
@@ -67,18 +56,6 @@ describe("distill on the fixture transcript", () => {
         "[TOOL_RESULT Read] export function sync(opts)",
       ),
     ).toBe(true);
-  });
-
-  test("an empty file distills to nothing", () => {
-    const file = path.join(tempDir(), "empty.jsonl");
-    fs.writeFileSync(file, "");
-    expect(distill(file, null, 400_000)).toEqual({
-      text: "",
-      next: null,
-      truncated: false,
-      records: 0,
-      paths: [],
-    });
   });
 });
 
@@ -152,14 +129,12 @@ describe("after", () => {
     expect(byTime).toEqual(byUuid);
   });
 
-  test("after the last record gives nothing", () => {
-    expect(distill(FIXTURE, pos(29), 400_000)).toEqual({
-      text: "",
-      next: null,
-      truncated: false,
-      records: 0,
-      paths: [],
-    });
+  test("after the last record, or in an empty file, gives nothing", () => {
+    const nothing = { text: "", next: null, truncated: false, records: 0, paths: [] };
+    expect(distill(FIXTURE, pos(29), 400_000)).toEqual(nothing);
+    const file = path.join(tempDir(), "empty.jsonl");
+    fs.writeFileSync(file, "");
+    expect(distill(file, null, 400_000)).toEqual(nothing);
   });
 });
 

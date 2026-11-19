@@ -22,15 +22,13 @@ function frontmatter(markdown: string): Record<string, string> {
 }
 
 describe("bundled crank-mem-audit skill", () => {
-  test("SKILL.md frontmatter satisfies the installer's constraints", () => {
+  test("SKILL.md frontmatter satisfies the installer's constraints and Codex blocks implicit invocation", () => {
     const fields = frontmatter(fs.readFileSync(path.join(SKILL_DIR, "SKILL.md"), "utf-8"));
     expect(fields.name).toBe("crank-mem-audit");
     expect(fields.name).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
     expect(fields.description?.length).toBeGreaterThan(0);
     expect(fields["disable-model-invocation"]).toBe("true");
-  });
-
-  test("Codex policy blocks implicit invocation", () => {
+    // Codex policy blocks implicit invocation.
     const yaml = fs.readFileSync(path.join(SKILL_DIR, "agents", "openai.yaml"), "utf-8");
     expect(yaml).toContain("allow_implicit_invocation: false");
   });

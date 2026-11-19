@@ -29,7 +29,7 @@ describe("numberBullets", () => {
 });
 
 describe("applyEdits", () => {
-  test("a replace, a remove and an add change only their own lines", () => {
+  test("a replace, a remove and an add change only their own lines, and an add lands after its section's last bullet", () => {
     expect(
       applyEdits(
         M,
@@ -61,6 +61,23 @@ describe("applyEdits", () => {
       ],
       skipped: [],
     });
+
+    // An add lands after its section's last bullet, or under the ## line when the section has none.
+    expect(
+      applyEdits(
+        "## User Preferences\n\n## Memory\n",
+        [{ op: "add", heading: "user preferences", bullet: "**P**", proposal: null }],
+        TODAY,
+      ).md,
+    ).toBe("## User Preferences\n- **P** (2026-11-04)\n\n## Memory\n");
+    const lines = applyEdits(
+      M,
+      [{ op: "add", heading: "Memory", bullet: "**Z**", proposal: null }],
+      TODAY,
+    ).md.split("\n");
+    expect(lines[lines.indexOf("- **Deep**: under sub (2026-10-02)") + 1]).toBe(
+      "- **Z** (2026-11-04)",
+    );
   });
 
   test("skips an edit on an unknown or already changed bullet, an empty bullet, and an unknown heading", () => {
@@ -156,23 +173,5 @@ describe("applyEdits", () => {
     expect(result.md.length).toBe(11_974);
     expect(result.md).toContain("\n- **A** (2026-11-04)\n");
     expect(result.skipped).toEqual([addB]);
-  });
-
-  test("an add lands after its section's last bullet, or under the ## line when the section has none", () => {
-    expect(
-      applyEdits(
-        "## User Preferences\n\n## Memory\n",
-        [{ op: "add", heading: "user preferences", bullet: "**P**", proposal: null }],
-        TODAY,
-      ).md,
-    ).toBe("## User Preferences\n- **P** (2026-11-04)\n\n## Memory\n");
-    const lines = applyEdits(
-      M,
-      [{ op: "add", heading: "Memory", bullet: "**Z**", proposal: null }],
-      TODAY,
-    ).md.split("\n");
-    expect(lines[lines.indexOf("- **Deep**: under sub (2026-10-02)") + 1]).toBe(
-      "- **Z** (2026-11-04)",
-    );
   });
 });

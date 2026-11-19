@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { codeFacts, codeSymbols, grammarFor } from "../src/cli/code-symbols.ts";
-import { outlinePage, preorder } from "../src/cli/code.ts";
+import { preorder } from "../src/cli/code.ts";
 import { childEnv, makeCrankProject, REPO_ROOT, runCli, tempDir, type CliRun } from "./helpers.ts";
 
 const FIXTURES = path.join(REPO_ROOT, "tests/fixtures/code");
@@ -24,44 +24,46 @@ const A_TS = [
 ].join("\n");
 
 describe("outline", () => {
-  test("every mapped extension loads its grammar, case-insensitively", async () => {
-    const exts = [
-      "ts",
-      "mts",
-      "cts",
-      "tsx",
-      "js",
-      "jsx",
-      "mjs",
-      "cjs",
-      "py",
-      "pyi",
-      "go",
-      "rs",
-      "c",
-      "h",
-      "cc",
-      "cpp",
-      "cxx",
-      "hpp",
-      "hh",
-      "hxx",
-      "sh",
-      "bash",
-      "java",
-      "cs",
-      "rb",
-      "php",
-      "ps1",
-      "psm1",
-      "TS",
-      "Py",
-      "CPP",
-    ];
-    for (const ext of exts) {
+  test("every mapped extension reads a symbol from its grammar, case-insensitively", async () => {
+    const fn = "function f() {}\n";
+    const snippets: Record<string, [source: string, name: string, kind: string]> = {
+      ts: [fn, "f", "fn"],
+      mts: [fn, "f", "fn"],
+      cts: [fn, "f", "fn"],
+      tsx: [fn, "f", "fn"],
+      js: [fn, "f", "fn"],
+      jsx: [fn, "f", "fn"],
+      mjs: [fn, "f", "fn"],
+      cjs: [fn, "f", "fn"],
+      py: ["def f(): pass\n", "f", "fn"],
+      pyi: ["def f(): pass\n", "f", "fn"],
+      go: ["package p\nfunc f() {}\n", "f", "fn"],
+      rs: ["fn f() {}\n", "f", "fn"],
+      c: ["void f(void) {}\n", "f", "fn"],
+      h: ["void f(void) {}\n", "f", "fn"],
+      cc: ["void f() {}\n", "f", "fn"],
+      cpp: ["void f() {}\n", "f", "fn"],
+      cxx: ["void f() {}\n", "f", "fn"],
+      hpp: ["void f() {}\n", "f", "fn"],
+      hh: ["void f() {}\n", "f", "fn"],
+      hxx: ["void f() {}\n", "f", "fn"],
+      sh: ["f() { :; }\n", "f", "fn"],
+      bash: ["f() { :; }\n", "f", "fn"],
+      java: ["class F {}\n", "F", "class"],
+      cs: ["class F {}\n", "F", "class"],
+      rb: ["def f\nend\n", "f", "fn"],
+      php: ["<?php\nfunction f() {}\n", "f", "fn"],
+      ps1: ["function F { }\n", "F", "fn"],
+      psm1: ["function F { }\n", "F", "fn"],
+      TS: [fn, "f", "fn"],
+      Py: ["def f(): pass\n", "f", "fn"],
+      CPP: ["void f() {}\n", "f", "fn"],
+    };
+    for (const [ext, [source, name, kind]] of Object.entries(snippets)) {
       const grammar = grammarFor(`e.${ext}`);
       expect([ext, grammar === null]).toEqual([ext, false]);
-      expect([ext, await codeSymbols("", grammar!)]).toEqual([ext, []]);
+      const symbols = await codeSymbols(source, grammar!);
+      expect([ext, symbols?.map((s) => [s.name, s.kind])]).toEqual([ext, [[name, kind]]]);
     }
     const root = makeCrankProject({ "src/e.TS": "" });
     expect(runCli(root, ["outline", "src/e.TS"])).toMatchObject({
@@ -614,17 +616,6 @@ describe("families", () => {
   for (const fixture of FAMILIES) {
     const file = `src/${fixture}`;
 
-    test(`symbols reproduce the committed outline and headers for ${fixture}`, async () => {
-      const { text, outline, headers } = golden(fixture);
-      const symbols = await codeSymbols(text, grammarFor(file)!);
-      expect(symbols).not.toBeNull();
-      const entries = preorder(symbols!);
-      expect(outlinePage(file, entries, 1).text).toBe(outline);
-      expect(
-        entries.map(({ symbol: s }) => `${file}:${s.start}-${s.end} ${s.kind} ${s.qualified}`),
-      ).toEqual(headers);
-    });
-
     test(`call sites reproduce the committed calls for ${fixture}`, async () => {
       const { text } = golden(fixture);
       const calls = fs.readFileSync(path.join(FIXTURES, `${fixture}.calls`), "utf8");
@@ -644,6 +635,9 @@ describe("families", () => {
       expect(runCli(root, ["outline", file])).toMatchObject({ status: 0, stdout: outline });
 
       const entries = preorder((await codeSymbols(text, grammarFor(file)!))!);
+      expect(
+        entries.map(({ symbol: s }) => `${file}:${s.start}-${s.end} ${s.kind} ${s.qualified}`),
+      ).toEqual(headers);
       const depth = Math.max(...entries.map(({ parents }) => parents.length));
       const deepest = entries.findIndex(({ parents }) => parents.length === depth);
       const header = headers[deepest]!;

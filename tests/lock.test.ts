@@ -11,15 +11,11 @@ function tmpDir(): string {
 const LOCK = "test.lock";
 
 describe("withLock", () => {
-  test("runs fn and releases", () => {
+  test("runs fn and releases, on return and on throw", () => {
     const dir = tmpDir();
     const result = withLock(dir, 1000, () => 42, LOCK);
     expect(result).toBe(42);
     expect(fs.existsSync(path.join(dir, LOCK))).toBe(false);
-  });
-
-  test("releases on throw", () => {
-    const dir = tmpDir();
     expect(() =>
       withLock(
         dir,

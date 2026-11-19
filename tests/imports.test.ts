@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { openCodeDb } from "../src/hooks/lib/code-db.ts";
@@ -100,7 +100,7 @@ describe("TS/JS imports", () => {
     fs.writeFileSync(path.join(root, "..", `${outsideName}.ts`), ONE_LINE),
   );
 
-  test("resolve and record in source order", () => {
+  test("resolve and record in source order, and a file with nothing to resolve records none", () => {
     expect(index.files["src/a.ts"].imports).toEqual([
       "src/b.ts",
       "src/side.ts",
@@ -116,9 +116,7 @@ describe("TS/JS imports", () => {
     expect(index.files["gen/g.ts"].imports).toEqual(["src/b.ts"]);
     expect(index.files["src/c.cjs"].imports).toEqual(["src/b.ts"]);
     expect(index.files["src/d.mjs"].imports).toEqual(["src/b.ts"]);
-  });
-
-  test("a file with no resolvable imports, or of an unsupported extension, carries no imports key", () => {
+    // A file with no resolvable imports, or of an unsupported extension, carries no imports key.
     expect(index.files["src/b.ts"]).toBeDefined();
     expect("imports" in index.files["src/b.ts"]).toBe(false);
     expect(index.files["notes.md"]).toBeDefined();

@@ -44,7 +44,7 @@ const NOT_READY = "crank-mem: warning: search by meaning is not ready; run `cran
 const USAGE = "Usage: crank-mem digest on|off|resume\n";
 
 describe("digest on|off", () => {
-  test("on and off flip the config from the project root and print the exact line", () => {
+  test("on and off flip the config from the project root or a subdirectory and print the exact line", () => {
     const root = initedCopy();
     const shared = fs.readFileSync(path.join(root, ".crank/config.json"));
     expect("digest" in readConfig(root)).toBe(false);
@@ -60,21 +60,19 @@ describe("digest on|off", () => {
     expect(off.stdout).toBe(OFF);
     expect(fs.existsSync(localConfigPath(root))).toBe(false);
     expect(fs.readFileSync(path.join(root, ".crank/config.json")).equals(shared)).toBe(true);
-  });
 
-  test("works from a subdirectory, keeps other config keys and leaves the store untouched", () => {
-    const root = initedCopy();
+    // From a subdirectory the same flip lands at the project root and leaves the store alone.
     const sub = path.join(root, "src/deep");
     fs.mkdirSync(sub, { recursive: true });
-    const before = readConfig(root);
     const db = path.join(root, ".crank/memory.db");
     const bytes = Buffer.from([0, 1, 2, 0xff, 0xfe, 0x53, 0x51, 0x4c]);
     fs.writeFileSync(db, bytes);
     expect(runCli(sub, ["digest", "on"]).stdout).toBe(ON);
-    expect(readConfig(root)).toEqual(before);
+    expect(JSON.parse(fs.readFileSync(localConfigPath(root), "utf-8"))).toEqual({ digest: true });
     expect(fs.existsSync(path.join(sub, ".crank"))).toBe(false);
     expect(runCli(sub, ["digest", "off"]).stdout).toBe(OFF);
-    expect(readConfig(root)).toEqual(before);
+    expect(fs.existsSync(localConfigPath(root))).toBe(false);
+    expect(fs.readFileSync(path.join(root, ".crank/config.json")).equals(shared)).toBe(true);
     expect(fs.readFileSync(db).equals(bytes)).toBe(true);
   });
 

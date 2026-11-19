@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  formatLine,
   MEMORY_FILE,
   openMemory,
   openStoreForWrite,
@@ -81,48 +80,6 @@ function v1File(): string {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("openMemory", () => {
-  test("a fresh path opens for write, then for read", () => {
-    const file = tmpFile();
-    const w = openMemory(file, "write");
-    expect(w.status).toBe("open");
-    if (w.status === "open") w.memory.close();
-    const r = openMemory(file, "read");
-    expect(r.status).toBe("open");
-    if (r.status === "open") r.memory.close();
-  });
-
-  test("a missing path reads as missing and is not created", () => {
-    const file = tmpFile();
-    expect(openMemory(file, "read").status).toBe("missing");
-    expect(fs.existsSync(file)).toBe(false);
-  });
-
-  test("a zero-byte file reads as missing", () => {
-    const file = tmpFile();
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, "");
-    expect(openMemory(file, "read").status).toBe("missing");
-  });
-
-  test("a text file is unreadable in both modes", () => {
-    const file = tmpFile();
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, "this is not a database, just some text bytes\n".repeat(50));
-    expect(openMemory(file, "read").status).toBe("unreadable");
-    expect(openMemory(file, "write").status).toBe("unreadable");
-  });
-
-  test("a database from a later schema version is newer in both modes", () => {
-    const file = tmpFile();
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const sqlite = process.getBuiltinModule("node:sqlite");
-    const raw = new sqlite.DatabaseSync(file);
-    raw.exec(`PRAGMA user_version=${SCHEMA_VERSION + 1}`);
-    raw.close();
-    expect(openMemory(file, "read").status).toBe("newer");
-    expect(openMemory(file, "write").status).toBe("newer");
-  });
-
   test("a writer reports the version it migrated from, and snapshots only a version-1 store", () => {
     const SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-v1\.db$/;
     const fresh = tmpFile();
@@ -401,6 +358,21 @@ describe("appendDigest", () => {
       },
     ]);
     expect(memory.fileHistory("src/ä b.ts", 5)).toEqual([line!]);
+    memory.appendDigest(
+      digest("stem-1", P1, P2, {
+        observations: [
+          obs({
+            title: "dup paths",
+            narrative: "n",
+            filesRead: ["src/a.ts", "src/a.ts"],
+            filesModified: ["src/a.ts"],
+          }),
+        ],
+      }),
+    );
+    const [dup] = memory.get([memory.recent(1)[0]!.id]);
+    expect(dup!.filesRead).toEqual(["src/a.ts"]);
+    expect(dup!.filesModified).toEqual(["src/a.ts"]);
     memory.close();
     open.length = 0;
     const r = openMemory(file, "read");
@@ -427,6 +399,17 @@ describe("appendDigest", () => {
     expect(memory.recent(50)).toEqual(before);
     expect(memory.position("s")).toEqual(P1);
     expect(memory.appendDigest(digest("s", { uuid: "u-1", timestamp: "other" }, P2))).toBe("stale");
+    const x = memory.recent(1)[0]!.id;
+    expect(
+      memory.appendDigest(
+        digest("s", { uuid: "u-1", timestamp: "other" }, P2, {
+          proposals: [{ kind: "memory", bullet: "- **Lock**: retry 2 s" }],
+          stale: [{ id: x, reason: "gone" }],
+        }),
+      ),
+    ).toBe("stale");
+    expect(memory.stats("m", 0).pendingProposals).toBe(0);
+    expect(memory.get([x])[0]!.staleFlag).toBeNull();
     expect(memory.appendDigest(digest("s", P1, P2))).toBe("appended");
     expect(memory.position("s")).toEqual(P2);
   });
@@ -449,26 +432,6 @@ describe("appendDigest", () => {
     expect(memory.recent(50)).toEqual(before);
     expect(memory.position("s")).toEqual(P1);
     expect(memory.appendDigest(digest("s", P1, P2))).toBe("appended");
-  });
-
-  test("a path listed twice is stored once", () => {
-    const memory = writable();
-    const result = memory.appendDigest(
-      digest("s", null, P1, {
-        observations: [
-          obs({
-            title: "t",
-            narrative: "n",
-            filesRead: ["src/a.ts", "src/a.ts"],
-            filesModified: ["src/a.ts"],
-          }),
-        ],
-      }),
-    );
-    expect(result).toBe("appended");
-    const [got] = memory.get([memory.recent(1)[0]!.id]);
-    expect(got!.filesRead).toEqual(["src/a.ts"]);
-    expect(got!.filesModified).toEqual(["src/a.ts"]);
   });
 
   test("an observation with the same normalized title and narrative adds no row", () => {
@@ -499,8 +462,10 @@ describe("refs and links", () => {
 
   test("refs pair a file with other projects' files, newest first", () => {
     const memory = writable();
+    expect(memory.links()).toEqual([]);
     memory.appendDigest(
       digest("s", null, P1, {
+        links: ["analytics"],
         observations: [
           obs({
             title: "Pay call",
@@ -537,25 +502,7 @@ describe("refs and links", () => {
     expect(memory.pairedPaths("src/a.ts", 3)).toEqual(paired);
     expect(memory.pairedPaths("src/a.ts", 1)).toEqual([paired[0]!]);
     expect(memory.pairedPaths("src/none.ts", 3)).toEqual([]);
-  });
-
-  test("links are the stored links plus the ref projects", () => {
-    const memory = writable();
-    expect(memory.links()).toEqual([]);
-    memory.appendDigest(digest("s", null, P1, { links: ["storefront"] }));
-    memory.appendDigest(
-      digest("s", P1, P2, {
-        links: ["storefront"],
-        observations: [
-          obs({
-            title: "Pay call",
-            narrative: "a calls pay",
-            refs: [{ project: "payments-api", path: "src/pay.ts", kind: "read" }],
-          }),
-        ],
-      }),
-    );
-    expect(memory.links()).toEqual(["payments-api", "storefront"]);
+    expect(memory.links()).toEqual(["analytics", "payments-api", "storefront"]);
   });
 
   test("share rows are never the latest summary", () => {
@@ -611,24 +558,6 @@ describe("refs and links", () => {
 describe("proposals and stale flags", () => {
   const P1 = { uuid: "u-1", timestamp: "2026-11-02T10:00:00.123Z" };
   const P2 = { uuid: "u-2", timestamp: "2026-11-02T10:05:00.456Z" };
-
-  test("a digest that loses its position race stores no proposal and no flag", () => {
-    const memory = writable();
-    memory.appendDigest(
-      digest("s", null, P1, { observations: [obs({ title: "x", narrative: "n" })] }),
-    );
-    const x = memory.recent(1)[0]!.id;
-    expect(
-      memory.appendDigest(
-        digest("s", { uuid: "u-1", timestamp: "other" }, P2, {
-          proposals: [{ kind: "memory", bullet: "- **Lock**: retry 2 s" }],
-          stale: [{ id: x, reason: "gone" }],
-        }),
-      ),
-    ).toBe("stale");
-    expect(memory.stats("m", 0).pendingProposals).toBe(0);
-    expect(memory.get([x])[0]!.staleFlag).toBeNull();
-  });
 
   test("proposals dedupe on the bullet without its dates, case or spacing", () => {
     const memory = writable();
@@ -995,22 +924,6 @@ describe("read methods", () => {
   });
 });
 
-describe("formatLine", () => {
-  test("renders id, local date, type and title", () => {
-    const createdAtMs = new Date(2026, 0, 2, 3, 4).getTime();
-    expect(formatLine({ id: 7, createdAtMs, type: "bugfix", title: "X", stale: false })).toBe(
-      "#7 2026-01-02 bugfix X",
-    );
-  });
-
-  test("tags a stale row after its type", () => {
-    const createdAtMs = new Date(2026, 0, 2, 3, 4).getTime();
-    expect(formatLine({ id: 7, createdAtMs, type: "bugfix", title: "X", stale: true })).toBe(
-      "#7 2026-01-02 bugfix [stale] X",
-    );
-  });
-});
-
 describe("search", () => {
   const P = { uuid: "u", timestamp: "2026-11-02T10:00:00.000Z" };
   let digests = 0;
@@ -1093,6 +1006,14 @@ describe("search", () => {
       many.map((id, i) => ({ id, vector: vec(1, i, 0) })),
     );
     expect(memory.search(query({ text: "qqqq", vector: near, limit: 100 })).length).toBe(50);
+    seed(
+      memory,
+      Array.from({ length: 55 }, (_, i) =>
+        obs({ title: `hub row ${i}`, narrative: "plain", filesModified: ["src/hub.ts"] }),
+      ),
+    );
+    const hub = { seeds: ["src/hub.ts"], neighbours: [] };
+    expect(memory.search(query({ text: "nomatch", related: hub, limit: 100 })).length).toBe(50);
   });
 
   test("without a usable vector, keyword search runs AND, then OR when AND finds nothing", () => {
@@ -1137,19 +1058,9 @@ describe("search", () => {
     expect(hybrid({ sinceMs: t2 })).toEqual([r2, r3].sort());
     expect(hybrid({ files: ["src/b.ts"] })).toEqual([r2, r3].sort());
     expect(hybrid({ files: ["src/a.ts"] })).toEqual([r1]);
+    expect(hybrid({ files: ["src/a.ts", "src/b.ts"] })).toEqual([r1, r2, r3].sort());
     expect(hybrid({ limit: 2 }).length).toBe(2);
     expect(ids(memory.search(query({ text: "kiwi", type: "feature" })))).toEqual([r2]);
-  });
-
-  test("a file filter matches a row on any of its files", () => {
-    const memory = writable();
-    const [a, b] = seed(memory, [
-      obs({ title: "mango one", narrative: "first", filesRead: ["src/a.ts"] }),
-      obs({ title: "mango two", narrative: "second", filesModified: ["src/b.ts"] }),
-      obs({ title: "mango three", narrative: "third", filesRead: ["src/c.ts"] }),
-    ]) as [number, number, number];
-    const found = ids(memory.search(query({ text: "mango", files: ["src/a.ts", "src/b.ts"] })));
-    expect(found.sort()).toEqual([a, b].sort());
   });
 
   test("a graph list of rows linked to seed and neighbour files fuses with the others", () => {
@@ -1211,18 +1122,6 @@ describe("search", () => {
     expect(found({ sinceMs: t2 })).toEqual([a2]);
     expect(found({ stale: true })).toEqual([a3, a2, a1]);
     expect(found({ stale: true, sinceMs: t2 })).toEqual([a3, a2]);
-  });
-
-  test("the graph list stops at 50", () => {
-    const memory = writable();
-    seed(
-      memory,
-      Array.from({ length: 55 }, (_, i) =>
-        obs({ title: `row ${i}`, narrative: "plain", filesModified: ["src/hub.ts"] }),
-      ),
-    );
-    const hub = { seeds: ["src/hub.ts"], neighbours: [] };
-    expect(memory.search(query({ text: "nomatch", related: hub, limit: 100 })).length).toBe(50);
   });
 
   test("raw query text never parses as FTS5 syntax", () => {

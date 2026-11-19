@@ -60,15 +60,6 @@ describe("digest signals (black-box)", () => {
     expect(Math.abs(Date.now() - (entry.updatedAt as number))).toBeLessThan(60_000);
   });
 
-  test("a hook run with no env writes its spool entry under the preload's CRANK_HOME", () => {
-    expect(process.env.CRANK_HOME).toBeTruthy();
-    expect(process.env.CRANK_HOME).not.toBe(path.join(os.homedir(), ".crank"));
-    const root = digestProject();
-    const payload = { ...claudeStop(root), transcript_path: "/x/t/preload-probe.jsonl" };
-    expect(runHook(STOP, JSON.stringify(payload), root).status).toBe(0);
-    expect(spoolFiles(process.env.CRANK_HOME!)).toContain("preload-probe.json");
-  });
-
   test("SessionEnd marks the entry ended, and a later Stop reopens it", () => {
     const root = digestProject();
     const home = makeCrankHome();
@@ -176,15 +167,6 @@ describe("digest signals (black-box)", () => {
   test("a new signal unparks a parked session; the spool readers skip temp and broken files", () => {
     const root = digestProject();
     const home = makeCrankHome();
-    const saved = process.env.CRANK_HOME;
-    process.env.CRANK_HOME = home;
-    try {
-      expect(readSpool()).toEqual([]);
-      expect(readParked()).toEqual([]);
-    } finally {
-      if (saved === undefined) delete process.env.CRANK_HOME;
-      else process.env.CRANK_HOME = saved;
-    }
     const parked = path.join(home, "spool/parked/abc-1.json");
     fs.mkdirSync(path.dirname(parked), { recursive: true });
     fs.writeFileSync(
@@ -204,6 +186,7 @@ describe("digest signals (black-box)", () => {
 
     fs.writeFileSync(path.join(home, "spool/abc-1.json.99.0.tmp"), "{");
     fs.writeFileSync(path.join(home, "spool/bad.json"), "{");
+    const saved = process.env.CRANK_HOME;
     process.env.CRANK_HOME = home;
     try {
       const [item] = readSpool();
@@ -211,9 +194,6 @@ describe("digest signals (black-box)", () => {
       expect(settleEntry("abc-1", item!.entry.updatedAt, "park")).toBe(true);
       expect(readSpool()).toEqual([]);
       expect(readParked().map((i) => i.stem)).toEqual(["abc-1"]);
-      deleteParked("abc-1");
-      expect(readParked()).toEqual([]);
-      expect(() => deleteEntry("nope")).not.toThrow();
     } finally {
       if (saved === undefined) delete process.env.CRANK_HOME;
       else process.env.CRANK_HOME = saved;

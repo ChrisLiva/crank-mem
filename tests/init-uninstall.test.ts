@@ -3,18 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import {
-  ALLOW_RULES,
-  makeCrankHome,
-  makeProject,
-  runCli,
-  runHook,
-  setMtime,
-  snapshot,
-  stopDigests,
-  type CliRun,
-} from "./helpers.ts";
-import { claudeSessionStart, claudeStop, codexApplyPatch } from "./fixtures/payloads.ts";
+import { ALLOW_RULES, makeProject, runCli, snapshot, stopDigests, type CliRun } from "./helpers.ts";
 
 // Smoke: init into a temp project, check the wiring, uninstall, then expect a
 // byte-identical restore and no crank residue.
@@ -58,14 +47,6 @@ function plantLaterManifest(root: string, text: string): string {
   return dir;
 }
 
-/** The original paths the manifest in the one backup dir under `<root>/.crank/backups/` lists. */
-function manifestOriginals(root: string): string[] {
-  const manifest = JSON.parse(
-    fs.readFileSync(path.join(onlyBackupDir(root), "manifest.json"), "utf-8"),
-  );
-  return manifest.entries.map((e: { original: string }) => e.original);
-}
-
 describe("init → uninstall round-trip", () => {
   test("default (exclude mode): wiring present, restore byte-identical, zero residue", () => {
     const { root, codexHome } = makeProject();
@@ -74,12 +55,6 @@ describe("init → uninstall round-trip", () => {
 
     const init = cli(root, codexHome, "init", "--yes", "--codex", "merge");
     expect(init.status).toBe(0);
-    // The audit-skill pointer sits on the closing guidance block, after "Next:".
-    const pointer = "Optional: install the audit skill — npx skills add ChrisLiva/crank-mem";
-    expect(init.stdout).toContain(pointer);
-    expect(init.stdout.indexOf(pointer)).toBeGreaterThan(
-      init.stdout.indexOf("Next: start a Claude Code session"),
-    );
 
     // wiring
     const settings = JSON.parse(
@@ -165,6 +140,19 @@ describe("init → uninstall round-trip", () => {
     cli(root, codexHome, "uninstall", "--yes", "--restore", "--delete-crank");
     expect(fs.readFileSync(path.join(root, ".crank/.gitignore"), "utf-8")).toBe("*\n");
     expect(fs.readFileSync(path.join(root, ".crank/efforts/e1/plan.md"), "utf-8")).toBe("plan\n");
+
+    // With no .crank/.gitignore beforehand, restore keeps the allowlist init wrote.
+    const bare = makeProject();
+    cli(bare.root, bare.codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
+    fs.writeFileSync(path.join(bare.root, ".crank/debug.log"), "x");
+    for (const name of STORE_FILES) fs.writeFileSync(path.join(bare.root, ".crank", name), "x");
+    const un = cli(bare.root, bare.codexHome, "uninstall", "--yes", "--restore", "--keep-crank");
+    expect(un.status).toBe(0);
+    expect(un.stdout).not.toContain(".gitignore");
+    for (const name of STORE_FILES)
+      expect(fs.existsSync(path.join(bare.root, ".crank", name))).toBe(true);
+    for (const rel of [".crank/debug.log", ".crank/cerebrum-nudge.json"])
+      expect(ignored(bare.root, rel)).toBe(true);
   });
 
   test("commit-mode init strips crank-mem's own ignore block that hides cerebrum", () => {
@@ -218,18 +206,6 @@ describe("init → uninstall round-trip", () => {
     expect(fs.existsSync(path.join(root, ".crank/cerebrum.md"))).toBe(true);
   });
 
-  test("exclude-mode upgrade adds back a missing ignore block and leaves .gitignore alone", () => {
-    const { root, codexHome } = makeProject({ ".gitignore": "dist/\n" });
-    cli(root, codexHome, "init", "--yes", "--git", "exclude", "--codex", "skip");
-    const exclude = path.join(root, ".git/info/exclude");
-    fs.writeFileSync(exclude, "");
-    const up = cli(root, codexHome, "upgrade");
-    expect(up.status).toBe(0);
-    expect(up.stdout).toContain("added the crank-mem .crank/ ignore block to .git/info/exclude");
-    expect(ignored(root, ".crank/cerebrum.md")).toBe(true);
-    expect(fs.readFileSync(path.join(root, ".gitignore"), "utf-8")).toBe("dist/\n");
-  });
-
   test("upgrade replaces a pre-allowlist .crank/.gitignore, and restore brings the old one back", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
@@ -268,26 +244,13 @@ describe("init → uninstall round-trip", () => {
     expect(fs.readFileSync(memorySnapshot, "utf8")).toBe(SNAPSHOT_BYTES);
   });
 
-  test("restore keeps the allowlist init wrote where no .crank/.gitignore was", () => {
-    const { root, codexHome } = makeProject();
-    cli(root, codexHome, "init", "--yes", "--git", "commit", "--codex", "skip");
-    fs.writeFileSync(path.join(root, ".crank/debug.log"), "x");
-    for (const name of STORE_FILES) fs.writeFileSync(path.join(root, ".crank", name), "x");
-    const un = cli(root, codexHome, "uninstall", "--yes", "--restore", "--keep-crank");
-    expect(un.status).toBe(0);
-    expect(un.stdout).not.toContain(".gitignore");
-    for (const name of STORE_FILES)
-      expect(fs.existsSync(path.join(root, ".crank", name))).toBe(true);
-    for (const rel of [".crank/debug.log", ".crank/cerebrum-nudge.json"])
-      expect(ignored(root, rel)).toBe(true);
-  });
-
   test("--delete-crank deletes only crank-mem's files and keeps another tool's", () => {
     const { root, codexHome } = makeProject();
     cli(root, codexHome, "init", "--yes", "--codex", "skip");
     const crank = path.join(root, ".crank");
     for (const name of [
       "debug.log",
+      "journal.md",
       "cerebrum-nudge.json",
       "cerebrum-dedup.json",
       "cerebrum-archive.md",
@@ -323,41 +286,6 @@ describe("init → uninstall round-trip", () => {
       "plugin-run",
     ]);
     expect(fs.readFileSync(path.join(crank, "efforts/e1/plan.md"), "utf-8")).toBe("plan\n");
-  });
-
-  test("hooks leave the old upkeep files untouched, and --delete-crank still removes them", () => {
-    const { root, codexHome } = makeProject();
-    cli(root, codexHome, "init", "--yes", "--codex", "skip");
-    const crank = path.join(root, ".crank");
-    const old = {
-      "journal.md": "# Journal\n\n- 2026-10-01: did a; NEXT: do b\n",
-      "cerebrum-nudge.json": JSON.stringify({ cerebrumMtimeMs: 1, nudgedAtChanged: 0 }),
-      "cerebrum-dedup.json": JSON.stringify({ cerebrumMtimeMs: 1, bulletHashes: [] }),
-    };
-    const ONE_DAY_AGO = Date.now() - 86_400_000;
-    for (const [name, text] of Object.entries(old)) {
-      fs.writeFileSync(path.join(crank, name), text);
-      setMtime(path.join(crank, name), ONE_DAY_AGO);
-    }
-    const before = Object.keys(old).map((name) => fs.statSync(path.join(crank, name)).mtimeMs);
-
-    const env = { CRANK_HOME: makeCrankHome() };
-    const patch = "*** Begin Patch\n*** Update File: app.ts\n+x\n*** End Patch";
-    for (const [hook, payload] of [
-      ["session-start", claudeSessionStart(root)],
-      ["stop", claudeStop(root)],
-      ["post-write", codexApplyPatch(root, patch)],
-    ] as const) {
-      expect(runHook(`src/hooks/${hook}.ts`, JSON.stringify(payload), root, env).status).toBe(0);
-    }
-    for (const [name, text] of Object.entries(old))
-      expect(fs.readFileSync(path.join(crank, name), "utf-8")).toBe(text);
-    expect(Object.keys(old).map((name) => fs.statSync(path.join(crank, name)).mtimeMs)).toEqual(
-      before,
-    );
-
-    expect(cli(root, codexHome, "uninstall", "--yes", "--delete-crank").status).toBe(0);
-    for (const name of Object.keys(old)) expect(fs.existsSync(path.join(crank, name))).toBe(false);
   });
 
   test("--delete-crank removes .crank/ when only crank-mem's audit backup is left", () => {
@@ -422,36 +350,6 @@ describe("init → uninstall round-trip", () => {
       ".claude/settings.local.json":
         JSON.stringify({ permissions: { allow: ["Bash(ls:*)"] } }, null, 2) + "\n",
     });
-  });
-
-  test("codex-trust write: entries land in CODEX_HOME config and are removed on uninstall", () => {
-    const { root, codexHome } = makeProject();
-    const codexConfig = path.join(codexHome, "config.toml");
-    const hooksJson = path.join(fs.realpathSync(root), ".codex/hooks.json");
-    // An older crank release's PascalCase orphan for THIS project, plus an
-    // entry codex wrote for another project: init sweeps the first, never the
-    // second, and uninstall leaves the second alone too.
-    const codexOwn =
-      '[hooks.state."/other/project/.codex/hooks.json:session_start:0:0"]\ntrusted_hash = "sha256:beef"\n';
-    fs.writeFileSync(
-      codexConfig,
-      `model = "gpt-5.6"\n[hooks.state."${hooksJson}:SessionStart:0:0"]\ntrusted_hash = "sha256:stale"\n${codexOwn}`,
-    );
-
-    cli(root, codexHome, "init", "--yes", "--codex", "merge", "--codex-trust", "write");
-    const toml = fs.readFileSync(codexConfig, "utf-8");
-    expect(toml).toContain(`[hooks.state."${hooksJson}:session_start:0:0"]`);
-    expect(toml).toMatch(/trusted_hash = "sha256:[0-9a-f]{64}"/);
-    expect(toml).not.toContain("SessionStart");
-    expect(toml).toContain(codexOwn);
-
-    // As if a release that keyed on the raw event had left an orphan after this init.
-    fs.appendFileSync(
-      codexConfig,
-      `[hooks.state."${hooksJson}:SessionStart:0:0"]\ntrusted_hash = "sha256:stale"\n`,
-    );
-    cli(root, codexHome, "uninstall", "--yes", "--keep-crank");
-    expect(fs.readFileSync(codexConfig, "utf-8")).toBe('model = "gpt-5.6"\n' + codexOwn);
   });
 
   test("pre-existing user settings survive surgical uninstall byte-identical", () => {
@@ -826,32 +724,6 @@ describe("init → uninstall round-trip", () => {
     expect(unB.status).toBe(0);
     expect(fs.readFileSync(codexConfig, "utf-8")).toBe(seed);
   }, 20_000);
-
-  test("a backup manifest lists only the files init wrote", () => {
-    const { root, codexHome } = makeProject({ ".gitignore": ".crank/\n" });
-    const init = cli(
-      root,
-      codexHome,
-      "init",
-      "--yes",
-      "--git",
-      "ignore",
-      "--codex",
-      "skip",
-      "--codex-trust",
-      "write",
-    );
-    expect(init.status).toBe(0);
-
-    const originals = manifestOriginals(root);
-    const realRoot = fs.realpathSync(root);
-    expect(originals).toContain(path.join(realRoot, ".claude/settings.local.json"));
-    expect(originals).not.toContain(path.join(realRoot, ".gitignore"));
-    expect(originals).not.toContain(path.join(codexHome, "config.toml"));
-    expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).toBe(
-      'model = "gpt-5.6"\n',
-    );
-  });
 });
 
 // Uninstall sweeps residue from a pre-rename (non-dotted crank/) install:

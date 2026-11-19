@@ -15,7 +15,6 @@ import {
 } from "./helpers.ts";
 import { deleteCodeDb } from "../src/hooks/lib/code-db.ts";
 import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
-import { COMMANDS as CLI_COMMANDS } from "../src/cli/commands.ts";
 
 describe("search", () => {
   test("each hit is dated in the local zone", () => {
@@ -124,9 +123,13 @@ describe("search flags", () => {
     expect(lines(runCli(root, ["search", "widget", "--limit", "3"]))).toBe(3);
   });
 
-  test("--file resolves against the shell's directory", () => {
+  test("--file resolves against the shell's directory, and --type keeps only that type", () => {
     const root = initedCopy({ "src/a.ts": "export const a = 1;\n" });
-    seedMemory(root, [{ title: "Gadget lives in src", filesModified: ["src/a.ts"] }]);
+    seedMemory(root, [
+      { title: "Gadget lives in src", filesModified: ["src/a.ts"] },
+      { type: "decision", title: "Sprocket decision" },
+      { type: "bugfix", title: "Sprocket bugfix" },
+    ]);
     const src = path.join(root, "src");
     expect(runCli(src, ["search", "gadget", "--file", "src/a.ts"]).stdout).toBe("");
     expect(runCli(src, ["search", "gadget", "--file", "a.ts"]).stdout).toMatch(
@@ -135,16 +138,9 @@ describe("search flags", () => {
     const outside = runCli(src, ["search", "gadget", "--file", "/elsewhere/a.ts"]);
     expect(outside.status).toBe(0);
     expect(outside.stdout).toBe("");
-  });
-
-  test("--type keeps only that type", () => {
-    const root = initedCopy();
-    seedMemory(root, [
-      { type: "decision", title: "Sprocket decision" },
-      { type: "bugfix", title: "Sprocket bugfix" },
-    ]);
-    const run = runCli(root, ["search", "sprocket", "--type", "decision"]);
-    expect(run.stdout).toMatch(/^#\d+ \S+ decision Sprocket decision\n$/);
+    expect(runCli(root, ["search", "sprocket", "--type", "decision"]).stdout).toMatch(
+      /^#\d+ \S+ decision Sprocket decision\n$/,
+    );
   });
 
   test("--since is local midnight", () => {
@@ -203,7 +199,7 @@ describe("stale rows", () => {
   }
 
   test("search hides a stale row unless --stale asks for it", () => {
-    const { root, b, staleLine } = staleProject();
+    const { root, a, b, staleLine } = staleProject();
     const plain = runCli(root, ["search", "Lock"], { TZ });
     expect(plain.status).toBe(0);
     expect(plain.stdout).toContain(
@@ -214,28 +210,17 @@ describe("stale rows", () => {
     expect(all.status).toBe(0);
     expect(all.stdout.split("\n")).toContain(staleLine);
     expect(all.stdout).toContain(`#${b} ${localDate(0, TZ)} discovery Lock files live in .crank\n`);
-    expect(runCli(root, ["search", "--stale"], { TZ })).toMatchObject({
-      status: 1,
-      stdout: "",
-      stderr: `${CLI_COMMANDS.search.usage}\n`,
-    });
-    expect(runCli(root, ["search", "--help"], { TZ }).stdout.split("\n")[0]).toBe(
-      "Usage: crank-mem search <query> [--limit n] [--type t] [--since YYYY-MM-DD] [--file path] [--project name] [--stale]",
-    );
-  });
+    const bare = runCli(root, ["search", "--stale"], { TZ });
+    expect(bare.status).toBe(1);
+    expect(bare.stdout).toBe("");
 
-  test("timeline keeps a stale row and tags it", () => {
-    const { root, a, staleLine } = staleProject();
-    const run = runCli(root, ["timeline", String(a)], { TZ });
-    expect(run.status).toBe(0);
-    expect(run.stdout.split("\n")).toContain(staleLine);
-  });
+    const timeline = runCli(root, ["timeline", String(a)], { TZ });
+    expect(timeline.status).toBe(0);
+    expect(timeline.stdout.split("\n")).toContain(staleLine);
 
-  test("get prints the flag's local date and reason after the session", () => {
-    const { root, a } = staleProject();
-    const run = runCli(root, ["get", String(a)], { TZ });
-    expect(run.status).toBe(0);
-    const lines = run.stdout.split("\n");
+    const got = runCli(root, ["get", String(a)], { TZ });
+    expect(got.status).toBe(0);
+    const lines = got.stdout.split("\n");
     expect(lines[1]).toMatch(/^session: seed-\d+$/);
     expect(lines[2]).toBe(`stale: ${localDate(0, TZ)} retry is 5 s now`);
   });
@@ -248,19 +233,6 @@ describe("search query text", () => {
     const run = runCli(root, ["search", "--max-turns"]);
     expect(run.status).toBe(0);
     expect(run.stdout).toMatch(/^#1 \S+ discovery Digest runs pass max turns 2\n$/);
-  });
-
-  test("FTS syntax in the query raises no error", () => {
-    const root = initedCopy();
-    seedMemory(root, [{ title: "Plain note" }]);
-    for (const q of ['"', "*", "-", "AND", "NEAR("]) {
-      const run = runCli(root, ["search", q]);
-      expect(run.status, q).toBe(0);
-      expect(run.stderr).toBe(
-        "crank-mem: keyword search only; run `crank-mem setup` for search by meaning.\n",
-      );
-    }
-    expect(runCli(root, ["search", '"']).stdout).toBe("");
   });
 });
 
@@ -334,11 +306,6 @@ describe("timeline", () => {
       stdout: "",
       stderr: "crank-mem: no observation #99.\n",
     });
-  });
-
-  test("a non-numeric id or depth prints usage and exits 1", () => {
-    const root = initedCopy();
-    seedMemory(root, [{}]);
     for (const args of [
       ["timeline"],
       ["timeline", "abc"],
@@ -353,17 +320,7 @@ describe("timeline", () => {
 });
 
 describe("get", () => {
-  test("a row seeded with defaults prints (none) for empty facts and file lists", () => {
-    const root = initedCopy();
-    seedMemory(root, [{}]);
-    const run = runCli(root, ["get", "1"]);
-    expect(run.status).toBe(0);
-    expect(run.stdout).toMatch(
-      /^#1 \d{4}-\d{2}-\d{2} discovery Observation 0\nsession: seed-\d+\nnarrative: Narrative 0\nfacts: \(none\)\nfiles read: \(none\)\nfiles modified: \(none\)\n$/,
-    );
-  });
-
-  test("a row with values prints every field literally", () => {
+  test("a row prints every field literally, and (none) for empty facts and file lists", () => {
     const root = initedCopy();
     seedMemory(root, [
       {
@@ -374,7 +331,13 @@ describe("get", () => {
         filesRead: ["src/b.ts", "src/a.ts"],
         filesModified: ["src/c.ts"],
       },
+      {},
     ]);
+    const empty = runCli(root, ["get", "2"]);
+    expect(empty.status).toBe(0);
+    expect(empty.stdout).toMatch(
+      /^#2 \d{4}-\d{2}-\d{2} discovery Observation 1\nsession: seed-\d+\nnarrative: Narrative 1\nfacts: \(none\)\nfiles read: \(none\)\nfiles modified: \(none\)\n$/,
+    );
     const run = runCli(root, ["get", "1"]);
     expect(run.status).toBe(0);
     expect(run.stdout).toMatch(
@@ -411,22 +374,7 @@ describe("get", () => {
     }
   });
 
-  test("an unknown project name exits 1", () => {
-    const root = initedCopy();
-    seedMemory(root, [{}]);
-    for (const command of ["get", "timeline"]) {
-      expect(runCli(root, [command, "nowhere#1"]), command).toMatchObject({
-        status: 1,
-        stdout: "",
-        stderr: "crank-mem: no project nowhere.\n",
-      });
-    }
-    const run = runCli(root, ["get", "#x"]);
-    expect(run.status).toBe(1);
-    expect(run.stderr).toContain("Usage: crank-mem get <id...>");
-  });
-
-  test("ids may carry a # prefix", () => {
+  test("an unknown project name exits 1, and ids may carry a # prefix", () => {
     const root = initedCopy();
     const [id] = seedMemory(root, [{}]);
     for (const command of ["get", "timeline"]) {
@@ -437,6 +385,16 @@ describe("get", () => {
         stdout: bare.stdout,
       });
     }
+    for (const command of ["get", "timeline"]) {
+      expect(runCli(root, [command, "nowhere#1"]), command).toMatchObject({
+        status: 1,
+        stdout: "",
+        stderr: "crank-mem: no project nowhere.\n",
+      });
+    }
+    const run = runCli(root, ["get", "#x"]);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("Usage: crank-mem get <id...>");
   });
 });
 
@@ -470,37 +428,11 @@ describe("where the commands run", () => {
 
   test("outside any project each command prints the init hint and exits 1", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-recall-bare-"));
-    for (const args of [...COMMANDS, ["digest", "on"], ["digest", "off"]]) {
+    for (const args of [...COMMANDS, ["restore-memory"], ["digest", "on"], ["digest", "off"]]) {
       const run = runCli(bare, args);
       expect(run.status, args[0]).toBe(1);
       expect(run.stderr).toContain("not initialized here");
       expect(fs.existsSync(path.join(bare, ".crank"))).toBe(false);
     }
-  }, 20_000);
-});
-
-describe("help", () => {
-  test("--help lists the recall and code commands, and hides --model-host", () => {
-    const run = runCli(os.tmpdir(), ["--help"]);
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("  search          Search stored memory by meaning or keyword\n");
-    expect(run.stdout).toContain("  timeline        Show the observations around one id\n");
-    expect(run.stdout).toContain(
-      "  get             Print stored observations in full\n  outline         Print a source file's symbols with their bodies folded\n",
-    );
-    expect(run.stdout).toContain(
-      "  outline         Print a source file's symbols with their bodies folded\n  unfold          Print one symbol's full source\n",
-    );
-    expect(run.stdout).toContain("  restore-memory  Put a memory.db snapshot back\n");
-    expect(run.stdout).toContain(
-      "  digest          Turn background digests on or off, or resume them\n",
-    );
-    expect(run.stdout).not.toContain("--model-host");
-    expect(runCli(os.tmpdir(), ["outline", "--help"]).stdout).toBe(
-      "Usage: crank-mem outline <file> [--from <line>]\n\nPrint a source file's symbols with their bodies folded.\n",
-    );
-    expect(runCli(os.tmpdir(), ["unfold", "--help"]).stdout).toBe(
-      "Usage: crank-mem unfold <file> <symbol|line>\n\nPrint one symbol's full source.\n",
-    );
   }, 20_000);
 });

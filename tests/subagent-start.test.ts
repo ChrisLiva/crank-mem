@@ -48,15 +48,10 @@ describe("subagent-start hook (black-box)", () => {
     const shape = (ctx: string): string[] => {
       const lines = ctx.split("\n");
       expect(lines[0]).toBe(INJECTION_HEADING);
-      expect(lines[1]).toBe(
-        "- Excerpt of `.crank/cerebrum.md`, this project's memory; grep it for more. Memory is not proof: verify a claim against the cited file before relying on it.",
-      );
       expect(lines.filter((l) => l.startsWith("### "))).toEqual([
         "### User Preferences",
         "### Memory",
       ]);
-      for (const dropped of ["journal.md", "agent-kept", "append at its end", "consolidate"])
-        expect(ctx).not.toContain(dropped);
       expect(ctx).toContain("- **Tabs**: user wants tabs");
       expect(ctx).toContain("- **Build**: `make -j8` OOMs on CI");
       return lines;

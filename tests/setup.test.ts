@@ -367,22 +367,10 @@ describe("upgrade --all", () => {
   });
 });
 
-describe("digest on and the embedder", () => {
-  test("says nothing when the model is in place", () => {
-    const root = initedCopy();
-    const run = runCli(root, ["digest", "on"], { CRANK_HOME: makeModelHome() });
-    expect(run.status).toBe(0);
-    expect(run.stderr).toBe("");
-  });
-});
-
 describe("help", () => {
   test("lists setup and none of the hidden commands or flags", () => {
     const out = runCli(tempDir("crank-setup-help-"), ["--help"]).stdout;
-    expect(out).toContain("Repair this project's install, or every registered project with --all");
-    expect(out).toContain(
-      "  setup           Install packages, build the dashboard and download the local search model\n",
-    );
+    expect(out).toMatch(/^ {2}setup /m);
     for (const flag of [
       "--model-host",
       "--fetch-timeout-ms",

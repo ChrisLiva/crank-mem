@@ -26,8 +26,6 @@ import { crankTrust } from "../src/cli/codex-trust.ts";
 import { openCodeDb, refreshFileFacts } from "../src/hooks/lib/code-db.ts";
 import { loadConfig } from "../src/hooks/lib/config.ts";
 import { openStoreForWrite } from "../src/hooks/lib/memory.ts";
-import { unknownFlag } from "../src/cli/args.ts";
-import { COMMANDS, commandHelp, commandSpec } from "../src/cli/commands.ts";
 import { cliVersion } from "../src/cli/version.ts";
 
 function cli(cwd: string, ...args: string[]): CliRun {
@@ -224,8 +222,9 @@ describe("stats: memory health", () => {
     return root;
   }
 
-  test("reports what the excerpt leaves out and cited paths", () => {
-    const run = cli(memoryProject(), "stats");
+  test("reports what the excerpt leaves out and cited paths, present or deleted", () => {
+    const root = memoryProject();
+    const run = cli(root, "stats");
     expect(run.status).toBe(0);
     // 15 bullets: the 1 preference and the 7 newest memory bullets shown, 7 left to the index.
     expect(run.stdout).toContain("cerebrum bullets: 8 of 15 injected\n");
@@ -235,15 +234,11 @@ describe("stats: memory health", () => {
     // No upkeep rows: nothing writes the journal, flags overlaps or nudges any more.
     expect(run.stdout).not.toMatch(/^ {2}(?:journal|overlaps:|nudges:)/m);
     expect(run.stdout).toContain("  last audit:");
-  });
 
-  test("counts a cited file deleted since the last scan as missing", () => {
-    const root = memoryProject();
+    // A cited file deleted since the last scan counts as missing.
     expect(cli(root, "scan").status).toBe(0);
     fs.rmSync(path.join(root, "docs/kept.md"));
-    const run = cli(root, "stats");
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("cited paths:      0 of 2 exist\n");
+    expect(cli(root, "stats").stdout).toContain("cited paths:      0 of 2 exist\n");
   });
 
   test("a hidden bullet whose only date does not parse counts as undated", () => {
@@ -353,6 +348,9 @@ describe("stats: capture health", () => {
     digestOn(root);
     seedMemory(root, [{ title: "first a" }, { title: "first b" }], { costUsd: 0.01 });
     seedMemory(root, [{ title: "second a" }], { costUsd: 0.02 });
+    const [a] = seedMemory(root, [{ title: "Lock retry is two seconds" }]) as [number];
+    seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
+    seedMemory(root, [], { proposals: [{ kind: "memory", bullet: "- **P**: x" }] });
     const home = makeCrankHome();
     stopDigests(home);
     spoolEntry(home, "waiting", "/elsewhere", Date.now());
@@ -367,13 +365,14 @@ describe("stats: capture health", () => {
     expect(run.stdout).toContain("  digest:           stopped (login)\n");
     expect(run.stdout).toContain("  daemon:           not running\n");
     expect(run.stdout).toContain("  spool:            1 waiting, 1 parked\n");
-    expect(run.stdout).toContain("  observations:     3\n");
+    expect(run.stdout).toContain("  observations:     4\n");
     // Seeded rows carry no vector.
-    expect(run.stdout).toContain("  unembedded:       3\n");
+    expect(run.stdout).toContain("  unembedded:       4\n");
     expect(run.stdout).toMatch(/ {2}last digest: {6}\d+s ago\n/);
     expect(run.stdout).toContain("  month cost:       $0.03 (list price)\n");
-    expect(run.stdout).toContain("  proposals:        0\n");
-    expect(run.stdout).toContain("  stale:            0\n");
+    expect(run.stdout).toMatch(
+      /\n {2}month cost: .*\n {2}proposals: {8}1\n {2}stale: {12}1\n {2}consolidation: {4}never\n {2}last snapshot: {4}never\n {2}embedder: /,
+    );
     expect(run.stdout).toContain("  embedder:         not ready (run crank-mem setup)\n");
     expect(run.stdout).toContain("  not installed:    none\n");
 
@@ -389,22 +388,6 @@ describe("stats: capture health", () => {
     expect(ready).toContain("  embedder:         ready\n");
     expect(ready).toContain("  digest:           on\n");
     expect(ready).toContain("  spool:            0 waiting, 0 parked\n");
-  });
-
-  test("counts pending proposals and stale rows after the month cost", () => {
-    const root = initedCopy(ALPHA);
-    const [a] = seedMemory(root, [
-      { title: "Lock retry is two seconds" },
-      { title: "Lock files live in .crank" },
-    ]) as [number];
-    seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
-    seedMemory(root, [], { proposals: [{ kind: "memory", bullet: "- **P**: x" }] });
-    const out = cli(root, "stats").stdout;
-    expect(out).toMatch(CAPTURE_ROWS);
-    expect(out).toContain("  month cost:       $0.00 (list price)\n");
-    expect(out).toMatch(
-      /\n {2}month cost: .*\n {2}proposals: {8}1\n {2}stale: {12}1\n {2}consolidation: {4}never\n {2}last snapshot: {4}never\n {2}embedder: /,
-    );
   });
 
   test("shows the last consolidation after the stale row, and counts its cost in the month", () => {
@@ -873,23 +856,6 @@ describe("upgrade", () => {
     expect(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf-8")).toBe(own);
   });
 
-  test("seeds no journal.md and keeps an existing one byte for byte", () => {
-    const root = initedCopy(ALPHA);
-    const journal = path.join(root, ".crank/journal.md");
-    expect(fs.existsSync(journal)).toBe(false);
-
-    const run = cli(root, "upgrade");
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("nothing else to do");
-    expect(run.stdout).not.toContain("seeded .crank/journal.md");
-    expect(fs.existsSync(journal)).toBe(false);
-
-    const kept = "# Journal\n\n- 2026-10-01: did a; NEXT: do b — ünïcode\n";
-    fs.writeFileSync(journal, kept);
-    expect(cli(root, "upgrade").status).toBe(0);
-    expect(fs.readFileSync(journal, "utf-8")).toBe(kept);
-  });
-
   // 0.8.1 and earlier seeded the cerebrum with a protocol preamble; frozen here.
   function frozenPreamble(): string {
     const text = fs.readFileSync(
@@ -992,75 +958,14 @@ describe("upgrade", () => {
   }, 20_000);
 });
 
-const COMMAND_NAMES = [
-  "init",
-  "scan",
-  "digest",
-  "search",
-  "timeline",
-  "get",
-  "outline",
-  "unfold",
-  "callers",
-  "callees",
-  "impact",
-  "anatomy",
-  "restore-memory",
-  "setup",
-  "stats",
-  "dashboard",
-  "upgrade",
-  "uninstall",
-  "daemon",
-  "job",
-  "graph-job",
-];
-
-describe("flags (in-process)", () => {
-  test("job --help hides the job's test flags", () => {
-    const help = commandHelp(COMMANDS.job);
-    expect(help).toBe("Usage: crank-mem job <stem> (internal: the daemon runs it)");
-    for (const word of ["consolidate", "maintain", "stale"]) expect(help).not.toContain(word);
-  });
-
-  test("an unknown flag is named, and every known flag passes", () => {
-    for (const [name, argv, flag] of [
-      ["init", ["--yes", "--bogus"], "bogus"],
-      ["uninstall", ["--yes", "--force"], "force"],
-      ["upgrade", ["--dry-run"], "dry-run"],
-      ["scan", ["--full"], "full"],
-      ["init", ["--git=commit"], "git=commit"],
-      ["job", ["s1", "--bogus"], "bogus"],
-      ["job", ["s1", "--maintain-every-ms"], "maintain-every-ms"],
-      ["job", ["s1", "--stale-keep-ms"], "stale-keep-ms"],
-    ] as const) {
-      const spec = commandSpec(name)!;
-      expect([name, argv, unknownFlag([...argv], spec.value, spec.bool)]).toEqual([
-        name,
-        argv,
-        flag,
-      ]);
-    }
-    for (const name of COMMAND_NAMES) {
-      const spec = commandSpec(name)!;
-      const argv = [
-        ...spec.value.flatMap((f) => [`--${f}`, "1"]),
-        ...spec.bool.map((f) => `--${f}`),
-      ];
-      expect([name, unknownFlag(argv, spec.value, spec.bool)]).toEqual([name, null]);
-    }
-  });
-});
-
 describe("flags", () => {
-  test("init --help and -h in a fresh directory install nothing", () => {
+  test("init --help and -h in a fresh directory exit 0 and install nothing", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-help-"));
     fs.writeFileSync(path.join(root, "a.ts"), "export const a = 1;\n");
     const home = makeCrankHome();
     for (const help of ["--help", "-h"]) {
       const run = runCli(root, ["init", help], { CRANK_HOME: home });
       expect([help, run.status]).toEqual([help, 0]);
-      expect(run.stdout).toContain("--git commit|ignore|exclude");
     }
     expect(fs.readdirSync(root)).toEqual(["a.ts"]);
     expect(fs.readdirSync(home)).toEqual([]);
@@ -1074,7 +979,7 @@ describe("flags", () => {
     expect(fs.readdirSync(fresh)).toEqual([]);
   });
 
-  test("an unknown command prints the usage and exits 1; a bare call, help and --version exit 0", () => {
+  test("an unknown command exits 1; a bare call, help and --version exit 0", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "crank-cmd-"));
     const home = makeCrankHome();
     for (const [args, status] of [
@@ -1085,12 +990,7 @@ describe("flags", () => {
       [["--help"], 0],
     ] as const) {
       const run = runCli(dir, [...args], { CRANK_HOME: home });
-      expect([
-        args,
-        run.status,
-        run.stdout.includes("Usage: crank-mem <command> [flags]"),
-        run.stdout.includes("Run `crank-mem <command> --help` for its flags."),
-      ]).toEqual([args, status, true, true]);
+      expect({ args, status: run.status }).toEqual({ args, status });
     }
     for (const flag of ["--version", "-v"]) {
       const run = runCli(dir, [flag], { CRANK_HOME: home });

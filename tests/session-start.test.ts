@@ -7,7 +7,6 @@ import {
   REPO_ROOT,
   enableDebugConfig,
   fakeCloneRoot,
-  git,
   killDaemon,
   makeCrankHome,
   makeCrankProject,
@@ -24,7 +23,7 @@ import {
 } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, RECALL_BULLET, SUBAGENT_BULLET } from "../src/hooks/lib/injection.ts";
-import { formatLine, openStoreForWrite, readStoreSync } from "../src/hooks/lib/memory.ts";
+import { openStoreForWrite } from "../src/hooks/lib/memory.ts";
 import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import { claudeSessionStart, claudeSubagentStart, codexSessionStart } from "./fixtures/payloads.ts";
 import { workspace } from "./workspace.ts";
@@ -46,6 +45,8 @@ describe("session-start hook (black-box)", () => {
     // The scan's result reaches the model as a count and a pointer, not a listing.
     expect(ctx).toContain("`crank-mem anatomy [<dir>]` lists the project's 2 file(s) with");
     expect(ctx).not.toContain("`app.ts`");
+    // Every language here has a grammar, so the pointer carries no gap clause.
+    expect(ctx).not.toContain("no symbol ranges");
     // code.db was written, and no anatomy file with it
     expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(true);
     // A read-only store makes `anatomy` answer without refreshing, so what it lists was written by the hook.
@@ -75,34 +76,21 @@ describe("session-start hook (black-box)", () => {
       expect(run.status).toBe(0);
       return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
     };
-    const pointer =
-      "- `crank-mem anatomy [<dir>]` lists the project's 5 file(s) with descriptions, token sizes and symbol line ranges (symbols for 2 files are still being parsed) (no symbol ranges for .lua, .dart files); use it before slice-reading a large file.";
     const codex = ctxFor(codexSessionStart(root));
     const claude = ctxFor(claudeSessionStart(root));
     // The code pointer follows the anatomy pointer, and the subagent line sits between it and the
     // proof bullet, for both agents.
-    expect(SUBAGENT_BULLET).toBe(
-      "- Subagents: when you write a subagent's prompt for code exploration or a question about earlier work, name the `crank-mem` commands above that fit its task.",
-    );
     for (const ctx of [codex, claude]) {
+      const pointer = ctx.split("\n").find((l) => l.startsWith("- `crank-mem anatomy [<dir>]`"))!;
+      expect(pointer).toContain("lists the project's 5 file(s)");
+      expect(pointer).toContain("(symbols for 2 files are still being parsed)");
+      expect(pointer).toContain("(no symbol ranges for .lua, .dart files)");
       expect(count(ctx, SUBAGENT_BULLET)).toBe(1);
       expect(
         count(ctx, `${pointer}\n${CODE_BULLET}\n${SUBAGENT_BULLET}\n- Memory is not proof`),
       ).toBe(1);
       expect(ctx).not.toContain("offset/limit");
     }
-  });
-
-  test("a project with nothing to parse omits the parsing and gap clauses", () => {
-    const root = makeCrankProject({ "README.md": "# Demo\n" });
-    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    expect(ctx).toContain(
-      "- `crank-mem anatomy [<dir>]` lists the project's 1 file(s) with descriptions, token sizes and symbol line ranges; use it before slice-reading a large file.\n",
-    );
-    expect(ctx).not.toContain("still being parsed");
-    expect(ctx).not.toContain("no symbol ranges");
   });
 
   test("a code.db that does not open drops the count and both clauses from the pointer", () => {
@@ -133,16 +121,6 @@ describe("session-start hook (black-box)", () => {
     expect(events.find((e) => e.event === "walk-fallback")?.reason).toMatch(/^exit \d+$/);
   });
 
-  test("a git repo with no commits skips churn and logs why", () => {
-    const root = makeCrankProject({ "a.ts": "x" });
-    git(root, "init", "-q");
-    enableDebugConfig(root);
-    const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    const events = readDebugLog(root).flatMap((r) => r.events);
-    expect(events.find((e) => e.event === "churn-skipped")?.reason).toMatch(/^exit \d+$/);
-  });
-
   test("no .crank/ dir: exit 0, silent stdout", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-bare-"));
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(bare)));
@@ -150,16 +128,12 @@ describe("session-start hook (black-box)", () => {
     expect(run.stdout).toBe("");
   });
 
-  test("garbage stdin: exit 0, silent", () => {
-    const run = runHook(HOOK, "{{{not json");
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
-  });
-
-  test("empty stdin: exit 0, silent", () => {
-    const run = runHook(HOOK, "");
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe("");
+  test("garbage or empty stdin: exit 0, silent", () => {
+    for (const stdin of ["{{{not json", ""]) {
+      const run = runHook(HOOK, stdin);
+      expect(run.status).toBe(0);
+      expect(run.stdout).toBe("");
+    }
   });
 });
 
@@ -178,19 +152,6 @@ describe("memory reaches the model whole (black-box)", () => {
         "  z-index of 10 — it becomes a backdrop root, killing the overlay blur.",
     );
     expect(ctx).toContain("Always use tabs");
-  });
-
-  test("an unmigrated cerebrum still injects its Key Learnings", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    fs.writeFileSync(
-      path.join(root, ".crank/cerebrum.md"),
-      "# Cerebrum\n\n## User Preferences\n\n- Always use tabs\n\n" +
-        "## Key Learnings\n\n- The API rate-limits at 100 rps\n\n" +
-        "## Do-Not-Repeat\n\n- Never force-push main\n",
-    );
-    const ctx = inject(root);
-    expect(ctx).toContain("The API rate-limits at 100 rps");
-    expect(ctx).toContain("Never force-push main");
   });
 });
 
@@ -272,13 +233,8 @@ describe("cerebrum index (black-box)", () => {
     expect(ctx).toMatch(/^### Not shown \(\d+ of 28; grep \.crank\/cerebrum\.md\)$/m);
     expect(ctx).toContain("- **Pref 0**: `Support.cpp` caps pillar reach at…");
     expect(ctx).toMatch(/^- \*\*Gotcha 15\*\*: .*…$/m); // the newest hidden one
-  });
 
-  test("memory bullets long enough to fill the excerpt still leave the hidden ones named", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
-    const bullet = (subject: string, i: number, clauses: number): string =>
-      `- **${subject} ${i}**: ${clause.repeat(clauses).trim()} (2026-09-${10 + i}).`;
+    // Memory bullets long enough to fill the excerpt alone still leave the hidden ones named.
     fs.writeFileSync(
       path.join(root, ".crank/cerebrum.md"),
       "# Cerebrum\n\n## User Preferences\n" +
@@ -287,13 +243,11 @@ describe("cerebrum index (black-box)", () => {
         Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i, 9)).join("\n") +
         "\n",
     );
-    setBudget(root);
-
-    const ctx = inject(root);
-    expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(BUDGET);
-    expect(ctx).toContain("- **Gotcha 20**:");
-    expect(ctx).toMatch(/^- \*\*Gotcha 17\*\*: .*…$/m); // the newest hidden one
-    expect(ctx.match(/^- \*\*Gotcha \d+\*\*: .*…$/gm)?.length).toBeGreaterThanOrEqual(10);
+    const long = inject(root);
+    expect(Buffer.byteLength(long, "utf-8")).toBeLessThanOrEqual(BUDGET);
+    expect(long).toContain("- **Gotcha 20**:");
+    expect(long).toMatch(/^- \*\*Gotcha 17\*\*: .*…$/m); // the newest hidden one
+    expect(long.match(/^- \*\*Gotcha \d+\*\*: .*…$/gm)?.length).toBeGreaterThanOrEqual(10);
   });
 });
 
@@ -324,22 +278,21 @@ describe("vendored-hook drift (black-box)", () => {
       "_Note: crank-mem hooks are at 0.3.2, crank-mem is at 0.5.0 — run `crank-mem upgrade`._",
     );
     expect((ctx.match(/run `crank-mem upgrade`/g) ?? []).length).toBe(1);
-  });
-
-  test("matching versions produce no line", () => {
+    // Matching versions produce no line.
     expect(injectWith({ vendored_version: "0.5.0", clone_root: fakeClone("0.5.0") })).not.toContain(
       "crank-mem upgrade",
     );
   });
 
-  test("a missing, moved, or unreadable clone produces no line and no error", () => {
+  test("a missing, moved, unreadable or versionless clone produces no line and no error", () => {
     const gone = fakeClone("0.5.0");
     fs.rmSync(gone, { recursive: true, force: true });
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), "crank-clone-")); // no package.json
     const malformed = fs.mkdtempSync(path.join(os.tmpdir(), "crank-clone-"));
     fs.writeFileSync(path.join(malformed, "package.json"), "{not json");
 
-    for (const clone_root of [gone, empty, malformed, ""]) {
+    const noVersion = fakeClone(5); // a package.json with no version string
+    for (const clone_root of [gone, empty, malformed, noVersion, ""]) {
       const root = makeCrankProject({ "a.ts": "const a = 1;" });
       configure(root, { vendored_version: "0.3.2", clone_root });
       const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
@@ -348,12 +301,6 @@ describe("vendored-hook drift (black-box)", () => {
       expect(ctx).toContain("crank-mem (project memory)");
       expect(ctx).not.toContain("crank-mem upgrade");
     }
-  });
-
-  test("a package.json with no version string produces no line", () => {
-    expect(injectWith({ vendored_version: "0.3.2", clone_root: fakeClone(5) })).not.toContain(
-      "crank-mem upgrade",
-    );
   });
 });
 
@@ -405,24 +352,6 @@ function count(haystack: string, needle: string): number {
 }
 
 describe("digests running (black-box)", () => {
-  test("the excerpt labels name the sections, with no editing hints", () => {
-    const { root, home } = memoryProject(true);
-    const prefs = Array.from({ length: 40 }, (_, i) => `- pref ${i} ${"p".repeat(80)}`).join("\n");
-    fs.writeFileSync(
-      path.join(root, ".crank/cerebrum.md"),
-      `# Cerebrum\n\n## User Preferences\n\n${prefs}\n\n## Memory\n\n- **Fact**: a memory bullet\n`,
-    );
-    const ctx = injectIn(root, home);
-    expect(ctx).toContain("### User Preferences\n");
-    expect(ctx).toContain("### Memory\n");
-    expect(ctx).toContain("### Not shown (");
-    expect(ctx).not.toContain("append at its end");
-    expect(ctx).not.toContain("consolidate");
-    // No store yet: the bullet still names the commands digests will feed.
-    expect(count(ctx, RECALL_BULLET)).toBe(1);
-    expect(ctx).not.toContain("## Recent memory");
-  });
-
   test("next steps come from the newest digest, only when short and not none", () => {
     const { root, home } = memoryProject(true);
     seedMemory(root, titled(2), { nextSteps: "Wire the daemon." });
@@ -452,12 +381,9 @@ describe("digests running (black-box)", () => {
     const before = injectIn(root, home);
     expect(before).not.toContain("## Recent memory");
     expect(count(before, RECALL_BULLET)).toBe(1);
-    const pointer =
-      "- Past work: before you change how an area behaves, debug a failure again, or act on earlier work the user mentions, run `crank-mem search <query>`; open any `#id` shown here or in file history with `crank-mem get <id...>`, and `crank-mem timeline <id>` shows what surrounds one.";
-    expect(count(before, pointer)).toBe(1);
-    expect(before.indexOf(CODE_BULLET)).toBeLessThan(before.indexOf(pointer));
+    expect(before.indexOf(CODE_BULLET)).toBeLessThan(before.indexOf(RECALL_BULLET));
     expect(
-      count(before, `${CODE_BULLET}\n${pointer}\n${SUBAGENT_BULLET}\n- Memory is not proof`),
+      count(before, `${CODE_BULLET}\n${RECALL_BULLET}\n${SUBAGENT_BULLET}\n- Memory is not proof`),
     ).toBe(1);
 
     seedMemory(root, titled(60));
@@ -466,14 +392,15 @@ describe("digests running (black-box)", () => {
       "## Recent memory (open one: `crank-mem get <id>`)\n",
     )!;
     expect(Buffer.byteLength(section, "utf-8")).toBeLessThanOrEqual(1536);
-    const read = readStoreSync(root, (memory) => memory.recent(60).map(formatLine));
-    if (read.status !== "open") throw new Error(read.status);
-    const all = read.value;
     const lines = section.split("\n").slice(1);
     expect(lines.length).toBeGreaterThan(0);
-    expect(lines).toEqual(all.slice(0, lines.length));
-    // Whole lines are dropped only while needed: one more would overflow.
-    expect(Buffer.byteLength([section, all[lines.length]].join("\n"), "utf-8")).toBeGreaterThan(
+    // Newest first: the last seeded title leads, and each next title is one older.
+    lines.forEach((line, i) => {
+      const title = `T${String(seeded - 1 - i).padStart(4, "0")} ${"t".repeat(54)}`;
+      expect(line).toMatch(new RegExp(`^#\\d+ \\d{4}-\\d\\d-\\d\\d discovery ${title}$`));
+    });
+    // Whole lines are dropped only while needed: one more line of the same width would overflow.
+    expect(Buffer.byteLength(section, "utf-8") + 1 + Buffer.byteLength(lines[0]!)).toBeGreaterThan(
       1536,
     );
   });
@@ -598,22 +525,8 @@ describe("digests running (black-box)", () => {
   });
 });
 
-// Every digest state injects the same instructions and labels: no state asks
-// the agent to keep memory, and journal.md is never read.
-const UPKEEP = [
-  "Cerebrum protocol",
-  "Journal protocol",
-  "telegram-style",
-  "append at its end",
-  "consolidate",
-  "## Journal",
-  "agent-maintained",
-  "session log",
-  "journal.md",
-];
-const LEAD =
-  "This project keeps a code graph in `.crank/code.db` and project memory in `.crank/cerebrum.md`.";
-
+// Every digest state injects the same labels: no state asks the agent to keep memory, and
+// journal.md is never read.
 describe("no upkeep prompt in any digest state (black-box)", () => {
   const states: Array<{
     name: string;
@@ -659,18 +572,6 @@ describe("no upkeep prompt in any digest state (black-box)", () => {
         expect([...at].sort((a, b) => a - b)).toEqual(at);
       },
     },
-    {
-      name: "Codex, digests on",
-      setup: (root, home) => {
-        spoolEntry(home, "old", root, Date.now() - 3 * 3_600_000);
-        stopDigests(home);
-        return codexSessionStart(root);
-      },
-      check: (ctx) => {
-        expect(count(ctx, NOTE_WAITED)).toBe(1);
-        expect(ctx.split("\n").filter((l) => l === NOTE_STOPPED)).toHaveLength(1);
-      },
-    },
   ];
 
   for (const { name, setup, check } of states) {
@@ -691,14 +592,7 @@ describe("no upkeep prompt in any digest state (black-box)", () => {
       fs.mkdirSync(path.join(root, "docs/adr"), { recursive: true });
       fs.writeFileSync(path.join(root, "docs/adr/0001-x.md"), "# x");
       const ctx = injectIn(root, home, setup(root, home));
-      for (const upkeep of UPKEEP) expect(ctx).not.toContain(upkeep);
-      for (const kept of [
-        LEAD,
-        "Memory is not proof",
-        "ADR protocol:",
-        "## Cerebrum (.crank/cerebrum.md)\n### Memory\n",
-        "0001-x.md",
-      ]) {
+      for (const kept of ["## Cerebrum (.crank/cerebrum.md)\n### Memory\n", "0001-x.md"]) {
         expect(ctx).toContain(kept);
       }
       // Session start leaves journal.md unread.

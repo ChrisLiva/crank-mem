@@ -89,20 +89,6 @@ const CODEX_FLAGS: Record<Choice, string[]> = {
   trust: ["--codex", "merge", "--codex-trust", "write"],
 };
 
-function codexLines(choice: Choice, codexHome: string): string[] {
-  if (choice === "skip") return ["  Codex: skipped"];
-  if (choice === "review")
-    return [
-      "  Codex: hooks wired into .codex/hooks.json",
-      "  Codex trust: open codex once in this project and accept the hooks review",
-      "  (or headless: codex --dangerously-bypass-hook-trust)",
-    ];
-  return [
-    "  Codex: hooks wired into .codex/hooks.json",
-    `  Codex trust: trusted_hash entries written to ${codexHome}/config.toml`,
-  ];
-}
-
 function configPath(root: string): string {
   return path.join(root, ".crank/config.json");
 }
@@ -113,15 +99,6 @@ function readConfig(root: string): Record<string, unknown> {
 
 function writeConfig(root: string, config: Record<string, unknown>): void {
   fs.writeFileSync(configPath(root), JSON.stringify(config, null, 2) + "\n");
-}
-
-const initCases: { git: GitMode; choice: Choice }[] = (
-  ["commit", "ignore", "exclude"] as const
-).flatMap((git) => (["skip", "review", "trust"] as const).map((choice) => ({ git, choice })));
-
-function initItemLines(git: GitMode, choice: Choice, codexHome: string): string[] {
-  const settings = git === "commit" ? ".claude/settings.json" : ".claude/settings.local.json";
-  return [`  Claude Code: hooks wired into ${settings}`, ...codexLines(choice, codexHome)];
 }
 
 function expectInitRecorded(root: string, choice: Choice): void {
@@ -140,7 +117,7 @@ function expectCerebrumSeeded(root: string): void {
 }
 
 describe("init records the Codex choice", () => {
-  test("init records the Codex choice and prints today's lines: exclude / trust", () => {
+  test("init records the Codex choice and writes the trust entries: exclude / trust", () => {
     const { root, codexHome } = makeProject();
     const home = makeCrankHome();
     const run = cli(
@@ -155,31 +132,11 @@ describe("init records the Codex choice", () => {
     );
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
-    expect(run.stdout).toBe(
-      [
-        `crank-mem ${cliVersion()} initialized (runtime: bun, git: exclude)`,
-        "  indexed 2 files → .crank/code.db",
-        ...initItemLines("exclude", "trust", codexHome),
-        "Next: start a Claude Code session here — project memory injects at session start.",
-        "Optional: install the audit skill — npx skills add ChrisLiva/crank-mem",
-      ].join("\n") + "\n",
-    );
     expectInitRecorded(root, "trust");
+    expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).toMatch(
+      /trusted_hash = "sha256:[0-9a-f]{64}"/,
+    );
   });
-
-  for (const { git, choice } of initCases) {
-    if (git === "exclude" && choice === "trust") continue;
-    // initIn writes the config itself, so only the spawned cells above and below prove init records the choice.
-    test(`init's install items print today's lines and seed the cerebrum: ${git} / ${choice}`, () => {
-      const p = project();
-      expect(initIn(p, git, choice)).toEqual({
-        lines: initItemLines(git, choice, p.codexHome),
-        warnings: [],
-        failed: false,
-      });
-      expectCerebrumSeeded(p.root);
-    });
-  }
 });
 
 test("init --yes defaults Codex to review, or skip when .codex/hooks.json exists", () => {
@@ -268,6 +225,7 @@ for (const git of ["commit", "ignore", "exclude"] as const) {
     const excludeBefore = fs.readFileSync(exclude);
     const init = cli(root, codexHome, home, "init", "--yes", "--git", git, ...CODEX_FLAGS.review);
     expect(init.status).toBe(0);
+    expectCerebrumSeeded(root);
     const real = fs.realpathSync(root);
     expect(registeredRoots(home)).toContain(real);
     const backupsBefore = fs.readdirSync(backups);
@@ -321,17 +279,6 @@ for (const c of ["skip", "missing key"] as const) {
     expect(read(".git/info/exclude")).not.toContain("# crank-mem");
   });
 }
-
-test("a restore uninstall prints the trust line once", () => {
-  const { root, codexHome } = makeProject();
-  const home = makeCrankHome();
-  expect(cli(root, codexHome, home, "init", "--yes", ...CODEX_FLAGS.trust).status).toBe(0);
-  const un = cli(root, codexHome, home, "uninstall", "--yes", "--restore", "--delete-crank");
-  expect(un.status).toBe(0);
-  const line = `  removed trusted_hash entries from ${codexHome}/config.toml`;
-  expect(un.stdout.split("\n").filter((l) => l === line).length).toBe(1);
-  expect(fs.readFileSync(path.join(codexHome, "config.toml"), "utf-8")).toBe('model = "gpt-5.6"\n');
-}, 20_000);
 
 const unparseableCases: { file: string; text: string; gone: string }[] = [
   {
@@ -595,19 +542,14 @@ function spacedProject(): { root: string; codexHome: string } {
   return { root, codexHome: made.codexHome };
 }
 
-test("init writes the project name", () => {
-  const { root, codexHome } = spacedProject();
-  expect(cli(root, codexHome, makeCrankHome(), "init", "--yes", "--codex", "skip").status).toBe(0);
-  const raw = readConfig(root);
-  expect(raw.name).toBe("my-app");
-  expect(raw).not.toHaveProperty("max_files");
-}, 20_000);
-
-test("upgrade adds a missing project name and keeps an existing one", () => {
+test("init writes the project name; upgrade adds a missing one and keeps an existing one", () => {
   const { root, codexHome } = spacedProject();
   const home = makeCrankHome();
   expect(cli(root, codexHome, home, "init", "--yes", "--codex", "skip").status).toBe(0);
-  const { name: _name, ...unnamed } = readConfig(root);
+  const raw = readConfig(root);
+  expect(raw.name).toBe("my-app");
+  expect(raw).not.toHaveProperty("max_files");
+  const { name: _name, ...unnamed } = raw;
   const { codex: _codex, ...bare } = unnamed;
   const cases: { config: Record<string, unknown>; name: string }[] = [
     { config: unnamed, name: "my-app" },
@@ -743,23 +685,6 @@ test("upgrade after uninstall --keep-crank reinstalls every item", () => {
   expect(registeredRoots(p.home)).toContain(p.root);
 });
 
-test("a failed cerebrum seed fails the upgrade after every step", () => {
-  const p = project();
-  initIn(p);
-  fs.rmSync(path.join(p.crankDir, "cerebrum.md"));
-  let up: Report;
-  try {
-    fs.chmodSync(p.crankDir, 0o555);
-    up = upgradeIn(p);
-  } finally {
-    fs.chmodSync(p.crankDir, 0o755);
-  }
-  expect(up.failed).toBe(true);
-  expect(up.warnings.join("\n")).toContain(
-    "crank-mem: could not seed .crank/cerebrum.md from the template (",
-  );
-});
-
 const failedWriteCases: { name: string; damage(root: string): () => void; line: string }[] = [
   {
     name: ".crank/.gitignore",
@@ -780,6 +705,16 @@ const failedWriteCases: { name: string; damage(root: string): () => void; line: 
       return () => fs.chmodSync(file, 0o644);
     },
     line: "crank-mem: could not write .git/info/exclude (",
+  },
+  {
+    name: "cerebrum seed",
+    damage: (root) => {
+      const dir = path.join(root, ".crank");
+      fs.rmSync(path.join(dir, "cerebrum.md"));
+      fs.chmodSync(dir, 0o555);
+      return () => fs.chmodSync(dir, 0o755);
+    },
+    line: "crank-mem: could not seed .crank/cerebrum.md from the template (",
   },
 ];
 

@@ -110,21 +110,19 @@ describe("debug logging (black-box)", () => {
     expect(fs.existsSync(path.join(home, "spool"))).toBe(false);
   });
 
-  test("CRANK_DEBUG=1 enables logging when config says off", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)), undefined, {
+  test("CRANK_DEBUG=1 enables logging when config says off, and CRANK_DEBUG=0 disables it when config says on", () => {
+    const off = makeCrankProject({ "a.ts": "const a = 1;" });
+    runHook(SESSION_START, JSON.stringify(claudeSessionStart(off)), undefined, {
       CRANK_DEBUG: "1",
     });
-    expect(readDebugLog(root)).toHaveLength(1);
-  });
+    expect(readDebugLog(off)).toHaveLength(1);
 
-  test("CRANK_DEBUG=0 disables logging when config says on", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    enableDebugConfig(root);
-    runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)), undefined, {
+    const on = makeCrankProject({ "a.ts": "const a = 1;" });
+    enableDebugConfig(on);
+    runHook(SESSION_START, JSON.stringify(claudeSessionStart(on)), undefined, {
       CRANK_DEBUG: "0",
     });
-    expect(readDebugLog(root)).toHaveLength(0);
+    expect(readDebugLog(on)).toHaveLength(0);
   });
 
   test("sensitive paths are redacted, never written to the log", () => {
@@ -188,7 +186,7 @@ describe("debug logging (black-box)", () => {
     const noOps = (root: string) =>
       readDebugLog(root)[0]!.events.find((e: any) => e.event === "no-write-ops");
 
-    test("a file outside the project root: outside-root, with the directory", () => {
+    test("a write that produces nothing to index records its reason: outside-root with the directory, no-path, owner-root, apply_patch skips and unhandled-tool", () => {
       const root = makeCrankProject({ "a.ts": "const a = 1;" });
       const outside = path.join(os.tmpdir(), "elsewhere", ".env");
       enableDebugConfig(root);
@@ -202,6 +200,43 @@ describe("debug logging (black-box)", () => {
       // The directory reaches the log without any filename.
       expect(fs.readFileSync(path.join(root, ".crank/debug.log"), "utf-8")).not.toContain(".env");
       expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(false);
+
+      const reasonOf = (payload: (root: string) => object) => {
+        const project = makeCrankProject({ "a.ts": "const a = 1;" });
+        enableDebugConfig(project);
+        expect(runHook(POST_WRITE, JSON.stringify(payload(project))).status).toBe(0);
+        return noOps(project);
+      };
+      expect(
+        reasonOf((p: string) => ({
+          ...claudePostWrite(p, "a.ts"),
+          tool_input: { content: "..." },
+        })),
+      ).toMatchObject({ tool: "Write", reason: "no-path" });
+      expect(reasonOf((p: string) => claudePostWrite(p, p))).toMatchObject({
+        tool: "Write",
+        reason: "owner-root",
+      });
+      expect(
+        reasonOf((p: string) => ({ ...claudePostWrite(p, "a.ts"), tool_name: "Bash" })),
+      ).toMatchObject({ tool: "Bash", reason: "unhandled-tool" });
+      const patch = [
+        "*** Begin Patch",
+        "*** Update File: .crank/cerebrum.md",
+        "+x",
+        `*** Add File: ${path.join(os.tmpdir(), "elsewhere", "b.ts")}`,
+        "+y",
+        "*** End Patch",
+      ].join("\n");
+      expect(reasonOf((p: string) => codexApplyPatch(p, patch))).toMatchObject({
+        tool: "apply_patch",
+        reason: "crank-internal",
+      });
+      const headerless = "*** Begin Patch\n+z\n*** End Patch";
+      expect(reasonOf((p: string) => codexApplyPatch(p, headerless))).toMatchObject({
+        tool: "apply_patch",
+        reason: "no-path",
+      });
     });
 
     test("a write under .crank/: crank-internal, and the store is never opened", () => {
@@ -227,58 +262,6 @@ describe("debug logging (black-box)", () => {
       });
       expect(events.some((e: any) => String(e.event).startsWith("graph"))).toBe(false);
       expect(events.some((e: any) => e.event === "reindex")).toBe(false);
-    });
-
-    test("a payload with no file_path: no-path, not a benign reason", () => {
-      const root = makeCrankProject({ "a.ts": "const a = 1;" });
-      enableDebugConfig(root);
-      const payload = { ...claudePostWrite(root, "a.ts"), tool_input: { content: "..." } };
-
-      const run = runHook(POST_WRITE, JSON.stringify(payload));
-      expect(run.status).toBe(0);
-      expect(noOps(root)).toMatchObject({ tool: "Write", reason: "no-path" });
-    });
-
-    test("a write to the project root itself: owner-root, with the root", () => {
-      const root = makeCrankProject({ "a.ts": "const a = 1;" });
-      enableDebugConfig(root);
-
-      const run = runHook(POST_WRITE, JSON.stringify(claudePostWrite(root, root)));
-      expect(run.status).toBe(0);
-      expect(noOps(root)).toMatchObject({ tool: "Write", reason: "owner-root", dir: root });
-    });
-
-    test("an apply_patch whose every path is unindexable reports its first skip", () => {
-      const root = makeCrankProject({ "a.ts": "const a = 1;" });
-      enableDebugConfig(root);
-      const patch = [
-        "*** Begin Patch",
-        "*** Update File: .crank/cerebrum.md",
-        "+x",
-        `*** Add File: ${path.join(os.tmpdir(), "elsewhere", "b.ts")}`,
-        "+y",
-        "*** End Patch",
-      ].join("\n");
-
-      const run = runHook(POST_WRITE, JSON.stringify(codexApplyPatch(root, patch)));
-      expect(run.status).toBe(0);
-      expect(noOps(root)).toMatchObject({ tool: "apply_patch", reason: "crank-internal" });
-
-      const headerless = "*** Begin Patch\n+z\n*** End Patch";
-      expect(runHook(POST_WRITE, JSON.stringify(codexApplyPatch(root, headerless))).status).toBe(0);
-      expect(
-        readDebugLog(root)[1]!.events.find((e: any) => e.event === "no-write-ops"),
-      ).toMatchObject({ tool: "apply_patch", reason: "no-path" });
-    });
-
-    test("a tool the hook does not handle: unhandled-tool", () => {
-      const root = makeCrankProject({ "a.ts": "const a = 1;" });
-      enableDebugConfig(root);
-      const payload = { ...claudePostWrite(root, "a.ts"), tool_name: "Bash" };
-
-      const run = runHook(POST_WRITE, JSON.stringify(payload));
-      expect(run.status).toBe(0);
-      expect(noOps(root)).toMatchObject({ tool: "Bash", reason: "unhandled-tool" });
     });
   });
 

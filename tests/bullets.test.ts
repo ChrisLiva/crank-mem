@@ -27,37 +27,23 @@ describe("parseBlocks", () => {
     expect(blocks[1]!.lines).toEqual(["### Nested heading", "loose prose"]);
   });
 
-  test("leading non-bullet lines form a preamble block", () => {
+  // the cerebrum editor writes blocks back to disk, so the grouping must be lossless:
+  // every line lands in exactly one block, in order.
+  test("blocks round-trip the input verbatim, and a leading non-bullet preamble is its own block", () => {
+    const text =
+      "# Cerebrum\n\n## Memory\n\n- 中文 bullet — em dash, \ttab\n  continuation with 🚀\n" +
+      "### Misfiled heading\n- trailing bullet with no newline after it";
+    const roundTrip = (t: string): string =>
+      parseBlocks(lines(t))
+        .flatMap((b) => b.lines)
+        .join("\n");
+    expect(roundTrip(text)).toBe(text);
+    expect(roundTrip("- one\n- two\n")).toBe("- one\n- two\n");
+
     const blocks = parseBlocks(lines("# Journal\n\nSession log, newest last.\n\n- entry one"));
     expect(blocks[0]!.kind).toBe("other");
     expect(blocks[0]!.lines).toEqual(["# Journal", "", "Session log, newest last.", ""]);
     expect(blocks[1]!.lines).toEqual(["- entry one"]);
-  });
-
-  test("empty input yields no blocks", () => {
-    expect(parseBlocks([])).toEqual([]);
-  });
-
-  // the cerebrum editor writes blocks back to disk, so the grouping must be lossless:
-  // every line lands in exactly one block, in order.
-  test("blocks round-trip the input verbatim", () => {
-    const text =
-      "# Cerebrum\n\n## Memory\n\n- 中文 bullet — em dash, \ttab\n  continuation with 🚀\n" +
-      "### Misfiled heading\n- trailing bullet with no newline after it";
-    expect(
-      parseBlocks(lines(text))
-        .flatMap((b) => b.lines)
-        .join("\n"),
-    ).toBe(text);
-  });
-
-  test("a trailing newline survives the round-trip", () => {
-    const text = "- one\n- two\n";
-    expect(
-      parseBlocks(lines(text))
-        .flatMap((b) => b.lines)
-        .join("\n"),
-    ).toBe(text);
   });
 });
 
@@ -69,24 +55,8 @@ describe("parseBullets", () => {
     ]);
   });
 
-  test("headings never appear inside or as a bullet", () => {
-    const bullets = parseBullets(lines("## Memory\n\n- kept\n### Stray\n- also kept"));
-    expect(bullets).toEqual(["- kept", "- also kept"]);
-    expect(bullets.join("\n")).not.toContain("#");
-  });
-
-  test("an indented bullet is continuation, not a new bullet", () => {
-    expect(parseBullets(lines("- parent\n  - child\n    - grandchild"))).toEqual([
-      "- parent\n  - child\n    - grandchild",
-    ]);
-  });
-
   test("a lone dash is not a bullet", () => {
     // `- ` requires the space: a horizontal rule or a stray `-` is prose.
     expect(parseBullets(lines("-\n---\n-not a bullet"))).toEqual([]);
-  });
-
-  test("no bullets yields an empty list", () => {
-    expect(parseBullets(lines("# Cerebrum\n\nJust prose.\n"))).toEqual([]);
   });
 });

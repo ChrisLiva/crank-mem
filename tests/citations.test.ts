@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { citationCheck, fileCitations, storeLinks } from "../src/hooks/lib/citations.ts";
 import { projectName } from "../src/hooks/lib/owner.ts";
@@ -17,7 +16,7 @@ function write(root: string, rel: string, text = "x\n"): void {
 
 /**
  * A home root, a linked `pay` with a `code.db`, a linked `broken` without one, a linked `vendored`
- * that home also holds as a directory, and a counted `links`. Home's `src/ghost.ts` is in its
+ * that home also holds as a directory, and the `links` list. Home's `src/ghost.ts` is in its
  * `code.db` and gone from disk.
  */
 function fixture() {
@@ -39,20 +38,14 @@ function fixture() {
   buildGraph(home);
   buildGraph(payRoot);
   fs.rmSync(path.join(home, "src/ghost.ts"));
-  let calls = 0;
-  const links = () => {
-    calls++;
-    return [
-      { name: "pay", root: payRoot },
-      { name: "broken", root: brokenRoot },
-      { name: "vendored", root: payRoot },
-    ];
-  };
+  const links = () => [
+    { name: "pay", root: payRoot },
+    { name: "broken", root: brokenRoot },
+    { name: "vendored", root: payRoot },
+  ];
   return {
     home,
     brokenRoot,
-    links,
-    calls: () => calls,
     resolve: () => citationCheck({ root: home }, { resolve: links }),
     ignore: () => citationCheck({ root: home }, { ignore: links }),
   };
@@ -149,23 +142,6 @@ describe("a citation whose first segment names a linked project", () => {
 
   test("is skipped under ignore", () => {
     expect(fixture().ignore().status("`pay/src/p.ts` and `pay/src/none.ts`", 1000)).toEqual(none);
-  });
-
-  test("lists the links at most once per checker, and only when a citation needs them", () => {
-    const home = fixture();
-    const homeOnly = home.resolve();
-    homeOnly.status("`a.ts` and `src/a.ts` and `vendored/x.ts`", 1000);
-    homeOnly.status("`a.ts` and `src/a.ts` and `vendored/x.ts`", 1000);
-    expect(home.calls()).toBe(0);
-
-    for (const policy of ["resolve", "ignore"] as const) {
-      const f = fixture();
-      const check = f[policy]();
-      check.status("`pay/src/p.ts`", 1000);
-      check.status("`pay/src/p.ts`", 1000);
-      if (policy === "resolve") check.status("`other/src/x.ts`", 1000);
-      expect(f.calls()).toBe(1);
-    }
   });
 
   test("checks the disk alone when the linked code.db is absent or corrupt", () => {

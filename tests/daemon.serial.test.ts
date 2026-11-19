@@ -744,15 +744,22 @@ describe("daemon release checks", () => {
     expect(readUpdate(e.home).latest?.version).toBe("1.1.0");
   }, 30_000);
 
-  test("a daemon run from a clone never checks", async () => {
+  test("a daemon run from a clone never checks or updates, even with auto on and a lagging project", async () => {
+    const clone = tempDir("crank-clone-");
+    for (const name of ["src", "bin", "package.json"])
+      fs.cpSync(path.join(REPO_ROOT, name), path.join(clone, name), { recursive: true });
     const e = setup();
     const server = await releaseServer(["1.1.0"]);
-    const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], {
-      ...e,
-      env: { ...e.env, CRANK_RELEASE_URL: server.url },
-    });
+    writeUpdate(e.home, { auto: true });
+    const root = digestProject({ clone_root: clone, vendored_version: "0.0.1" }, temps);
+    withEnv({ CRANK_HOME: e.home }, () => registerProject(root));
+    const bun = fakeTool("bun", "runtime");
+    const env = { ...e.env, CRANK_RELEASE_URL: server.url, PATH: `${bun.dir}:${e.fake.env.PATH}` };
+    const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], { ...e, env }, clone);
     expect(await within(d.exited, 20_000)).toBe(0);
     expect(server.requests()).toEqual([]);
+    expect(installs(bun)).toEqual([]);
+    expect(vendored(root)).toBe("0.0.1");
   }, 30_000);
 });
 
@@ -843,26 +850,6 @@ describe("daemon auto-update", () => {
     expect(a.release.requests().filter((r) => r === "/latest/download/crank-mem.tar.gz")).toEqual([
       "/latest/download/crank-mem.tar.gz",
     ]);
-  }, 30_000);
-
-  test("a daemon run from a clone starts no update, even with a lagging project", async () => {
-    const clone = tempDir("crank-clone-");
-    for (const name of ["src", "bin", "package.json"])
-      fs.cpSync(path.join(REPO_ROOT, name), path.join(clone, name), { recursive: true });
-    const e = setup();
-    const version = JSON.parse(fs.readFileSync(path.join(clone, "package.json"), "utf8")).version;
-    writeUpdate(e.home, {
-      ...AT_LATEST,
-      latest: { version, tag: `v${version}`, releasedAt: "2026-11-09T00:00:00Z" },
-    });
-    const root = digestProject({ clone_root: clone, vendored_version: "0.0.1" }, temps);
-    withEnv({ CRANK_HOME: e.home }, () => registerProject(root));
-    const bun = fakeTool("bun", "runtime");
-    const env = { ...e.env, PATH: `${bun.dir}:${e.fake.env.PATH}` };
-    const d = daemon(["--sweep-ms", "50", "--idle-ms", "500"], { ...e, env }, clone);
-    expect(await within(d.exited, 20_000)).toBe(0);
-    expect(installs(bun)).toEqual([]);
-    expect(vendored(root)).toBe("0.0.1");
   }, 30_000);
 });
 

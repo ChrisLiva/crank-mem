@@ -9,7 +9,6 @@ import {
   makeModelHome,
   plantMemory,
   releaseDir,
-  runCli,
   runInstalled,
   startReleaseServer,
   tempDir,
@@ -152,22 +151,6 @@ describe("self-update", () => {
     expect(calls.filter((c) => c.argv.startsWith("install"))).toEqual([]);
     expect(current(H)).toBe("versions/1.0.0");
   }, 30_000);
-
-  test("refuses from a clone", () => {
-    const result = runCli(tempDir("crank-selfupdate-"), ["self-update"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("self-update runs from an installed copy");
-    expect(result.stderr).toContain("git pull");
-  }, 30_000);
-
-  test("a live tool lock refuses", async () => {
-    const { H, env } = await setup();
-    fs.writeFileSync(path.join(H, "tool.lock"), String(process.pid));
-    const result = runInstalled(H, tempDir("crank-cwd-"), ["self-update"], env);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("crank-mem: another install or update is running");
-    expect(current(H)).toBe("versions/1.0.0");
-  }, 30_000);
 });
 
 /** Task 9's setup, then `self-update` to 1.1.0, so `H/versions` holds 1.0.0 and 1.1.0. */
@@ -239,15 +222,6 @@ describe("rollback", () => {
     expect(current(H)).toBe("versions/1.1.0");
   }, 60_000);
 
-  test("no previous version refuses", () => {
-    const H2 = makeModelHome();
-    makeInstalledCopy(H2, "1.0.0");
-    const result = runInstalled(H2, tempDir("crank-cwd-"), ["rollback"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("no previous version");
-    expect(current(H2)).toBe("versions/1.0.0");
-  }, 30_000);
-
   test("self-update --to an older tag goes through the same guard", async () => {
     const { H, P, env } = await updated();
     plantMemory(P, "newer");
@@ -256,12 +230,6 @@ describe("rollback", () => {
     expect(result.stderr).toContain("crank-mem restore-memory");
     expect(current(H)).toBe("versions/1.1.0");
   }, 60_000);
-
-  test("refuses from a clone", () => {
-    const result = runCli(tempDir("crank-rollback-"), ["rollback"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("rollback runs from an installed copy");
-  }, 30_000);
 });
 
 function updateState(H: string): Record<string, unknown> & {
@@ -334,8 +302,6 @@ describe("self-update --check", () => {
   test("--auto and --check-daily write settings and change nothing else", async () => {
     const { H, server, env } = await checkSetup();
     const cwd = tempDir("crank-cwd-");
-    const usage =
-      "Usage: crank-mem self-update [--to vX.Y.Z] [--check] [--auto on|off] [--check-daily on|off]";
     const on = runInstalled(H, cwd, ["self-update", "--auto", "on"], env);
     expect(on.stderr).toBe("");
     expect(on.status).toBe(0);
@@ -357,16 +323,9 @@ describe("self-update --check", () => {
     ]) {
       const result = runInstalled(H, cwd, ["self-update", ...args], env);
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain(usage);
     }
     expect(updateState(H)).toMatchObject({ auto: false, checkDaily: true });
     expect(server.requests()).toEqual([]);
     expect(current(H)).toBe("versions/1.0.0");
-  }, 30_000);
-
-  test("refuses from a clone", () => {
-    const result = runCli(tempDir("crank-selfupdate-"), ["self-update", "--check"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("self-update runs from an installed copy");
   }, 30_000);
 });

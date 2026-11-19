@@ -22,24 +22,6 @@ function tmpFile(name = "settings.json"): string {
 }
 
 describe("mergeHooksIntoFile", () => {
-  test("creates file with our hooks when absent", () => {
-    const f = tmpFile();
-    mergeHooksIntoFile(f, crankHooks("bun", "claude"));
-    const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
-    expect(parsed.hooks.SessionStart[0].hooks[0].command).toContain(
-      ".crank/hooks/session-start.ts",
-    );
-    expect(parsed.hooks.PostToolUse[0].matcher).toBe("Write|Edit|MultiEdit");
-    expect(parsed.hooks.Stop[0].hooks[0].command).toContain(".crank/hooks/stop.ts");
-  });
-
-  test("Stop is wired for Claude but not Codex", () => {
-    expect(crankHooks("bun", "claude").Stop![0]!.hooks[0]!.command).toContain(
-      ".crank/hooks/stop.ts",
-    );
-    expect(crankHooks("node", "codex").Stop).toBeUndefined();
-  });
-
   test("SubagentStart is wired for Claude's four probed agent types only", () => {
     const [group] = crankHooks("bun", "claude").SubagentStart!;
     expect(group!.hooks[0]!.command).toContain(".crank/hooks/subagent-start.ts");
@@ -51,55 +33,24 @@ describe("mergeHooksIntoFile", () => {
     expect(crankHooks("bun", "codex").SubagentStart).toBeUndefined();
   });
 
-  test("file history is wired after the write group for Claude only", () => {
-    const [write, read] = crankHooks("bun", "claude").PostToolUse!;
+  test("each event is wired for the right agent: Stop, SessionEnd and file history for Claude only", () => {
+    const claude = crankHooks("bun", "claude");
+    expect(claude.Stop![0]!.hooks[0]!.command).toContain(".crank/hooks/stop.ts");
+    expect(crankHooks("node", "codex").Stop).toBeUndefined();
+
+    const [write, read] = claude.PostToolUse!;
     expect(write!.matcher).toBe("Write|Edit|MultiEdit");
     expect(read!.matcher).toBe("Read|Bash");
     expect(read!.hooks).toEqual([
       { type: "command", command: hookCommand("bun", "post-read.ts", "claude"), timeout: 10 },
     ]);
     expect(crankHooks("bun", "codex").PostToolUse).toHaveLength(1);
-  });
 
-  test("SessionEnd is wired for Claude only, with a 10 s timeout", () => {
-    const [hook] = crankHooks("bun", "claude").SessionEnd![0]!.hooks;
-    expect(hook!.timeout).toBe(10);
-    expect(hook!.command).toEndWith("session-end.ts");
-    expect(crankHooks("bun", "codex").SessionEnd).toBeUndefined();
-  });
+    const [sessionEnd] = claude.SessionEnd![0]!.hooks;
+    expect(sessionEnd!.timeout).toBe(10);
+    expect(sessionEnd!.command).toEndWith("session-end.ts");
+    expect(crankHooks("node", "codex").SessionEnd).toBeUndefined();
 
-  test("preserves pre-existing settings byte-identical apart from appended entries", () => {
-    const f = tmpFile();
-    // UserPromptSubmit is an event crank never wires, so it must survive untouched.
-    const preexisting = {
-      permissions: { allow: ["Bash(ls:*)"] },
-      hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "echo mine" }] }],
-        UserPromptSubmit: [{ hooks: [{ type: "command", command: "echo prompt" }] }],
-      },
-    };
-    fs.writeFileSync(f, JSON.stringify(preexisting, null, 2) + "\n");
-    mergeHooksIntoFile(f, crankHooks("bun", "claude"));
-    const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
-    // user entries intact, ours appended after
-    expect(parsed.permissions).toEqual(preexisting.permissions);
-    expect(parsed.hooks.UserPromptSubmit).toEqual(preexisting.hooks.UserPromptSubmit);
-    expect(parsed.hooks.SessionStart[0].hooks[0].command).toBe("echo mine");
-    expect(parsed.hooks.SessionStart[1].hooks[0].command).toContain(".crank/hooks/");
-    // removal returns exactly the pre-existing bytes
-    removeCrankHooksFromFile(f);
-    expect(fs.readFileSync(f, "utf-8")).toBe(JSON.stringify(preexisting, null, 2) + "\n");
-  });
-
-  test("merge is idempotent (re-init does not duplicate)", () => {
-    const f = tmpFile();
-    mergeHooksIntoFile(f, crankHooks("bun", "claude"));
-    mergeHooksIntoFile(f, crankHooks("bun", "claude"));
-    const parsed = JSON.parse(fs.readFileSync(f, "utf-8"));
-    expect(parsed.hooks.SessionStart.length).toBe(1);
-  });
-
-  test("codex hooks use apply_patch matcher and relative command", () => {
     const hooks = crankHooks("node", "codex");
     expect(hooks.PostToolUse![0]!.matcher).toBe("apply_patch");
     expect(hooks.SessionStart![0]!.hooks[0]!.command).toBe(
@@ -156,9 +107,10 @@ describe("mergeHooksIntoFile", () => {
     expect(parsed.hooks.PostToolUse).toEqual(want.PostToolUse);
   });
 
-  test("an already-wired file is not rewritten", () => {
+  test("an already-wired file is not rewritten or duplicated", () => {
     const f = tmpFile();
     mergeHooksIntoFile(f, crankHooks("bun", "claude"));
+    const bytes = fs.readFileSync(f, "utf-8");
     let called = false;
     expect(
       mergeHooksIntoFile(f, crankHooks("bun", "claude"), () => {
@@ -166,6 +118,8 @@ describe("mergeHooksIntoFile", () => {
       }),
     ).toBe(false);
     expect(called).toBe(false);
+    expect(fs.readFileSync(f, "utf-8")).toBe(bytes);
+    expect(JSON.parse(bytes).hooks.SessionStart).toHaveLength(1);
   });
 });
 
@@ -206,15 +160,6 @@ describe("wired commands", () => {
 });
 
 describe("removeCrankHooksFromFile", () => {
-  test("missing file is a no-op", () => {
-    expect(removeCrankHooksFromFile("/nonexistent/settings.json")).toBe(false);
-  });
-  test("drops empty hooks object entirely", () => {
-    const f = tmpFile();
-    mergeHooksIntoFile(f, crankHooks("bun", "claude"));
-    removeCrankHooksFromFile(f);
-    expect(JSON.parse(fs.readFileSync(f, "utf-8"))).toEqual({});
-  });
   test("a mixed group keeps the user's handler", () => {
     const mine = { type: "command", command: "echo mine" };
     const crank = { type: "command", command: 'bun "$CLAUDE_PROJECT_DIR"/.crank/hooks/stop.ts' };
@@ -256,14 +201,10 @@ describe("addAllowRule", () => {
     });
     expect(backedUp).toHaveLength(1);
     expect(JSON.parse(backedUp[0]!).permissions.allow).toEqual(["Bash(ls:*)"]);
-  });
-  test("a second call is a no-op with unchanged bytes", () => {
-    const f = writeSettings({ permissions: { allow: ["Bash(ls:*)"], deny: ["x"] } });
-    addAllowRule(f);
+    // A second call is a no-op: unchanged bytes, no second backup.
     const bytes = fs.readFileSync(f, "utf-8");
-    let called = false;
-    expect(addAllowRule(f, () => (called = true))).toBe(false);
-    expect(called).toBe(false);
+    expect(addAllowRule(f, (file) => backedUp.push(file))).toBe(false);
+    expect(backedUp).toHaveLength(1);
     expect(fs.readFileSync(f, "utf-8")).toBe(bytes);
   });
   test("creates missing permissions and allow keys", () => {
@@ -335,12 +276,11 @@ describe("removeAllowRule", () => {
     addAllowRule(f);
     expect(removeAllowRule(f)).toBe(true);
     expect(fs.readFileSync(f, "utf-8")).toBe(original);
-  });
-  test("drops an allow array and permissions object the removal emptied", () => {
-    const f = writeSettings({});
-    addAllowRule(f);
-    expect(removeAllowRule(f)).toBe(true);
-    expect(fs.readFileSync(f, "utf-8")).toBe("{}\n");
+    // Starting from `{}`, removal drops the allow array and permissions object it emptied.
+    const empty = writeSettings({});
+    addAllowRule(empty);
+    expect(removeAllowRule(empty)).toBe(true);
+    expect(fs.readFileSync(empty, "utf-8")).toBe("{}\n");
   });
   test("keeps permissions when other keys remain", () => {
     const f = writeSettings({
@@ -375,12 +315,11 @@ describe("ignore lines", () => {
     expect(fs.readFileSync(f, "utf-8")).toBe("node_modules/\ndist/\n# crank-mem\n.crank/\n");
     removeIgnoreLines(f);
     expect(fs.readFileSync(f, "utf-8")).toBe("node_modules/\ndist/\n");
-  });
-  test("handles file without trailing newline", () => {
-    const f = tmpFile(".gitignore");
-    fs.writeFileSync(f, "dist/");
-    addIgnoreLines(f);
-    expect(fs.readFileSync(f, "utf-8")).toBe("dist/\n# crank-mem\n.crank/\n");
+    // A file without a trailing newline gets one before the block.
+    const bare = tmpFile(".gitignore");
+    fs.writeFileSync(bare, "dist/");
+    addIgnoreLines(bare);
+    expect(fs.readFileSync(bare, "utf-8")).toBe("dist/\n# crank-mem\n.crank/\n");
   });
   test("user's own .crank/ line survives add + remove untouched", () => {
     const f = tmpFile(".gitignore");

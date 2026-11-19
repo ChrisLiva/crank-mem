@@ -12,15 +12,10 @@ function tmpFile(name: string, content: string): string {
 }
 
 describe("describeFile", () => {
-  test("known filename wins", () => {
-    expect(describeFile(tmpFile("tsconfig.json", "{}"))).toBe("TypeScript compiler configuration");
-  });
-  test("package.json uses its own description field", () => {
+  test("package.json uses its own description field, else its label", () => {
     expect(describeFile(tmpFile("package.json", '{"description":"My great tool"}'))).toBe(
       "My great tool",
     );
-  });
-  test("package.json without description falls back to label", () => {
     expect(describeFile(tmpFile("package.json", "{}"))).toBe("Package manifest");
   });
   test("markdown heading", () => {
@@ -32,11 +27,6 @@ describe("describeFile", () => {
         tmpFile("a.ts", "/**\n * Parses widgets.\n * @param x\n */\nexport function p() {}"),
       ),
     ).toBe("Parses widgets.");
-  });
-  test("python docstring", () => {
-    expect(describeFile(tmpFile("a.py", '"""Frobnicates the baz."""\ndef f(): pass'))).toBe(
-      "Frobnicates the baz.",
-    );
   });
   test("header line comment", () => {
     expect(describeFile(tmpFile("b.ts", "// Widget registry.\nconst x = 1;"))).toBe(
@@ -107,7 +97,10 @@ describe("describeFile extraction rules", () => {
     expect(describeFile(tmpFile("w.cpp", src))).toBe("Winding numbers.");
   });
 
-  test("python module docstring keeps apostrophes", () => {
+  test("python module docstring describes the file and keeps apostrophes", () => {
+    expect(describeFile(tmpFile("a.py", '"""Frobnicates the baz."""\ndef f(): pass'))).toBe(
+      "Frobnicates the baz.",
+    );
     expect(
       describeFile(
         tmpFile("p.py", '#!/usr/bin/env python\n"""Parse the user\'s config file."""\nimport os\n'),

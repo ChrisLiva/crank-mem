@@ -36,6 +36,12 @@ describe("loadConfig sanitization", () => {
     expect(config.adr_path).toBe("adr");
     expect(config.digest).toBe(false);
     expect(loadConfig(dirWithConfig(JSON.stringify({ digest: "yes" }))).digest).toBe(false);
+    expect(loadConfig(dirWithConfig(JSON.stringify({ excludes: ["dist", 42] }))).excludes).toEqual(
+      DEFAULT_EXCLUDES,
+    );
+    expect(
+      loadConfig(dirWithConfig(JSON.stringify({ excludes: ["dist", "vendor"] }))).excludes,
+    ).toEqual(["dist", "vendor"]);
     for (const local of ["", "not json", "[true]", "null", `{"digest":"true"}`, `{"digest":1}`]) {
       const localDir = dirWithConfig("{}");
       fs.writeFileSync(path.join(localDir, LOCAL_CONFIG_FILE), local);
@@ -75,14 +81,6 @@ describe("loadConfig sanitization", () => {
     const accepted = loadConfig(dirWithConfig(JSON.stringify({ runtime: "node", git: "commit" })));
     expect(accepted.runtime).toBe("node");
     expect(accepted.git).toBe("commit");
-  });
-
-  test("excludes must be an array of strings", () => {
-    const dir = dirWithConfig(JSON.stringify({ excludes: ["dist", 42] }));
-    expect(loadConfig(dir).excludes).toEqual(DEFAULT_EXCLUDES);
-    expect(
-      loadConfig(dirWithConfig(JSON.stringify({ excludes: ["dist", "vendor"] }))).excludes,
-    ).toEqual(["dist", "vendor"]);
   });
 
   test("non-object config falls back entirely", () => {
@@ -135,6 +133,7 @@ describe("isExcluded", () => {
   test("directory segment match", () => {
     expect(isExcluded("node_modules/x/index.js", DEFAULT_EXCLUDES)).toBe(true);
     expect(isExcluded("src/node_modules_helper.ts", DEFAULT_EXCLUDES)).toBe(false);
+    expect(isExcluded("dist2/app.min.js", DEFAULT_EXCLUDES)).toBe(true);
   });
   test("hidden paths always excluded, even with empty excludes", () => {
     for (const p of [
@@ -148,13 +147,9 @@ describe("isExcluded", () => {
     ]) {
       expect(isExcluded(p, [])).toBe(true);
     }
-  });
-  test("dots inside a name do not exclude", () => {
+    // Dots inside a name do not exclude.
     expect(isExcluded("src/app.module.ts", [])).toBe(false);
     expect(isExcluded("v1.2/notes.md", [])).toBe(false);
-  });
-  test("glob extension match", () => {
-    expect(isExcluded("dist2/app.min.js", DEFAULT_EXCLUDES)).toBe(true);
   });
   test("sensitive always excluded even with empty excludes", () => {
     expect(isExcluded("config/.env.production", [])).toBe(true);

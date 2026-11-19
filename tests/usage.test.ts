@@ -151,16 +151,7 @@ describe("usage capture: the session-start line", () => {
     expect(emptyLine!.cerebrumBullets).toBeNull();
   });
 
-  test("a session id that is not a string records a null session", () => {
-    const root = makeCrankProject();
-    const payload = { ...claudeSessionStart(root), session_id: 42, source: undefined };
-    expect(sessionStart(root, payload).status).toBe(0);
-    const [line] = usageLines(root);
-    expect(line!.session).toBeNull();
-    expect(line!.source).toBeNull();
-  });
-
-  test("a Codex SessionStart records agent codex", () => {
+  test("a Codex SessionStart records agent codex, and a session id that is not a string records a null session", () => {
     const root = makeCrankProject();
     const payload = codexSessionStart(root) as Record<string, unknown>;
     expect(payload.turn_id).toBeUndefined();
@@ -168,6 +159,13 @@ describe("usage capture: the session-start line", () => {
     const [line] = usageLines(root);
     expect(line!.agent).toBe("codex");
     expect(line!.session).toBe("019f6e07-aaaa-bbbb-cccc-ddddeeeeffff");
+
+    const odd = makeCrankProject();
+    const oddPayload = { ...claudeSessionStart(odd), session_id: 42, source: undefined };
+    expect(sessionStart(odd, oddPayload).status).toBe(0);
+    const [oddLine] = usageLines(odd);
+    expect(oddLine!.session).toBeNull();
+    expect(oddLine!.source).toBeNull();
   });
 
   test("a SessionStart that returns before emitting writes no line", () => {
@@ -318,7 +316,7 @@ describe("usage capture: the file-history line", () => {
 });
 
 describe("usage capture: the file-history cap", () => {
-  test("the paths the 1,536-byte cap stopped are recorded as cut, in command order", () => {
+  test("the paths the 1,536-byte cap stopped are recorded as cut, in command order, and a list keeps its first 100 entries", () => {
     const files = ["f1.ts", "f2.ts", "f3.ts", "f4.ts", "f5.ts", "f6.ts"];
     const root = makeCrankProject(Object.fromEntries(files.map((f) => [f, "x\n"])));
     seedMemory(
@@ -340,18 +338,14 @@ describe("usage capture: the file-history cap", () => {
     expect(line!.cut).toEqual(files.slice(shown.length));
     expect(line!.bytes).toBeLessThanOrEqual(1536);
     expect(line!.bytes).toBe(Buffer.byteLength(additionalContext(run.stdout), "utf-8"));
-  });
-});
 
-describe("usage capture: the 100-entry list cap", () => {
-  test("a line keeps the first 100 entries of a list, in order", () => {
     const paths = Array.from({ length: 150 }, (_, i) => `p${i}.ts`);
-    const root = makeCrankProject(Object.fromEntries(paths.map((p) => [p, "x\n"])));
-    seedMemory(root, [{ title: "one", filesRead: ["other.ts"] }]);
-    const run = postRead(root, claudePostBash(root, `cat ${paths.join(" ")}`, TRANSCRIPT));
-    expect(run.status).toBe(0);
-    const [line] = usageLines(root);
-    expect(line!.empty).toEqual(paths.slice(0, 100));
+    const wide = makeCrankProject(Object.fromEntries(paths.map((p) => [p, "x\n"])));
+    seedMemory(wide, [{ title: "one", filesRead: ["other.ts"] }]);
+    const listRun = postRead(wide, claudePostBash(wide, `cat ${paths.join(" ")}`, TRANSCRIPT));
+    expect(listRun.status).toBe(0);
+    const [wideLine] = usageLines(wide);
+    expect(wideLine!.empty).toEqual(paths.slice(0, 100));
   });
 });
 
@@ -426,31 +420,20 @@ describe("usage capture: rotation, failure and placement", () => {
     for (const line of lines) expect(line).toMatchObject({ v: 1, channel: "get" });
   });
 
-  test("a line that cannot be written changes neither output nor exit status", () => {
-    const root = makeCrankProject({ "src/a.ts": "export const a = 1;\n" });
-    const home = makeCrankHome();
-    const stdin = JSON.stringify(claudeSessionStart(root));
-    runHook(HOOK, stdin, root, { CRANK_HOME: home });
-    const a = runHook(HOOK, stdin, root, { CRANK_HOME: home });
-    fs.rmSync(path.join(root, ".crank/usage.jsonl"), { force: true });
-    fs.mkdirSync(path.join(root, ".crank/usage.jsonl"));
-    const b = runHook(HOOK, stdin, root, { CRANK_HOME: home });
-    expect(a.status).toBe(0);
-    expect(b.status).toBe(0);
-    expect(b.stdout).toBe(a.stdout);
-    expect(b.stderr).toBe(a.stderr);
-  });
-
-  test("a usage line that cannot be written changes neither SubagentStart's nor post-read's output", () => {
+  test("a usage line that cannot be written changes neither SessionStart's, SubagentStart's nor post-read's output", () => {
     const root = makeCrankProject({ "a.ts": "export const a = 1;\n" });
     seedMemory(root, [{ title: "one", filesRead: ["a.ts"] }]);
     const usage = path.join(root, ".crank/usage.jsonl");
+    const home = makeCrankHome();
     const both = () => [
+      runHook(HOOK, JSON.stringify(claudeSessionStart(root)), root, { CRANK_HOME: home }),
       subagentStart(root, claudeSubagentStart(root, "Explore")),
       postRead(root, claudePostRead(root, path.join(root, "a.ts"), TRANSCRIPT)),
     ];
+    both();
+    fs.rmSync(usage);
     const written = both();
-    expect(usageLines(root)).toHaveLength(2);
+    expect(usageLines(root)).toHaveLength(3);
     fs.rmSync(usage);
     fs.mkdirSync(usage);
     const unwritable = both();
@@ -975,7 +958,23 @@ describe("usage window: the usage endpoint aggregates the log", () => {
     const dash = await startDashboard(home, ["--port", "0"]);
     const none = await usageOf(dash, empty, "days=7");
     expect(none.perDay).toHaveLength(7);
-    expect([none.searches, none.zeroResultShare, none.filesWithoutMemory]).toEqual([0, null, []]);
+    for (const day of none.perDay) expect(day.counts).toEqual(channelCounts({}));
+    expect(none).toEqual({
+      perDay: none.perDay,
+      searches: 0,
+      zeroResultShare: null,
+      keywordShare: null,
+      followThrough: null,
+      recallReach: null,
+      surfacedFollowThrough: null,
+      graphShare: null,
+      symbolFollowThrough: null,
+      topQueries: [],
+      surfaced: [],
+      neverSurfacedShare: null,
+      filesWithoutMemory: [],
+      note: STORE_TEXT.missing.note,
+    });
     const id = projectId(root);
     for (const query of [
       "manual=0",
@@ -1177,27 +1176,6 @@ describe("usageMetrics (in-process)", () => {
       });
     });
   }
-
-  test("a missing usage log answers zero counts and null shares", () => {
-    const body = metricsOf([], 7);
-    expect(body.perDay).toHaveLength(7);
-    for (const day of body.perDay) expect(day.counts).toEqual(channelCounts({}));
-    expect(body).toEqual({
-      perDay: body.perDay,
-      searches: 0,
-      zeroResultShare: null,
-      keywordShare: null,
-      followThrough: null,
-      recallReach: null,
-      surfacedFollowThrough: null,
-      graphShare: null,
-      symbolFollowThrough: null,
-      topQueries: [],
-      surfaced: [],
-      neverSurfacedShare: 1,
-      filesWithoutMemory: [],
-    });
-  });
 
   test("follow-through needs the same session within 30 minutes, and a query keeps its last 10 runs", () => {
     const T = NOW - D;

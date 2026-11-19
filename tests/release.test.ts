@@ -39,11 +39,18 @@ function entries(tarball: string): string[] {
 }
 
 describe("pack-release", () => {
-  test("the tarball carries the runtime files and nothing from tests, docs, dashboard sources or node_modules", () => {
+  test("the tarball carries the runtime files, nothing from tests, docs, dashboard sources or node_modules, and its checksum file matches", () => {
     const run = pack(path.join(dashboardFixture(cliVersion()), "dist"));
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);
     const listed = entries(path.join(run.out, "crank-mem.tar.gz"));
+    const summed = spawnSync("shasum", ["-a", "256", "crank-mem.tar.gz"], {
+      cwd: run.out,
+      encoding: "utf-8",
+    });
+    expect(summed.status).toBe(0);
+    const recorded = fs.readFileSync(path.join(run.out, "crank-mem.tar.gz.sha256"), "utf-8");
+    expect(recorded.split(/\s+/)[0]).toBe(summed.stdout.split(/\s+/)[0]!);
     for (const file of [
       "bin/crank-mem",
       "src/cli/main.ts",
@@ -63,18 +70,6 @@ describe("pack-release", () => {
         ) || path.basename(entry).startsWith("._"),
     );
     expect(excluded).toEqual([]);
-  });
-
-  test("the checksum file matches the tarball", () => {
-    const run = pack(path.join(dashboardFixture(cliVersion()), "dist"));
-    expect(run.status).toBe(0);
-    const summed = spawnSync("shasum", ["-a", "256", "crank-mem.tar.gz"], {
-      cwd: run.out,
-      encoding: "utf-8",
-    });
-    expect(summed.status).toBe(0);
-    const recorded = fs.readFileSync(path.join(run.out, "crank-mem.tar.gz.sha256"), "utf-8");
-    expect(recorded.split(/\s+/)[0]).toBe(summed.stdout.split(/\s+/)[0]!);
   });
 
   test("release.json names the packed version", () => {
@@ -177,8 +172,10 @@ function incoming(H: string): string[] {
 }
 
 describe("install.sh", () => {
-  test("a fresh install of the latest release lays out the version, the link and the bin", async () => {
+  test("a fresh install of the latest release lays out the version, the link and the bin, and rechecks a recorded latest that is older", async () => {
     const t = await installer();
+    const stale = { version: "0.9.0", tag: "v0.9.0", releasedAt: "2026-01-01T00:00:00.000Z" };
+    fs.writeFileSync(path.join(t.H, "update.json"), JSON.stringify({ latest: stale }));
     const result = installSh(["--yes", "--bin-dir", t.bin], t.env);
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
@@ -193,6 +190,9 @@ describe("install.sh", () => {
     expect(t.server.requests()).toContain(`/latest/download/${TARBALL}`);
     expect(t.server.requests()).toContain(`/latest/download/${TARBALL}.sha256`);
     expect(incoming(t.H)).toEqual([]);
+    expect(JSON.parse(fs.readFileSync(path.join(t.H, "update.json"), "utf-8")).latest.version).toBe(
+      V,
+    );
   }, 60_000);
 
   test("the linked command works and inits projects against the stable link", async () => {
@@ -232,24 +232,14 @@ describe("install.sh", () => {
     expect(fs.existsSync(path.join(t.H, "current"))).toBe(false);
   }, 60_000);
 
-  test("no runtime stops before any download", async () => {
+  test("no runtime, or a node older than 23.6, stops before any download", async () => {
     const t = await installer();
-    const result = installSh(["--yes", "--bin-dir", t.bin], { ...t.env, PATH: "/usr/bin:/bin" });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("curl -fsSL https://bun.sh/install | bash");
-    expect(t.server.requests()).toEqual([]);
-  }, 60_000);
-
-  test("a node older than 23.6 counts as no runtime", async () => {
-    const t = await installer();
-    const dir = tempDir("crank-oldnode-");
-    fs.writeFileSync(path.join(dir, "node"), "#!/bin/sh\necho v22.11.0\n", { mode: 0o755 });
-    const result = installSh(["--yes", "--bin-dir", t.bin], {
-      ...t.env,
-      PATH: `${dir}:/usr/bin:/bin`,
-    });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("curl -fsSL https://bun.sh/install | bash");
+    const oldNode = tempDir("crank-oldnode-");
+    fs.writeFileSync(path.join(oldNode, "node"), "#!/bin/sh\necho v22.11.0\n", { mode: 0o755 });
+    for (const PATH of ["/usr/bin:/bin", `${oldNode}:/usr/bin:/bin`]) {
+      const result = installSh(["--yes", "--bin-dir", t.bin], { ...t.env, PATH });
+      expect({ PATH, status: result.status }).toEqual({ PATH, status: 1 });
+    }
     expect(t.server.requests()).toEqual([]);
   }, 60_000);
 
@@ -265,15 +255,6 @@ describe("install.sh", () => {
     expect(fs.existsSync(marker)).toBe(true);
   }, 60_000);
 
-  test("a recorded latest older than the installed version is checked again", async () => {
-    const t = await installer();
-    const stale = { version: "0.9.0", tag: "v0.9.0", releasedAt: "2026-01-01T00:00:00.000Z" };
-    fs.writeFileSync(path.join(t.H, "update.json"), JSON.stringify({ latest: stale }));
-    expect(installSh(["--yes", "--bin-dir", t.bin], t.env).status).toBe(0);
-    const state = JSON.parse(fs.readFileSync(path.join(t.H, "update.json"), "utf-8"));
-    expect(state.latest.version).toBe(V);
-  }, 60_000);
-
   test("without --bin-dir the link lands in ~/.local/bin", async () => {
     const t = await installer();
     const result = installSh(["--yes"], t.env);
@@ -286,15 +267,22 @@ describe("install.sh", () => {
 });
 
 describe("self-install", () => {
-  test("refuses to run from a clone", () => {
+  test("every installed-only command refuses to run from a clone", () => {
     // A temp HOME and a fake bun keep a regression from installing into the clone or ~/.local/bin.
     const bun = fakeTool("bun", 0);
-    const result = runCli(tempDir("crank-selfinstall-"), ["self-install", "--yes"], {
-      HOME: tempDir("crank-home-dir-"),
-      PATH: `${bun.dir}:${process.env.PATH}`,
-    });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("self-install runs from an installed copy");
+    for (const args of [
+      ["self-install", "--yes"],
+      ["self-uninstall", "--yes"],
+      ["self-update"],
+      ["rollback"],
+    ]) {
+      const result = runCli(tempDir("crank-selfinstall-"), args, {
+        HOME: tempDir("crank-home-dir-"),
+        PATH: `${bun.dir}:${process.env.PATH}`,
+      });
+      expect({ args, status: result.status }).toEqual({ args, status: 1 });
+      expect(result.stderr).toContain(`${args[0]} runs from an installed copy`);
+    }
     expect(bun.calls()).toEqual([]);
   });
 
@@ -320,9 +308,23 @@ describe("self-install", () => {
     const lock = path.join(t.H, "tool.lock");
     const args = ["self-install", "--yes", "--bin-dir", t.bin];
     fs.writeFileSync(lock, String(process.pid));
-    const live = run(launcher, args, t.env);
-    expect(live.stderr.trim()).toBe("crank-mem: another install or update is running");
-    expect(live.status).toBe(1);
+    const before = fs.readdirSync(path.join(t.H, "versions"));
+    for (const held of [
+      args,
+      ["self-uninstall", "--yes", "--bin-dir", t.bin],
+      ["self-update"],
+      ["rollback"],
+    ]) {
+      const live = run(launcher, held, t.env);
+      expect({ held, stderr: live.stderr.trim(), status: live.status }).toEqual({
+        held,
+        stderr: "crank-mem: another install or update is running",
+        status: 1,
+      });
+    }
+    expect(fs.readdirSync(path.join(t.H, "versions"))).toEqual(before);
+    expect(fs.readlinkSync(path.join(t.H, "current"))).toBe(`versions/${V}`);
+    expect(fs.existsSync(path.join(t.bin, "crank-mem"))).toBe(true);
     expect(() => process.kill(999999, 0)).toThrow();
     fs.writeFileSync(lock, "999999");
     const dead = run(launcher, args, t.env);
@@ -393,20 +395,14 @@ describe("self-install PATH offer", () => {
   const exportLine = (bin: string) => `export PATH="${bin}:$PATH"`;
   const markers = (text: string) => text.split("# >>> crank-mem >>>").length - 1;
 
-  test("with --yes the zsh rc file gains one block, and a second install leaves one", async () => {
+  test("with --yes the zsh rc file gains one block beside its own lines, and a second install leaves one", async () => {
     const t = await installer();
+    fs.writeFileSync(path.join(t.HOME, ".zshrc"), "alias x=y\n");
     expect(installSh(["--yes", "--bin-dir", t.bin], t.env).status).toBe(0);
     expect(installSh(["--yes", "--bin-dir", t.bin], t.env).status).toBe(0);
     const rc = fs.readFileSync(path.join(t.HOME, ".zshrc"), "utf-8");
     expect(markers(rc)).toBe(1);
-    expect(rc).toContain(`\n${exportLine(t.bin)}\n`);
-  }, 60_000);
-
-  test("an existing rc file keeps its own lines", async () => {
-    const t = await installer();
-    fs.writeFileSync(path.join(t.HOME, ".zshrc"), "alias x=y\n");
-    expect(installSh(["--yes", "--bin-dir", t.bin], t.env).status).toBe(0);
-    expect(fs.readFileSync(path.join(t.HOME, ".zshrc"), "utf-8")).toBe(
+    expect(rc).toBe(
       `alias x=y\n\n# >>> crank-mem >>>\n${exportLine(t.bin)}\n# <<< crank-mem <<<\n`,
     );
   }, 60_000);
@@ -640,24 +636,6 @@ describe("self-uninstall", () => {
     } finally {
       daemon.kill("SIGKILL");
     }
-  }, 60_000);
-
-  test("refuses to run from a clone", () => {
-    const result = runCli(tempDir("crank-selfuninstall-"), ["self-uninstall", "--yes"], {
-      HOME: tempDir("crank-home-dir-"),
-    });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("self-uninstall runs from an installed copy");
-  });
-
-  test("a live tool lock refuses self-uninstall and leaves the install", () => {
-    const t = installedSetup();
-    fs.writeFileSync(path.join(t.H, "tool.lock"), String(process.pid));
-    const result = t.uninstall(["--yes"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("crank-mem: another install or update is running");
-    expect(fs.existsSync(path.join(t.H, "versions", V))).toBe(true);
-    expect(fs.existsSync(path.join(t.H, "current"))).toBe(true);
   }, 60_000);
 });
 

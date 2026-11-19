@@ -54,7 +54,7 @@ const G = project({
   "src/lib/foo.ts": {},
 });
 
-test("terms match a file by path, path suffix, basename, stem or symbol", () => {
+test("terms match a file by path, path suffix, basename, stem or symbol, in term order and code-unit path order", () => {
   const lock = { seeds: ["src/lock.ts"], neighbours: ["src/a.ts", "src/b.ts"] };
   expect(rel(G, "withLock")).toEqual({ seeds: ["src/lock.ts"], neighbours: [] });
   for (const q of [
@@ -77,6 +77,9 @@ test("terms match a file by path, path suffix, basename, stem or symbol", () => 
   expect(rel(short, "abc")).toEqual(E);
   expect(rel(short, "aB")).toEqual(E);
   expect(rel(short, "aBc")).toEqual({ seeds: ["x/abc.ts"], neighbours: [] });
+  expect(rel(G, "c.ts lock.ts c.ts").seeds).toEqual(["src/c.ts", "src/lock.ts"]);
+  const cased = project({ "x/a/util.ts": {}, "x/B/util.ts": {} });
+  expect(rel(cased, "util.ts").seeds).toEqual(["x/B/util.ts", "x/a/util.ts"]);
 });
 
 test("neighbours run both ways, heaviest first, never a seed or a missing path", () => {
@@ -99,15 +102,8 @@ test("neighbours run both ways, heaviest first, never a seed or a missing path",
     seeds: ["p.ts", "r.ts", "s.ts"],
     neighbours: ["b/z.ts", "a/q.ts"],
   });
-});
-
-test("each seed splits 1/seeds evenly over all its neighbours", () => {
-  expect(weighted(G, "src/a.ts src/b.ts").neighbours).toEqual([
-    { path: "src/lock.ts", weight: 0.5 },
-    { path: "src/c.ts", weight: 0.25 },
-    { path: "src/d.ts", weight: 0.25 },
-  ]);
-  const i = project({
+  // A seed splits its weight over all its neighbours: hub's four dilute below one's single y.
+  const split = project({
     "hub.ts": { imports: ["x1.ts", "x2.ts", "x3.ts", "x4.ts"] },
     "x1.ts": {},
     "x2.ts": {},
@@ -116,22 +112,13 @@ test("each seed splits 1/seeds evenly over all its neighbours", () => {
     "one.ts": { imports: ["y.ts", "hub.ts"] },
     "y.ts": {},
   });
-  expect(weighted(i, "hub.ts one.ts").neighbours).toEqual([
-    { path: "y.ts", weight: 0.25 },
-    { path: "x1.ts", weight: 0.1 },
-    { path: "x2.ts", weight: 0.1 },
-    { path: "x3.ts", weight: 0.1 },
-    { path: "x4.ts", weight: 0.1 },
+  expect(rel(split, "hub.ts one.ts").neighbours).toEqual([
+    "y.ts",
+    "x1.ts",
+    "x2.ts",
+    "x3.ts",
+    "x4.ts",
   ]);
-});
-
-test("seeds follow query-term order, without duplicates", () => {
-  expect(rel(G, "c.ts lock.ts c.ts").seeds).toEqual(["src/c.ts", "src/lock.ts"]);
-});
-
-test("path order within a term is code-unit order", () => {
-  const i = project({ "x/a/util.ts": {}, "x/B/util.ts": {} });
-  expect(rel(i, "util.ts").seeds).toEqual(["x/B/util.ts", "x/a/util.ts"]);
 });
 
 test("a term matching more than 5 files seeds nothing", () => {

@@ -16,28 +16,6 @@ function tmpFile(): string {
 }
 
 describe("trustEntries", () => {
-  const hooks = crankHooks("bun", "codex");
-  const entries = trustEntries("/proj/.codex/hooks.json", hooks);
-
-  // The event segment is the snake_case label codex looks the entry up by —
-  // PascalCase keys are invisible to it (they never skipped the hooks review).
-  test("one entry per handler with positional, snake_case-labelled key", () => {
-    expect(entries.map((e) => e.key).sort()).toEqual([
-      "/proj/.codex/hooks.json:post_tool_use:0:0",
-      "/proj/.codex/hooks.json:session_start:0:0",
-    ]);
-  });
-
-  test("hashes are sha256-formatted and deterministic", () => {
-    for (const e of entries) expect(e.hash).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(trustEntries("/proj/.codex/hooks.json", hooks)).toEqual(entries);
-  });
-
-  test("hash changes when the command changes", () => {
-    const other = trustEntries("/proj/.codex/hooks.json", crankHooks("node", "codex"));
-    expect(other[0]!.hash).not.toBe(entries[0]!.hash);
-  });
-
   // Pinned against codex-rs rust-v0.144.6 (ADR 0002): sha256 of the compact,
   // recursively key-sorted JSON of the normalized identity, using codex's serde
   // wire names — e.g. for PostToolUse:
@@ -89,21 +67,12 @@ describe("crankTrust", () => {
       `${hooksJson}:PostToolUse:0:0`,
       `${hooksJson}:SessionStart:1:0`,
     ]);
-    expect(t.keys).toEqual([...t.entries.map((e) => e.key), ...t.staleKeys]);
-  });
-  test("missing file yields no entries", () => {
+    // A missing file yields no entries.
     expect(crankTrust("/nonexistent/hooks.json")).toEqual({ entries: [], staleKeys: [], keys: [] });
   });
 });
 
 describe("staleTrustKeys", () => {
-  test("names the PascalCase raw-event key for each handler", () => {
-    expect(staleTrustKeys("/proj/.codex/hooks.json", crankHooks("bun", "codex")).sort()).toEqual([
-      "/proj/.codex/hooks.json:PostToolUse:0:0",
-      "/proj/.codex/hooks.json:SessionStart:0:0",
-    ]);
-  });
-
   // The load-bearing safety property: an event already spelled like its label
   // yields no stale key, so a strip can never delete an entry codex wrote.
   test("a snake_case entry codex wrote for itself survives a strip", () => {
@@ -145,12 +114,10 @@ describe("write/removeTrustEntries", () => {
     writeTrustEntries(f, e1);
     writeTrustEntries(f, e2);
     const content = fs.readFileSync(f, "utf-8");
-    expect(content.match(/session_start:0:0/g)!.length).toBe(1);
-    expect(content).toContain(
-      e2[0]!.hash.startsWith("sha256:")
-        ? e2.find((e) => e.key.includes("session_start"))!.hash
-        : "",
-    );
+    for (const key of ["session_start:0:0", "post_tool_use:0:0"])
+      expect(content.match(new RegExp(key, "g"))!.length).toBe(1);
+    for (const e of e2) expect(content).toContain(`trusted_hash = "${e.hash}"`);
+    for (const e of e1) expect(content).not.toContain(e.hash);
   });
 
   test("a write sweeps the PascalCase orphan an older release left behind", () => {

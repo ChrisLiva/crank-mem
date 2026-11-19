@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { digestRequest } from "../src/daemon/digest-prompt.ts";
@@ -196,15 +195,13 @@ describe("migration", () => {
     const up = runCli(broken, ["upgrade"]);
     expect(up.status).toBe(0);
     expect(up.stderr).toContain("crank-mem: could not migrate memory.db (unreadable)");
-  });
 
-  test("upgrade prints no migrate line for a store from a later version", () => {
-    const root = project();
-    plantMemory(root, "newer");
-    const up = runCli(root, ["upgrade"]);
-    expect(up.status).toBe(0);
-    expect(up.stdout).not.toContain("migrate");
-    expect(up.stderr).not.toContain("migrate");
+    const newer = project();
+    plantMemory(newer, "newer");
+    const later = runCli(newer, ["upgrade"]);
+    expect(later.status).toBe(0);
+    expect(later.stdout).not.toContain("migrate");
+    expect(later.stderr).not.toContain("migrate");
   });
 });
 
@@ -574,18 +571,6 @@ db.close();
         projects: null,
         existing: [],
       }).input,
-    );
-  });
-
-  test("outside a project it prints the not-initialized hint, and --help prints its usage", () => {
-    const outside = runCli(os.tmpdir(), ["restore-memory"]);
-    expect(outside.status).toBe(1);
-    expect(outside.stderr).toBe(runCli(os.tmpdir(), ["get", "1"]).stderr);
-
-    const help = runCli(os.tmpdir(), ["restore-memory", "--help"]);
-    expect(help.status).toBe(0);
-    expect(help.stdout).toBe(
-      "Usage: crank-mem restore-memory [<file>]\n\nPut a memory.db snapshot back.\n",
     );
   });
 });

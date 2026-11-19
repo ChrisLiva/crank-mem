@@ -45,6 +45,9 @@ describe("shellReadPaths", () => {
       ["crank-mem outline --help", []],
       ["crank-mem outline", []],
       ["crank-mem outline --from 40", []],
+      ["git log -- src/a.ts", []],
+      ["git show HEAD:src/a.ts", []],
+      ["git blame src/a.ts", []],
     ];
     for (const [command, paths] of table)
       expect([command, shellReadPaths(command)]).toEqual([command, paths]);
@@ -126,10 +129,5 @@ describe("shellHistoryPaths", () => {
     ];
     for (const [command, paths] of table)
       expect([command, shellHistoryPaths(command)]).toEqual([command, paths]);
-  });
-
-  test("a git history command is not a read to shellReadPaths", () => {
-    for (const command of ["git log -- src/a.ts", "git show HEAD:src/a.ts", "git blame src/a.ts"])
-      expect([command, shellReadPaths(command)]).toEqual([command, []]);
   });
 });

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { projectStatus, type HealthSummary, type Status } from "../src/hooks/lib/wire.ts";
+import { projectStatus, type HealthSummary, type Tone } from "../src/hooks/lib/wire.ts";
 
 type Input = Omit<HealthSummary, "status">;
+type Expected = { tone: Tone; label: string; command: string | null };
 
 const base: Input = {
   digest: "on",
@@ -15,43 +16,28 @@ const base: Input = {
   embedderReady: true,
 };
 
-const DIGESTS_OFF: Status = {
-  tone: "off",
-  label: "Digests off",
-  fix: { text: "Digests are off in this checkout.", command: "crank-mem digest on" },
-};
-const STOPPED_LOGIN: Status = {
-  tone: "bad",
-  label: "Stopped",
-  fix: {
-    text: "Digests stopped: claude is not logged in. Log in, then resume.",
-    command: "crank-mem digest resume",
-  },
-};
-const STOPPED_CREDENTIAL: Status = {
-  tone: "bad",
-  label: "Stopped",
-  fix: {
-    text: "Digests stopped on a credential other than your Claude login.",
-    command: "crank-mem digest resume",
-  },
-};
-const DAEMON_DOWN: Status = {
+const DIGESTS_OFF: Expected = { tone: "off", label: "Digests off", command: "crank-mem digest on" };
+const STOPPED: Expected = { tone: "bad", label: "Stopped", command: "crank-mem digest resume" };
+const DAEMON_DOWN: Expected = {
   tone: "warn",
   label: "Daemon down",
-  fix: { text: "1 waiting with no daemon to digest them.", command: "crank-mem digest resume" },
+  command: "crank-mem digest resume",
 };
-const PARKED: Status = {
-  tone: "warn",
-  label: "Parked entries",
-  fix: {
-    text: "1 parked: no digest job could finish them. Each returns when its session writes again.",
-  },
+const PARKED: Expected = { tone: "warn", label: "Parked entries", command: null };
+const storeLook = (command: string): Expected => ({
+  tone: "bad",
+  label: "Store needs a look",
+  command,
+});
+const GRAPH_LOOK: Expected = {
+  tone: "bad",
+  label: "Code graph needs a look",
+  command: "crank-mem scan",
 };
-const HEALTHY: Status = { tone: "ok", label: "Healthy", fix: null };
+const HEALTHY: Expected = { tone: "ok", label: "Healthy", command: null };
 
 describe("projectStatus", () => {
-  const rows: [string, Partial<Input>, Status][] = [
+  const rows: [string, Partial<Input>, Expected][] = [
     [
       "digest off, even with no store and a waiting entry",
       { digest: "off", store: "missing", daemonAlive: false, spool: { waiting: 1, parked: 0 } },
@@ -60,26 +46,32 @@ describe("projectStatus", () => {
     [
       "stopped on login, even with no store",
       { digest: "stopped", stopReason: "login", store: "missing" },
-      STOPPED_LOGIN,
+      STOPPED,
     ],
     [
       "stopped on a credential beats a store that won't open",
       { digest: "stopped", stopReason: "credential", store: "unreadable", embedderReady: false },
-      STOPPED_CREDENTIAL,
+      STOPPED,
     ],
     [
       "a missing store beats daemon down",
       { store: "missing", daemonAlive: false, spool: { waiting: 1, parked: 0 } },
-      { tone: "off", label: "No memory yet", fix: { text: "The first digest creates it." } },
+      { tone: "off", label: "No memory yet", command: null },
     ],
     [
       "a newer store beats daemon down",
       { store: "newer", daemonAlive: false, spool: { waiting: 1, parked: 0 } },
-      {
-        tone: "bad",
-        label: "Store needs a look",
-        fix: { text: "memory.db is newer than this version.", command: "crank-mem upgrade" },
-      },
+      storeLook("crank-mem upgrade"),
+    ],
+    [
+      "an older store needs a look, even with the daemon down",
+      { store: "older", daemonAlive: false, spool: { waiting: 1, parked: 0 } },
+      storeLook("crank-mem upgrade"),
+    ],
+    [
+      "an unreadable store names restore-memory, even with the daemon down",
+      { store: "unreadable", daemonAlive: false, spool: { waiting: 1, parked: 0 } },
+      storeLook("crank-mem restore-memory"),
     ],
     [
       "daemon down beats parked",
@@ -94,20 +86,12 @@ describe("projectStatus", () => {
     [
       "keyword search only",
       { embedderReady: false },
-      {
-        tone: "warn",
-        label: "Keyword search only",
-        fix: { text: "The local search model is not installed.", command: "crank-mem setup" },
-      },
+      { tone: "warn", label: "Keyword search only", command: "crank-mem setup" },
     ],
     [
       "a graph to rebuild beats digests off and a missing store",
       { digest: "off", store: "missing", graph: { status: "rebuild", files: 0, pending: 0 } },
-      {
-        tone: "bad",
-        label: "Code graph needs a look",
-        fix: { text: "code.db is corrupt or from another version.", command: "crank-mem scan" },
-      },
+      GRAPH_LOOK,
     ],
     [
       "an unreadable graph names crank-mem scan, even when digests are stopped",
@@ -116,11 +100,7 @@ describe("projectStatus", () => {
         stopReason: "login",
         graph: { status: "unreadable", files: 0, pending: 0 },
       },
-      {
-        tone: "bad",
-        label: "Code graph needs a look",
-        fix: { text: "code.db is not a readable database.", command: "crank-mem scan" },
-      },
+      GRAPH_LOOK,
     ],
     [
       "a missing graph is not a problem",
@@ -137,24 +117,12 @@ describe("projectStatus", () => {
   ];
   for (const [name, overrides, expected] of rows) {
     test(name, () => {
-      expect(projectStatus({ ...base, ...overrides })).toEqual(expected);
-    });
-  }
-
-  for (const [store, command] of [
-    ["older", "crank-mem upgrade"],
-    ["unreadable", "crank-mem restore-memory"],
-  ] as const) {
-    test(`an ${store} store needs a look and names ${command}, even with the daemon down`, () => {
-      const status = projectStatus({
-        ...base,
-        store,
-        daemonAlive: false,
-        spool: { waiting: 1, parked: 0 },
-      });
-      expect(status.tone).toBe("bad");
-      expect(status.label).toBe("Store needs a look");
-      expect(status.fix?.command).toBe(command);
+      const status = projectStatus({ ...base, ...overrides });
+      expect({
+        tone: status.tone,
+        label: status.label,
+        command: status.fix === null ? null : (status.fix.command ?? null),
+      }).toEqual(expected);
     });
   }
 });

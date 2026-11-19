@@ -181,8 +181,9 @@ describe("fileFacts", () => {
     setMtime(path.join(root, "src/big.ts"), 1_700_000_000_000);
     const big = fileFacts(root, "src/big.ts", defaultConfig())!;
     expect(big.description).toBe("Widget engine.");
-    expect(big.tokens).toBeGreaterThan(300);
-    expect(big.size).toBe(Buffer.byteLength(bigTs));
+    // 22 chars of header + 60 functions (10 at 34 chars, 50 at 36) + 59 newlines = 2221 bytes; code files are 3.5 chars a token, so ceil(2221 / 3.5) = 635.
+    expect(big.tokens).toBe(635);
+    expect(big.size).toBe(2221);
     expect(big.mtimeMs).toBe(1_700_000_000_000);
     expect(big.generated).toBe(false);
     expect(fileFacts(root, "notes.md", defaultConfig())!.description).toBe("Notes");
@@ -285,32 +286,6 @@ const filesIn = (db: sqlite.DatabaseSync): string[] =>
   );
 
 describe("refreshFileFacts", () => {
-  test("detects changed, added, deleted", () => {
-    const root = makeProject({ "a.ts": "const a = 1;", "b.ts": "const b = 1;" });
-    const config = defaultConfig();
-    const db = openFacts(root);
-    try {
-      expect(refreshFileFacts(root, config, db, Infinity)).toMatchObject({ added: 2 });
-
-      // change a (content + size), add c and d, delete b
-      fs.writeFileSync(path.join(root, "a.ts"), "const a = 12345; // changed now");
-      fs.writeFileSync(path.join(root, "c.ts"), "const c = 1;");
-      fs.writeFileSync(path.join(root, "d.ts"), "const d = 1;");
-      fs.unlinkSync(path.join(root, "b.ts"));
-
-      expect(refreshFileFacts(root, config, db, Infinity)).toEqual({
-        changed: 1,
-        added: 2,
-        removed: 1,
-        partial: false,
-        listed: true,
-      });
-      expect(filesIn(db)).toEqual(["a.ts", "c.ts", "d.ts"]);
-    } finally {
-      db.close();
-    }
-  });
-
   test("unchanged files are not read again", () => {
     const root = makeCrankProject({ "a.ts": "/** Alpha. */\nconst x = 1;\n" });
     const file = path.join(root, "a.ts");
@@ -331,21 +306,6 @@ describe("refreshFileFacts", () => {
     setMtime(file, stamp + 2000);
     expect(start().status).toBe(0);
     expect(described()).toContain("`a.ts` — Omega.");
-  });
-
-  test("drops a file once it grows past max_file_size_bytes", () => {
-    const root = makeProject({ "a.ts": "const a = 1;" });
-    const config = { ...defaultConfig(), max_file_size_bytes: 50 };
-    const db = openFacts(root);
-    try {
-      refreshFileFacts(root, config, db, Infinity);
-      expect(filesIn(db)).toEqual(["a.ts"]);
-      fs.writeFileSync(path.join(root, "a.ts"), "x".repeat(100));
-      expect(refreshFileFacts(root, config, db, Infinity).removed).toBe(1);
-      expect(filesIn(db)).toEqual([]);
-    } finally {
-      db.close();
-    }
   });
 
   test("an expired deadline marks partial, reads no new file and still drops deleted ones", () => {

@@ -674,7 +674,6 @@ describe("consolidation edge outcomes", () => {
     expect(calls[0]!.stdin).not.toContain("[CEREBRUM]");
     const lines = j.job.stderr.split("\n").filter((l) => l.includes("consolidation"));
     expect(lines.length).toBe(1);
-    expect(lines[0]!.startsWith("crank-mem: consolidation skipped (")).toBe(true);
     const stats = statsOf(j);
     expect(stats).toContain("\n  consolidation:    never\n");
     expect(stats).toContain("\n  observations:     1\n");

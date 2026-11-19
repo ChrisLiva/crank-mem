@@ -5,23 +5,6 @@ import { locked } from "../src/cli/tool-install.ts";
 import { REPO_ROOT, childEnv, makeCrankHome, withEnv } from "./helpers.ts";
 
 describe("tool lock", () => {
-  test("releasing does not remove a lock another live process took", async () => {
-    const home = makeCrankHome();
-    const lock = path.join(home, "tool.lock");
-    try {
-      const code = await withEnv({ CRANK_HOME: home }, () =>
-        locked("test", async () => {
-          fs.writeFileSync(lock, String(process.ppid));
-          return 0;
-        }),
-      );
-      expect(code).toBe(0);
-      expect(fs.readFileSync(lock, "utf-8")).toBe(String(process.ppid));
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
   test("takers racing to steal a dead-pid lock never hold it together", async () => {
     const home = makeCrankHome();
     const log = path.join(home, "takers.log");

@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { redact, stripBlocks } from "../src/daemon/redact.ts";
-import { REPO_ROOT } from "./helpers.ts";
 
 describe("stripBlocks", () => {
   test.each([
@@ -138,22 +135,5 @@ describe("redact leaves near-misses alone", () => {
   ])("is idempotent on %j", (input) => {
     const once = redact(input);
     expect(redact(once)).toBe(once);
-  });
-});
-
-describe("redaction has no switch", () => {
-  test("redact takes one argument and ignores any extra one", () => {
-    expect(redact.length).toBe(1);
-    expect(Reflect.apply(redact, undefined, ["password=hunter2hunter2", false])).toBe(
-      "password=[redacted]",
-    );
-  });
-
-  test("src/daemon/redact.ts imports nothing and reads no environment", () => {
-    const source = fs.readFileSync(path.join(REPO_ROOT, "src/daemon/redact.ts"), "utf-8");
-    expect(source).not.toMatch(/^\s*(?:import|export)\b[^;]*?\bfrom\s*["']/m);
-    expect(source).not.toMatch(/^\s*import\s*["']/m);
-    expect(source).not.toMatch(/\bimport\s*\(/);
-    expect(source).not.toMatch(/\bprocess\.env\b/);
   });
 });

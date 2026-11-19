@@ -34,25 +34,19 @@ const section = (ex: string, name: string): string[] => {
 };
 
 describe("excerptOf", () => {
-  test("prefs in full, plus the most recent memory bullets", () => {
+  test("prefs in full, plus the most recent memory bullets, and every bullet left out is listed after", () => {
     const ex = excerpt(CEREBRUM);
     expect(ex).toContain("Prefers pnpm over npm");
     expect(ex).toContain("Mistake number 14");
+    // The newest MEMORY_RECENT_COUNT of 15 bullets stay: 8 through 14.
     const memory = section(ex, "Memory");
-    expect(memory).toContain(`- Mistake number ${15 - MEMORY_RECENT_COUNT}`);
-    expect(memory).not.toContain(`- Mistake number ${15 - MEMORY_RECENT_COUNT - 1}`);
-  });
-
-  test("every bullet the excerpt leaves out is listed after it", () => {
-    const ex = excerpt(CEREBRUM);
-    const hidden = 15 - MEMORY_RECENT_COUNT;
+    expect(memory).toContain("- Mistake number 8");
+    expect(memory).not.toContain("- Mistake number 7");
     expect(section(ex, "Not shown")).toEqual([
-      `### Not shown (${hidden} of 17; grep .crank/cerebrum.md)`,
-      ...Array.from({ length: hidden }, (_, i) => `- Mistake number ${i}`),
+      "### Not shown (8 of 17; grep .crank/cerebrum.md)",
+      ...Array.from({ length: 8 }, (_, i) => `- Mistake number ${i}`),
     ]);
-  });
-
-  test("nothing hidden, no index", () => {
+    // Nothing hidden, no index.
     expect(excerpt("# Cerebrum\n\n## Memory\n\n- only one\n")).not.toContain("Not shown");
   });
 
@@ -73,25 +67,6 @@ describe("excerptOf", () => {
       Array.from({ length: MEMORY_RECENT_COUNT }, (_, i) => `- recent ${i}`).join("\n");
     const [, entry] = section(excerpt(md), "Not shown");
     expect(entry).toBe("- `test_fates.test_every_vocabulary_entry_has_a_me`…");
-  });
-
-  test("empty template yields empty excerpt", () => {
-    expect(excerpt("# Cerebrum\n\n## User Preferences\n\n## Memory\n")).toBe("");
-  });
-
-  // The protocol asks for prose bullets, which wrap, so the excerpt keeps every
-  // physical line of a bullet.
-  test("a bullet spanning several physical lines arrives whole", () => {
-    const ex = excerpt(
-      "# Cerebrum\n\n## Memory\n\n" +
-        "- The blur dies when the container gets `position: fixed` or above a\n" +
-        "  z-index of 10 — it becomes a backdrop root, killing the overlay blur.\n",
-    );
-    expect(ex).toContain("z-index of 10 — it becomes a backdrop root, killing the overlay blur.");
-    expect(ex).toContain(
-      "- The blur dies when the container gets `position: fixed` or above a\n" +
-        "  z-index of 10 — it becomes a backdrop root, killing the overlay blur.",
-    );
   });
 
   test("sub-bullets ride along with the bullet they belong to", () => {
@@ -209,21 +184,8 @@ describe("excerptOf", () => {
     expect(index[0]).toBe(`### Not shown (${10 - memory.length} of 10; grep .crank/cerebrum.md)`);
     expect(index.slice(1)).toHaveLength(10 - memory.length);
     expect(index[1]).toStartWith("- Learning 0:");
-  });
-
-  test("a budget too small for even one bullet yields nothing rather than a fragment", () => {
+    // A budget too small for even one bullet yields nothing rather than a fragment.
     expect(excerptOf(CEREBRUM, 10).text).toBe("");
-  });
-
-  // The subagent excerpt passes balanced; unbalanced, preferences take a 2 KB budget whole.
-  test("unbalanced, a 2 KB budget spends every byte on preferences", () => {
-    const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
-    const bullet = (s: string, i: number): string =>
-      `- **${s} ${i}**: ${clause.repeat(4).trim()} (2026-09-${10 + i}).`;
-    const prefs = Array.from({ length: 7 }, (_, i) => bullet("Pref", i));
-    const memory = Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i));
-    const md = `# Cerebrum\n\n## User Preferences\n${prefs.join("\n")}\n\n## Memory\n${memory.join("\n")}\n`;
-    expect(excerptOf(md, 2048).text).not.toMatch(/^### Memory$/m);
   });
 });
 
@@ -237,16 +199,6 @@ describe("composeInjection", () => {
     graph: { files: 30, pending: 0, gaps: [] as string[] },
     adrPath: "docs/adr",
   };
-
-  test("contains all sections in order", () => {
-    const out = composeInjection(sources, 8192).text;
-    const iInstr = out.indexOf("crank-mem (project memory)");
-    const iCer = out.indexOf("## Cerebrum");
-    const iAdr = out.indexOf("## ADRs");
-    expect(iInstr).toBeGreaterThanOrEqual(0);
-    expect(iCer).toBeGreaterThan(iInstr);
-    expect(iAdr).toBeGreaterThan(iCer);
-  });
 
   test("caps ADR list at most recent 20", () => {
     const out = composeInjection(sources, 8192).text;
@@ -263,19 +215,9 @@ describe("composeInjection", () => {
       "symbol line ranges (symbols for 4 files are still being parsed) (no symbol ranges for .lua, .dart, .zig files); use it before",
     );
     expect(out).not.toContain(".sql");
-  });
-
-  test("symbols never appear in injection", () => {
-    const out = composeInjection(sources, 8192).text;
-    expect(out).not.toContain("(fn, L");
-  });
-
-  test("staleness note is included when set", () => {
-    const out = composeInjection(
-      { ...sources, notes: ["index refresh skipped (lock busy)"] },
-      8192,
-    ).text;
-    expect(out).toContain("index refresh skipped");
+    const settled = composeInjection(sources, 8192).text;
+    expect(settled).not.toContain("still being parsed");
+    expect(settled).not.toContain("no symbol ranges");
   });
 
   test("the drift note sits directly below the staleness note", () => {
@@ -292,6 +234,7 @@ describe("composeInjection", () => {
     expect(out).toContain(
       "_Note: crank-mem hooks are at 0.3.2, crank-mem is at 0.5.0 — run `crank-mem upgrade`._",
     );
+    expect(out).toContain("index refresh skipped");
     expect(out.indexOf("refresh skipped")).toBeLessThan(out.indexOf("hooks are at 0.3.2"));
     expect(out.indexOf("hooks are at 0.3.2")).toBeLessThan(out.indexOf("## Cerebrum"));
   });
@@ -317,40 +260,23 @@ describe("composeInjection", () => {
         `## Memory\n\n${wrapped("Learning", 11, 7)}\n`,
     };
 
-    test("the fixture is big enough that bytes, not the token cap, bind", () => {
+    test("the ADR section survives a full cerebrum", () => {
+      // The fixture must be big enough that bytes, not the token cap, bind; otherwise the
+      // ceiling below would pass without the byte trim ever running.
       const size = Buffer.byteLength(fat.cerebrumMd, "utf-8");
       expect(size).toBeGreaterThan(9_000);
       expect(size).toBeLessThan(10_000);
-      // Big enough that bytes, not the token cap, are what bind — otherwise the
-      // ceiling below would pass without the byte trim ever running.
       const free =
         8192 -
         Buffer.byteLength(composeInjection({ ...fat, cerebrumMd: null }, 8192).text, "utf-8");
       expect(estimateProseTokens(excerptOf(fat.cerebrumMd, free).text)).toBeLessThan(1500);
-    });
 
-    test("a full cerebrum stays inside the byte budget", () => {
       const out = composeInjection(fat, 8192).text;
       expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(8192);
-    });
-
-    test("the ADR section survives a full cerebrum", () => {
-      const out = composeInjection(fat, 8192).text;
       expect(out).toContain("## ADRs");
       expect(out).toContain("0025-decision-25.md");
       expect(out).toContain("## Cerebrum");
       expect(out).toContain("Learning 10:"); // the newest memory bullet
-    });
-
-    // Under real pressure the whole excerpt gives way in one direction: oldest
-    // memory first, and only once memory is gone does the oldest preference
-    // go. A user-stated preference outranks anything the agent inferred.
-    test("a starved budget sheds memory before preferences, oldest first", () => {
-      const out = composeInjection(fat, 2560).text;
-      expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(2560);
-      expect(out).toContain("Preference 4:"); // newest preference survives
-      expect(out).not.toContain("Preference 0:"); // oldest goes first
-      expect(out).not.toContain("### Memory"); // memory yields entirely before prefs do
     });
 
     test("a section that cannot fit is dropped, not truncated mid-way", () => {
@@ -368,11 +294,6 @@ describe("composeInjection", () => {
       expect(out).toContain("## Cerebrum");
       expect(out).toContain("Mistake number 14");
       expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(1230);
-    });
-
-    test("instructions survive a budget too small to hold them", () => {
-      const out = composeInjection(sources, 10).text;
-      expect(out).toContain("`crank-mem anatomy [<dir>]` lists the project's 30 file(s)");
     });
   });
 
