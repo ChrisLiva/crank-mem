@@ -1,7 +1,7 @@
-// The files a Bash command reads with a plain read tool or `crank-mem outline`/`unfold`, and the
-// identifiers its greps search for. A best-effort lexer, not a shell parser: callers filter the
-// path candidates through ownedPath and the names through the code graph, so a stray word such as
-// a `head -n` count costs nothing.
+// The files a Bash command reads with a plain read tool or `crank-mem outline`/`unfold`, the files
+// its `git log`, `show` and `blame` ask about, and the identifiers its greps search for. A
+// best-effort lexer, not a shell parser: callers filter the path candidates through ownedPath and
+// the names through the code graph, so a stray word such as a `head -n` count costs nothing.
 
 const READERS = new Set(["cat", "sed", "head", "tail", "awk", "nl"]);
 /** Readers whose first non-flag word is a program, not a file. */
@@ -48,6 +48,17 @@ const GREP_VALUE_FLAGS = new Set([
   "--threads",
   "--type",
   "--type-not",
+]);
+/** `git` subcommands that ask about a file's past. */
+const HISTORY_COMMANDS = new Set(["log", "show", "blame"]);
+/** Flags of `git blame` whose next word is their value, so never a file. */
+const BLAME_VALUE_FLAGS = new Set([
+  "-L",
+  "-S",
+  "--contents",
+  "--date",
+  "--ignore-rev",
+  "--ignore-revs-file",
 ]);
 /** The most names one grep pattern may alternate between and still read as a lookup of those names. */
 const MAX_GREP_NAMES = 3;
@@ -160,6 +171,35 @@ export function shellReadPaths(command: string): string[] {
       const args = readerArgs(rest);
       paths.push(...(PROGRAM_FIRST.has(name!) ? args.slice(1) : args));
     }
+  }
+  return paths;
+}
+
+/** The candidate paths the words after a `git log`, `show` or `blame` name. */
+function historyArgs(sub: string, args: string[]): string[] {
+  if (sub === "blame")
+    return readerArgs(args.filter((_, i) => !BLAME_VALUE_FLAGS.has(args[i - 1]!)));
+  const dashes = args.indexOf("--");
+  const after = dashes === -1 ? [] : readerArgs(args.slice(dashes + 1));
+  if (sub === "log") return after;
+  const revs = (dashes === -1 ? args : args.slice(0, dashes)).filter(
+    (w) => !w.startsWith("-") && w.includes(":"),
+  );
+  return [...revs.map((w) => w.slice(w.indexOf(":") + 1)), ...after];
+}
+
+/**
+ * Candidate paths the `git log`, `git show` and `git blame` commands in `command` ask about, in
+ * order: the words after `--`, a `git show`'s `<rev>:<path>` words, and a `git blame`'s non-flag
+ * words. Kept apart from shellReadPaths, whose paths the digest links observations to: asking
+ * about a file's past reads none of its content. A command that a pipe feeds names none.
+ */
+export function shellHistoryPaths(command: string): string[] {
+  const paths: string[] = [];
+  for (const { words, piped } of segments(dropHeredocs(command))) {
+    const [name, sub, ...args] = words;
+    if (!piped && name === "git" && HISTORY_COMMANDS.has(sub!))
+      paths.push(...historyArgs(sub!, args));
   }
   return paths;
 }

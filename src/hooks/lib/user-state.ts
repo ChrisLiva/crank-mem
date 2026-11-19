@@ -8,12 +8,19 @@ import { readJsonObject } from "./config.ts";
 export const STOP_FILE = "digest-state.json";
 /** Per-session markers of the file histories each agent has already seen. */
 export const SEEN_DIR = "seen";
+/** The name a session's main agent has in its seen file's name; a subagent has its agent id. */
+export const MAIN_AGENT = "main";
 
 export type StopState = { reason: "credential" | "login"; atMs: number; detail: string };
 
 /** `||`, not `??`: an empty CRANK_HOME would turn every path under it relative. */
 export function crankHome(): string {
   return process.env.CRANK_HOME || path.join(os.homedir(), ".crank");
+}
+
+/** The seen file of one agent of a session; `stem` is the session transcript's stem. */
+export function seenFile(stem: string, agent: string): string {
+  return path.join(crankHome(), SEEN_DIR, `${stem}-${agent}.seen`);
 }
 
 export function ensureCrankHome(): string {

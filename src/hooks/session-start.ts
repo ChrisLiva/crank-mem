@@ -6,19 +6,21 @@ import {
   emitAdditionalContext,
   runAdvisoryHook,
   isCodexPayload,
+  type HookPayload,
 } from "./lib/hook-io.ts";
 import { errorMessage, type CrankConfig } from "./lib/config.ts";
 import { openCodeDb, pendingCount, refreshFileFacts } from "./lib/code-db.ts";
 import { writeActivity } from "./lib/activity.ts";
-import { ensureDaemon } from "./lib/spool.ts";
-import { readStopState } from "./lib/user-state.ts";
+import { ensureDaemon, transcriptStem } from "./lib/spool.ts";
+import { MAIN_AGENT, readStopState, seenFile } from "./lib/user-state.ts";
 import { sessionStartInjection } from "./lib/injection.ts";
 import { debugEvent } from "./lib/debug.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
 import { registerProject } from "./lib/registry.ts";
 
 // SessionStart hook (Claude Code and Codex). Every source re-injects, compaction
-// included. Refreshes code.db's file facts, then emits the injection via
+// included, and a Claude compaction also clears the main agent's seen marks.
+// Refreshes code.db's file facts, then emits the injection via
 // hookSpecificOutput.additionalContext. sessionStartInjection applies the digest
 // gate (ADR 0010).
 // Advisory-only: every path exits 0.
@@ -62,12 +64,29 @@ function writeGraph(root: string, config: CrankConfig, deadlineMs: number): stri
   }
 }
 
+/**
+ * Deletes the main agent's seen marks when a Claude session compacts. Compaction drops the
+ * sections post-read showed from the agent's context, so each one must show again; a subagent's
+ * context does not compact with its parent's, so its marks stay. Never throws.
+ */
+function resetSeen(payload: HookPayload): void {
+  if (payload.source !== "compact" || isCodexPayload(payload)) return;
+  const stem = transcriptStem(payload.transcript_path);
+  if (!stem) return;
+  try {
+    fs.rmSync(seenFile(stem, MAIN_AGENT), { force: true });
+  } catch {
+    // Marks that cannot be deleted stay, and the agent sees those sections once.
+  }
+}
+
 async function main(): Promise<void> {
   const payload = parsePayload(await readStdin());
   if (!payload) return;
 
   const ctx = projectContext(payload);
   if (!ctx) return;
+  resetSeen(payload);
   const { root, crankDir, config } = ctx;
   try {
     // findProjectRoot keeps a symlinked cwd; the CLI registers the realpath.

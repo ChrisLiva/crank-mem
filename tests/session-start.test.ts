@@ -23,7 +23,7 @@ import {
   withReadOnlyCodeDb,
 } from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
-import { CODE_BULLET, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
+import { CODE_BULLET, RECALL_BULLET, SUBAGENT_BULLET } from "../src/hooks/lib/injection.ts";
 import { formatLine, openStoreForWrite, readStoreSync } from "../src/hooks/lib/memory.ts";
 import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import { claudeSessionStart, claudeSubagentStart, codexSessionStart } from "./fixtures/payloads.ts";
@@ -79,9 +79,16 @@ describe("session-start hook (black-box)", () => {
       "- `crank-mem anatomy [<dir>]` lists the project's 5 file(s) with descriptions, token sizes and symbol line ranges (symbols for 2 files are still being parsed) (no symbol ranges for .lua, .dart files); use it before slice-reading a large file.";
     const codex = ctxFor(codexSessionStart(root));
     const claude = ctxFor(claudeSessionStart(root));
-    // The code pointer follows the anatomy pointer and precedes the proof bullet, for both agents.
+    // The code pointer follows the anatomy pointer, and the subagent line sits between it and the
+    // proof bullet, for both agents.
+    expect(SUBAGENT_BULLET).toBe(
+      "- Subagents: when you write a subagent's prompt for code exploration or a question about earlier work, name the `crank-mem` commands above that fit its task.",
+    );
     for (const ctx of [codex, claude]) {
-      expect(count(ctx, `${pointer}\n${CODE_BULLET}\n- Memory is not proof`)).toBe(1);
+      expect(count(ctx, SUBAGENT_BULLET)).toBe(1);
+      expect(
+        count(ctx, `${pointer}\n${CODE_BULLET}\n${SUBAGENT_BULLET}\n- Memory is not proof`),
+      ).toBe(1);
       expect(ctx).not.toContain("offset/limit");
     }
   });
@@ -449,7 +456,9 @@ describe("digests running (black-box)", () => {
       "- Past work: before you change how an area behaves, debug a failure again, or act on earlier work the user mentions, run `crank-mem search <query>`; open any `#id` shown here or in file history with `crank-mem get <id...>`, and `crank-mem timeline <id>` shows what surrounds one.";
     expect(count(before, pointer)).toBe(1);
     expect(before.indexOf(CODE_BULLET)).toBeLessThan(before.indexOf(pointer));
-    expect(count(before, `${CODE_BULLET}\n${pointer}\n- Memory is not proof`)).toBe(1);
+    expect(
+      count(before, `${CODE_BULLET}\n${pointer}\n${SUBAGENT_BULLET}\n- Memory is not proof`),
+    ).toBe(1);
 
     seedMemory(root, titled(60));
     const section = sectionOf(
@@ -732,10 +741,10 @@ describe("linked projects (black-box)", () => {
     expect(
       count(
         ctx,
-        `${RECALL_BULLET}\n- Search also covers linked projects: payments-api, storefront.\n- Memory is not proof`,
+        `${RECALL_BULLET}\n- Search also covers linked projects: payments-api, storefront.\n${SUBAGENT_BULLET}\n- Memory is not proof`,
       ),
     ).toBe(1);
-    // SubagentStart does not gain the line.
+    // SubagentStart gains neither line.
     const sub = runHook(
       "src/hooks/subagent-start.ts",
       JSON.stringify(claudeSubagentStart(ws.H, "Explore")),
@@ -746,6 +755,7 @@ describe("linked projects (black-box)", () => {
     const subCtx: string = JSON.parse(sub.stdout).hookSpecificOutput.additionalContext;
     expect(subCtx).toContain(RECALL_BULLET);
     expect(subCtx).not.toContain("Search also covers");
+    expect(subCtx).not.toContain(SUBAGENT_BULLET);
 
     // A renamed project's link stops resolving; once none resolves, the plain recall bullet.
     const rename = (root: string, name: string) =>
@@ -754,12 +764,12 @@ describe("linked projects (black-box)", () => {
     expect(
       count(
         injectIn(ws.H, ws.home),
-        `${RECALL_BULLET}\n- Search also covers linked projects: payments-api.\n- Memory is not proof`,
+        `${RECALL_BULLET}\n- Search also covers linked projects: payments-api.\n${SUBAGENT_BULLET}\n- Memory is not proof`,
       ),
     ).toBe(1);
     rename(ws.payments, "pay");
     const plain = injectIn(ws.H, ws.home);
-    expect(count(plain, `${RECALL_BULLET}\n- Memory is not proof`)).toBe(1);
+    expect(count(plain, `${RECALL_BULLET}\n${SUBAGENT_BULLET}\n- Memory is not proof`)).toBe(1);
     expect(plain).not.toContain("Search also covers");
   });
 

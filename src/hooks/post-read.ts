@@ -22,9 +22,9 @@ import { formatLine, memoryPath, readStore, type MemoryReader } from "./lib/memo
 import { ownerOf, projectName } from "./lib/owner.ts";
 import { rootOfName } from "./lib/registry.ts";
 import { recordUntouched } from "./lib/untouched.ts";
-import { shellGrepNames, shellReadPaths } from "./lib/shell-reads.ts";
+import { shellGrepNames, shellHistoryPaths, shellReadPaths } from "./lib/shell-reads.ts";
 import { transcriptStem } from "./lib/spool.ts";
-import { SEEN_DIR, crankHome } from "./lib/user-state.ts";
+import { MAIN_AGENT, seenFile } from "./lib/user-state.ts";
 import { hookActor, recordUsage } from "./lib/usage.ts";
 import type { ObservationLine } from "./lib/wire.ts";
 
@@ -60,12 +60,12 @@ const SYMBOL_MARK = "symbol:";
 /** The symbol kinds whose call sites `crank-mem callers` lists. */
 const CALLABLE_KINDS = new Set(["fn", "method", "class"]);
 
+/** The files a call reads or, with a git history command, asks about. */
 function readPaths(payload: HookPayload): string[] {
-  const input = payload.tool_input ?? {};
-  if (payload.tool_name === "Read")
-    return typeof input.file_path === "string" ? [input.file_path] : [];
-  if (payload.tool_name === "Bash")
-    return typeof input.command === "string" ? shellReadPaths(input.command) : [];
+  const { file_path, command } = payload.tool_input ?? {};
+  if (payload.tool_name === "Read") return typeof file_path === "string" ? [file_path] : [];
+  if (payload.tool_name === "Bash" && typeof command === "string")
+    return [...shellReadPaths(command), ...shellHistoryPaths(command)];
   return [];
 }
 
@@ -95,7 +95,7 @@ function changedSince(file: string, ms: number): boolean {
 function agentOf(payload: HookPayload): string {
   return typeof payload.agent_id === "string" && /^[\w-]+$/.test(payload.agent_id)
     ? payload.agent_id
-    : "main";
+    : MAIN_AGENT;
 }
 
 /** A read path its owner holds: the owner-relative path, the tree it sits in, and the store it reads. */
@@ -501,10 +501,10 @@ function excerptBlock(
 }
 
 /** Appends, so parallel hooks on one transcript each keep their marks. */
-function markSeen(seenFile: string, marked: string[]): void {
+function markSeen(file: string, marked: string[]): void {
   try {
-    fs.mkdirSync(path.dirname(seenFile), { recursive: true, mode: 0o700 });
-    fs.appendFileSync(seenFile, marked.map((p) => p + "\n").join(""));
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.appendFileSync(file, marked.map((p) => p + "\n").join(""));
   } catch {
     // A lost marker costs only a repeat of this history.
   }
@@ -525,8 +525,8 @@ async function main(): Promise<void> {
   if (!stem) return;
 
   const reads = resolveReads(ctx.cwd, paths, hookActor(payload).session);
-  const seenFile = path.join(crankHome(), SEEN_DIR, `${stem}-${agentOf(payload)}.seen`);
-  const seen = readSeen(seenFile);
+  const marks = seenFile(stem, agentOf(payload));
+  const seen = readSeen(marks);
   const lookup = symbolLookup(ctx.root, greps, seen);
   if (reads.length === 0 && lookup === null) return;
 
@@ -543,7 +543,7 @@ async function main(): Promise<void> {
   const block = excerptBlock(ctx.root, reads, seen, sections);
   const shown = block ? [...sections, block.text] : sections;
   if (shown.length > 0) {
-    markSeen(seenFile, [
+    markSeen(marks, [
       ...marked.map((r) => r.abs),
       ...used.marks,
       ...(callers?.shown ?? []).map((name) => SYMBOL_MARK + name),

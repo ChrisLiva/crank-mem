@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { shellGrepNames, shellReadPaths } from "../src/hooks/lib/shell-reads.ts";
+import { shellGrepNames, shellHistoryPaths, shellReadPaths } from "../src/hooks/lib/shell-reads.ts";
 
 describe("shellReadPaths", () => {
   test("names the files a read-only shell command reads", () => {
@@ -81,5 +81,50 @@ describe("shellGrepNames", () => {
     ];
     for (const [command, names] of table)
       expect([command, shellGrepNames(command)]).toEqual([command, names]);
+  });
+});
+
+describe("shellHistoryPaths", () => {
+  test("names the files a git log, show or blame asks about", () => {
+    const table: Array<[string, string[]]> = [
+      ["git log --oneline -5 -- src/a.ts", ["src/a.ts"]],
+      [
+        "git log --oneline 340aca0..HEAD -- src/a.ts src/b.ts 2>/dev/null",
+        ["src/a.ts", "src/b.ts"],
+      ],
+      ['git log --oneline -S"agent_id" -- src/a.ts', ["src/a.ts"]],
+      ["git log -3 -- src/a.ts > out.txt", ["src/a.ts"]],
+      ["git show HEAD~1:src/a.ts", ["src/a.ts"]],
+      ["git show 1299cc0 -- src/a.ts src/b.ts", ["src/a.ts", "src/b.ts"]],
+      ["git show HEAD:src/a.ts > src/b.ts", ["src/a.ts"]],
+      ["git show --stat HEAD:src/a.ts 1299cc0:src/b.ts", ["src/a.ts", "src/b.ts"]],
+      ["git blame -L 10,20 src/a.ts", ["src/a.ts"]],
+      ["git blame --date short -w src/a.ts", ["src/a.ts"]],
+      ["git blame 1299cc0 -- src/a.ts", ["1299cc0", "src/a.ts"]],
+      ["cd src && git log -3 -- a.ts; git blame b.ts", ["a.ts", "b.ts"]],
+      ["git log --oneline -5", []],
+      ["git log --oneline src/a.ts", []],
+      ["git log --grep fix", []],
+      ["git log --", []],
+      ["git show 1299cc0 --stat", []],
+      ["git show --format=%h:%s 1299cc0", []],
+      ["git show", []],
+      ["git blame", []],
+      ["git diff -- src/a.ts", []],
+      ["git status", []],
+      ["git -C sub log -- src/a.ts", []],
+      ["echo x | git log -- src/a.ts", []],
+      ["echo 'git log -- src/a.ts'", []],
+      ["cat <<'EOF'\ngit log -- src/a.ts\nEOF", []],
+      ["cat src/a.ts", []],
+      ["", []],
+    ];
+    for (const [command, paths] of table)
+      expect([command, shellHistoryPaths(command)]).toEqual([command, paths]);
+  });
+
+  test("a git history command is not a read to shellReadPaths", () => {
+    for (const command of ["git log -- src/a.ts", "git show HEAD:src/a.ts", "git blame src/a.ts"])
+      expect([command, shellReadPaths(command)]).toEqual([command, []]);
   });
 });

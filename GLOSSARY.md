@@ -263,7 +263,7 @@ The observations that surround one observation in time.
 _Avoid_: History, context
 
 **File history**:
-The observations stored about one file, shown to an agent when it reads that file.
+The observations stored about one file, shown to an agent when it reads that file or asks git about its past.
 _Avoid_: File notes, blame
 
 **Surfaced**:

@@ -108,6 +108,143 @@ describe("post-read file history", () => {
   });
 });
 
+describe("post-read git history", () => {
+  test("a git log, show or blame that names a file shows the history a read of it shows", () => {
+    const { root } = seeded();
+    const viaRead = context(run(root, claudePostBash(root, "sed -n 1,5p src/a.ts", TRANSCRIPT)));
+    expect(viaRead).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n#");
+    for (const command of [
+      "git log --oneline -5 -- src/a.ts",
+      "git show HEAD~1:src/a.ts",
+      "git show 1299cc0 -- src/a.ts src/b.ts",
+      "git blame -L 10,20 src/a.ts",
+    ])
+      expect([command, context(run(root, claudePostBash(root, command, TRANSCRIPT)))]).toEqual([
+        command,
+        viaRead,
+      ]);
+  }, 20_000);
+
+  test("a git command that names no file, a git diff and a piped git log are silent and record nothing", () => {
+    const { root } = seeded();
+    for (const command of [
+      "git log --oneline -5",
+      "git show 1299cc0 --stat",
+      "git log --grep fix",
+      "git diff -- src/a.ts",
+      "git status",
+      "echo x | git log -- src/a.ts",
+    ]) {
+      const r = run(root, claudePostBash(root, command, TRANSCRIPT));
+      expect([command, r.status, r.stdout]).toEqual([command, 0, ""]);
+    }
+    expect(fs.existsSync(path.join(root, ".crank/usage.jsonl"))).toBe(false);
+  }, 20_000);
+
+  test("a git history command and a Read share one seen mark, in either order", () => {
+    const { root } = seeded();
+    const file = path.join(root, "src/a.ts");
+    const read = (env: Record<string, string>) =>
+      run(root, claudePostRead(root, file, TRANSCRIPT), env);
+    const log = (env: Record<string, string>) =>
+      run(root, claudePostBash(root, "git log -3 -- src/a.ts", TRANSCRIPT), env);
+    const gitFirst = { CRANK_HOME: makeCrankHome() };
+    expect(context(log(gitFirst))).toStartWith("History of src/a.ts");
+    expect(read(gitFirst).stdout).toBe("");
+    const readFirst = { CRANK_HOME: makeCrankHome() };
+    expect(context(read(readFirst))).toStartWith("History of src/a.ts");
+    expect(log(readFirst).stdout).toBe("");
+  });
+});
+
+const SESSION_START = "src/hooks/session-start.ts";
+const SEEN_FILE = "seen/551be959-main.seen";
+
+/** Runs a session-start hook for TRANSCRIPT's session under `home`, with `fields` over the Claude payload. */
+function sessionStart(root: string, home: string, fields: object): HookRun {
+  // A stop state keeps the hook from starting a daemon that parses under the test.
+  stopDigests(home);
+  const payload = { ...claudeSessionStart(root), transcript_path: TRANSCRIPT, ...fields };
+  return runHook(SESSION_START, JSON.stringify(payload), root, { CRANK_HOME: home });
+}
+
+describe("post-read after a compaction", () => {
+  test("a compaction clears the main agent's marks, so its next read shows every section again", () => {
+    const root = lookupProject({}, 2);
+    const home = makeCrankHome();
+    const env = { CRANK_HOME: home };
+    const lib = path.join(root, "src/lib.ts");
+    const read = (agent?: string) => run(root, claudePostRead(root, lib, TRANSCRIPT, agent), env);
+    const grep = () => run(root, claudePostBash(root, "rg -n loadConfig src", TRANSCRIPT), env);
+    const first = context(read());
+    expect(first).toStartWith(HISTORY);
+    expect(first).toContain("\n\nUsed by (crank-mem impact src/lib.ts):\n");
+    expect(context(grep())).toBe(LOAD);
+    expect(context(read("a1b2"))).toBe(first);
+    const subagentMarks = fs.readFileSync(path.join(home, "seen/551be959-a1b2.seen"), "utf-8");
+    expect(read().stdout).toBe("");
+    expect(grep().stdout).toBe("");
+
+    const start = sessionStart(root, home, { source: "compact" });
+    expect(start.status).toBe(0);
+    expect(start.stderr).toBe("crank-mem: injected project memory\n");
+    expect(fs.existsSync(path.join(home, SEEN_FILE))).toBe(false);
+    expect(fs.readFileSync(path.join(home, "seen/551be959-a1b2.seen"), "utf-8")).toBe(
+      subagentMarks,
+    );
+
+    expect(context(read())).toBe(first);
+    expect(context(grep())).toBe(LOAD);
+    expect(read().stdout).toBe("");
+    expect(read("a1b2").stdout).toBe("");
+  }, 30_000);
+
+  test("any other source, a Codex start and a subagent transcript leave the marks", () => {
+    const { root } = seeded();
+    const home = makeCrankHome();
+    const file = path.join(root, "src/a.ts");
+    const read = () => run(root, claudePostRead(root, file, TRANSCRIPT), { CRANK_HOME: home });
+    expect(context(read())).toStartWith("History of src/a.ts");
+    const marks = fs.readFileSync(path.join(home, SEEN_FILE), "utf-8");
+    const injected = (r: HookRun) => JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    const compact = injected(sessionStart(root, makeCrankHome(), { source: "compact" }));
+    for (const fields of [
+      { source: "startup" },
+      { source: "clear" },
+      { source: "resume" },
+      { source: "compact", turn_id: "019f6e07-0000-0000-0000-000000000001" },
+      {
+        source: "compact",
+        transcript_path: "/u/.claude/projects/-proj/551be959/subagents/551be959.jsonl",
+      },
+    ]) {
+      const start = sessionStart(root, home, fields);
+      expect([fields, start.status]).toEqual([fields, 0]);
+      expect([fields, fs.readFileSync(path.join(home, SEEN_FILE), "utf-8")]).toEqual([
+        fields,
+        marks,
+      ]);
+    }
+    expect(read().stdout).toBe("");
+    // The reset changes nothing the hook injects.
+    expect(injected(sessionStart(root, home, { source: "compact" }))).toBe(compact);
+  }, 30_000);
+
+  test("a compaction with no marks, or marks it cannot delete, injects as before", () => {
+    const { root } = seeded();
+    const fresh = sessionStart(root, makeCrankHome(), { source: "compact" });
+    const blocked = makeCrankHome();
+    fs.mkdirSync(path.join(blocked, SEEN_FILE, "kept"), { recursive: true });
+    const stuck = sessionStart(root, blocked, { source: "compact" });
+    for (const r of [fresh, stuck]) {
+      expect(r.status).toBe(0);
+      expect(r.stderr).toBe("crank-mem: injected project memory\n");
+    }
+    expect(stuck.stdout).toBe(fresh.stdout);
+    expect(fs.existsSync(path.join(blocked, SEEN_FILE, "kept"))).toBe(true);
+  });
+});
+
 describe("post-read stale rows", () => {
   test("a file's history leaves out a stale row", () => {
     const root = makeCrankProject({ "src/a.ts": "export const a = 1;\n" });

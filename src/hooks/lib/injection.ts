@@ -47,6 +47,12 @@ export const RECALL_BULLET =
 /** Points at the code commands; session start and SubagentStart show it ungated. */
 export const CODE_BULLET =
   "- Code: `crank-mem outline <file>` lists a source file's symbols with line ranges, and `crank-mem unfold <file> <symbol|line>` prints one in full. `crank-mem callers|callees <symbol>` and `crank-mem impact <file|symbol>` show what calls what and what a change reaches.";
+/**
+ * Session start only: the agent that reads it writes each subagent's prompt, and no hook can
+ * (ADR 0007). It names no command, so it reads the same with or without the recall bullets.
+ */
+export const SUBAGENT_BULLET =
+  "- Subagents: when you write a subagent's prompt for code exploration or a question about earlier work, name the `crank-mem` commands above that fit its task.";
 
 /**
  * Cerebrum sections read as memory bullets, lowercased. `## Memory` is the
@@ -97,6 +103,7 @@ function instructions(graph: GraphCounts | null, recall: boolean, linked: string
     graphPointer(graph),
     CODE_BULLET,
     ...(recall ? recallBullets(linked) : []),
+    SUBAGENT_BULLET,
     PROOF_AND_ADR_BULLETS,
   ];
   return `${INJECTION_HEADING}\n\n${lead}\n\n${bullets.join("\n")}`;
