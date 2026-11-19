@@ -9,8 +9,10 @@ import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { openCodeDb } from "../src/hooks/lib/code-db.ts";
 import {
   memoryPath,
+  openMemory,
   openStoreForWrite,
   type DigestInput,
+  type Memory,
   type NewObservation,
   type Position,
 } from "../src/hooks/lib/memory.ts";
@@ -539,6 +541,21 @@ export function plantMemory(root: string, state: "newer" | "unreadable" | "broke
   if (state === "newer") db.exec("PRAGMA journal_mode=WAL");
   db.exec(`PRAGMA user_version = ${state === "newer" ? SCHEMA_VERSION + 1 : SCHEMA_VERSION}`);
   db.close();
+}
+
+const writables: Memory[] = [];
+
+/** Opens the store at `file` for writing; `closeWritables` closes it. */
+export function openWritable(file: string): Memory {
+  const result = openMemory(file, "write");
+  if (result.status !== "open") throw new Error(`expected open, got ${result.status}`);
+  writables.push(result.memory);
+  return result.memory;
+}
+
+/** Closes every store `openWritable` opened since the last call. */
+export function closeWritables(): void {
+  for (const memory of writables.splice(0)) memory.close();
 }
 
 export type FakeScenario = {

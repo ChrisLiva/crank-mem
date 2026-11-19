@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   MEMORY_FILE,
+  memoryPath,
   openMemory,
   openStoreForWrite,
   readStore,
@@ -20,25 +21,20 @@ import {
 import { SCHEMA_VERSION } from "../src/hooks/lib/memory-schema.ts";
 import type { StoreStatus } from "../src/hooks/lib/wire.ts";
 import { V1_DDL } from "./fixtures/schema-v1.ts";
-import { plantMemory, seedMemory } from "./helpers.ts";
+import { closeWritables, openWritable, plantMemory, seedMemory } from "./helpers.ts";
 import { workspace } from "./workspace.ts";
 
-const open: { close(): void }[] = [];
+afterEach(closeWritables);
 
-afterEach(() => {
-  for (const memory of open.splice(0)) memory.close();
-});
+function tmpRoot(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "crank-memory-"));
+}
 
 function tmpFile(): string {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "crank-memory-")), ".crank", MEMORY_FILE);
+  return memoryPath(tmpRoot());
 }
 
-function writable(file = tmpFile()): Memory {
-  const result = openMemory(file, "write");
-  if (result.status !== "open") throw new Error(`expected open, got ${result.status}`);
-  open.push(result.memory);
-  return result.memory;
-}
+const writable = (file = tmpFile()): Memory => openWritable(file);
 
 function obs(over: Partial<NewObservation> & { title: string; narrative: string }): NewObservation {
   return { type: "discovery", facts: [], filesRead: [], filesModified: [], refs: [], ...over };
@@ -78,17 +74,16 @@ const summary = (next_steps: string) => ({
 });
 
 /** A store built from the frozen version-1 schema, at user_version 1. */
-function v1File(): string {
-  const file = tmpFile();
+function v1Root(): string {
+  const root = tmpRoot();
+  const file = memoryPath(root);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const raw = new (process.getBuiltinModule("node:sqlite").DatabaseSync)(file);
   raw.exec(V1_DDL);
   raw.exec("PRAGMA user_version = 1");
   raw.close();
-  return file;
+  return root;
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("openMemory", () => {
   test("a writer reports the version it migrated from, and snapshots only a version-1 store", () => {
@@ -102,7 +97,7 @@ describe("openMemory", () => {
     expect(reopened.status === "open" && reopened.migratedFrom).toBeNull();
     if (reopened.status === "open") reopened.memory.close();
 
-    const file = v1File();
+    const file = memoryPath(v1Root());
     const migrated = openMemory(file, "write");
     expect(migrated.status === "open" && migrated.migratedFrom).toBe(1);
     if (migrated.status === "open") migrated.memory.close();
@@ -131,7 +126,7 @@ describe("openMemory", () => {
 describe("store by root", () => {
   /** A root whose store holds the one observation `Root fact`. */
   function openRoot(): string {
-    const root = path.dirname(path.dirname(tmpFile()));
+    const root = tmpRoot();
     const w = openStoreForWrite(root);
     if (w.status !== "open") throw new Error(`expected open, got ${w.status}`);
     try {
@@ -149,7 +144,7 @@ describe("store by root", () => {
     return root;
   }
 
-  const emptyRoot = () => path.dirname(path.dirname(tmpFile()));
+  const emptyRoot = () => tmpRoot();
 
   function plantedRoot(state: "newer" | "unreadable" | "broken"): string {
     const root = emptyRoot();
@@ -168,7 +163,7 @@ describe("store by root", () => {
       [zeroByte, "missing"],
       [plantedRoot("unreadable"), "unreadable"],
       [plantedRoot("newer"), "newer"],
-      [path.dirname(path.dirname(v1File())), "older"],
+      [v1Root(), "older"],
     ];
     const statusesOf = async (r: string) => {
       let calls = 0;
@@ -292,7 +287,7 @@ describe("store by root", () => {
     expect(openStoreForWrite(plantedRoot("newer"))).toEqual({ status: "newer" });
     expect(openStoreForWrite(plantedRoot("unreadable"))).toEqual({ status: "unreadable" });
 
-    const older = path.dirname(path.dirname(v1File()));
+    const older = v1Root();
     const backups = path.join(older, ".crank/backups");
     fs.mkdirSync(backups);
     fs.chmodSync(backups, 0o555);
@@ -382,8 +377,7 @@ describe("appendDigest", () => {
     const [dup] = memory.get([memory.recent(1)[0]!.id]);
     expect(dup!.filesRead).toEqual(["src/a.ts"]);
     expect(dup!.filesModified).toEqual(["src/a.ts"]);
-    memory.close();
-    open.length = 0;
+    closeWritables();
     const r = openMemory(file, "read");
     if (r.status !== "open") throw new Error(r.status);
     expect(r.memory.get([line!.id])[0]!.facts).toEqual(input.facts);
@@ -593,7 +587,7 @@ describe("proposals and stale flags", () => {
     const first = memory.get([x])[0]!.staleFlag;
     expect(first?.reason).toBe("first");
     expect(first!.atMs).toBeGreaterThanOrEqual(before);
-    await sleep(2);
+    await Bun.sleep(2);
     expect(
       memory.appendDigest(
         digest("s", P2, { uuid: "u-3", timestamp: "t" }, { stale: [{ id: x, reason: "second" }] }),
@@ -638,12 +632,12 @@ describe("consolidation work", () => {
       proposals: [{ kind: "memory", bullet: B1 }],
       stale: [{ id: b, reason: "B moved — 2026-11-02" }],
     });
-    await sleep(2);
+    await Bun.sleep(2);
     append({
       proposals: [{ kind: "preference", bullet: B2 }],
       stale: [{ id: a, reason: "A gone" }],
     });
-    await sleep(2);
+    await Bun.sleep(2);
     append({ proposals: [{ kind: "memory", bullet: B3 }] });
     const [p1, p2, p3] = memory.pending(20).proposals.map((p) => p.id) as [number, number, number];
     return { memory, append, p1, p2, p3, s1: b, s2: a };
@@ -828,7 +822,7 @@ describe("read methods", () => {
       }),
     );
     expect(memory.latestNextSteps()).toBeNull();
-    await sleep(2);
+    await Bun.sleep(2);
     const t2 = Date.now();
     const d2 = {
       request: "R2",
@@ -858,7 +852,7 @@ describe("read methods", () => {
       ),
     );
     expect(memory.latestNextSteps()).toBeNull();
-    await sleep(2);
+    await Bun.sleep(2);
     const t3 = Date.now();
     memory.appendDigest(
       digest(
@@ -1024,7 +1018,7 @@ describe("search", () => {
     const [r1] = seed(memory, [
       obs({ type: "bugfix", title: "kiwi one", narrative: "n", filesRead: ["src/a.ts"] }),
     ]) as [number];
-    await sleep(2);
+    await Bun.sleep(2);
     const t2 = Date.now();
     const [r2, r3] = seed(memory, [
       obs({ type: "feature", title: "kiwi two", narrative: "n", filesModified: ["src/b.ts"] }),
@@ -1096,7 +1090,7 @@ describe("search", () => {
     const [a1] = seed(memory, [
       obs({ title: "old row", narrative: "plain", filesModified: ["src/seed.ts"] }),
     ]) as [number];
-    await sleep(2);
+    await Bun.sleep(2);
     const t2 = Date.now();
     const [a2, a3] = seed(memory, [
       obs({ title: "new row", narrative: "plain", filesModified: ["src/seed.ts"] }),
@@ -1173,7 +1167,7 @@ describe("search", () => {
     expect(hybrid("narwhal horn zzzz", { files: ["src/b.ts"], stale: true })).toEqual([b]);
     expect(hybrid("narwhal horn zzzz", { stale: true })).toEqual([z, v, b]);
 
-    await sleep(2);
+    await Bun.sleep(2);
     const t2 = Date.now();
     const [n] = seed(memory, [obs({ title: "newer anchor", narrative: "plain" })]) as [number];
     memory.putVectors("m1", [{ id: n, vector: vec(0, 1, 0) }]);

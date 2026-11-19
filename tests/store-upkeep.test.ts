@@ -2,15 +2,13 @@ import { afterEach, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { MEMORY_FILE, openMemory, type Memory } from "../src/hooks/lib/memory.ts";
-import { cleanup, seedMemory, setMtime, tempDir } from "./helpers.ts";
+import { cleanup, closeWritables, openWritable, seedMemory, setMtime, tempDir } from "./helpers.ts";
 
 const DAILY = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.db$/;
 const DAY_MS = 24 * 3_600_000;
 
-const open: { close(): void }[] = [];
-
 afterEach(async () => {
-  for (const memory of open.splice(0)) memory.close();
+  closeWritables();
   await cleanup();
 });
 
@@ -20,15 +18,6 @@ function store(): { root: string; file: string; dir: string } {
   const crank = path.join(root, ".crank");
   return { root, file: path.join(crank, MEMORY_FILE), dir: path.join(crank, "backups", "memory") };
 }
-
-function writable(file: string): Memory {
-  const opened = openMemory(file, "write");
-  if (opened.status !== "open") throw new Error(`expected open, got ${opened.status}`);
-  open.push(opened.memory);
-  return opened.memory;
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test("the daily pass snapshots when due, then deletes only rows stale more than 90 days, after the snapshot", async () => {
   const { root, file, dir } = store();
@@ -42,7 +31,7 @@ test("the daily pass snapshots when due, then deletes only rows stale more than 
     ],
     { proposals: [{ kind: "memory", bullet: "**Keep**: proposals survive retention" }] },
   ) as [number, number, number, number];
-  const m = writable(file);
+  const m = openWritable(file);
   m.putVectors("m1", [{ id: a, vector: new Float32Array([1, 0]) }]);
   expect(m.hasVectors("m1")).toBe(true);
 
@@ -62,7 +51,7 @@ test("the daily pass snapshots when due, then deletes only rows stale more than 
   // Flag A, then B, then C, each at a later millisecond.
   let previous = 0;
   for (const id of [a, b, c]) {
-    while (Date.now() <= previous) await sleep(1);
+    while (Date.now() <= previous) await Bun.sleep(1);
     seedMemory(root, [], { stale: [{ id, reason: "replaced" }] });
     previous = m.staleRows({ before: null, limit: 10 }).find((r) => r.id === id)!.staleAtMs;
   }
@@ -89,8 +78,11 @@ test("the daily pass snapshots when due, then deletes only rows stale more than 
   const snap = openMemory(s2, "read");
   expect(snap.status).toBe("open");
   if (snap.status === "open") {
-    open.push(snap.memory);
-    expect(snap.memory.get([a]).map((o) => o.id)).toEqual([a]);
+    try {
+      expect(snap.memory.get([a]).map((o) => o.id)).toEqual([a]);
+    } finally {
+      snap.memory.close();
+    }
   }
 });
 
@@ -100,7 +92,7 @@ test("the due check counts a -v1.db snapshot and skips a .tmp file", () => {
     seedMemory(root, [{ title: "x" }]);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, name), "");
-    return { m: writable(file), dir };
+    return { m: openWritable(file), dir };
   };
 
   const v1 = planted("2026-01-01T00-00-00-000Z-v1.db");
@@ -132,7 +124,7 @@ test("the trim keeps the newest 7 daily snapshots and every other name, and remo
   }
   fs.writeFileSync(path.join(dir, "memory.db.999.1.tmp"), "");
 
-  expect(writable(file).maintain()).not.toBeNull();
+  expect(openWritable(file).maintain()).not.toBeNull();
   const names = fs.readdirSync(dir).sort();
   expect(names).toHaveLength(11);
   expect(names.slice(0, -2)).toEqual([...kept, ...days.slice(1)]);
@@ -145,7 +137,7 @@ test("a snapshot that cannot be written throws and deletes nothing", () => {
   const { root, file } = store();
   const [id] = seedMemory(root, [{ title: "x" }]) as [number];
   seedMemory(root, [], { stale: [{ id, reason: "replaced" }] });
-  const m = writable(file);
+  const m = openWritable(file);
   const staleAtMs = m.staleRows({ before: null, limit: 10 })[0]!.staleAtMs;
   fs.mkdirSync(path.join(root, ".crank", "backups"));
   fs.writeFileSync(path.join(root, ".crank", "backups", "memory"), "x");
