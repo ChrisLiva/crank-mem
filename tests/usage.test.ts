@@ -759,6 +759,9 @@ describe("usage capture: the graph commands", () => {
       "src/b.ts": "export function save() {}\n",
       ".env": "SECRET=1\n",
     });
+    const outside = path.join(tempDir("crank-usage-outside-"), "outside.ts");
+    fs.writeFileSync(outside, "export const o = 1;\n");
+    fs.symlinkSync(outside, path.join(root, "src/link.ts"));
     const runs = [
       claudeCli(root, ["anatomy"]),
       claudeCli(root, ["callers", "f1"]),
@@ -769,8 +772,10 @@ describe("usage capture: the graph commands", () => {
       claudeCli(root, ["callees", "save"]),
       claudeCli(root, ["impact", ".env", "x"]),
       claudeCli(root, ["anatomy", "--from", ".env"]),
+      claudeCli(root, ["anatomy", "src/link.ts"]),
+      claudeCli(root, ["callers", "src/missing.ts", "x"]),
     ];
-    expect(runs.map((r) => r.status)).toEqual([0, 0, 0, 0, 0, 1, 1, 1, 0]);
+    expect(runs.map((r) => r.status)).toEqual([0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1]);
     const before = lineCount(root);
     expect(claudeCli(root, ["callers"]).status).toBe(1);
     expect(claudeCli(root, ["impact", "f1", "--depth", "9"]).status).toBe(1);
@@ -801,6 +806,8 @@ describe("usage capture: the graph commands", () => {
       ["callees", null, "save", 0, "refused"],
       ["impact", null, "x", 0, "refused"],
       ["anatomy", null, null, 4, "ok"],
+      ["anatomy", "src/link.ts", null, 0, "refused"],
+      ["callers", "src/missing.ts", "x", 0, "not-found"],
     ]);
 
     const bare = tempDir("crank-usage-bare-");

@@ -574,6 +574,19 @@ describe("callers and callees", () => {
     const strayRun = runCli(root, ["impact", stray]);
     expect(strayRun.status).toBe(1);
     expect(strayRun.stderr).toContain("is outside every installed project.");
+
+    const target = path.join(tempDir("crank-outside-"), "target.ts");
+    fs.writeFileSync(target, "export const t = 1;\n");
+    fs.symlinkSync(target, path.join(root, "src-link.ts"));
+    const refused = (args: string[], line: string) =>
+      expect([args, runCli(root, args)]).toEqual([
+        args,
+        { status: 1, stdout: "", stderr: `crank-mem: ${line}\n` },
+      ]);
+    refused(["anatomy", "src-link.ts"], "src-link.ts is outside this project.");
+    refused(["impact", "src-link.ts", "t"], "src-link.ts is outside this project.");
+    refused(["anatomy", "src/missing.ts"], "no file src/missing.ts.");
+    refused(["impact", "src/missing.ts", "sym"], "no file src/missing.ts.");
   });
 
   test("a path in another installed project answers from that project's store", () => {
