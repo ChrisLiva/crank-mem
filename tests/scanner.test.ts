@@ -44,14 +44,14 @@ describe("walkProject", () => {
       "pnpm-lock.yaml": "lockfileVersion: 9",
       "web/package-lock.json": "{}",
     });
-    expect(walkProject(root, defaultConfig()).sort()).toEqual(["README.md", "src/a.ts"]);
+    expect(walkProject(root, defaultConfig(), Infinity)!.sort()).toEqual(["README.md", "src/a.ts"]);
   });
 
   test("outside git, lists every file in path order with no cap", () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 600; i++) files[`f${String(i).padStart(3, "0")}.ts`] = "x";
     const root = makeProject(files);
-    expect(walkProject(root, defaultConfig())).toEqual(Object.keys(files));
+    expect(walkProject(root, defaultConfig(), Infinity)).toEqual(Object.keys(files));
   });
 });
 
@@ -75,7 +75,7 @@ describe("walkProject in a git repo", () => {
       "notes.md": "untracked",
     });
     git(root, "add", ".gitignore", "deps_src", "src", "README.md");
-    expect(walkProject(root, defaultConfig())).toEqual([
+    expect(walkProject(root, defaultConfig(), Infinity)).toEqual([
       "src/a.ts",
       "src/b.ts",
       "src/c.ts",
@@ -100,7 +100,7 @@ describe("walkProject in a git repo", () => {
       input: entries,
     });
     expect(r.status).toBe(0);
-    expect(walkProject(root, defaultConfig())).toEqual(["src/a.ts"]);
+    expect(walkProject(root, defaultConfig(), Infinity)).toEqual(["src/a.ts"]);
   });
 
   test("a conflicted path git lists once per stage counts once", () => {
@@ -115,7 +115,7 @@ describe("walkProject in a git repo", () => {
         .split("\n")
         .filter((l) => l === "a.ts"),
     ).toHaveLength(3);
-    expect(walkProject(root, defaultConfig())).toEqual(["a.ts", "b.ts", "c.ts"]);
+    expect(walkProject(root, defaultConfig(), Infinity)).toEqual(["a.ts", "b.ts", "c.ts"]);
   });
 
   test("a tracked symlink is not a file to index", () => {
@@ -123,8 +123,59 @@ describe("walkProject in a git repo", () => {
     const outside = makeProject({ "secret.txt": "outside the project" });
     fs.symlinkSync(path.join(outside, "secret.txt"), path.join(root, "link.txt"));
     git(root, "add", ".");
-    expect(walkProject(root, defaultConfig())).toEqual(["src/a.ts"]);
+    expect(walkProject(root, defaultConfig(), Infinity)).toEqual(["src/a.ts"]);
   });
+
+  /** Runs `fn` with a `git` first on PATH that sleeps 2 s before `ls-files`, then runs the real one. */
+  function withSlowLsFiles<T>(fn: () => T): T {
+    const realGit = Bun.which("git")!;
+    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), "crank-git-shim-"));
+    fs.writeFileSync(
+      path.join(shimDir, "git"),
+      `#!/bin/sh\ncase " $* " in *" ls-files "*) sleep 2;; esac\nexec "${realGit}" "$@"\n`,
+      { mode: 0o755 },
+    );
+    const saved = process.env.PATH;
+    process.env.PATH = `${shimDir}${path.delimiter}${saved}`;
+    try {
+      return fn();
+    } finally {
+      process.env.PATH = saved;
+      fs.rmSync(shimDir, { recursive: true, force: true });
+    }
+  }
+
+  test("a git listing that outlasts the deadline keeps code.db's rows and reports partial", () => {
+    const root = makeRepo({ ".gitignore": "ignored.ts\n", "a.ts": "const a = 1;" });
+    git(root, "add", ".");
+    fs.writeFileSync(path.join(root, "ignored.ts"), "const i = 1;");
+    const config = defaultConfig();
+    const db = openFacts(root);
+    try {
+      refreshFileFacts(root, config, db, Infinity);
+      const before = filesIn(db);
+      expect(before).toContain("a.ts");
+      const result = withSlowLsFiles(() => refreshFileFacts(root, config, db, Date.now() + 1000));
+      expect(result).toEqual({ changed: 0, added: 0, removed: 0, partial: true });
+      expect(filesIn(db)).toEqual(before);
+    } finally {
+      db.close();
+    }
+  }, 20_000);
+
+  test("with no deadline a slow git listing is waited for, so ignored files stay out", () => {
+    const root = makeRepo({ ".gitignore": "ignored.ts\n", "a.ts": "const a = 1;" });
+    git(root, "add", ".");
+    fs.writeFileSync(path.join(root, "ignored.ts"), "const i = 1;");
+    const db = openFacts(root);
+    try {
+      withSlowLsFiles(() => refreshFileFacts(root, defaultConfig(), db, Infinity));
+      expect(filesIn(db)).toContain("a.ts");
+      expect(filesIn(db)).not.toContain("ignored.ts");
+    } finally {
+      db.close();
+    }
+  }, 20_000);
 });
 
 describe("fileFacts", () => {
@@ -217,14 +268,17 @@ describe("ownership", () => {
   }
 
   test("a walk leaves out files another project or repo owns, and stops there", () => {
-    expect(walkProject(makeOwnersRepo(), defaultConfig()).sort()).toEqual([
+    expect(walkProject(makeOwnersRepo(), defaultConfig(), Infinity)!.sort()).toEqual([
       "src/a.ts",
       "vendor/m/x.ts",
     ]);
 
     const extra: Record<string, string> = {};
     for (let i = 1; i <= 5; i++) extra[`child/f${i}.ts`] = `export const f${i} = 1;`;
-    expect(walkProject(makeOwnersTree(extra), defaultConfig()).sort()).toEqual(["q1.ts", "q2.ts"]);
+    expect(walkProject(makeOwnersTree(extra), defaultConfig(), Infinity)!.sort()).toEqual([
+      "q1.ts",
+      "q2.ts",
+    ]);
   });
 });
 

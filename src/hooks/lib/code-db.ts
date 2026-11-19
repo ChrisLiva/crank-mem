@@ -289,7 +289,8 @@ export interface FactsRefresh {
 /**
  * Brings the `files` rows in line with the project: rows the uncapped walk no longer lists go
  * first and unbudgeted, then each new or changed file (size or mtime differs) is read until
- * `deadlineMs`, an absolute `Date.now()` time that `Infinity` removes.
+ * `deadlineMs`, an absolute `Date.now()` time that `Infinity` removes. When git's listing
+ * outlasts its budget, no row changes and the refresh reports partial.
  */
 export function refreshFileFacts(
   root: string,
@@ -297,7 +298,8 @@ export function refreshFileFacts(
   db: sqlite.DatabaseSync,
   deadlineMs: number,
 ): FactsRefresh {
-  const walked = walkProject(root, config);
+  const walked = walkProject(root, config, deadlineMs);
+  if (!walked) return { changed: 0, added: 0, removed: 0, partial: true };
   const known = new Map<string, { size: number; mtimeMs: number }>();
   const rows = db.prepare("SELECT path, size, mtime_ms FROM files").all() as {
     path: string;

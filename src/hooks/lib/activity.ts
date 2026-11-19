@@ -19,8 +19,11 @@ interface Churn {
 
 // A large repo's ls-files listing can pass the 1 MiB default maxBuffer.
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
-// The walk runs before the refresh deadline is checked, so git gets its own.
+// Churn's git calls get this budget, and the listing never gets less, so a hook's refresh
+// keeps the listing even when its own deadline is shorter.
 const GIT_TIMEOUT_MS = 500;
+// The listing waits for the caller's deadline, at most this long; `Infinity` gets the cap.
+const GIT_LISTING_CAP_MS = 30_000;
 
 /** Run git in rootDir; on failure, the error code or exit status instead of stdout. Never throws. */
 function runGit(
@@ -42,19 +45,29 @@ function runGit(
 }
 
 /**
- * Tracked plus untracked-but-not-ignored paths, or null when root is not a
- * git work tree root or git fails. Submodules list as one path (a directory,
- * dropped by the isFile check), so their contents are never indexed. An
- * unmerged path lists once per conflict stage, so the listing is deduplicated.
+ * Tracked plus untracked-but-not-ignored paths; `timedOut` when git outlasts
+ * max(GIT_TIMEOUT_MS, min(time left before `deadlineMs`, GIT_LISTING_CAP_MS));
+ * null when root is not a git work tree root or git fails any other way.
+ * Submodules list as one path (a directory, dropped by the isFile check), so
+ * their contents are never indexed. An unmerged path lists once per conflict
+ * stage, so the listing is deduplicated.
  */
-export function gitListing(rootDir: string): string[] | null {
+export function gitListing(
+  rootDir: string,
+  deadlineMs: number,
+): { files: string[] } | { timedOut: true } | null {
   if (!fs.existsSync(path.join(rootDir, ".git"))) return null;
-  const r = runGit(rootDir, ["ls-files", "-co", "--exclude-standard", "-z"], GIT_TIMEOUT_MS);
+  const timeoutMs = Math.max(GIT_TIMEOUT_MS, Math.min(deadlineMs - Date.now(), GIT_LISTING_CAP_MS));
+  const r = runGit(rootDir, ["ls-files", "-co", "--exclude-standard", "-z"], timeoutMs);
   if ("error" in r) {
+    if (r.error === "ETIMEDOUT") {
+      debugEvent("walk-timeout", { timeoutMs });
+      return { timedOut: true };
+    }
     debugEvent("walk-fallback", { reason: r.error });
     return null;
   }
-  return [...new Set(r.stdout.split("\0").filter(Boolean))];
+  return { files: [...new Set(r.stdout.split("\0").filter(Boolean))] };
 }
 
 const CHURN_COMMITS = 300;

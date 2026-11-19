@@ -81,14 +81,21 @@ function isWalkableFile(rootDir: string, rel: string, config: CrankConfig): bool
 /**
  * Every indexable file, no cap: in a git repo git's listing ranked first-party code first,
  * elsewhere a sorted directory walk. Only paths `rootDir` owns count: the walk skips another
- * project's or repo's files and never enters their directories.
+ * project's or repo's files and never enters their directories. Null when git's listing outlasts
+ * the budget `deadlineMs` gives it (`gitListing`), so the caller keeps what it has rather than
+ * walking files git would ignore.
  */
-export function walkProject(rootDir: string, config: CrankConfig): string[] {
+export function walkProject(
+  rootDir: string,
+  config: CrankConfig,
+  deadlineMs: number,
+): string[] | null {
   const ownedPath = ownedBy(rootDir);
   const owned = (rel: string): boolean => ownedPath(path.join(rootDir, rel));
-  const listed = gitListing(rootDir);
+  const listed = gitListing(rootDir, deadlineMs);
+  if (listed && "timedOut" in listed) return null;
   return listed
-    ? walkListing(rootDir, listed.filter(owned), config)
+    ? walkListing(rootDir, listed.files.filter(owned), config)
     : walkTree(rootDir, config, owned);
 }
 
