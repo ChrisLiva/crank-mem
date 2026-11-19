@@ -4,22 +4,24 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  type Call,
   REPO_ROOT,
   childEnv,
   cleanup,
-  fakeTool,
   git,
   makeCrankHome,
-  makeInstalledCopy,
-  makeModelHome,
   runCli,
   runHook,
-  runInstalled,
-  startReleaseServer,
   temps,
   tempDir,
 } from "./helpers.ts";
+import {
+  type Call,
+  fakeTool,
+  makeInstalledCopy,
+  makeModelHome,
+  runInstalled,
+  startReleaseServer,
+} from "./release-fixtures.ts";
 import { claudeSessionStart } from "./fixtures/payloads.ts";
 
 afterEach(cleanup);

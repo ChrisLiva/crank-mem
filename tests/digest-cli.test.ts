@@ -2,15 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import {
-  git,
-  gitCommit,
-  initedCopy,
-  makeCrankHome,
-  runCli,
-  runHook,
-  spoolFiles,
-} from "./helpers.ts";
+import { git, gitCommit, makeCrankHome, runCli, runHook, spoolFiles } from "./helpers.ts";
+import { initedCopy } from "./release-fixtures.ts";
 import { claudeStop } from "./fixtures/payloads.ts";
 import { defaultConfig } from "../src/hooks/lib/config.ts";
 import {

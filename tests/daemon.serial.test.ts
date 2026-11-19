@@ -4,38 +4,42 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  type Call,
   REPO_ROOT,
   appendRecords,
   digestProject,
-  fakeTool,
-  fakeClaude,
   childEnv,
   git,
   gitCommit,
   killDaemon,
-  laterRecords,
   makeCrankHome,
   makeCrankProject,
-  makeInstalledCopy,
   readDaemon,
-  releaseDir,
   runCli,
   runHook,
-  runInstalled,
   setMtime,
   spoolFiles,
   startDaemon,
-  startReleaseServer,
   stopDigests,
-  stopState,
   userRecord,
   waitFor,
   withEnv,
   withReadOnlyCodeDb,
+} from "./helpers.ts";
+import {
   type FakeCall,
   type FakeScenario,
-} from "./helpers.ts";
+  fakeClaude,
+  laterRecords,
+  stopState,
+} from "./fake-claude.ts";
+import {
+  type Call,
+  fakeTool,
+  makeInstalledCopy,
+  releaseDir,
+  runInstalled,
+  startReleaseServer,
+} from "./release-fixtures.ts";
 import { digestRequest } from "../src/daemon/digest-prompt.ts";
 import { refreshGraph } from "../src/cli/code-parse.ts";
 import { STOP_FILE } from "../src/hooks/lib/user-state.ts";

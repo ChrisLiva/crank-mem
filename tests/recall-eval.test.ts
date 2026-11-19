@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { buildGraph, childEnv, initedCopy, REPO_ROOT, seedMemory, tempDir } from "./helpers.ts";
+import { buildGraph, childEnv, REPO_ROOT, seedMemory, tempDir } from "./helpers.ts";
+import { initedCopy } from "./release-fixtures.ts";
 
 const SCRIPT = path.join(REPO_ROOT, "scripts/recall-eval.ts");
 const FILES = {

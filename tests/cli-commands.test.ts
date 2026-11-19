@@ -7,11 +7,9 @@ import type * as sqlite from "node:sqlite";
 import {
   ALLOW_RULES,
   holdCodeDb,
-  initedCopy,
   killDaemon,
   makeCrankHome,
   makeCrankProject,
-  makeModelHome,
   plantMemory,
   readDaemon,
   runCli,
@@ -21,6 +19,7 @@ import {
   stopDigests,
   type CliRun,
 } from "./helpers.ts";
+import { initedCopy, makeModelHome } from "./release-fixtures.ts";
 import { claudeSessionStart } from "./fixtures/payloads.ts";
 import { crankHooks } from "../src/cli/settings.ts";
 import { crankTrust } from "../src/cli/codex-trust.ts";

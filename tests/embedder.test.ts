@@ -2,16 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EMBED_MODEL, MODEL_FILES } from "../src/daemon/embedder.ts";
-import {
-  makeCrankHome,
-  makeCrankProject,
-  makeModelHome,
-  plantVector,
-  realModelsDir,
-  runCli,
-  seedMemory,
-  startModelServer,
-} from "./helpers.ts";
+import { makeCrankHome, makeCrankProject, plantVector, runCli, seedMemory } from "./helpers.ts";
+import { makeModelHome, realModelsDir, startModelServer } from "./release-fixtures.ts";
 
 const KEYWORD_ONLY_NOTE =
   "crank-mem: keyword search only; run `crank-mem setup` for search by meaning.";

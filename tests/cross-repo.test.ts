@@ -19,22 +19,19 @@ import { okStream, okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import {
   hookContext,
-  journey,
   makeCrankHome,
   plantMemory,
-  projectId,
   readRecord,
-  realModelsDir,
-  rerun,
   runCli,
   tempDir,
   runHook,
   seedMemory,
   setMtime,
-  startDashboard,
   userRecord,
   withEnv,
 } from "./helpers.ts";
+import { journey, rerun } from "./fake-claude.ts";
+import { projectId, realModelsDir, startDashboard } from "./release-fixtures.ts";
 import { V1_DDL } from "./fixtures/schema-v1.ts";
 import { V2_DDL } from "./fixtures/schema-v2.ts";
 import { workspace } from "./workspace.ts";

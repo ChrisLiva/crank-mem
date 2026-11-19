@@ -3,18 +3,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { cliVersion } from "../src/cli/version.ts";
+import { REPO_ROOT, dashboardFixture, makeCrankHome, runCli, stopDigests } from "./helpers.ts";
 import {
-  REPO_ROOT,
-  dashboardFixture,
   fakeTool,
   initedCopy,
-  makeCrankHome,
   makeModelHome,
   realModelsDir,
-  runCli,
   startModelServer,
-  stopDigests,
-} from "./helpers.ts";
+} from "./release-fixtures.ts";
 
 const MODEL_FILE = "Xenova/all-MiniLM-L6-v2/onnx/model_quantized.onnx";
 

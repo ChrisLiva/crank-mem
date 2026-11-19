@@ -49,13 +49,13 @@ The shared core is `src/hooks/lib/`: `owner.ts` (`ownerOf`, the one ownership wa
 
 ## Testing conventions
 
-Tests are black-box: hooks and CLI commands are executed as real child processes with agent-like stdin payloads via `runHook` and `runCli` in `tests/helpers.ts`, with `fakeClaude` standing in for the `claude` binary and `startDaemon` running the real daemon under a temp `CRANK_HOME` (no test runs the real `claude`), against temp projects built by `makeCrankProject`. Agent payload fixtures live in `tests/fixtures/payloads.ts`. Prefer this style over importing hook internals — assertions should hold against exit status, stdout JSON, and on-disk `.crank/` state.
+Tests are black-box: hooks and CLI commands are executed as real child processes with agent-like stdin payloads via `runHook` and `runCli` in `tests/helpers.ts`, with `fakeClaude` (in `tests/fake-claude.ts`) standing in for the `claude` binary and `startDaemon` running the real daemon under a temp `CRANK_HOME` (no test runs the real `claude`), against temp projects built by `makeCrankProject`. Agent payload fixtures live in `tests/fixtures/payloads.ts`. Prefer this style over importing hook internals — assertions should hold against exit status, stdout JSON, and on-disk `.crank/` state.
 
 `bun test` runs the test process in UTC with `TZ` unset, while `runCli` and `runHook` children run in the system zone (a test that spawns its own child builds its env with `tests/helpers.ts` → `childEnv`, which drops the `TZ` a zone test left at `"UTC"`), so an in-process local-date assertion passes against UTC getters too. Pin local dates in zones on both sides of UTC (`tests/helpers.ts` → `ZONES`): an in-process test may set `process.env.TZ` per zone and must restore it to `"UTC"`, never `delete` it, which falls back to the machine zone; a CLI child with `TZ` in its env still works.
 
 A `tests/dashboard-page.test.ts` test that deep-links an `item` also sets `project` in the URL: without it `dashboard/src/App.tsx` → `App`'s projects poll picks the first project and resets `item` to null.
 
-An installed-copy test puts `tests/helpers.ts` → `fakeTool("bun", "runtime")` on `PATH`; it records every `bun` call the launcher makes (it runs non-`install` calls through the real runtime), so an oracle meaning "no package install ran" filters `calls()` for `install`.
+An installed-copy test puts `tests/release-fixtures.ts` → `fakeTool("bun", "runtime")` on `PATH`; it records every `bun` call the launcher makes (it runs non-`install` calls through the real runtime), so an oracle meaning "no package install ran" filters `calls()` for `install`.
 
 The `spawnSync` timeout in `tests/helpers.ts` → `runCli` kills only the CLI child; a grandchild that hangs, such as `fakeClaude` with `auth: "hang"`, keeps running at ppid 1. After a RED run that hit the timeout, find leftover fake `claude` processes with `ps` and kill them.
 

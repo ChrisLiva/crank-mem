@@ -5,31 +5,33 @@ import { consolidationRequest } from "../src/daemon/consolidate.ts";
 import { isSensitiveFile } from "../src/hooks/lib/config.ts";
 import {
   buildGraph,
-  FIXTURE,
-  TOKEN,
   appendRecords,
   cleanup,
   digestProject,
-  expectStopped,
   git,
   gitCommit,
-  journey,
-  laterRecords,
   readRecord,
-  rerun,
   runCli,
   runHook,
-  search,
   seedMemory,
   setMtime,
-  spawnJob,
-  stop,
   temps,
   userRecord,
   waitFor,
+} from "./helpers.ts";
+import {
   type FakeScenario,
   type Journey,
-} from "./helpers.ts";
+  FIXTURE,
+  TOKEN,
+  expectStopped,
+  journey,
+  laterRecords,
+  rerun,
+  search,
+  spawnJob,
+  stop,
+} from "./fake-claude.ts";
 import {
   okStream,
   okStreamOf,

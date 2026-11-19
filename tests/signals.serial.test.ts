@@ -6,7 +6,6 @@ import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import {
   REPO_ROOT,
   digestProject,
-  fakeClaude,
   killDaemon,
   makeCrankHome,
   makeCrankProject,
@@ -15,6 +14,7 @@ import {
   spoolFiles,
   waitFor,
 } from "./helpers.ts";
+import { fakeClaude } from "./fake-claude.ts";
 import { claudeSessionEnd, claudeStop } from "./fixtures/payloads.ts";
 
 const STOP = "src/hooks/stop.ts";

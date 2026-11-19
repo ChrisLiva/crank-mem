@@ -16,20 +16,16 @@ import {
   cleanup,
   digestProject,
   hookContext,
-  journey,
-  laterRecords,
   makeCrankHome,
   makeCrankProject,
   plantMemory,
-  rerun,
   runCli,
   runHook,
-  search,
   seedMemory,
-  stop,
   temps,
   tempDir,
 } from "./helpers.ts";
+import { journey, laterRecords, rerun, search, stop } from "./fake-claude.ts";
 import { okStream, okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import { claudePostRead, claudeSessionStart, claudeSubagentStart } from "./fixtures/payloads.ts";

@@ -6,13 +6,13 @@ import {
   buildGraph,
   git,
   gitCommit,
-  initedCopy,
   plantMemory,
   runCli,
   seedMemory,
   tempDir,
   ZONES,
 } from "./helpers.ts";
+import { initedCopy } from "./release-fixtures.ts";
 import { deleteCodeDb } from "../src/hooks/lib/code-db.ts";
 import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 

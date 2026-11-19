@@ -1,17 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import {
-  cleanup,
-  makeCrankHome,
-  plantMemory,
-  projectId,
-  registeredCopy,
-  runCli,
-  runHook,
-  seedMemory,
-  startDashboard,
-} from "./helpers.ts";
+import { cleanup, makeCrankHome, plantMemory, runCli, runHook, seedMemory } from "./helpers.ts";
+import { projectId, registeredCopy, startDashboard } from "./release-fixtures.ts";
 import { STORE_TEXT } from "../src/hooks/lib/wire.ts";
 import {
   claudePostBash,
