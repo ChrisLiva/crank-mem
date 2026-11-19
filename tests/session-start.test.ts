@@ -57,7 +57,6 @@ describe("session-start hook (black-box)", () => {
     expect(ctx).not.toContain("no symbol ranges");
     // code.db was written, and no anatomy file with it
     expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(true);
-    // A read-only store makes `anatomy` answer without refreshing, so what it lists was written by the hook.
     const listing = withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]));
     expect(listing.status).toBe(0);
     expect([...listing.stdout.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1])).toEqual([
@@ -67,7 +66,6 @@ describe("session-start hook (black-box)", () => {
     expect(
       fs.readdirSync(path.join(root, ".crank")).filter((n) => n.startsWith("anatomy")),
     ).toEqual([]);
-    // Debug logging is off by default.
     expect(fs.existsSync(path.join(root, ".crank/debug.log"))).toBe(false);
   });
 
@@ -81,8 +79,6 @@ describe("session-start hook (black-box)", () => {
     });
     const codex = hookContext(runHook(HOOK, JSON.stringify(codexSessionStart(root))));
     const claude = hookContext(runHook(HOOK, JSON.stringify(claudeSessionStart(root))));
-    // The code pointer follows the anatomy pointer, and the subagent line sits between it and the
-    // proof bullet, for both agents.
     for (const ctx of [codex, claude]) {
       const pointer = ctx.split("\n").find((l) => l.startsWith("- `crank-mem anatomy [<dir>]`"))!;
       expect(pointer).toContain("lists the project's 5 file(s)");
@@ -177,8 +173,8 @@ describe("cited files (black-box)", () => {
 });
 
 describe("cerebrum index (black-box)", () => {
-  // Without upkeep protocols the default 8,192 bytes leave the excerpt under
-  // the token cap alone, so these tests shrink the budget until bytes bind.
+  // The default 8,192 bytes leave the excerpt under the token cap alone, so this
+  // test shrinks the budget until bytes bind.
   const BUDGET = 5632;
 
   // 7 preferences over PREFS_TOKEN_CAP, 21 memory bullets and an ADR list
@@ -249,7 +245,6 @@ describe("vendored-hook drift (black-box)", () => {
       "_Note: crank-mem hooks are at 0.3.2, crank-mem is at 0.5.0 — run `crank-mem upgrade`._",
     );
     expect((ctx.match(/run `crank-mem upgrade`/g) ?? []).length).toBe(1);
-    // Matching versions produce no line.
     expect(injectWith({ vendored_version: "0.5.0", clone_root: fakeClone("0.5.0") })).not.toContain(
       "crank-mem upgrade",
     );
@@ -286,7 +281,7 @@ function inject(root: string): string {
   return hookContext(run);
 }
 
-// Digest-era injection. Every run passes one temp CRANK_HOME per project, so a
+// Every run passes one temp CRANK_HOME per project, so a
 // planted stop file or spool entry is the one the hook reads.
 const NOTE_STOPPED =
   "_Note: crank-mem digests stopped (login): run `crank-mem digest resume` once that is fixed._";
@@ -362,7 +357,6 @@ describe("digests running (black-box)", () => {
     expect(Buffer.byteLength(section, "utf-8")).toBeLessThanOrEqual(1536);
     const lines = section.split("\n").slice(1);
     expect(lines.length).toBeGreaterThan(0);
-    // Newest first: the last seeded title leads, and each next title is one older.
     lines.forEach((line, i) => {
       const title = `T${String(seeded - 1 - i).padStart(4, "0")} ${"t".repeat(54)}`;
       expect(line).toMatch(new RegExp(`^#\\d+ \\d{4}-\\d\\d-\\d\\d discovery ${title}$`));

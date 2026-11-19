@@ -72,7 +72,6 @@ describe("post-read file history", () => {
     const read = run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT));
     expect(read.status).toBe(0);
     const viaRead = hookContext(read, "PostToolUse");
-    // The newest five lines, newest first.
     expect(viaRead).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n#");
     const lines = viaRead.split("\n").slice(1);
     expect(lines).toHaveLength(5);
@@ -459,7 +458,7 @@ describe("post-read Used by", () => {
     );
   });
 
-  test("a file touched after its parse shows none, and a store that is gone leaves today's output", () => {
+  test("a file touched after its parse shows none, and a store that is gone leaves the history alone", () => {
     const root = graphed({ "src/a.ts": caller(["helper"]) }, 2);
     const file = path.join(root, "src/lib.ts");
     const read = () => run(root, claudePostRead(root, file, TRANSCRIPT));

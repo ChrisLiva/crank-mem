@@ -12,9 +12,7 @@ import {
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { claudeSessionStart, claudeStop, claudeSubagentStart } from "./fixtures/payloads.ts";
 
-// Characterization: the stdout of session-start and subagent-start on a fixed project,
-// with no memory.db and digest off, must stay byte-identical to the golden files.
-// Stop prints nothing on the same project, with digests off or on.
+// Byte-identical to tests/fixtures/golden/ with no memory.db and digest off.
 
 const GOLDEN = path.join(REPO_ROOT, "tests/fixtures/golden");
 

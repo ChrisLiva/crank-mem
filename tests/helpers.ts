@@ -52,7 +52,6 @@ export function writeFiles(root: string, files: Record<string, string>): void {
   }
 }
 
-/** Create a temp project with .crank/ initialized and some source files. */
 export function makeCrankProject(files: Record<string, string> = {}): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-proj-"));
   fs.mkdirSync(path.join(root, ".crank"), { recursive: true });
@@ -73,7 +72,7 @@ export function buildGraph(root: string): void {
   }
 }
 
-/** A crank project holding `files` whose `code.db` `crank-mem anatomy` has filled and fully parsed. */
+/** A crank project holding `files`, graph built. */
 export function graphProject(files: Record<string, string>): string {
   const root = makeCrankProject(files);
   buildGraph(root);
@@ -94,7 +93,6 @@ export function makeProject(extra: Record<string, string> = {}): {
   return { root, codexHome };
 }
 
-/** Recursive listing and contents of everything except .git and .crank. */
 export function snapshot(root: string): Record<string, string> {
   const out: Record<string, string> = {};
   const walk = (dir: string): void => {
@@ -117,7 +115,6 @@ export function git(root: string, ...args: string[]): string {
   return result.stdout;
 }
 
-/** Stage everything in `root` and commit it as a fixed test identity, unsigned. */
 export function gitCommit(root: string, message: string): void {
   git(root, "add", "-A");
   git(
@@ -154,7 +151,6 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
   return env;
 }
 
-/** Run a hook script as a child process with the given stdin, like an agent would. */
 export function runHook(
   script: string,
   stdin: string,
@@ -363,7 +359,6 @@ export function registeredCopy(home: string, files?: Record<string, string>): st
   return root;
 }
 
-/** Set a file's atime and mtime to `ms` since the epoch. */
 export function setMtime(p: string, ms: number): void {
   fs.utimesSync(p, new Date(ms), new Date(ms));
 }
@@ -371,7 +366,8 @@ export function setMtime(p: string, ms: number): void {
 /**
  * Runs `fn` with `.crank/code.db` and the WAL files beside it made read-only, then restores their
  * modes. SQLite creates a missing `-wal` or `-shm` at the store's mode, so the restore lists the
- * files again after `fn`.
+ * files again after `fn`. A read-only store makes `anatomy` answer without refreshing, so what it
+ * lists was written by the hook.
  */
 export function withReadOnlyCodeDb<T>(root: string, fn: () => T): T {
   const present = () =>
@@ -419,7 +415,6 @@ export function holdCodeDb(root: string): () => void {
   };
 }
 
-/** Turn on .crank/debug.log for a temp project. */
 export function enableDebugConfig(root: string): void {
   const crankDir = path.join(root, ".crank");
   saveConfig(crankDir, { ...defaultConfig(), debug: true });
@@ -719,7 +714,6 @@ export function spoolEntry(
   fs.writeFileSync(path.join(dir, `${stem}.json`), JSON.stringify(entry));
 }
 
-/** Poll `cond` every 20 ms until it holds, or throw after `timeoutMs`. */
 export async function waitFor(cond: () => boolean, timeoutMs = 10_000): Promise<void> {
   const end = Date.now() + timeoutMs;
   while (!cond()) {
@@ -728,7 +722,6 @@ export async function waitFor(cond: () => boolean, timeoutMs = 10_000): Promise<
   }
 }
 
-/** A `user` transcript record as one JSONL line. */
 export function userRecord(uuid: string, timestamp: string, content: string): string {
   return JSON.stringify({ type: "user", uuid, timestamp, message: { role: "user", content } });
 }
@@ -900,7 +893,6 @@ export function startReleaseServer(
 
 export type Pack = { status: number; stderr: string; out: string };
 
-/** Run `scripts/pack-release.ts` from a temp cwd into a fresh out dir. */
 export function pack(dist: string, extra: string[] = []): Pack {
   const out = tempDir("crank-release-out-");
   const result = spawnSync(
@@ -1213,7 +1205,6 @@ export function laterRecords(tag = "later"): { records: string[]; text: string }
   };
 }
 
-/** Send the Stop hook for a journey's transcript, rewriting its spool entry. */
 export function stop(j: Pick<Journey, "root" | "home" | "fake" | "transcript">): void {
   const payload = JSON.stringify({ ...claudeStop(j.root), transcript_path: j.transcript });
   expect(

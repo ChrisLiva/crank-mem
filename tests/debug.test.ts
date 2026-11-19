@@ -41,7 +41,6 @@ describe("debug logging (black-box)", () => {
       expect(typeof r.ts).toBe("string");
     }
 
-    // Session start records the refresh counters and the injection size.
     const refresh = records[0]!.events.find((e) => e.event === "graph-refresh");
     expect(refresh!.added).toBe(2);
     expect(refresh!.removed).toBe(0);
@@ -50,10 +49,8 @@ describe("debug logging (black-box)", () => {
     expect(injected!.fileCount).toBe(2);
     expect(injected!.source).toBe("startup");
     expect(injected!.injectionTokens).toBeGreaterThan(0);
-    // Session start never reads journal.md, so the event carries no journal counts.
     expect(Object.keys(injected!).filter((k) => k.startsWith("journal"))).toEqual([]);
 
-    // A write lands in code.db.
     const writeEvents = records[1]!.events;
     expect(writeEvents.find((e) => e.event === "reindex")).toMatchObject({ paths: ["a.ts"] });
   });
@@ -139,7 +136,7 @@ describe("debug logging (black-box)", () => {
     const record = readDebugLog(root)[0]!;
     expect(record.ok).toBe(false);
     expect(record.error).toContain("boom from hook body");
-    // A stack, not just the message — the reason stderr alone was not enough.
+    // A stack, not just the message.
     expect(record.error).toContain("throwing-hook.ts");
   });
 
@@ -161,7 +158,6 @@ describe("debug logging (black-box)", () => {
         reason: "outside-root",
         dir: path.join(os.tmpdir(), "elsewhere"),
       });
-      // The directory reaches the log without any filename.
       expect(fs.readFileSync(path.join(root, ".crank/debug.log"), "utf-8")).not.toContain(".env");
       expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(false);
 

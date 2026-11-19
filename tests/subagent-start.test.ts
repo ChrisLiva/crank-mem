@@ -61,16 +61,13 @@ describe("subagent-start hook (black-box)", () => {
       return lines;
     };
 
-    // Digests off, no store: no recall pointer.
     const off = context(root);
     expect(shape(off)[2]).toBe(CODE_BULLET);
     expect(off).not.toContain(RECALL_BULLET);
-    // A cited file that no longer exists is tagged.
     expect(off).toContain("[cited file missing: src/old/loader.ts]");
     // Read-only: a subagent spawn creates no code.db.
     expect(fs.existsSync(path.join(root, ".crank/code.db"))).toBe(false);
 
-    // Digests on, no store: the recall pointer follows the code pointer.
     setDigest(root, true);
     const on = shape(context(root));
     expect(on[2]).toBe(CODE_BULLET);
@@ -96,7 +93,7 @@ describe("subagent-start hook (black-box)", () => {
     expect(ctx).toContain("- **Gotcha 20**:"); // the newest memory bullet, whole
     expect(ctx).toMatch(/^### Not shown \(\d+ of 28; grep \.crank\/cerebrum\.md\)$/m);
 
-    // Digests running keep the excerpt, drop the upkeep pointers, and add recall.
+    // Digests running add the recall pointer; no upkeep pointer appears.
     setDigest(root, true);
     const running = context(root);
     for (const kept of ["this project's memory;", RECALL_BULLET, "### Memory\n"])

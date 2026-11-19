@@ -223,7 +223,7 @@ test("a symbol seeds its defining file and reaches only its resolved callers and
   expect(rel(TWO, "fetchAll").seeds).toEqual(["src/a.ts", "src/b.ts", "src/c.ts"]);
 });
 
-test("a file seed adds the files whose calls reach it or that it calls, when nothing imports", () => {
+test("a file seed adds the files whose calls reach it or that it calls", () => {
   const J = graphProject({
     "src/A.java": "class A {\n  void run(B b) { b.go(); }\n}\n",
     "src/B.java": "class B {\n  void go() { C.help(); }\n}\n",

@@ -77,7 +77,7 @@ describe("withLock", () => {
 
   test("steals a dead-pid lock", () => {
     const dir = tmpDir();
-    // pid 1 exists but we can't signal it... use an unlikely-live pid instead.
+    // An unlikely-live pid.
     fs.writeFileSync(
       path.join(dir, LOCK),
       JSON.stringify({ pid: 99999999, hostname: os.hostname(), acquiredAt: Date.now() }),

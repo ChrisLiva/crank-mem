@@ -16,7 +16,6 @@ import {
 const HOOK = "src/hooks/post-write.ts";
 
 function seedIndex(root: string): void {
-  // Run session-start once to build the initial file facts in code.db.
   runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root)));
 }
 
@@ -57,7 +56,6 @@ describe("post-write hook (black-box)", () => {
     expect(run.stdout).toBe("");
     expect(graphFiles(root)["src/new.ts"]!.description).toBe("Brand new module.");
 
-    // An Edit of an existing file re-indexes it too.
     fs.writeFileSync(path.join(root, "a.ts"), "/** Updated alpha. */\nconst a = 2;\n");
     const edit = runHook(HOOK, JSON.stringify(claudePostEdit(root, path.join(root, "a.ts"))));
     expect(edit.status).toBe(0);
@@ -184,7 +182,6 @@ describe("post-write hook (black-box)", () => {
     expect(after["grows.ts"]).toBeUndefined();
     expect(Object.keys(after)).toHaveLength(Object.keys(before).length - 1);
 
-    // A new file past the cap is never indexed.
     fs.writeFileSync(path.join(root, "huge.ts"), "x".repeat(1024 * 1024 + 1));
     runHook(HOOK, JSON.stringify(claudePostWrite(root, path.join(root, "huge.ts"))));
     expect(graphFiles(root)["huge.ts"]).toBeUndefined();
@@ -216,7 +213,6 @@ describe("post-write writes code.db", () => {
     for (let n = 1; n <= 3; n++) {
       expect(write(root, "src/new.ts", `export const n = ${n};\n`).status).toBe(0);
     }
-    // A read-only store makes `anatomy` answer without refreshing, so what it lists was written by the hook.
     const active = anatomy(root);
     expect(active.status).toBe(0);
     expect(active.stdout.startsWith("## Most active files\n\n- `src/new.ts`")).toBe(true);

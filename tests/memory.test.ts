@@ -186,7 +186,6 @@ describe("store by root", () => {
         calls: status === "open" ? 2 : 0,
       });
     }
-    // A store that opens and then fails its queries reads as unreadable.
     const broken = plantedRoot("broken");
     expect(readStoreSync(broken, (m) => m.recent(1))).toEqual({ status: "unreadable" });
     expect(await readStore(broken, (m) => m.recent(1))).toEqual({ status: "unreadable" });
@@ -793,7 +792,7 @@ describe("consolidation work", () => {
 });
 
 describe("read methods", () => {
-  test("match the table on a seeded store", async () => {
+  test("return the seeded rows", async () => {
     const memory = writable();
     expect(memory.latestNextSteps()).toBeNull();
     expect(memory.stats("m1", 0)).toEqual({

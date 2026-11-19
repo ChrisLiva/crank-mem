@@ -225,7 +225,7 @@ describe("fileFacts", () => {
 });
 
 describe("ownership", () => {
-  /** P: a git repo holding a nested project, a nested clone and a submodule. */
+  /** A git repo holding a nested project, a nested clone and a submodule. */
   function makeOwnersRepo(): string {
     const root = tempTree({
       "src/a.ts": "export const a = 1;",
@@ -241,7 +241,7 @@ describe("ownership", () => {
     return root;
   }
 
-  /** Q: no git, no install, holding a nested project and a nested repo. */
+  /** No git, no install, holding a nested project and a nested repo. */
   function makeOwnersTree(extra: Record<string, string>): string {
     return tempTree({
       "q1.ts": "export const q1 = 1;",

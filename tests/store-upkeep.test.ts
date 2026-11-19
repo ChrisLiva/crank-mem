@@ -35,7 +35,6 @@ test("the daily pass snapshots when due, then deletes only rows stale more than 
   m.putVectors("m1", [{ id: a, vector: new Float32Array([1, 0]) }]);
   expect(m.hasVectors("m1")).toBe(true);
 
-  // No snapshot yet: the pass writes one and deletes nothing.
   const first = m.maintain();
   expect(first).not.toBeNull();
   expect(first!.deleted).toBe(0);
@@ -43,7 +42,6 @@ test("the daily pass snapshots when due, then deletes only rows stale more than 
   expect(path.basename(first!.snapshot)).toMatch(DAILY);
   expect(fs.readdirSync(dir)).toEqual([path.basename(first!.snapshot)]);
 
-  // An hour later the pass is not due.
   expect(m.maintain(Date.now() + 3_600_000)).toBeNull();
   expect(fs.readdirSync(dir)).toEqual([path.basename(first!.snapshot)]);
   expect(m.get([a, b, c, d])).toHaveLength(4);

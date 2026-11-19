@@ -220,7 +220,7 @@ describe("composeInjection", () => {
     expect(settled).not.toContain("no symbol ranges");
   });
 
-  test("the drift note sits directly below the staleness note", () => {
+  test("the drift note sits below the staleness note", () => {
     const out = composeInjection(
       {
         ...sources,
@@ -241,7 +241,7 @@ describe("composeInjection", () => {
 
   // Bytes are the budget that binds: Claude Code caps additionalContext characters, not tokens.
   describe("byte budget", () => {
-    // This 9,264-byte cerebrum of wrapped bullets, 5 preferences and 11 memory
+    // This cerebrum of about 9 KB of wrapped bullets, 5 preferences and 11 memory
     // bullets, is big enough that the byte budget binds before the token cap.
     const wrapped = (label: string, n: number, lines: number): string =>
       Array.from(
