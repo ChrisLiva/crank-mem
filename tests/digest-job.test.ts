@@ -632,10 +632,11 @@ describe("digest context across projects", () => {
   test("two projects sharing a name list by root path, whatever order the transcript reads them", () => {
     const ws = workspace();
     const { H, storefront } = ws;
-    const twin = fs.realpathSync(makeCrankProject({ "src/a.ts": "export const a = 1;\n" }));
+    // `<parent>/front` sorts before `<parent>/storefront` by code unit ("f" < "s").
+    const twin = path.join(ws.parent, "front");
+    fs.renameSync(makeCrankProject({ "src/a.ts": "export const a = 1;\n" }), twin);
     saveConfig(path.join(twin, CRANK_DIR), { ...defaultConfig(), name: "storefront" });
-    const [first, second] = [storefront, twin].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    const listed = `[PROJECTS]\nH ${H} (session)\nstorefront ${first}\nstorefront ${second}\n\n`;
+    const listed = `[PROJECTS]\nH ${H} (session)\nstorefront ${twin}\nstorefront ${storefront}\n\n`;
     const orders = [
       ["s1", [storefront, twin]],
       ["s2", [twin, storefront]],
