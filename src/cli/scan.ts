@@ -1,5 +1,4 @@
 import { openProject } from "./project.ts";
-import { deleteCodeDb } from "../hooks/lib/code-db.ts";
 import { deleteStore, openForRefresh, refreshGraph } from "./code-parse.ts";
 import { errorMessage, type CrankConfig } from "../hooks/lib/config.ts";
 import {
