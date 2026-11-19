@@ -583,6 +583,10 @@ describe("without the code reader", () => {
       stderr: "crank-mem: the code reader is not installed — run `crank-mem setup`.\n",
     });
     expect(run("scan").status).toBe(0);
+    const anatomy = run("anatomy");
+    expect(anatomy.status).toBe(0);
+    expect(anatomy.stdout).toContain("(symbols pending)");
+    expect(anatomy.stdout).toContain("(1 file(s) still pending parse)");
     expect(run("--help").status).toBe(0);
   }, 30_000);
 });

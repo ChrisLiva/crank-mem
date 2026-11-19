@@ -138,16 +138,21 @@ async function parsePending(
   return "done";
 }
 
-/** What reading and parsing one file produced; null `facts` with an `error` records a failed parse. */
-interface Parsed {
+interface FileStamp {
   rel: string;
-  text: string;
   size: number;
   mtimeMs: number;
-  facts: { symbols: CodeSymbol[]; calls: CallSite[] } | null;
-  links: FileLinks;
-  error: string | null;
 }
+
+/** A file's parsed rows: its symbols and call sites, its links, and the text its symbols were measured on. */
+interface Extracted {
+  text: string;
+  facts: { symbols: CodeSymbol[]; calls: CallSite[] };
+  links: FileLinks;
+}
+
+/** What reading and parsing one file produced: its rows, or the `error` its stamp records for a read or parse that failed. */
+type Parsed = FileStamp & ({ error: string } | ({ error: null } & Extracted));
 
 /** The file's text; the error code of a read that fails while the file exists; null when the file is gone. */
 function readText(file: string): { text: string } | { error: string } | null {
@@ -159,22 +164,22 @@ function readText(file: string): { text: string } | { error: string } | null {
   }
 }
 
-/** Fills `parsed`'s facts and links; a parse that throws records its message as the file's `error`. */
+/** The file's rows; a parse that throws records its message as the file's `error`; "no-parser" when nothing loaded. */
 async function extract(
-  parsed: Parsed,
+  rel: string,
+  text: string,
   root: string,
   config: CrankConfig,
   grammar: NonNullable<ReturnType<typeof grammarFor>>,
-): Promise<"done" | "no-parser"> {
+): Promise<Extracted | { error: string } | "no-parser"> {
   try {
-    parsed.facts = await codeFacts(parsed.text, grammar);
+    const facts = await codeFacts(text, grammar);
     // Nothing loaded: leave the file pending rather than stamp it parsed and empty.
-    if (parsed.facts === null) return "no-parser";
-    parsed.links = fileLinks(root, parsed.rel, parsed.text, config);
+    if (facts === null) return "no-parser";
+    return { text, facts, links: fileLinks(root, rel, text, config) };
   } catch (err) {
-    parsed.error = err instanceof Error ? err.message : String(err);
+    return { error: err instanceof Error ? err.message : String(err) };
   }
-  return "done";
 }
 
 async function parseFile(
@@ -196,17 +201,14 @@ async function parseFile(
   const read = readText(path.join(root, rel));
   if (read === null) return "skipped";
   afterRead?.(rel);
+  const outcome = "error" in read ? read : await extract(rel, read.text, root, config, grammar);
+  if (outcome === "no-parser") return "no-parser";
   const parsed: Parsed = {
     rel,
-    text: "text" in read ? read.text : "",
     size: stat.size,
     mtimeMs: stat.mtimeMs,
-    facts: null,
-    links: {},
-    error: "error" in read ? read.error : null,
+    ...("error" in outcome ? outcome : { error: null, ...outcome }),
   };
-  if (parsed.error === null && (await extract(parsed, root, config, grammar)) === "no-parser")
-    return "no-parser";
   try {
     return writer.commit(parsed) ? "committed" : "skipped";
   } catch (err) {
@@ -236,7 +238,7 @@ function prepareWriter(db: sqlite.DatabaseSync): Writer {
   const namespace = db.prepare("INSERT INTO namespaces (path, namespace, role) VALUES (?, ?, ?)");
 
   /** Inserts the symbols parent first, as `code.ts` → `preorder` lists them; returns each row id in that order. */
-  function insertSymbols(parsed: Parsed): number[] {
+  function insertSymbols(parsed: FileStamp & Extracted): number[] {
     const lines = parsed.text.split("\n");
     const ids: number[] = [];
     const visit = (symbols: CodeSymbol[], parent: number | null) => {
@@ -257,13 +259,13 @@ function prepareWriter(db: sqlite.DatabaseSync): Writer {
         visit(s.children, id);
       }
     };
-    visit(parsed.facts?.symbols ?? [], null);
+    visit(parsed.facts.symbols, null);
     return ids;
   }
 
-  function insertFacts(parsed: Parsed): void {
+  function insertFacts(parsed: FileStamp & Extracted): void {
     const ids = insertSymbols(parsed);
-    for (const c of parsed.facts?.calls ?? []) {
+    for (const c of parsed.facts.calls) {
       const caller = c.enclosing === null ? null : (ids[c.enclosing] ?? null);
       call.run(parsed.rel, c.line, caller, c.callee, c.receiver);
     }
