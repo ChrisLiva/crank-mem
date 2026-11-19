@@ -72,6 +72,19 @@ function claudeCli(root: string, args: string[], env: Record<string, string> = {
   return runCli(root, args, { ...CLAUDE_SHELL, ...env });
 }
 
+type Ran = { status: number | null; stdout: string; stderr: string };
+
+/** Each run in `unwritable` exits 0 and prints what the run at its index in `written` printed. */
+function expectSameOutput(written: Ran[], unwritable: Ran[]): void {
+  for (const [i, a] of written.entries()) {
+    const b = unwritable[i]!;
+    expect([a.status, b.status]).toEqual([0, 0]);
+    expect(a.stdout).not.toBe("");
+    expect(b.stdout).toBe(a.stdout);
+    expect(b.stderr).toBe(a.stderr);
+  }
+}
+
 /** A commit-mode main checkout with a linked worktree beside it. */
 function commitModeProject(): { root: string; worktree: string } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "crank-usage-git-"));
@@ -430,13 +443,7 @@ describe("usage capture: rotation, failure and placement", () => {
     fs.rmSync(usage);
     fs.mkdirSync(usage);
     const unwritable = both();
-    for (const [i, a] of written.entries()) {
-      const b = unwritable[i]!;
-      expect([a.status, b.status]).toEqual([0, 0]);
-      expect(a.stdout).not.toBe("");
-      expect(b.stdout).toBe(a.stdout);
-      expect(b.stderr).toBe(a.stderr);
-    }
+    expectSameOutput(written, unwritable);
   });
 
   test("a usage line that cannot be written changes neither search's nor outline's output", () => {
@@ -448,13 +455,7 @@ describe("usage capture: rotation, failure and placement", () => {
     fs.rmSync(path.join(root, ".crank/usage.jsonl"));
     fs.mkdirSync(path.join(root, ".crank/usage.jsonl"));
     const unwritable = both();
-    for (const [i, a] of written.entries()) {
-      const b = unwritable[i]!;
-      expect([a.status, b.status]).toEqual([0, 0]);
-      expect(a.stdout).not.toBe("");
-      expect(b.stdout).toBe(a.stdout);
-      expect(b.stderr).toBe(a.stderr);
-    }
+    expectSameOutput(written, unwritable);
   }, 30_000);
 
   test("a commit-mode linked worktree records into its main checkout's usage.jsonl", () => {
