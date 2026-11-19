@@ -7,6 +7,7 @@ import { CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
 import { isProjectFile } from "../hooks/lib/hook-io.ts";
 import { memoryPath, type MemoryReader, readStore, storeStatus } from "../hooks/lib/memory.ts";
 import { readCodeDb } from "../hooks/lib/code-db.ts";
+import { byCodeUnit } from "../hooks/lib/indexable.ts";
 import { relatedFiles } from "../hooks/lib/related-files.ts";
 import { readUsage } from "../hooks/lib/usage.ts";
 import {
@@ -107,11 +108,7 @@ function listProjects(): Project[] {
     name: projectName(root),
     root,
   }));
-  return projects.sort(
-    (a, b) =>
-      (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) ||
-      (a.root < b.root ? -1 : a.root > b.root ? 1 : 0),
-  );
+  return projects.sort((a, b) => byCodeUnit(a.name, b.name) || byCodeUnit(a.root, b.root));
 }
 
 function projectById(id: string): Project | null {

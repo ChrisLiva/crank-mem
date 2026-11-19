@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { GRAMMARS } from "./code-db.ts";
-import { TEST_PATH } from "./indexable.ts";
+import { byCodeUnit, TEST_PATH } from "./indexable.ts";
 
 // Reads over code.db's symbols, calls and imports: finding a symbol and resolving each call site
 // to the one definition it reaches, when exactly one is provable.
@@ -404,7 +404,7 @@ export function callerFiles(
       if (site.path !== file) counts.set(site.path, (counts.get(site.path) ?? 0) + 1);
   return [...counts]
     .map(([caller, calls]) => ({ path: caller, calls }))
-    .sort((a, b) => b.calls - a.calls || (a.path < b.path ? -1 : 1))
+    .sort((a, b) => b.calls - a.calls || byCodeUnit(a.path, b.path))
     .slice(0, limit);
 }
 
@@ -436,6 +436,6 @@ export function calleeFiles(
   }
   return [...counts]
     .map(([callee, calls]) => ({ path: callee, calls }))
-    .sort((a, b) => b.calls - a.calls || (a.path < b.path ? -1 : 1))
+    .sort((a, b) => b.calls - a.calls || byCodeUnit(a.path, b.path))
     .slice(0, limit);
 }

@@ -17,6 +17,7 @@ import {
 } from "../hooks/lib/code-db.ts";
 import { fileLinks, type FileLinks } from "../hooks/lib/imports.ts";
 import { isInstalled } from "../hooks/lib/owner.ts";
+import { byCodeUnit } from "../hooks/lib/indexable.ts";
 import { rank } from "../hooks/lib/scanner.ts";
 import { transaction } from "../hooks/lib/transaction.ts";
 import { estimateTokens } from "../hooks/lib/tokens.ts";
@@ -115,7 +116,7 @@ function parseOrder(a: PendingFile, b: PendingFile): number {
     b.writeCount - a.writeCount ||
     (a.churnRank ?? Infinity) - (b.churnRank ?? Infinity) ||
     rank(a.path) - rank(b.path) ||
-    (a.path < b.path ? -1 : 1)
+    byCodeUnit(a.path, b.path)
   );
 }
 

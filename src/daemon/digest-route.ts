@@ -6,6 +6,7 @@ import {
   type DigestSummary,
   type NewObservation,
 } from "../hooks/lib/memory.ts";
+import { byCodeUnit } from "../hooks/lib/indexable.ts";
 import { projectName, type Owner } from "../hooks/lib/owner.ts";
 import type { Digest, Shown } from "./digest-prompt.ts";
 
@@ -149,6 +150,6 @@ export function route(
     entry: { ...shareOf(root), summary: output.summary, links: [...links].sort(), fallbacks },
     others: [...shares.values()]
       .filter((s) => s.root !== root)
-      .sort((a, b) => (nameOf(a.root) < nameOf(b.root) ? -1 : 1)),
+      .sort((a, b) => byCodeUnit(nameOf(a.root), nameOf(b.root)) || byCodeUnit(a.root, b.root)),
   };
 }

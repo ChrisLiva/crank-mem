@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { CRANK_DIR, type CrankConfig } from "./config.ts";
-import { SOURCE_EXTENSIONS } from "./indexable.ts";
+import { byCodeUnit, SOURCE_EXTENSIONS } from "./indexable.ts";
 import { fileFacts, walkProject, type FileFacts } from "./scanner.ts";
 import { transaction } from "./transaction.ts";
 import type { GraphStatus } from "./wire.ts";
@@ -446,7 +446,7 @@ export function graphCounts(db: sqlite.DatabaseSync): GraphCounts {
     if (SOURCE_EXTENSIONS.has(ext) && !Object.hasOwn(GRAMMARS, ext))
       byExt.set(ext, (byExt.get(ext) ?? 0) + 1);
   }
-  const gaps = [...byExt].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1)).map(([ext]) => ext);
+  const gaps = [...byExt].sort(([a, x], [b, y]) => y - x || byCodeUnit(a, b)).map(([ext]) => ext);
   return { files: rows.length, pending: pendingCount(db), gaps };
 }
 

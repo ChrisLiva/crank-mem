@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { isObj, readJsonObject } from "../hooks/lib/config.ts";
+import { byCodeUnit } from "../hooks/lib/indexable.ts";
 import { isCrankHookCommand, type HooksMap } from "./settings.ts";
 
 // Opt-in Codex per-hook trust: compute trusted_hash entries the way codex-rs
@@ -22,7 +23,7 @@ function canonicalJson(value: unknown): string {
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      .sort(([a], [b]) => byCodeUnit(a, b));
     return (
       "{" + entries.map(([k, v]) => JSON.stringify(k) + ":" + canonicalJson(v)).join(",") + "}"
     );

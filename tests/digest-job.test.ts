@@ -5,6 +5,7 @@ import { digestRequest, type Digest } from "../src/daemon/digest-prompt.ts";
 import { matchesSchema } from "../src/daemon/gateway.ts";
 import { EMBED_MODEL } from "../src/daemon/embedder.ts";
 import { redact } from "../src/daemon/redact.ts";
+import { CRANK_DIR, defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { parseHandle, readStoreSync, type Position } from "../src/hooks/lib/memory.ts";
 import {
   REPO_ROOT,
@@ -19,6 +20,7 @@ import {
   journey,
   laterRecords,
   makeCrankHome,
+  makeCrankProject,
   makeModelHome,
   plantMemory,
   readRecord,
@@ -625,6 +627,29 @@ describe("digest context across projects", () => {
     });
     expect(rootOnly.job.status).toBe(0);
     expect(rootOnly.fake.calls()[0]!.stdin).not.toContain("[PROJECTS]");
+  }, 30_000);
+
+  test("two projects sharing a name list by root path, whatever order the transcript reads them", () => {
+    const ws = workspace();
+    const { H, storefront } = ws;
+    const twin = fs.realpathSync(makeCrankProject({ "src/a.ts": "export const a = 1;\n" }));
+    saveConfig(path.join(twin, CRANK_DIR), { ...defaultConfig(), name: "storefront" });
+    const [first, second] = [storefront, twin].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const listed = `[PROJECTS]\nH ${H} (session)\nstorefront ${first}\nstorefront ${second}\n\n`;
+    const orders = [
+      ["s1", [storefront, twin]],
+      ["s2", [twin, storefront]],
+    ] as const;
+    for (const [stem, roots] of orders) {
+      const { fake, job } = journey(H, [{ lines: okStream(SAMPLE_DIGEST) }], {
+        home: ws.home,
+        cwd: H,
+        stem,
+        transcript: readingTranscript(roots.map((r) => path.join(r, "src/a.ts"))),
+      });
+      expect(job.status).toBe(0);
+      expect(fake.calls()[0]!.stdin).toContain(listed);
+    }
   }, 30_000);
 
   test("existing observations cap at 30 across stores", () => {

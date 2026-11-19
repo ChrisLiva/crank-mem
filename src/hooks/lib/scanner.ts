@@ -3,7 +3,13 @@ import * as path from "node:path";
 import { describeFile, isGenerated } from "./describe.ts";
 import { estimateTokens } from "./tokens.ts";
 import { isExcluded, type CrankConfig } from "./config.ts";
-import { BINARY_SNIFF_BYTES, isIndexableName, SOURCE_EXTENSIONS, toPosix } from "./indexable.ts";
+import {
+  BINARY_SNIFF_BYTES,
+  byCodeUnit,
+  isIndexableName,
+  SOURCE_EXTENSIONS,
+  toPosix,
+} from "./indexable.ts";
 import { gitListing } from "./activity.ts";
 import { ownedBy } from "./owner.ts";
 
@@ -103,7 +109,7 @@ function walkListing(rootDir: string, listed: string[], config: CrankConfig): st
   return listed
     .filter((rel) => isIndexableName(rel, config))
     .map((rel) => ({ rel, rank: rank(rel) }))
-    .sort((a, b) => a.rank - b.rank || (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
+    .sort((a, b) => a.rank - b.rank || byCodeUnit(a.rel, b.rel))
     .map(({ rel }) => rel)
     .filter((rel) => isWalkableFile(rootDir, rel, config));
 }

@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
 import { callEdgeFiles, calleeFiles, callerFiles, symbolSets, symbolsNamed } from "./code-graph.ts";
+import { byCodeUnit } from "./indexable.ts";
 
 const MAX_TERM_FILES = 5;
 /** Path-like (`.`, `/`) or identifier-shaped (`_`, a lowercase-then-uppercase pair); plain words seed nothing. */
@@ -16,8 +17,6 @@ interface Node {
   declares: string[];
   uses: string[];
 }
-
-const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Each file `code.db` holds, in code-unit path order, with its imports, lowercased symbol names and C# namespaces. */
 function nodes(db: sqlite.DatabaseSync): Map<string, Node> {

@@ -34,6 +34,7 @@ import {
   type GraphUsage,
   type UsageEvent,
 } from "../hooks/lib/usage.ts";
+import { byCodeUnit } from "../hooks/lib/indexable.ts";
 import { CAP, resolveTarget } from "./code.ts";
 import { refreshGraph } from "./code-parse.ts";
 import { COMMANDS } from "./commands.ts";
@@ -392,11 +393,7 @@ function callersReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]):
 
 /** The resolved sites by the file defining each callee, then by the call's line. */
 function byCalleeFile(sites: Site[]): Site[] {
-  return [...sites].sort(
-    (a, b) =>
-      (a.target!.path === b.target!.path ? 0 : a.target!.path < b.target!.path ? -1 : 1) ||
-      a.line - b.line,
-  );
+  return [...sites].sort((a, b) => byCodeUnit(a.target!.path, b.target!.path) || a.line - b.line);
 }
 
 function calleesReport(db: sqlite.DatabaseSync, root: string, set: SymbolRow[]): Listing {

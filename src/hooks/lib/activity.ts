@@ -5,7 +5,7 @@ import type * as sqlite from "node:sqlite";
 import { transaction } from "./transaction.ts";
 import type { CrankConfig } from "./config.ts";
 import { debugEvent } from "./debug.ts";
-import { isIndexableName } from "./indexable.ts";
+import { byCodeUnit, isIndexableName } from "./indexable.ts";
 
 // Git listing and churn-driven activity: the walk's git listing, the churn list and the write
 // pins it settles in code.db.
@@ -117,7 +117,7 @@ function churnFor(
   }
   const paths = [...counts]
     .filter(([rel]) => isIndexableName(rel, config))
-    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a, x], [b, y]) => y - x || byCodeUnit(a, b))
     .slice(0, CHURN_KEEP)
     .map(([rel]) => rel);
   return { head, paths };

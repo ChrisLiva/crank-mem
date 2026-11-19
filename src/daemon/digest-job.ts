@@ -22,6 +22,7 @@ import { ownerOf, projectName } from "../hooks/lib/owner.ts";
 import { digestRequest, type Digest, type DigestContext, type Shown } from "./digest-prompt.ts";
 import { route, type EntryShare, type Share } from "./digest-route.ts";
 import { EMBED_MODEL, embed } from "./embedder.ts";
+import { byCodeUnit } from "../hooks/lib/indexable.ts";
 import { CONSOLIDATE_EVERY_MS, consolidate } from "./consolidate.ts";
 import { askClaude, RUN_TIMEOUT_MS } from "./gateway.ts";
 import { redact } from "./redact.ts";
@@ -191,7 +192,7 @@ function otherProjects(
   return [...owned.keys()]
     .filter((root) => root !== entry.projectRoot)
     .map((root) => ({ name: projectName(root), root }))
-    .sort((a, b) => (a.name < b.name ? -1 : 1));
+    .sort((a, b) => byCodeUnit(a.name, b.name) || byCodeUnit(a.root, b.root));
 }
 
 /**

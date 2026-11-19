@@ -1,3 +1,4 @@
+import { byCodeUnit } from "../hooks/lib/indexable.ts";
 import { localDate, type ActivityEvents } from "../hooks/lib/memory.ts";
 import type { UsageLine } from "../hooks/lib/usage.ts";
 import {
@@ -31,7 +32,7 @@ function zeroCounts(): Record<UsageChannel, number> {
 /** The `TOP` most counted keys, by count and then path, both as `{ path, count }`. */
 function topPaths(counts: Map<string, number>): { path: string; count: number }[] {
   return [...counts]
-    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a, x], [b, y]) => y - x || byCodeUnit(a, b))
     .slice(0, TOP)
     .map(([path, count]) => ({ path, count }));
 }
