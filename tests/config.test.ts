@@ -103,6 +103,8 @@ describe("isSensitiveFile", () => {
     for (const f of [
       ".env",
       ".env.local",
+      "prod.env",
+      ".envrc",
       "server.pem",
       "id_rsa",
       "id_ed25519.pub",
@@ -116,7 +118,14 @@ describe("isSensitiveFile", () => {
     }
   });
   test("passes normal files", () => {
-    for (const f of ["index.ts", "README.md", "environment.ts", "keyboard.ts"]) {
+    for (const f of [
+      "index.ts",
+      "README.md",
+      "environment.ts",
+      "keyboard.ts",
+      "foo.envelope",
+      "env.ts",
+    ]) {
       expect(isSensitiveFile(f)).toBe(false);
     }
   });

@@ -203,6 +203,8 @@ export const SENSITIVE_GLOBS: readonly string[] = [
   ...[...SENSITIVE_BASENAMES].map((b) => `**/${b}`),
   ...[...SENSITIVE_EXTENSIONS].map((ext) => `**/*${ext}`),
   "**/.env",
+  "**/*.env",
+  "**/.envrc",
   "**/.env.*",
   "**/id_rsa*",
   "**/id_dsa*",
@@ -217,7 +219,7 @@ export const SENSITIVE_GLOBS: readonly string[] = [
 
 export function isSensitiveFile(basename: string): boolean {
   const lower = basename.toLowerCase();
-  if (lower === ".env" || lower.startsWith(".env.")) return true;
+  if (lower.endsWith(".env") || lower === ".envrc" || lower.startsWith(".env.")) return true;
   if (SENSITIVE_BASENAMES.has(lower)) return true;
   const dot = lower.lastIndexOf(".");
   if (dot >= 0 && SENSITIVE_EXTENSIONS.has(lower.slice(dot))) return true;

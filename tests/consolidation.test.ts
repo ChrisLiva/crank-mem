@@ -67,6 +67,8 @@ const DENY_SETTINGS = JSON.stringify({
       "**/*.kdbx",
       "**/*.tfstate",
       "**/.env",
+      "**/*.env",
+      "**/.envrc",
       "**/.env.*",
       "**/id_rsa*",
       "**/id_dsa*",
@@ -85,6 +87,8 @@ const DENY_SETTINGS = JSON.stringify({
 const FILTER_NAMES = [
   ".env",
   ".env.local",
+  "prod.env",
+  ".envrc",
   "server.pem",
   "id_rsa",
   "id_ed25519.pub",
@@ -97,6 +101,8 @@ const FILTER_NAMES = [
   "README.md",
   "environment.ts",
   "keyboard.ts",
+  "foo.envelope",
+  "env.ts",
   "id_token.ts",
   "secrets.txt",
 ];
