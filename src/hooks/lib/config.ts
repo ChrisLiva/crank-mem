@@ -116,7 +116,7 @@ const CODEX_CHOICES: readonly CodexChoice[] = ["skip", "review", "trust"];
 export function loadConfig(crankDir: string): CrankConfig {
   const config = defaultConfig();
   config.digest = loadDigest(crankDir);
-  const raw = readRawConfig(crankDir);
+  const raw = readJsonObject(path.join(crankDir, CONFIG_FILE));
   if (raw === null) return config;
   for (const key of Object.keys(config) as (keyof CrankConfig)[]) {
     const value = raw[key];
@@ -127,17 +127,6 @@ export function loadConfig(crankDir: string): CrankConfig {
   if (typeof raw.name === "string") config.name = raw.name;
   carryUnknown(config, raw);
   return config;
-}
-
-/** config.json parsed; null when unreadable, invalid, or not an object (a top-level array passes). */
-function readRawConfig(crankDir: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(crankDir, CONFIG_FILE), "utf-8"));
-    if (typeof parsed !== "object" || parsed === null) return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }
 
 /** Whether a known field's raw value has the shape the field expects. */

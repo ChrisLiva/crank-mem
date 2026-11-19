@@ -85,6 +85,9 @@ describe("loadConfig sanitization", () => {
 
   test("non-object config falls back entirely", () => {
     expect(loadConfig(dirWithConfig(`"just a string"`))).toEqual(defaultConfig());
+    const fromArray = loadConfig(dirWithConfig(`["a","b"]`));
+    expect(fromArray).toEqual(defaultConfig());
+    expect("0" in fromArray).toBe(false);
   });
 
   test("unknown user keys survive a load → save round-trip, and the retired max_files does not", () => {
