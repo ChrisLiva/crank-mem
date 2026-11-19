@@ -2,7 +2,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CRANK_DIR, defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { registerProject } from "../src/hooks/lib/registry.ts";
-import { REPO_ROOT, git, gitCommit, makeCrankHome, tempDir, withEnv } from "./helpers.ts";
+import {
+  REPO_ROOT,
+  git,
+  gitCommit,
+  makeCrankHome,
+  tempDir,
+  withEnv,
+  writeFiles,
+} from "./helpers.ts";
 
 type Workspace = {
   parent: string;
@@ -24,7 +32,7 @@ function writeFile(abs: string, content: string): void {
 function gitInit(dir: string, files: Record<string, string>): void {
   fs.mkdirSync(dir, { recursive: true });
   git(dir, "init", "-q");
-  for (const [rel, content] of Object.entries(files)) writeFile(path.join(dir, rel), content);
+  writeFiles(dir, files);
 }
 
 function install(root: string, home: string): void {

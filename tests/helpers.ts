@@ -40,6 +40,15 @@ export const ALLOW_RULES = [
 // GitHub, unless its test passes a release server.
 process.env.CRANK_RELEASE_URL ??= "http://127.0.0.1:9";
 
+/** Writes each `files` entry under `root`, creating its parent directories. */
+export function writeFiles(root: string, files: Record<string, string>): void {
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(root, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, content);
+  }
+}
+
 /** Create a temp project with .crank/ initialized and some source files. */
 export function makeCrankProject(files: Record<string, string> = {}): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "crank-proj-"));
@@ -49,11 +58,7 @@ export function makeCrankProject(files: Record<string, string> = {}): string {
     path.join(REPO_ROOT, "src/templates/cerebrum.md"),
     path.join(root, ".crank/cerebrum.md"),
   );
-  for (const [rel, content] of Object.entries(files)) {
-    const abs = path.join(root, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content);
-  }
+  writeFiles(root, files);
   return root;
 }
 
@@ -81,11 +86,7 @@ export function makeProject(extra: Record<string, string> = {}): {
   fs.writeFileSync(path.join(codexHome, "config.toml"), 'model = "gpt-5.6"\n');
   fs.writeFileSync(path.join(root, "app.ts"), "/** The app. */\nexport const app = 1;\n");
   fs.writeFileSync(path.join(root, "README.md"), "# Test project\n");
-  for (const [rel, content] of Object.entries(extra)) {
-    const abs = path.join(root, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content);
-  }
+  writeFiles(root, extra);
   spawnSync("git", ["init", "-q"], { cwd: root });
   return { root, codexHome };
 }
@@ -330,10 +331,7 @@ export function initedCopy(
   let template = initedTemplates.get(key);
   if (template === undefined) {
     template = fs.mkdtempSync(path.join(os.tmpdir(), "crank-template-"));
-    for (const [rel, content] of Object.entries(files)) {
-      fs.mkdirSync(path.dirname(path.join(template, rel)), { recursive: true });
-      fs.writeFileSync(path.join(template, rel), content);
-    }
+    writeFiles(template, files);
     // A home under a stop state: the template's daemon would parse it while it is copied.
     const home = makeCrankHome();
     stopDigests(home);
