@@ -15,6 +15,7 @@ import {
   children,
   cleanup,
   digestProject,
+  hookContext,
   journey,
   laterRecords,
   makeCrankHome,
@@ -219,8 +220,7 @@ describe("older stores", () => {
       root,
       env,
     );
-    expect(start.status).toBe(0);
-    const ctx: string = JSON.parse(start.stdout).hookSpecificOutput.additionalContext;
+    const ctx = hookContext(start);
     expect(ctx.split("\n")).toContain(`_Note: ${STORE_TEXT.older.note}_`);
     expect(ctx).not.toContain("## Recent memory");
     expect(ctx).not.toContain(RECALL_BULLET);

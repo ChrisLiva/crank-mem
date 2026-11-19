@@ -7,6 +7,7 @@ import {
   REPO_ROOT,
   buildGraph,
   childEnv,
+  hookContext,
   killDaemon,
   makeCrankHome,
   makeCrankProject,
@@ -51,12 +52,6 @@ function run(root: string, payload: object, env: Record<string, string> = {}): H
   return runHook(HOOK, JSON.stringify(payload), root, { CRANK_HOME: makeCrankHome(), ...env });
 }
 
-function context(r: HookRun): string {
-  const out = JSON.parse(r.stdout).hookSpecificOutput;
-  expect(out.hookEventName).toBe("PostToolUse");
-  return out.additionalContext;
-}
-
 describe("post-read file history", () => {
   test("an unwritable seen marker still shows the history, silently", () => {
     const { root } = seeded();
@@ -67,23 +62,29 @@ describe("post-read file history", () => {
     });
     expect(r.status).toBe(0);
     expect(r.stderr).toBe("");
-    expect(context(r)).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n#");
+    expect(hookContext(r, "PostToolUse")).toStartWith(
+      "History of src/a.ts (open one: `crank-mem get <id>`):\n#",
+    );
   });
 
   test("a Bash read names the same history as a Read", () => {
     const { root } = seeded();
     const read = run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT));
     expect(read.status).toBe(0);
-    const viaRead = context(read);
+    const viaRead = hookContext(read, "PostToolUse");
     // The newest five lines, newest first.
     expect(viaRead).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n#");
     const lines = viaRead.split("\n").slice(1);
     expect(lines).toHaveLength(5);
     expect(lines[0]).toMatch(/^#\d+ \d{4}-\d\d-\d\d discovery Read a 6$/);
-    const viaBash = context(run(root, claudePostBash(root, "sed -n '1,20p' src/a.ts", TRANSCRIPT)));
+    const viaBash = hookContext(
+      run(root, claudePostBash(root, "sed -n '1,20p' src/a.ts", TRANSCRIPT)),
+      "PostToolUse",
+    );
     expect(viaBash).toBe(viaRead);
-    const viaUnfold = context(
+    const viaUnfold = hookContext(
       run(root, claudePostBash(root, "crank-mem unfold src/a.ts f", TRANSCRIPT)),
+      "PostToolUse",
     );
     expect(viaUnfold).toBe(viaRead);
   }, 20_000);
@@ -101,7 +102,10 @@ describe("post-read file history", () => {
       Array.from({ length: 20 }, (_, i) => ({ title: long("b")(i), filesRead: ["src/b.ts"] })),
     );
     for (const f of ["src/a.ts", "src/b.ts"]) setMtime(path.join(root, f), seedMs - HOUR);
-    const ctx = context(run(root, claudePostBash(root, "cat src/a.ts src/b.ts", TRANSCRIPT)));
+    const ctx = hookContext(
+      run(root, claudePostBash(root, "cat src/a.ts src/b.ts", TRANSCRIPT)),
+      "PostToolUse",
+    );
     expect(ctx).toContain("History of src/a.ts (open one: `crank-mem get <id>`):");
     expect(ctx).not.toContain("History of src/b.ts");
     expect(Buffer.byteLength(ctx)).toBeLessThanOrEqual(1536);
@@ -111,7 +115,10 @@ describe("post-read file history", () => {
 describe("post-read git history", () => {
   test("a git log, show or blame that names a file shows the history a read of it shows", () => {
     const { root } = seeded();
-    const viaRead = context(run(root, claudePostBash(root, "sed -n 1,5p src/a.ts", TRANSCRIPT)));
+    const viaRead = hookContext(
+      run(root, claudePostBash(root, "sed -n 1,5p src/a.ts", TRANSCRIPT)),
+      "PostToolUse",
+    );
     expect(viaRead).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n#");
     for (const command of [
       "git log --oneline -5 -- src/a.ts",
@@ -119,10 +126,10 @@ describe("post-read git history", () => {
       "git show 1299cc0 -- src/a.ts src/b.ts",
       "git blame -L 10,20 src/a.ts",
     ])
-      expect([command, context(run(root, claudePostBash(root, command, TRANSCRIPT)))]).toEqual([
+      expect([
         command,
-        viaRead,
-      ]);
+        hookContext(run(root, claudePostBash(root, command, TRANSCRIPT)), "PostToolUse"),
+      ]).toEqual([command, viaRead]);
   }, 20_000);
 
   test("a git command that names no file, a git diff and a piped git log are silent and record nothing", () => {
@@ -149,10 +156,10 @@ describe("post-read git history", () => {
     const log = (env: Record<string, string>) =>
       run(root, claudePostBash(root, "git log -3 -- src/a.ts", TRANSCRIPT), env);
     const gitFirst = { CRANK_HOME: makeCrankHome() };
-    expect(context(log(gitFirst))).toStartWith("History of src/a.ts");
+    expect(hookContext(log(gitFirst), "PostToolUse")).toStartWith("History of src/a.ts");
     expect(read(gitFirst).stdout).toBe("");
     const readFirst = { CRANK_HOME: makeCrankHome() };
-    expect(context(read(readFirst))).toStartWith("History of src/a.ts");
+    expect(hookContext(read(readFirst), "PostToolUse")).toStartWith("History of src/a.ts");
     expect(log(readFirst).stdout).toBe("");
   });
 });
@@ -176,11 +183,11 @@ describe("post-read after a compaction", () => {
     const lib = path.join(root, "src/lib.ts");
     const read = (agent?: string) => run(root, claudePostRead(root, lib, TRANSCRIPT, agent), env);
     const grep = () => run(root, claudePostBash(root, "rg -n loadConfig src", TRANSCRIPT), env);
-    const first = context(read());
+    const first = hookContext(read(), "PostToolUse");
     expect(first).toStartWith(HISTORY);
     expect(first).toContain("\n\nUsed by (crank-mem impact src/lib.ts):\n");
-    expect(context(grep())).toBe(LOAD);
-    expect(context(read("a1b2"))).toBe(first);
+    expect(hookContext(grep(), "PostToolUse")).toBe(LOAD);
+    expect(hookContext(read("a1b2"), "PostToolUse")).toBe(first);
     const subagentMarks = fs.readFileSync(path.join(home, "seen/551be959-a1b2.seen"), "utf-8");
     expect(read().stdout).toBe("");
     expect(grep().stdout).toBe("");
@@ -193,8 +200,8 @@ describe("post-read after a compaction", () => {
       subagentMarks,
     );
 
-    expect(context(read())).toBe(first);
-    expect(context(grep())).toBe(LOAD);
+    expect(hookContext(read(), "PostToolUse")).toBe(first);
+    expect(hookContext(grep(), "PostToolUse")).toBe(LOAD);
     expect(read().stdout).toBe("");
     expect(read("a1b2").stdout).toBe("");
   }, 30_000);
@@ -204,10 +211,9 @@ describe("post-read after a compaction", () => {
     const home = makeCrankHome();
     const file = path.join(root, "src/a.ts");
     const read = () => run(root, claudePostRead(root, file, TRANSCRIPT), { CRANK_HOME: home });
-    expect(context(read())).toStartWith("History of src/a.ts");
+    expect(hookContext(read(), "PostToolUse")).toStartWith("History of src/a.ts");
     const marks = fs.readFileSync(path.join(home, SEEN_FILE), "utf-8");
-    const injected = (r: HookRun) => JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
-    const compact = injected(sessionStart(root, makeCrankHome(), { source: "compact" }));
+    const compact = hookContext(sessionStart(root, makeCrankHome(), { source: "compact" }));
     for (const fields of [
       { source: "startup" },
       { source: "clear" },
@@ -227,7 +233,7 @@ describe("post-read after a compaction", () => {
     }
     expect(read().stdout).toBe("");
     // The reset changes nothing the hook injects.
-    expect(injected(sessionStart(root, home, { source: "compact" }))).toBe(compact);
+    expect(hookContext(sessionStart(root, home, { source: "compact" }))).toBe(compact);
   }, 30_000);
 
   test("a compaction with no marks, or marks it cannot delete, injects as before", () => {
@@ -255,7 +261,10 @@ describe("post-read stale rows", () => {
     ]) as [number];
     seedMemory(root, [], { stale: [{ id: a, reason: "retry is 5 s now" }] });
     setMtime(path.join(root, "src/a.ts"), seedMs - HOUR);
-    const ctx = context(run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)));
+    const ctx = hookContext(
+      run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)),
+      "PostToolUse",
+    );
     expect(ctx).toMatch(
       /^History of src\/a\.ts \(open one: `crank-mem get <id>`\):\n#\d+ \S+ discovery Lock files live in \.crank$/,
     );
@@ -267,17 +276,17 @@ describe("post-read once per agent per session", () => {
     const { root } = seeded();
     const env = { CRANK_HOME: makeCrankHome() };
     const file = path.join(root, "src/a.ts");
-    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT), env))).toStartWith(
-      "History of src/a.ts (open one: `crank-mem get <id>`):",
-    );
+    expect(
+      hookContext(run(root, claudePostRead(root, file, TRANSCRIPT), env), "PostToolUse"),
+    ).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):");
     expect(run(root, claudePostRead(root, file, TRANSCRIPT), env).stdout).toBe("");
-    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT, "a1b2"), env))).toStartWith(
-      "History of src/a.ts (open one: `crank-mem get <id>`):",
-    );
+    expect(
+      hookContext(run(root, claudePostRead(root, file, TRANSCRIPT, "a1b2"), env), "PostToolUse"),
+    ).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):");
     const other = "/u/.claude/projects/-proj/7c2e9f14.jsonl";
-    expect(context(run(root, claudePostRead(root, file, other), env))).toStartWith(
-      "History of src/a.ts (open one: `crank-mem get <id>`):",
-    );
+    expect(
+      hookContext(run(root, claudePostRead(root, file, other), env), "PostToolUse"),
+    ).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):");
   });
 
   test("parallel reads of different files each mark their file", async () => {
@@ -305,7 +314,7 @@ describe("post-read once per agent per session", () => {
       }),
     );
     for (const [i, out] of outs.entries()) {
-      expect(context({ status: 0, stdout: out, stderr: "" })).toStartWith(
+      expect(hookContext({ status: 0, stdout: out, stderr: "" }, "PostToolUse")).toStartWith(
         `History of ${names[i]} (open one: \`crank-mem get <id>\`):`,
       );
     }
@@ -318,13 +327,13 @@ describe("post-read change tag", () => {
     const { root, seedMs } = seeded();
     const file = path.join(root, "src/a.ts");
     setMtime(file, seedMs + HOUR);
-    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT)))).toStartWith(
-      "History of src/a.ts (open one: `crank-mem get <id>`): [file changed since]\n#",
-    );
+    expect(
+      hookContext(run(root, claudePostRead(root, file, TRANSCRIPT)), "PostToolUse"),
+    ).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`): [file changed since]\n#");
     setMtime(file, seedMs - HOUR);
-    expect(context(run(root, claudePostRead(root, file, TRANSCRIPT)))).toStartWith(
-      "History of src/a.ts (open one: `crank-mem get <id>`):\n#",
-    );
+    expect(
+      hookContext(run(root, claudePostRead(root, file, TRANSCRIPT)), "PostToolUse"),
+    ).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n#");
     seedMemory(root, [{ title: "Gone", filesRead: ["src/gone.ts"] }]);
     expect(run(root, claudePostBash(root, "cat src/gone.ts", TRANSCRIPT)).stdout).toBe("");
   });
@@ -427,7 +436,7 @@ describe("post-read Used by", () => {
     const env = { CRANK_HOME: makeCrankHome() };
     const read = () =>
       run(root, claudePostRead(root, path.join(root, "src/lib.ts"), TRANSCRIPT), env);
-    const ctx = context(read());
+    const ctx = hookContext(read(), "PostToolUse");
     expect(ctx).toStartWith(HISTORY);
     const [history, section, ...rest] = ctx.split("\n\n");
     expect(history).toStartWith(HISTORY);
@@ -442,7 +451,9 @@ describe("post-read Used by", () => {
     const root = graphed({ "src/a.ts": caller(["helper"]) });
     expect(fs.existsSync(path.join(root, ".crank/memory.db"))).toBe(false);
     const lib = run(root, claudePostRead(root, path.join(root, "src/lib.ts"), TRANSCRIPT));
-    expect(context(lib)).toBe("Used by (crank-mem impact src/lib.ts):\n- src/a.ts (1 call)");
+    expect(hookContext(lib, "PostToolUse")).toBe(
+      "Used by (crank-mem impact src/lib.ts):\n- src/a.ts (1 call)",
+    );
     expect(run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)).stdout).toBe(
       "",
     );
@@ -454,14 +465,15 @@ describe("post-read Used by", () => {
     const read = () => run(root, claudePostRead(root, file, TRANSCRIPT));
     const stamp = fs.statSync(file).mtimeMs;
     setMtime(file, stamp + 5000);
-    expect(usedBy(context(read()))).toBeNull();
+    expect(usedBy(hookContext(read(), "PostToolUse"))).toBeNull();
     setMtime(file, stamp);
-    expect(usedBy(context(read()))).not.toBeNull();
+    expect(usedBy(hookContext(read(), "PostToolUse"))).not.toBeNull();
 
     for (const name of ["code.db", "code.db-wal", "code.db-shm"])
       fs.rmSync(path.join(root, ".crank", name), { force: true });
-    const bare = context(
+    const bare = hookContext(
       run(root, claudePostRead(root, file, TRANSCRIPT), { CRANK_HOME: makeCrankHome() }),
+      "PostToolUse",
     );
     expect(bare).toStartWith(HISTORY);
     expect(bare).not.toContain("Used by");
@@ -474,7 +486,10 @@ describe("post-read Used by", () => {
       Object.fromEntries(names.map((n) => [`src/${n}.ts`, caller(["helper"])])),
     );
     const five = usedBy(
-      context(run(short, claudePostRead(short, path.join(short, "src/lib.ts"), TRANSCRIPT))),
+      hookContext(
+        run(short, claudePostRead(short, path.join(short, "src/lib.ts"), TRANSCRIPT)),
+        "PostToolUse",
+      ),
     )!;
     expect(five.split("\n").slice(1)).toEqual(
       names.slice(0, 5).map((n) => `- src/${n}.ts (1 call)`),
@@ -485,7 +500,10 @@ describe("post-read Used by", () => {
       Object.fromEntries(names.map((n) => [`src/${deep}/${n}.ts`, caller(["helper"], "../lib")])),
     );
     const cut = usedBy(
-      context(run(long, claudePostRead(long, path.join(long, "src/lib.ts"), TRANSCRIPT))),
+      hookContext(
+        run(long, claudePostRead(long, path.join(long, "src/lib.ts"), TRANSCRIPT)),
+        "PostToolUse",
+      ),
     )!;
     expect(Buffer.byteLength(cut)).toBeLessThanOrEqual(512);
     // The header is 38 B and each line 131 B: three lines and their newlines take 434 B, a fourth would reach 566 B.
@@ -516,7 +534,7 @@ describe("post-read Used by", () => {
     const read = () =>
       run(ws.H, claudePostRead(ws.H, lib, TRANSCRIPT), { CRANK_HOME: makeCrankHome() });
 
-    const ctx = context(read());
+    const ctx = hookContext(read(), "PostToolUse");
     const order = [HEAD, `Used by (crank-mem impact ${lib}):`, "Excerpt of "].map((m) =>
       ctx.indexOf(m),
     );
@@ -529,7 +547,7 @@ describe("post-read Used by", () => {
     try {
       const locked = read();
       expect([locked.status, locked.stderr]).toEqual([0, ""]);
-      const without = context(locked);
+      const without = hookContext(locked, "PostToolUse");
       expect(without).toStartWith(HEAD);
       expect(without).toContain("Excerpt of ");
       expect(without).not.toContain("Used by");
@@ -554,7 +572,9 @@ describe("post-read Used by", () => {
     buildGraph(ws.H);
     const env = { CRANK_HOME: makeCrankHome() };
 
-    const section = usedBy(context(run(ws.H, claudePostRead(ws.H, lib, TRANSCRIPT), env)))!;
+    const section = usedBy(
+      hookContext(run(ws.H, claudePostRead(ws.H, lib, TRANSCRIPT), env), "PostToolUse"),
+    )!;
     const printed = /^Used by \(crank-mem (impact .+)\):/.exec(section)![1]!.split(" ");
     const answer = runCli(ws.H, printed, env);
     expect(answer.status).toBe(0);
@@ -566,7 +586,9 @@ describe("post-read Used by", () => {
     buildGraph(ws.H);
     fs.writeFileSync(path.join(ws.H, "src/user.ts"), caller(["onlyHere"]));
     buildGraph(ws.H);
-    const mine = usedBy(context(run(ws.H, claudePostRead(ws.H, own, TRANSCRIPT), env)));
+    const mine = usedBy(
+      hookContext(run(ws.H, claudePostRead(ws.H, own, TRANSCRIPT), env), "PostToolUse"),
+    );
     expect(mine?.split("\n")[0]).toBe("Used by (crank-mem impact src/lib.ts):");
   }, 30_000);
 });
@@ -585,7 +607,7 @@ describe("post-read journey: init to Used by", () => {
       expect(runCli(root, ["init", "--yes", "--codex", "skip"], env).status).toBe(0);
 
       const start = hook("src/hooks/session-start.ts", claudeSessionStart(root));
-      const pointer = JSON.parse(start.stdout).hookSpecificOutput.additionalContext;
+      const pointer = hookContext(start);
       expect(pointer).toContain(CODE_BULLET);
       expect(pointer).toMatch(
         /symbol line ranges \(symbols for \d+ files are still being parsed\)/,
@@ -601,7 +623,9 @@ describe("post-read journey: init to Used by", () => {
 
       const read = () =>
         hook(HOOK, claudePostRead(root, path.join(root, "src/lib.ts"), TRANSCRIPT));
-      expect(context(read())).toBe("Used by (crank-mem impact src/lib.ts):\n- src/c.ts (1 call)");
+      expect(hookContext(read(), "PostToolUse")).toBe(
+        "Used by (crank-mem impact src/lib.ts):\n- src/c.ts (1 call)",
+      );
       expect(read().stdout).toBe("");
 
       const impact = runCli(root, ["impact", "helper"], env);
@@ -675,15 +699,15 @@ describe("post-read callers pointer", () => {
 
     const first = grep('rg -n "loadConfig" src');
     expect([first.status, first.stderr]).toEqual([0, ""]);
-    expect(context(first)).toBe(LOAD);
+    expect(hookContext(first, "PostToolUse")).toBe(LOAD);
     const cli = runCli(root, ["callers", "loadConfig"]);
     expect(cli.status).toBe(0);
     expect(cli.stdout).toContain("2 call sites in 2 files.");
 
     expect(grep("git grep -n loadConfig").stdout).toBe("");
-    expect(context(grep("grep -rn 'saveConfig(' src"))).toBe(SAVE);
+    expect(hookContext(grep("grep -rn 'saveConfig(' src"), "PostToolUse")).toBe(SAVE);
     const sub = { agent_id: "sub1", agent_type: "general-purpose" };
-    expect(context(grep("rg loadConfig", sub))).toBe(LOAD);
+    expect(hookContext(grep("rg loadConfig", sub), "PostToolUse")).toBe(LOAD);
     expect(grep("rg loadConfig", sub).stdout).toBe("");
 
     expect(lookups(root)).toEqual([
@@ -700,9 +724,9 @@ describe("post-read callers pointer", () => {
     const grep = (command: string) =>
       run(root, claudePostBash(root, command, TRANSCRIPT), { CRANK_HOME: makeCrankHome() });
 
-    expect(context(grep('rg "\\bsaveConfig\\b|loadConfig" src; rg unusedThing'))).toBe(
-      `${SAVE}\n${LOAD}`,
-    );
+    expect(
+      hookContext(grep('rg "\\bsaveConfig\\b|loadConfig" src; rg unusedThing'), "PostToolUse"),
+    ).toBe(`${SAVE}\n${LOAD}`);
     expect(grep("rg dupName src").stdout).toBe("");
     expect(grep("rg unusedThing src").stdout).toBe("");
     expect(runCli(root, ["callers", "unusedThing"]).stdout).toContain("0 call sites in 0 files.");
@@ -754,7 +778,7 @@ describe("post-read callers pointer", () => {
       root,
       claudePostBash(root, "sed -n 1,5p src/lib.ts; rg -n loadConfig src", TRANSCRIPT),
     );
-    const sections = context(r).split("\n\n");
+    const sections = hookContext(r, "PostToolUse").split("\n\n");
     expect(sections).toHaveLength(3);
     expect(sections[0]).toStartWith(HISTORY);
     expect(sections[1]).toStartWith("Used by (crank-mem impact src/lib.ts):\n");
@@ -782,17 +806,20 @@ describe("post-read callers pointer", () => {
       callersLine(long[i]!, "1 call site in 1 file", `src/names.ts:${i + 1}-${i + 1}`);
     const greps = long.map((n) => `rg ${n} src`).join("; ");
 
-    const fit = context(run(root, claudePostBash(root, greps, TRANSCRIPT)));
+    const fit = hookContext(run(root, claudePostBash(root, greps, TRANSCRIPT)), "PostToolUse");
     // Each line is 223 B: two and their newline take 447 B, a third would reach 671 B.
     expect(fit).toBe(`${line(0)}\n${line(1)}`);
     expect(Buffer.byteLength(fit)).toBeLessThanOrEqual(512);
 
     const reads = libs.map((lib) => `sed -n 1p src/${lib}.ts`).join("; ");
-    const alone = context(run(root, claudePostBash(root, reads, TRANSCRIPT)));
+    const alone = hookContext(run(root, claudePostBash(root, reads, TRANSCRIPT)), "PostToolUse");
     expect(alone.split("\n\n")).toHaveLength(libs.length);
     // The fixture must leave no room: the reads' sections plus the callers section reach the cap.
     expect(Buffer.byteLength(`${alone}\n\n${fit}`)).toBeGreaterThanOrEqual(4096);
-    const both = context(run(root, claudePostBash(root, `${reads}; ${greps}`, TRANSCRIPT)));
+    const both = hookContext(
+      run(root, claudePostBash(root, `${reads}; ${greps}`, TRANSCRIPT)),
+      "PostToolUse",
+    );
     expect(both).toBe(alone);
 
     expect(lookups(root)).toEqual([

@@ -18,6 +18,7 @@ import type { Digest } from "../src/daemon/digest-prompt.ts";
 import { okStream, okStreamOf } from "./fixtures/claude-scenarios.ts";
 import { SAMPLE_DIGEST } from "./fixtures/digest-output.ts";
 import {
+  hookContext,
   journey,
   makeCrankHome,
   plantMemory,
@@ -48,10 +49,6 @@ function usageLines(root: string): Array<Record<string, unknown>> {
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l));
-}
-
-function additionalContext(stdout: string): string {
-  return JSON.parse(stdout).hookSpecificOutput.additionalContext;
 }
 
 function sectionOf(ctx: string, header: string): string | undefined {
@@ -182,10 +179,10 @@ const staleLine = (ws: Ws, root: string, id: number) =>
     .find((l) => l.startsWith("stale: "));
 
 const sessionStart = (ws: Ws, root: string) =>
-  additionalContext(
+  hookContext(
     runHook("src/hooks/session-start.ts", JSON.stringify(claudeSessionStart(root)), root, {
       CRANK_HOME: ws.home,
-    }).stdout,
+    }),
   );
 
 describe("cross-repo memory", () => {
@@ -222,7 +219,7 @@ describe("cross-repo memory", () => {
     const payFile = path.join(ws.payments, "src/a.ts");
     const first = read(payFile, "9c000001");
     expect(first.status).toBe(0);
-    const block = additionalContext(first.stdout);
+    const block = hookContext(first);
     expect(block).toStartWith(
       `Excerpt of \`${ws.payments}/.crank/cerebrum.md\`, project payments-api's memory; grep it for more.\n` +
         "Recall there: `crank-mem search --project payments-api <query>`; its ids show as `payments-api#<id>`.\n\n",
@@ -232,7 +229,7 @@ describe("cross-repo memory", () => {
     const marker = fs.readFileSync(path.join(ws.home, "seen/9c000001-main.seen"), "utf-8");
     expect(marker.split("\n")).toContain(`cerebrum:${ws.payments}`);
     expect(read(payFile, "9c000001").stdout).not.toContain("Excerpt of");
-    expect(additionalContext(read(payFile, "9c000001", "sub1").stdout)).toStartWith(
+    expect(hookContext(read(payFile, "9c000001", "sub1"))).toStartWith(
       `Excerpt of \`${ws.payments}/.crank/cerebrum.md\``,
     );
 
@@ -744,7 +741,7 @@ describe("cross-repo memory", () => {
     setMtime(storefrontFile, Date.now() - HOUR);
     const first = read(storefrontFile);
     expect(first.status).toBe(0);
-    const ctx = additionalContext(first.stdout);
+    const ctx = hookContext(first);
     expect(ctx).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\nstorefront#");
     expect(ctx).toMatch(/^storefront#\d+ \d{4}-\d\d-\d\d discovery Storefront fact$/m);
     const actor = { agent: "claude", session: "551be959-1111-2222-3333-444455556666" };
@@ -772,7 +769,7 @@ describe("cross-repo memory", () => {
     seedMemory(ws.payments, [{ title: "Payments fact", filesRead: ["src/a.ts"] }]);
     const worktreeRead = read(path.join(ws.worktree, "src/a.ts"));
     expect(worktreeRead.status).toBe(0);
-    const worktreeCtx = additionalContext(worktreeRead.stdout);
+    const worktreeCtx = hookContext(worktreeRead);
     expect(worktreeCtx).toContain("History of src/a.ts");
     expect(worktreeCtx).toMatch(/^payments-api#\d+ .* Payments fact$/m);
 
@@ -818,7 +815,7 @@ describe("cross-repo memory", () => {
     const [payFactId] = seedMemory(ws.payments, [{ title: "Pay fact", filesRead: ["src/pay.ts"] }]);
     const paired = fromStorefront(storefrontFile, "/u/.claude/projects/-sf/7a0c0001.jsonl");
     expect(paired.status).toBe(0);
-    const pairedCtx = additionalContext(paired.stdout);
+    const pairedCtx = hookContext(paired);
     expect(pairedCtx).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n#");
     expect(pairedCtx).toMatch(
       /\n\nHistory of payments-api\/src\/pay\.ts, paired with src\/a\.ts:\npayments-api#\d+ .* Pay fact$/,
@@ -836,7 +833,7 @@ describe("cross-repo memory", () => {
       "src/a.ts",
     ]);
     const payRead = fromStorefront(payFile, "/u/.claude/projects/-sf/7a0c0001.jsonl");
-    expect(additionalContext(payRead.stdout)).toMatch(
+    expect(hookContext(payRead)).toMatch(
       /^History of src\/pay\.ts \(open one: `crank-mem get <id>`\):.*\npayments-api#\d+ .* Pay fact$/m,
     );
 
@@ -850,7 +847,7 @@ describe("cross-repo memory", () => {
     const [frontId] = seedMemory(ws.storefront, [{ title: "Front fact", filesRead: ["src/a.ts"] }]);
     const back = fromStorefront(payFile, "/u/.claude/projects/-sf/7a0c0002.jsonl");
     const backPair = sectionOf(
-      additionalContext(back.stdout),
+      hookContext(back),
       "History of storefront/src/a.ts, paired with src/pay.ts:\n",
     );
     expect(backPair).toMatch(/^#\d+ .* Front fact$/m);
@@ -863,7 +860,7 @@ describe("cross-repo memory", () => {
       ws.H,
       { CRANK_HOME: ws.home },
     );
-    const bothCtx = additionalContext(both.stdout);
+    const bothCtx = hookContext(both);
     expect(bothCtx.split(`Excerpt of \`${ws.storefront}/.crank/cerebrum.md\``)).toHaveLength(2);
     expect(bothCtx).not.toContain("payments-api's memory");
     const next = runHook(
@@ -872,7 +869,7 @@ describe("cross-repo memory", () => {
       ws.H,
       { CRANK_HOME: ws.home },
     );
-    expect(additionalContext(next.stdout)).toStartWith(
+    expect(hookContext(next)).toStartWith(
       `Excerpt of \`${ws.payments}/.crank/cerebrum.md\`, project payments-api's memory;`,
     );
 
@@ -1016,7 +1013,7 @@ describe("cross-repo memory", () => {
       ...lines("p3", 1),
       ...lines("p4", 7),
     ]);
-    const ctx = additionalContext(read("/u/.claude/projects/-sf/7b000001.jsonl").stdout);
+    const ctx = hookContext(read("/u/.claude/projects/-sf/7b000001.jsonl"));
     const pairHeaders = ctx
       .split("\n\n")
       .filter((s) => s.startsWith("History of payments-api/"))
@@ -1059,7 +1056,7 @@ describe("cross-repo memory", () => {
       ws.storefront,
       { CRANK_HOME: ws.home },
     );
-    const dedupedCtx = additionalContext(deduped.stdout);
+    const dedupedCtx = hookContext(deduped);
     const q = sectionOf(dedupedCtx, "History of payments-api/src/q.ts, paired with src/b.ts:\n")!;
     expect(q).toMatch(/^payments-api#\d+ .* Pair only$/m);
     expect(q).not.toContain("Shared");
@@ -1092,7 +1089,7 @@ describe("cross-repo memory", () => {
       ws.storefront,
       { CRANK_HOME: ws.home },
     );
-    const ctx = additionalContext(run.stdout);
+    const ctx = hookContext(run);
     expect(ctx).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n");
     expect(ctx).not.toContain("History of payments-api/");
     expect(Buffer.byteLength(ctx)).toBeLessThanOrEqual(1536);
@@ -1125,7 +1122,7 @@ describe("cross-repo memory", () => {
       ws.H,
       { CRANK_HOME: ws.home },
     );
-    const ctx = additionalContext(run.stdout);
+    const ctx = hookContext(run);
     expect(Buffer.byteLength(ctx)).toBeLessThan(4096);
     const [history, ...rest] = ctx.split(`\n\nExcerpt of \`${ws.payments}/.crank/cerebrum.md\``);
     expect(history).toStartWith("History of src/a.ts (open one: `crank-mem get <id>`):\n");
@@ -1179,7 +1176,7 @@ describe("cross-repo memory", () => {
       { CRANK_HOME: ws.home },
     );
     expect(run.status).toBe(0);
-    const ctx = additionalContext(run.stdout);
+    const ctx = hookContext(run);
     expect(sectionOf(ctx, "Excerpt of")).toBeDefined();
     expect(ctx).toContain(
       `${bullet} [cited file modified after this note; check: storefront/src/a.ts]`,

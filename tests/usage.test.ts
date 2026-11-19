@@ -8,6 +8,7 @@ import {
   childEnv,
   git,
   gitCommit,
+  hookContext,
   inZone,
   makeCrankHome,
   makeCrankProject,
@@ -95,8 +96,7 @@ describe("usage capture: the session-start line", () => {
     const seeded = seedMemory(root, [{ title: "one" }, { title: "two" }, { title: "three" }]);
     const before = Date.now();
     const run = sessionStart(root, claudeSessionStart(root));
-    expect(run.status).toBe(0);
-    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    const ctx = hookContext(run);
     expect(ctx).toContain("## Cerebrum (.crank/cerebrum.md)");
     expect(ctx).toContain("## ADRs (");
 
@@ -130,7 +130,7 @@ describe("usage capture: the session-start line", () => {
     fs.rmSync(path.join(bare, ".crank/cerebrum.md"));
     const bareRun = sessionStart(bare, claudeSessionStart(bare));
     expect(bareRun.status).toBe(0);
-    expect(additionalContext(bareRun.stdout)).not.toContain(RECALL_BULLET);
+    expect(hookContext(bareRun)).not.toContain(RECALL_BULLET);
     const [noFile] = usageLines(bare);
     expect(noFile!.recallPointer).toBe(false);
     expect(noFile!.cerebrum).toBe(false);
@@ -191,10 +191,6 @@ function postRead(root: string, payload: object, home = makeCrankHome()) {
   return runHook(READ_HOOK, JSON.stringify(payload), root, { CRANK_HOME: home });
 }
 
-function additionalContext(stdout: string): string {
-  return JSON.parse(stdout).hookSpecificOutput.additionalContext;
-}
-
 describe("usage capture: the subagent-start line", () => {
   test("a SubagentStart records its agent type, excerpt bytes and recall pointer", () => {
     const root = makeCrankProject();
@@ -205,7 +201,7 @@ describe("usage capture: the subagent-start line", () => {
     seedMemory(root, [{ title: "one" }]);
     const run = subagentStart(root, claudeSubagentStart(root, "Explore"));
     expect(run.status).toBe(0);
-    const ctx = additionalContext(run.stdout);
+    const ctx = hookContext(run);
     const excerpt = ctx.slice(ctx.indexOf("\n\n") + 2);
     expect(excerpt).toContain("- p1");
     const lines = usageLines(root);
@@ -270,7 +266,7 @@ describe("usage capture: the file-history line", () => {
     const home = makeCrankHome();
     const first = postRead(root, claudePostRead(root, path.join(root, "a.ts"), TRANSCRIPT), home);
     expect(first.status).toBe(0);
-    const ctx = additionalContext(first.stdout);
+    const ctx = hookContext(first);
     const again = postRead(root, claudePostRead(root, path.join(root, "a.ts"), TRANSCRIPT), home);
     expect(again.stdout).toBe("");
     const bash = postRead(
@@ -337,7 +333,7 @@ describe("usage capture: the file-history cap", () => {
     expect(shown).toEqual(files.slice(0, shown.length));
     expect(line!.cut).toEqual(files.slice(shown.length));
     expect(line!.bytes).toBeLessThanOrEqual(1536);
-    expect(line!.bytes).toBe(Buffer.byteLength(additionalContext(run.stdout), "utf-8"));
+    expect(line!.bytes).toBe(Buffer.byteLength(hookContext(run), "utf-8"));
 
     const paths = Array.from({ length: 150 }, (_, i) => `p${i}.ts`);
     const wide = makeCrankProject(Object.fromEntries(paths.map((p) => [p, "x\n"])));

@@ -7,6 +7,7 @@ import {
   REPO_ROOT,
   enableDebugConfig,
   fakeCloneRoot,
+  hookContext,
   killDaemon,
   makeCrankHome,
   makeCrankProject,
@@ -45,10 +46,7 @@ describe("session-start hook (black-box)", () => {
       "README.md": "# Demo project\n",
     });
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    const out = JSON.parse(run.stdout);
-    expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
-    const ctx: string = out.hookSpecificOutput.additionalContext;
+    const ctx = hookContext(run, "SessionStart");
     expect(ctx).toContain("crank-mem (project memory)");
     // The scan's result reaches the model as a count and a pointer, not a listing.
     expect(ctx).toContain("`crank-mem anatomy [<dir>]` lists the project's 2 file(s) with");
@@ -79,13 +77,8 @@ describe("session-start hook (black-box)", () => {
       "main.c": "int main(void) { return 0; }\n",
       "a.ts": "x",
     });
-    const ctxFor = (payload: object): string => {
-      const run = runHook(HOOK, JSON.stringify(payload));
-      expect(run.status).toBe(0);
-      return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
-    };
-    const codex = ctxFor(codexSessionStart(root));
-    const claude = ctxFor(claudeSessionStart(root));
+    const codex = hookContext(runHook(HOOK, JSON.stringify(codexSessionStart(root))));
+    const claude = hookContext(runHook(HOOK, JSON.stringify(claudeSessionStart(root))));
     // The code pointer follows the anatomy pointer, and the subagent line sits between it and the
     // proof bullet, for both agents.
     for (const ctx of [codex, claude]) {
@@ -105,8 +98,7 @@ describe("session-start hook (black-box)", () => {
     const root = makeCrankProject({ "a.lua": "x", "b.ts": "x" });
     fs.writeFileSync(path.join(root, ".crank/code.db"), "not a database");
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    const ctx = hookContext(run);
     expect(ctx).toContain(
       "- `crank-mem anatomy [<dir>]` lists the project's files with descriptions, token sizes and symbol line ranges; use it before slice-reading a large file.\n",
     );
@@ -122,8 +114,7 @@ describe("session-start hook (black-box)", () => {
     fs.writeFileSync(path.join(root, ".git"), "not a gitdir pointer\n");
     enableDebugConfig(root);
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    const ctx = hookContext(run);
     expect(ctx).toContain("lists the project's 2 file(s)");
     const events = readDebugLog(root).flatMap((r) => r.events);
     expect(events.find((e) => e.event === "walk-fallback")?.reason).toMatch(/^exit \d+$/);
@@ -289,8 +280,7 @@ describe("vendored-hook drift (black-box)", () => {
       const root = makeCrankProject({ "a.ts": "const a = 1;" });
       configure(root, { vendored_version: "0.3.2", clone_root });
       const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-      expect(run.status).toBe(0);
-      const ctx = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+      const ctx = hookContext(run);
       expect(ctx).toContain("crank-mem (project memory)");
       expect(ctx).not.toContain("crank-mem upgrade");
     }
@@ -306,8 +296,7 @@ function writeJournal(root: string, bullets: string[]): string {
 }
 function inject(root: string): string {
   const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)));
-  expect(run.status).toBe(0);
-  return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+  return hookContext(run);
 }
 
 // Digest-era injection. Every run passes one temp CRANK_HOME per project, so a
@@ -328,8 +317,7 @@ function memoryProject(digest: boolean): { root: string; home: string } {
 }
 function injectIn(root: string, home: string, payload: object = claudeSessionStart(root)): string {
   const run = runHook(HOOK, JSON.stringify(payload), root, { CRANK_HOME: home, TZ: "UTC" });
-  expect(run.status).toBe(0);
-  return JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+  return hookContext(run);
 }
 function sectionOf(ctx: string, heading: string): string | undefined {
   return ctx.split("\n\n").find((s) => s.startsWith(heading));
@@ -608,8 +596,7 @@ describe("project registry (black-box)", () => {
     fs.writeFileSync(home, "");
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)), root, { CRANK_HOME: home });
-    expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("crank-mem");
+    expect(hookContext(run)).toContain("crank-mem");
   });
 });
 
@@ -631,8 +618,7 @@ describe("linked projects (black-box)", () => {
       ws.H,
       { CRANK_HOME: ws.home },
     );
-    expect(sub.status).toBe(0);
-    const subCtx: string = JSON.parse(sub.stdout).hookSpecificOutput.additionalContext;
+    const subCtx = hookContext(sub);
     expect(subCtx).toContain(RECALL_BULLET);
     expect(subCtx).not.toContain("Search also covers");
     expect(subCtx).not.toContain(SUBAGENT_BULLET);
@@ -709,10 +695,7 @@ describe("session-start writes code.db", () => {
       const started = Date.now();
       const run = sessionStart(root);
       expect(Date.now() - started).toBeLessThan(2500);
-      expect(run.status).toBe(0);
-      expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).not.toMatch(
-        /locked|busy|errcode|SQLITE/i,
-      );
+      expect(hookContext(run)).not.toMatch(/locked|busy|errcode|SQLITE/i);
       const events = readDebugLog(root)
         .slice(logged)
         .flatMap((r) => r.events);

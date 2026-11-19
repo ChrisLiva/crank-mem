@@ -169,6 +169,14 @@ export function runHook(
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
+/** The `additionalContext` of a hook run that exited 0, checking `hookEventName` when given. */
+export function hookContext(run: HookRun, eventName?: string): string {
+  expect(run.status).toBe(0);
+  const out = JSON.parse(run.stdout).hookSpecificOutput;
+  if (eventName !== undefined) expect(out.hookEventName).toBe(eventName);
+  return out.additionalContext;
+}
+
 export type CliRun = HookRun;
 
 /** A fresh empty temp directory to stand in for `~/.crank` in a child process. */

@@ -8,6 +8,7 @@ import {
   runHook,
   enableDebugConfig,
   holdCodeDb,
+  hookContext,
   queryCodeDb,
   readDebugLog,
   type DebugRecord,
@@ -257,10 +258,7 @@ describe("debug logging (black-box)", () => {
     fs.mkdirSync(path.join(root, ".crank/debug.log"));
 
     const run = runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain(
-      "## crank-mem (project memory)",
-    );
+    expect(hookContext(run)).toContain("## crank-mem (project memory)");
   });
 
   test("an oversized log is restarted rather than grown without bound", () => {

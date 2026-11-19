@@ -2,7 +2,14 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { makeCrankHome, makeCrankProject, plantMemory, runHook, seedMemory } from "./helpers.ts";
+import {
+  hookContext,
+  makeCrankHome,
+  makeCrankProject,
+  plantMemory,
+  runHook,
+  seedMemory,
+} from "./helpers.ts";
 import { defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { CODE_BULLET, INJECTION_HEADING, RECALL_BULLET } from "../src/hooks/lib/injection.ts";
 import { claudeSessionStart, claudeSubagentStart } from "./fixtures/payloads.ts";
@@ -28,10 +35,7 @@ function context(root: string): string {
   const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(root, "Explore")), undefined, {
     CRANK_HOME: HOME,
   });
-  expect(run.status).toBe(0);
-  const out = JSON.parse(run.stdout);
-  expect(out.hookSpecificOutput.hookEventName).toBe("SubagentStart");
-  return out.hookSpecificOutput.additionalContext;
+  return hookContext(run, "SubagentStart");
 }
 
 describe("subagent-start hook (black-box)", () => {
@@ -143,8 +147,7 @@ describe("subagent-start hook (black-box)", () => {
     fs.appendFileSync(path.join(ws.H, ".crank/cerebrum.md"), `${bullet}\n`);
 
     const run = runHook(HOOK, JSON.stringify(claudeSubagentStart(ws.H, "Explore")), ws.H, env);
-    expect(run.status).toBe(0);
-    const ctx: string = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    const ctx = hookContext(run);
     expect(ctx).toContain(
       `${bullet} [cited file modified after this note; check: payments-api/src/a.ts]`,
     );

@@ -13,6 +13,7 @@ import { projectName } from "../src/hooks/lib/owner.ts";
 import { installedStores, registerProject, rootOfName } from "../src/hooks/lib/registry.ts";
 import {
   holdCodeDb,
+  hookContext,
   makeCrankHome,
   makeCrankProject,
   plantCodeDb,
@@ -81,14 +82,10 @@ function sessionStart(cwd: string, home: string) {
   return runHook(HOOK, JSON.stringify(claudeSessionStart(cwd)), undefined, { CRANK_HOME: home });
 }
 
-function context(stdout: string): string {
-  return JSON.parse(stdout).hookSpecificOutput.additionalContext;
-}
-
 describe("ownership", () => {
   test("session start and the CLI resolve their project by the walk rule", () => {
     const ws = workspace();
-    expect(context(sessionStart(ws.H, ws.home).stdout)).toContain("project H.");
+    expect(hookContext(sessionStart(ws.H, ws.home))).toContain("project H.");
     const clone = sessionStart(ws.clone, ws.home);
     expect(clone).toMatchObject({ status: 0, stdout: "" });
     expect(runCli(ws.clone, ["search", "x"], { CRANK_HOME: ws.home })).toEqual({
@@ -96,8 +93,8 @@ describe("ownership", () => {
       stdout: "",
       stderr: "crank-mem: not initialized here — run `crank-mem init` first.\n",
     });
-    expect(context(sessionStart(ws.submodule, ws.home).stdout)).toContain("project H.");
-    expect(context(sessionStart(ws.worktree, ws.home).stdout)).toContain("project payments-api.");
+    expect(hookContext(sessionStart(ws.submodule, ws.home))).toContain("project H.");
+    expect(hookContext(sessionStart(ws.worktree, ws.home))).toContain("project payments-api.");
     expect(sessionStart(ws.scratch, ws.home)).toMatchObject({ status: 0, stdout: "" });
     expect(fs.existsSync(path.join(ws.worktree, ".crank"))).toBe(false);
 
@@ -105,7 +102,7 @@ describe("ownership", () => {
       path.join(ws.worktree, ".git"),
       "gitdir: ../payments-api/.git/worktrees/payments-api-wt\n",
     );
-    expect(context(sessionStart(ws.worktree, ws.home).stdout)).toContain("project payments-api.");
+    expect(hookContext(sessionStart(ws.worktree, ws.home))).toContain("project payments-api.");
 
     // A worktree with its own config still reads the main store, with git failing.
     const crankDir = path.join(ws.worktree, CRANK_DIR);

@@ -14,7 +14,7 @@ import {
   removeAllowRule,
 } from "../src/cli/settings.ts";
 import { vendorHooks } from "../src/cli/vendor.ts";
-import { ALLOW_RULES, childEnv, makeCrankProject } from "./helpers.ts";
+import { ALLOW_RULES, childEnv, hookContext, makeCrankProject } from "./helpers.ts";
 import { claudeSessionStart } from "./fixtures/payloads.ts";
 
 function tmpFile(name = "settings.json"): string {
@@ -132,7 +132,7 @@ function runWired(command: string, root: string, stdin = "{}") {
     timeout: 15_000,
     env: childEnv({ CLAUDE_PROJECT_DIR: root }),
   });
-  return { status: res.status ?? -1, stdout: res.stdout };
+  return { status: res.status ?? -1, stdout: res.stdout, stderr: res.stderr };
 }
 
 describe("wired commands", () => {
@@ -154,8 +154,7 @@ describe("wired commands", () => {
     vendorHooks(path.join(root, ".crank"));
     const command = crankHooks("bun", "claude").SessionStart![0]!.hooks[0]!.command;
     const run = runWired(command, root, JSON.stringify(claudeSessionStart(root)));
-    expect(run.status).toBe(0);
-    expect(JSON.parse(run.stdout).hookSpecificOutput.additionalContext).toContain("cerebrum");
+    expect(hookContext(run)).toContain("cerebrum");
   });
 });
 
