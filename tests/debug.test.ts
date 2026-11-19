@@ -8,6 +8,7 @@ import {
   runHook,
   enableDebugConfig,
   readDebugLog,
+  type DebugRecord,
 } from "./helpers.ts";
 import {
   claudeSessionStart,
@@ -51,27 +52,27 @@ describe("debug logging (black-box)", () => {
     }
 
     // Session start records the refresh counters and the injection size.
-    const refresh = records[0]!.events.find((e: any) => e.event === "graph-refresh");
-    expect(refresh.added).toBe(2);
-    expect(refresh.removed).toBe(0);
-    expect(refresh.partial).toBe(false);
-    const injected = records[0]!.events.find((e: any) => e.event === "injected");
-    expect(injected.fileCount).toBe(2);
-    expect(injected.source).toBe("startup");
-    expect(injected.injectionTokens).toBeGreaterThan(0);
+    const refresh = records[0]!.events.find((e) => e.event === "graph-refresh");
+    expect(refresh!.added).toBe(2);
+    expect(refresh!.removed).toBe(0);
+    expect(refresh!.partial).toBe(false);
+    const injected = records[0]!.events.find((e) => e.event === "injected");
+    expect(injected!.fileCount).toBe(2);
+    expect(injected!.source).toBe("startup");
+    expect(injected!.injectionTokens).toBeGreaterThan(0);
     // Session start never reads journal.md, so the event carries no journal counts.
-    expect(Object.keys(injected).filter((k) => k.startsWith("journal"))).toEqual([]);
+    expect(Object.keys(injected!).filter((k) => k.startsWith("journal"))).toEqual([]);
 
     // A write lands in code.db.
     const writeEvents = records[1]!.events;
-    expect(writeEvents.find((e: any) => e.event === "reindex")).toMatchObject({ paths: ["a.ts"] });
+    expect(writeEvents.find((e) => e.event === "reindex")).toMatchObject({ paths: ["a.ts"] });
   });
 
   test("a payload without cwd finds the project from the process cwd, and every hook logs a record", () => {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     enableDebugConfig(root);
     const transcript = path.join(root, "t.jsonl");
-    const hooks: Array<[string, object]> = [
+    const hooks: Array<[string, Record<string, unknown>]> = [
       ["session-start", claudeSessionStart(root)],
       ["subagent-start", claudeSubagentStart(root)],
       ["post-write", claudePostWrite(root, "a.ts")],
@@ -80,7 +81,7 @@ describe("debug logging (black-box)", () => {
       ["session-end", claudeSessionEnd(root, transcript)],
     ];
     for (const [hook, payload] of hooks) {
-      const { cwd: _, ...withoutCwd } = payload as Record<string, unknown>;
+      const { cwd: _, ...withoutCwd } = payload;
       const run = runHook(`src/hooks/${hook}.ts`, JSON.stringify(withoutCwd), root);
       expect(run.status).toBe(0);
     }
@@ -93,7 +94,7 @@ describe("debug logging (black-box)", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "crank-bare-"));
     const home = makeCrankHome();
     const transcript = path.join(bare, "t.jsonl");
-    const hooks: Array<[string, object]> = [
+    const hooks: Array<[string, Record<string, unknown>]> = [
       ["stop", claudeStop(bare)],
       ["session-end", claudeSessionEnd(bare, transcript)],
       ["post-write", claudePostWrite(bare, "a.ts")],
@@ -156,11 +157,11 @@ describe("debug logging (black-box)", () => {
     }
 
     const events = readDebugLog(root)[1]!.events;
-    expect(events.find((e: any) => String(e.event).startsWith("graph"))).toMatchObject({
+    expect(events.find((e) => String(e.event).startsWith("graph"))).toMatchObject({
       event: "graph-skip",
       status: "busy",
     });
-    expect(events.some((e: any) => e.event === "reindex")).toBe(false);
+    expect(events.some((e) => e.event === "reindex")).toBe(false);
   });
 
   test("a throwing hook body: exit 0, stderr message, full stack in the log", () => {
@@ -184,7 +185,7 @@ describe("debug logging (black-box)", () => {
   // editing a file the index does not cover.
   describe("post-write records why a write produced nothing to index", () => {
     const noOps = (root: string) =>
-      readDebugLog(root)[0]!.events.find((e: any) => e.event === "no-write-ops");
+      readDebugLog(root)[0]!.events.find((e) => e.event === "no-write-ops");
 
     test("a write that produces nothing to index records its reason: outside-root with the directory, no-path, owner-root, apply_patch skips and unhandled-tool", () => {
       const root = makeCrankProject({ "a.ts": "const a = 1;" });
@@ -245,7 +246,7 @@ describe("debug logging (black-box)", () => {
       // A held store would stall any writer — reaching it at all is the failure.
       runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
       const release = holdStore(root);
-      let events: any[];
+      let events: DebugRecord["events"];
       try {
         const run = runHook(
           POST_WRITE,
@@ -257,11 +258,11 @@ describe("debug logging (black-box)", () => {
       } finally {
         release();
       }
-      expect(events.find((e: any) => e.event === "no-write-ops")).toMatchObject({
+      expect(events.find((e) => e.event === "no-write-ops")).toMatchObject({
         reason: "crank-internal",
       });
-      expect(events.some((e: any) => String(e.event).startsWith("graph"))).toBe(false);
-      expect(events.some((e: any) => e.event === "reindex")).toBe(false);
+      expect(events.some((e) => String(e.event).startsWith("graph"))).toBe(false);
+      expect(events.some((e) => e.event === "reindex")).toBe(false);
     });
   });
 

@@ -66,6 +66,17 @@ function digest(
   };
 }
 
+const P1 = { uuid: "u-1", timestamp: "2026-11-02T10:00:00.123Z" };
+const P2 = { uuid: "u-2", timestamp: "2026-11-02T10:05:00.456Z" };
+
+const summary = (next_steps: string) => ({
+  request: "r",
+  investigated: "i",
+  learned: "l",
+  completed: "c",
+  next_steps,
+});
+
 /** A store built from the frozen version-1 schema, at user_version 1. */
 function v1File(): string {
   const file = tmpFile();
@@ -324,9 +335,6 @@ describe("store by root", () => {
 });
 
 describe("appendDigest", () => {
-  const P1 = { uuid: "u-1", timestamp: "2026-11-02T10:00:00.123Z" };
-  const P2 = { uuid: "u-2", timestamp: "2026-11-02T10:05:00.456Z" };
-
   test("a stored digest reads back with the literal values it went in with", () => {
     const file = tmpFile();
     const memory = writable(file);
@@ -458,9 +466,6 @@ describe("appendDigest", () => {
 });
 
 describe("refs and links", () => {
-  const P1 = { uuid: "u-1", timestamp: "2026-11-02T10:00:00.123Z" };
-  const P2 = { uuid: "u-2", timestamp: "2026-11-02T10:05:00.456Z" };
-
   test("refs pair a file with other projects' files, newest first", () => {
     const memory = writable();
     expect(memory.links()).toEqual([]);
@@ -508,13 +513,6 @@ describe("refs and links", () => {
 
   test("share rows are never the latest summary", () => {
     const memory = writable();
-    const summary = (next_steps: string) => ({
-      request: "r",
-      investigated: "i",
-      learned: "l",
-      completed: "c",
-      next_steps,
-    });
     expect(
       memory.appendDigest(digest("s", null, P1, { origin: null, summary: summary("Ship it") })),
     ).toBe("appended");
@@ -557,9 +555,6 @@ describe("refs and links", () => {
 });
 
 describe("proposals and stale flags", () => {
-  const P1 = { uuid: "u-1", timestamp: "2026-11-02T10:00:00.123Z" };
-  const P2 = { uuid: "u-2", timestamp: "2026-11-02T10:05:00.456Z" };
-
   test("proposals dedupe on the bullet without its dates, case or spacing", () => {
     const memory = writable();
     const propose = (n: number, bullet: string) => {
@@ -817,13 +812,6 @@ describe("read methods", () => {
       lastConsolidation: null,
     });
     const n1 = { uuid: "a", timestamp: "2026-11-02T10:00:00.000Z" };
-    const summary = (next_steps: string) => ({
-      request: "r",
-      investigated: "i",
-      learned: "l",
-      completed: "c",
-      next_steps,
-    });
     memory.appendDigest(
       digest("s1", null, n1, {
         costUsd: 0.01,

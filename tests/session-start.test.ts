@@ -30,6 +30,13 @@ import { workspace } from "./workspace.ts";
 
 const HOOK = "src/hooks/session-start.ts";
 
+/** Merge `patch` over the project's .crank/config.json. */
+function configure(root: string, patch: Record<string, unknown>): void {
+  const file = path.join(root, ".crank/config.json");
+  const config = JSON.parse(fs.readFileSync(file, "utf-8"));
+  fs.writeFileSync(file, JSON.stringify({ ...config, ...patch }));
+}
+
 describe("session-start hook (black-box)", () => {
   test("Claude payload: exit 0, injects context, refreshes code.db", () => {
     const root = makeCrankProject({
@@ -194,16 +201,6 @@ describe("cerebrum index (black-box)", () => {
   // Without upkeep protocols the default 8,192 bytes leave the excerpt under
   // the token cap alone, so these tests shrink the budget until bytes bind.
   const BUDGET = 5632;
-  const setBudget = (root: string): void => {
-    const configPath = path.join(root, ".crank/config.json");
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        ...JSON.parse(fs.readFileSync(configPath, "utf-8")),
-        injection_budget_bytes: BUDGET,
-      }),
-    );
-  };
 
   // 7 preferences over PREFS_TOKEN_CAP, 21 memory bullets and an ADR list
   // overflow the budget, so the excerpt must hide bullets and name every one it hides.
@@ -224,7 +221,7 @@ describe("cerebrum index (black-box)", () => {
     for (const f of ["0001-scaffold-points.md", "0002-pad-solid.md", "0003-tilt-cap.md"]) {
       fs.writeFileSync(path.join(root, "docs/adr", f), "# x");
     }
-    setBudget(root);
+    configure(root, { injection_budget_bytes: BUDGET });
 
     const ctx = inject(root);
     expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(BUDGET);
@@ -260,11 +257,6 @@ describe("vendored-hook drift (black-box)", () => {
       JSON.stringify({ name: "crank-mem", version }),
     );
     return dir;
-  }
-  function configure(root: string, patch: Record<string, unknown>): void {
-    const file = path.join(root, ".crank/config.json");
-    const config = JSON.parse(fs.readFileSync(file, "utf-8"));
-    fs.writeFileSync(file, JSON.stringify({ ...config, ...patch }));
   }
   function injectWith(patch: Record<string, unknown>): string {
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
@@ -444,14 +436,7 @@ describe("digests running (black-box)", () => {
     );
     expect(Buffer.byteLength(injectIn(root, home), "utf-8")).toBeLessThanOrEqual(8192);
 
-    const configPath = path.join(root, ".crank/config.json");
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        ...JSON.parse(fs.readFileSync(configPath, "utf-8")),
-        injection_budget_bytes: 100,
-      }),
-    );
+    configure(root, { injection_budget_bytes: 100 });
     const ctx = injectIn(root, home);
     expect(ctx.startsWith("## crank-mem (project memory)\n\n")).toBe(true);
     expect(ctx.endsWith("Existing ADRs are settled — don't relitigate them.")).toBe(true);
@@ -690,7 +675,7 @@ describe("session-start writes code.db", () => {
     runHook(HOOK, JSON.stringify(claudeSessionStart(root)), undefined, env);
   const graphEvents = (root: string) =>
     readDebugLog(root)
-      .flatMap((r) => r.events as Array<Record<string, unknown>>)
+      .flatMap((r) => r.events)
       .filter((e) => String(e.event).startsWith("graph"));
   /** A fresh crank home, so a daemon an earlier run started cannot satisfy this run's `ensureDaemon`. */
   const freshHome = () => {
@@ -729,7 +714,7 @@ describe("session-start writes code.db", () => {
       );
       const events = readDebugLog(root)
         .slice(logged)
-        .flatMap((r) => r.events as Array<Record<string, unknown>>);
+        .flatMap((r) => r.events);
       expect(events.filter((e) => String(e.event).startsWith("graph"))).toHaveLength(1);
     } finally {
       holder.kill("SIGKILL");

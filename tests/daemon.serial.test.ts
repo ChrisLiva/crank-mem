@@ -38,6 +38,7 @@ import {
 } from "./helpers.ts";
 import { digestRequest } from "../src/daemon/digest-prompt.ts";
 import { refreshGraph } from "../src/cli/code-parse.ts";
+import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import { openCodeDb, pendingCount, refreshFileFacts } from "../src/hooks/lib/code-db.ts";
 import { loadConfig } from "../src/hooks/lib/config.ts";
 import { registerProject } from "../src/hooks/lib/registry.ts";
@@ -904,7 +905,7 @@ describe("daemon recovery", () => {
 
     const run = runCli(tempDir("crank-nowhere-"), ["digest", "resume"], e.env);
     expect(run.status).toBe(0);
-    expect(fs.existsSync(path.join(e.home, "digest-state.json"))).toBe(false);
+    expect(fs.existsSync(path.join(e.home, STOP_FILE))).toBe(false);
     await waitFor(() => spoolFiles(e.home).length === 0, 20_000);
     daemonPid(e.home);
     expectOneRow(root, "EEXIST");

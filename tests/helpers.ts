@@ -286,17 +286,14 @@ export function runInstalled(
 ): CliRun {
   // `init` and `upgrade` start a daemon on files that await a parse; a stop state for the run keeps
   // that daemon out of tests that assert on release checks, pruning and daemon files.
-  const quiet = (args[0] === "init" || args[0] === "upgrade") && readStop(home) === null;
+  const quiet =
+    (args[0] === "init" || args[0] === "upgrade") && !fs.existsSync(path.join(home, STOP_FILE));
   if (quiet) stopDigests(home);
   try {
     return spawnInstalled(home, cwd, args, env);
   } finally {
     if (quiet) fs.rmSync(path.join(home, STOP_FILE), { force: true });
   }
-}
-
-function readStop(home: string): unknown {
-  return fs.existsSync(path.join(home, STOP_FILE)) ? true : null;
 }
 
 function spawnInstalled(
@@ -386,14 +383,24 @@ export function enableDebugConfig(root: string): void {
   saveConfig(crankDir, { ...defaultConfig(), debug: true });
 }
 
+/** One .crank/debug.log line: what `flushDebug` and `runAdvisoryHook` write. */
+export type DebugRecord = {
+  hook: string;
+  ok: boolean;
+  ms: number;
+  ts: string;
+  error?: string;
+  events: Array<{ event: string; [k: string]: unknown }>;
+};
+
 /** Parsed .crank/debug.log records, oldest first ([] when the log is absent). */
-export function readDebugLog(root: string): Array<Record<string, any>> {
+export function readDebugLog(root: string): DebugRecord[] {
   try {
     return fs
       .readFileSync(path.join(root, ".crank/debug.log"), "utf-8")
       .split("\n")
       .filter((l) => l.trim())
-      .map((l) => JSON.parse(l));
+      .map((l) => JSON.parse(l) as DebugRecord);
   } catch {
     return [];
   }
@@ -1124,7 +1131,7 @@ export function rerun(
 /** The recorded stop state under a crank home, or null when digests are not stopped. */
 export function stopState(home: string): { reason: string; atMs: unknown; detail: unknown } | null {
   try {
-    return JSON.parse(fs.readFileSync(path.join(home, "digest-state.json"), "utf8"));
+    return JSON.parse(fs.readFileSync(path.join(home, STOP_FILE), "utf8"));
   } catch {
     return null;
   }

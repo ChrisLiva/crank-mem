@@ -7,6 +7,7 @@ import { EMBED_MODEL } from "../src/daemon/embedder.ts";
 import { redact } from "../src/daemon/redact.ts";
 import { CRANK_DIR, defaultConfig, saveConfig } from "../src/hooks/lib/config.ts";
 import { parseHandle, readStoreSync, type Position } from "../src/hooks/lib/memory.ts";
+import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import {
   REPO_ROOT,
   appendRecords,
@@ -309,7 +310,7 @@ describe("digest job (black-box)", () => {
     // Stopped digests: exit 0, entry kept.
     const stopped = journey(digestProject({}, temps), scenarios, { skipJob: true });
     fs.writeFileSync(
-      path.join(stopped.home, "digest-state.json"),
+      path.join(stopped.home, STOP_FILE),
       JSON.stringify({ reason: "login", atMs: 1, detail: "x" }),
     );
     const stoppedRun = runCli(stopped.root, ["job", "s1"], {

@@ -274,7 +274,7 @@ describe("post-write writes code.db", () => {
     expect(write(root, "b.ts", "export const b = 1;\n").status).toBe(0);
     expect(fs.readFileSync(file).equals(before)).toBe(true);
     const graph = readDebugLog(root)
-      .flatMap((r) => r.events as Array<Record<string, unknown>>)
+      .flatMap((r) => r.events)
       .filter((e) => String(e.event).startsWith("graph"));
     expect(graph).toHaveLength(1);
     expect(graph[0]).toMatchObject({ event: "graph-skip", status: "rebuild" });

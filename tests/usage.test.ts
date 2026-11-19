@@ -153,7 +153,7 @@ describe("usage capture: the session-start line", () => {
 
   test("a Codex SessionStart records agent codex, and a session id that is not a string records a null session", () => {
     const root = makeCrankProject();
-    const payload = codexSessionStart(root) as Record<string, unknown>;
+    const payload = codexSessionStart(root);
     expect(payload.turn_id).toBeUndefined();
     expect(sessionStart(root, payload).status).toBe(0);
     const [line] = usageLines(root);
@@ -249,7 +249,7 @@ describe("usage capture: the subagent-start line", () => {
     expect(dir!.recallPointer).toBe(false);
 
     const untyped = makeCrankProject();
-    const payload = claudeSubagentStart(untyped) as Record<string, unknown>;
+    const payload = claudeSubagentStart(untyped);
     delete payload.agent_type;
     expect(subagentStart(untyped, payload).status).toBe(0);
     const [line] = usageLines(untyped);
@@ -357,10 +357,7 @@ describe("usage capture: post-read early returns", () => {
     const newer = makeCrankProject({ "a.ts": "a\n" });
     plantMemory(newer, "newer");
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "crank-outside-"));
-    const noStem = claudePostRead(root, path.join(root, "a.ts"), TRANSCRIPT) as Record<
-      string,
-      unknown
-    >;
+    const noStem = claudePostRead(root, path.join(root, "a.ts"), TRANSCRIPT);
     delete noStem.transcript_path;
 
     const runs = [

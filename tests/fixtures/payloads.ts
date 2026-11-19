@@ -2,7 +2,7 @@
 // Codex 0.144.5). Shapes are real; ids and paths are anonymized. `cwd` is
 // patched in by tests.
 
-export function claudeSessionStart(cwd: string): object {
+export function claudeSessionStart(cwd: string): Record<string, unknown> {
   return {
     session_id: "a46b6073-1111-2222-3333-444455556666",
     transcript_path: "/Users/u/.claude/projects/-proj/a46b6073.jsonl",
@@ -13,7 +13,7 @@ export function claudeSessionStart(cwd: string): object {
 }
 
 // Codex SessionStart carries no turn_id (ADR 0007, verbatim payload).
-export function codexSessionStart(cwd: string): object {
+export function codexSessionStart(cwd: string): Record<string, unknown> {
   return {
     session_id: "019f6e07-aaaa-bbbb-cccc-ddddeeeeffff",
     transcript_path: "/Users/u/.codex/sessions/2026/10/13/rollout-2026-10-13T11-14-58-019f6e07-aaaa-bbbb-cccc-ddddeeeeffff.jsonl",
@@ -25,7 +25,7 @@ export function codexSessionStart(cwd: string): object {
   };
 }
 
-export function claudeStop(cwd: string, stopHookActive = false): object {
+export function claudeStop(cwd: string, stopHookActive = false): Record<string, unknown> {
   return {
     session_id: "a46b6073-1111-2222-3333-444455556666",
     transcript_path: "/Users/u/.claude/projects/-proj/a46b6073.jsonl",
@@ -35,7 +35,7 @@ export function claudeStop(cwd: string, stopHookActive = false): object {
   };
 }
 
-export function claudePostWrite(cwd: string, filePath: string): object {
+export function claudePostWrite(cwd: string, filePath: string): Record<string, unknown> {
   return {
     session_id: "a46b6073-1111-2222-3333-444455556666",
     transcript_path: "/Users/u/.claude/projects/-proj/a46b6073.jsonl",
@@ -51,7 +51,7 @@ export function claudePostWrite(cwd: string, filePath: string): object {
   };
 }
 
-export function claudePostEdit(cwd: string, filePath: string): object {
+export function claudePostEdit(cwd: string, filePath: string): Record<string, unknown> {
   return {
     ...claudePostWrite(cwd, filePath),
     tool_name: "Edit",
@@ -59,7 +59,7 @@ export function claudePostEdit(cwd: string, filePath: string): object {
   };
 }
 
-export function codexApplyPatch(cwd: string, patchText: string): object {
+export function codexApplyPatch(cwd: string, patchText: string): Record<string, unknown> {
   return {
     session_id: "019f6e07-aaaa-bbbb-cccc-ddddeeeeffff",
     turn_id: "019f6e07-1111-2222-3333-444455556666",
@@ -77,7 +77,7 @@ export function codexApplyPatch(cwd: string, patchText: string): object {
 
 // Live-probed 2026-10-13, Claude Code 2.1.296 (ADR 0007). session_id and
 // transcript_path name the parent session.
-export function claudeSubagentStart(cwd: string, agentType = "general-purpose"): object {
+export function claudeSubagentStart(cwd: string, agentType = "general-purpose"): Record<string, unknown> {
   return {
     session_id: "5195319c-1111-2222-3333-444455556666",
     transcript_path: "/Users/u/.claude/projects/-proj/5195319c.jsonl",
@@ -90,7 +90,7 @@ export function claudeSubagentStart(cwd: string, agentType = "general-purpose"):
 }
 
 // Live-probed 2026-11-02, Claude Code 2.1.316 (ADR 0009).
-export function claudeSessionEnd(cwd: string, transcriptPath: string): object {
+export function claudeSessionEnd(cwd: string, transcriptPath: string): Record<string, unknown> {
   return {
     session_id: "7c2e9f14-1111-2222-3333-444455556666",
     transcript_path: transcriptPath,
@@ -103,7 +103,7 @@ export function claudeSessionEnd(cwd: string, transcriptPath: string): object {
 }
 
 // Live-probed 2026-11-02, Claude Code 2.1.316 (ADR 0009).
-export function claudePostRead(cwd: string, filePath: string, transcriptPath: string, agentId?: string): object {
+export function claudePostRead(cwd: string, filePath: string, transcriptPath: string, agentId?: string): Record<string, unknown> {
   return {
     session_id: "551be959-1111-2222-3333-444455556666",
     transcript_path: transcriptPath,
@@ -119,7 +119,7 @@ export function claudePostRead(cwd: string, filePath: string, transcriptPath: st
 }
 
 // Live-probed 2026-11-02, Claude Code 2.1.316 (ADR 0009).
-export function claudePostBash(cwd: string, command: string, transcriptPath: string): object {
+export function claudePostBash(cwd: string, command: string, transcriptPath: string): Record<string, unknown> {
   return {
     session_id: "551be959-1111-2222-3333-444455556666",
     transcript_path: transcriptPath,

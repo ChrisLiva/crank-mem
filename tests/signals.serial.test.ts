@@ -2,6 +2,7 @@ import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import { STOP_FILE } from "../src/hooks/lib/user-state.ts";
 import {
   REPO_ROOT,
   digestProject,
@@ -85,7 +86,7 @@ describe("hook-started daemon (black-box)", () => {
   test("a stop file or digest off starts no daemon", async () => {
     const stopped = daemonEnv();
     fs.writeFileSync(
-      path.join(stopped.home, "digest-state.json"),
+      path.join(stopped.home, STOP_FILE),
       JSON.stringify({ reason: "login", atMs: 1, detail: "x" }),
     );
     const on = digestProject({ clone_root: REPO_ROOT });

@@ -56,10 +56,13 @@ describe("loadConfig sanitization", () => {
     const dir = dirWithConfig(
       JSON.stringify({ injection_budget_tokens: 5000, my_own_key: "kept" }),
     );
-    const config = loadConfig(dir) as unknown as Record<string, unknown>;
-    expect(config.injection_budget_tokens).toBeUndefined();
-    expect(config.injection_budget_bytes).toBe(defaultConfig().injection_budget_bytes);
-    expect(config.my_own_key).toBe("kept"); // unknown keys still survive
+    const config = loadConfig(dir);
+    expect(config).not.toHaveProperty("injection_budget_tokens");
+    // unknown keys still survive
+    expect(config).toMatchObject({
+      my_own_key: "kept",
+      injection_budget_bytes: defaultConfig().injection_budget_bytes,
+    });
   });
 
   test("zero, negative and non-finite numbers rejected", () => {
