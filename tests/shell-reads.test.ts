@@ -31,6 +31,7 @@ describe("shellReadPaths", () => {
       ['cat a.ts <<<"v"\ncat src/foo.ts', ["a.ts", "src/foo.ts"]],
       ["cat <<-EOF\n\tbody\n\tEOF\ncat src/foo.ts", ["src/foo.ts"]],
       ["cat <<-EOF\nbody\nEOF\ncat src/foo.ts", ["src/foo.ts"]],
+      ["cat <<- EOF\n\tbody\n\tEOF\ncat src/foo.ts", ["src/foo.ts"]],
       ["grep foo a.ts", []],
       ["rg foo", []],
       ["cat", []],

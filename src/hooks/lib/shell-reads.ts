@@ -153,7 +153,7 @@ function readerArgs(rest: string[]): string[] {
   const args: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i]!;
-    if (BARE_REDIRECT.test(w) || w === "<<" || w === "<<<") i++;
+    if (BARE_REDIRECT.test(w) || w === "<<" || w === "<<-" || w === "<<<") i++;
     else if (ATTACHED_REDIRECT.test(w) || w === "<" || w.startsWith("<<") || w.startsWith("-"))
       continue;
     else args.push(w);
