@@ -2,21 +2,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { isSensitiveFile } from "./config.ts";
 
-// Opt-in observability for the hook paths.
-//
-// Hooks are advisory-only and silent by design: stderr reaches only the
-// terminal, never the model (ADR 0001), so a hook that has been throwing since
-// install leaves no record in the project. This writes one JSONL record per
-// hook run to .crank/debug.log so that failure has a trace.
+// Opt-in trace of the hook paths: one JSONL record per hook run in
+// .crank/debug.log. Hooks are silent by design, since stderr never reaches the
+// model (ADR 0001), so a hook that throws leaves no other record.
 //
 // Three rules this module must never break:
-//  1. It never throws. A broken logger must not break an agent session — the
-//     same invariant the hooks themselves hold, applied to the thing watching.
-//  2. It never writes to stdout. That is the hookSpecificOutput protocol
-//     channel and a stray byte corrupts the injection.
-//  3. It never logs a sensitive path. The indexer refuses to read .env and
-//     friends; the debug log must not leak by the back door what the index
-//     deliberately excludes.
+//  1. It never throws.
+//  2. It never writes to stdout, the hookSpecificOutput channel.
+//  3. It never records a sensitive path.
 
 export const LOG_FILE = "debug.log";
 /** Past this, the log is discarded and restarted — a debug trace, not an audit log. */
@@ -60,7 +53,7 @@ export function safePath(relPath: string): string {
 
 /**
  * Append this run's record and reset the buffer. Called once, from the hook
- * epilogue. Swallows every error — logging failure is never a session failure.
+ * epilogue.
  */
 export function flushDebug(record: Record<string, unknown>): void {
   const dest = target;

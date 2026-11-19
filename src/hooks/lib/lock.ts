@@ -33,7 +33,6 @@ interface LockBody {
   acquiredAt: number;
 }
 
-/** Dependency-free synchronous sleep. */
 function sleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }

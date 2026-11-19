@@ -6,13 +6,10 @@ import { debugEvent } from "./debug.ts";
 // The memory files under .crank/: their names, cerebrum's size limits, and the
 // backup helpers that find crank-mem's own copies of them.
 
-// Past either of these, cerebrum has likely accumulated stale or bloated
-// entries. Consolidation skips an add that would cross either limit
-// (cerebrum-edit.ts → applyEdits); removes and replaces are unbounded, and
-// nothing truncates the file. The token limit catches the file that stays under the line count by packing paragraphs
-// into a handful of very long bullets; it measures with the same prose estimate
-// injection.ts uses on this file, and sits well above CEREBRUM_INJECT_TOKEN_CAP
-// (only an excerpt is ever injected).
+// Consolidation skips an add that would cross either limit (cerebrum-edit.ts →
+// applyEdits); removes and replaces are unbounded. The token limit sits beside
+// the line limit to catch a file that stays under the line count by packing
+// paragraphs into a few very long bullets.
 export const PRUNE_LINE_LIMIT = 150;
 export const PRUNE_TOKEN_LIMIT = 3000;
 

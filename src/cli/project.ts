@@ -5,8 +5,6 @@ import { isInstalled } from "../hooks/lib/owner.ts";
 import { findProjectRoot } from "../hooks/lib/hook-io.ts";
 import type { StoreMigration } from "../hooks/lib/memory.ts";
 
-// Shared "is crank-mem initialized here?" guard for CLI commands.
-
 const NOT_INITIALIZED = "crank-mem: not initialized here — run `crank-mem init` first.";
 
 export interface OpenedProject {

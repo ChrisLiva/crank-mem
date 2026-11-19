@@ -1,11 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-// One-line file descriptions for code.db's files table. First hit wins:
-// package.json "description", known filename, any .json "description",
-// markdown heading, Python module docstring, comments above the first line of
-// code, first declaration. Reads at most HEAD_BYTES; result capped at
-// MAX_DESC_CHARS.
+// One-line file descriptions for code.db's files table. First hit wins; reads
+// at most HEAD_BYTES; capped at MAX_DESC_CHARS.
 
 const HEAD_BYTES = 12 * 1024;
 export const MAX_DESC_CHARS = 150;

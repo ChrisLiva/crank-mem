@@ -30,17 +30,9 @@ import type { ObservationLine } from "./lib/wire.ts";
 
 // PostToolUse hook for Claude's Read and Bash, Claude Code only (ADR 0009).
 // When the agent reads a file memory has observations on, it adds that file's
-// newest lines from the store of the project that owns it, once per file per
-// agent per session. After a file's own section come up to PAIRED_FILES sections
-// for the other projects' files its observations cite, read from those projects'
-// stores and never marked seen. Each read's history and pairs are followed by its
-// "Used by" section (`usedBySection`), the caller files from the owner's code.db,
-// which needs no memory.db and counts toward MAX_CALL_BYTES only. After the reads
-// comes the callers section (`symbolLookup`): one line for each function, method or
-// class of the start project's code.db that a Bash grep searched for by name, once
-// per name per agent per session. Last comes at most one other project's cerebrum
-// excerpt (`excerptBlock`), once per project per agent per session.
-// Every path exits 0.
+// newest lines from the store of the project that owns it, plus the sections
+// each helper below documents. Each section shows once per agent per session,
+// except paired files, which are never marked seen. Every path exits 0.
 
 const HISTORY_LINES = 5;
 const PAIRED_FILES = 3;

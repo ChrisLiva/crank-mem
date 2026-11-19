@@ -172,10 +172,7 @@ export interface Memory {
   consolidationRows(q: { beforeId: number | null; limit: number }): ConsolidationRow[];
   activity(sinceMs: number): ActivityEvents;
   recordConsolidation(run: ConsolidationRecord): void;
-  /**
-   * The daily pass (store-upkeep's `dailyUpkeep`) at `nowMs`, default `Date.now()`. Null when not due;
-   * throws, before any delete, when the snapshot fails.
-   */
+  /** The daily pass: see store-upkeep's `dailyUpkeep`. */
   maintain(nowMs?: number): { snapshot: string; deleted: number } | null;
   close(): void;
 }

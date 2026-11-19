@@ -69,9 +69,7 @@ function abandonedTmp(dir: string, name: string): boolean {
 }
 
 /**
- * The daily pass. Null when the newest `.db` snapshot is no more than MAINTAIN_EVERY_MS old at nowMs.
- * Otherwise: writes `<fileStamp>.db`, calls deleteStale(nowMs - STALE_KEEP_MS), trims daily names
- * to DAILY_KEEP and removes every .tmp older than an hour. Throws, before deleteStale, when the snapshot fails.
+ * The daily pass. Null when not due. Throws, before deleteStale, when the snapshot fails.
  * `nowMs` sets only the due comparison and the stale cutoff: the snapshot's name is `fileStamp()`
  * and its mtime the real write time.
  */

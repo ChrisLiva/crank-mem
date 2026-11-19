@@ -14,15 +14,9 @@ import type { CrankConfig } from "./config.ts";
 import type { UsageEvent } from "./usage.ts";
 import { STORE_TEXT, type ObservationLine } from "./wire.ts";
 
-// Session-start injection: instructions (carrying a one-line pointer to the
-// code graph, the code pointer, and the recall pointer when recallApplies) → staleness/drift/
-// capture notes → the recall sections from memory.db (next steps, only while
-// digests run, then recent memory) → cerebrum excerpt → ADR filenames. No
-// digest state asks the agent to keep memory: the excerpt labels its sections
-// by name alone.
-//
-// The file list is not injected, only a one-line pointer to `crank-mem anatomy`. Inlining it
-// cost 74% of the injection; ADR 0005 records the measurement.
+// Session-start injection. The file list is not injected, only a one-line
+// pointer to `crank-mem anatomy`: inlining it cost 74% of the injection
+// (ADR 0005).
 
 /** Ceiling on the whole excerpt, set to catch a runaway file. */
 const CEREBRUM_INJECT_TOKEN_CAP = 1500;
@@ -34,9 +28,9 @@ export const MEMORY_RECENT_COUNT = 7;
 /** Width of one index entry: a bullet's opening words, enough to grep for. */
 export const INDEX_ENTRY_CHARS = 48;
 /**
- * Bytes of memory index, about 11 entries, kept ahead of the oldest recent
- * bullet under budget pressure, so a few long recent bullets cannot push every
- * hidden bullet's name out of the excerpt.
+ * Bytes of memory index (INDEX_ENTRY_CHARS-wide entries) kept ahead of the
+ * oldest recent bullet under budget pressure, so a few long recent bullets
+ * cannot push every hidden bullet's name out of the excerpt.
  */
 const MEMORY_INDEX_ALLOWANCE_BYTES = 600;
 /** First line of every injection; `crank-mem stats` finds it in Codex rollouts. */
@@ -181,13 +175,10 @@ export interface Excerpt {
  * sections read as one merged memory section.
  *
  * Bullets arrive whole, wrapped prose and sub-bullets included (see
- * lib/bullets.ts): half a learning is worse than none. The file's own headings
- * never appear inside a bucket; each bucket is labelled by its name alone.
+ * lib/bullets.ts): half a learning is worse than none.
  *
- * Every bullet left out, older memory or preferences over PREFS_TOKEN_CAP, is
- * listed after the excerpt by its first INDEX_ENTRY_CHARS characters, so an
- * agent can grep for it. Without the index, a warning that rotated out of the
- * recency slice was gone from every later session while still in the file.
+ * Every bullet left out is listed after the excerpt by its first
+ * INDEX_ENTRY_CHARS characters, so an agent can grep for it.
  *
  * Over either the token cap or `budgetBytes`, the oldest memory index entry
  * goes first while the memory index is over MEMORY_INDEX_ALLOWANCE_BYTES, then
@@ -197,8 +188,8 @@ export interface Excerpt {
  * and a user-stated preference outranks anything the agent inferred.
  *
  * `balanced` drops both index lists first, then the oldest bullet of whichever
- * kind takes more bytes, so a 2,048-byte budget still carries a memory bullet
- * when preferences alone would fill it. ADR 0007 records the measurements.
+ * kind takes more bytes, so the SUBAGENT_EXCERPT_BYTES budget still carries a
+ * memory bullet when preferences alone would fill it (ADR 0007).
  */
 export function excerptOf(
   md: string,
@@ -347,19 +338,13 @@ export interface Shown {
 }
 
 /**
- * Compose the injection under a hard byte cap.
+ * Compose the injection under a hard byte cap: an over-budget section is
+ * dropped. The ADR list's cost is reserved ahead of the cerebrum excerpt, so
+ * the excerpt is trimmed to what remains instead of evicting the ADRs.
  *
- * Sections are added in priority order and each must fit in what's left, so an
- * over-budget section is dropped rather than allowed to push the whole
- * injection past the cliff. The ADR list is rendered ahead of its turn and its
- * cost reserved, so the cerebrum excerpt — the only part that grows without a
- * natural bound — is trimmed to what remains instead of quietly evicting the
- * ADRs behind it.
- *
- * The instructions are exempt: they carry the anatomy pointer and the ADR protocol, so a
- * budget too small to hold them is a misconfiguration, not a reason to inject a
- * headless fragment. Consequence: the result can exceed `budgetBytes`, but only
- * by the fixed size of the instructions.
+ * The instructions are exempt: a budget too small to hold them is a
+ * misconfiguration, not a reason to inject a headless fragment, so the result
+ * can exceed `budgetBytes` by their fixed size.
  *
  * Returns the text, the excerpt counts that crank-mem stats reports (a null
  * excerpt without a cerebrum), and what each section showed.
@@ -483,10 +468,9 @@ type SubagentStartUsage = Extract<UsageEvent, { channel: "subagent-start" }>;
 
 /**
  * The SubagentStart injection. Read-only, with no index refresh: a compact
- * cerebrum excerpt labelled by section name, balanced at SUBAGENT_EXCERPT_BYTES,
- * CODE_BULLET (the outline/unfold pointer) with no gate, so a project root
- * always yields an injection, plus the recall pointer where recallApplies.
- * Returns the text and the usage event; the caller records the event.
+ * cerebrum excerpt, CODE_BULLET with no gate, so a project root always yields
+ * an injection, plus the recall pointer where recallApplies. Returns the text
+ * and the usage event; the caller records the event.
  */
 export function subagentInjection(
   root: string,
@@ -498,7 +482,6 @@ export function subagentInjection(
   const recall = recallApplies(running, storeStatus(root));
 
   const md = readCerebrum(crankDir);
-  // Balanced: at this budget the session-start order leaves no room for memory.
   const excerpt = md
     ? excerptOf(md, SUBAGENT_EXCERPT_BYTES, citationCheck({ root }), true).text
     : "";

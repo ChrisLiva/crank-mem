@@ -6,8 +6,7 @@ import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 import type { UntouchedRepo } from "./wire.ts";
 
 // The per-user list of git repos agents read or wrote that crank-mem is not installed in, kept at
-// <crank home>/untouched.json. post-write and post-read add to it, once per run; stats and the dashboard read it.
-// A list that cannot be read or written never changes a hook's outcome.
+// <crank home>/untouched.json. A list that cannot be read or written never changes a hook's outcome.
 
 export const UNTOUCHED_FILE = "untouched.json";
 const UNTOUCHED_LOCK_FILE = "untouched.lock";

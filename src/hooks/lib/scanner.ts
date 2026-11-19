@@ -25,10 +25,7 @@ export interface FileFacts {
   generated: boolean;
 }
 
-/**
- * The one gate for a path's facts: name checks, one stat, size gate, read, NUL sniff, then the
- * facts `code.db` keeps. Null on any rejection or I/O failure.
- */
+/** The one gate for a path's facts; null on any rejection or I/O failure. */
 export function fileFacts(rootDir: string, relPath: string, config: CrankConfig): FileFacts | null {
   if (!isIndexableName(relPath, config)) return null;
   const absPath = path.join(rootDir, relPath);

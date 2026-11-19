@@ -1,10 +1,4 @@
-// Markdown bullet grouping, shared by the cerebrum excerpt (injection.ts) and
-// consolidation (src/daemon/cerebrum-edit.ts). Cerebrum is prose, where a
-// single logical bullet routinely wraps across several physical lines and
-// carries sub-bullets — so "one bullet = one line" loses most of the content.
-//
-// Grouping is deliberately dumb: no inline markdown is parsed, and lines are
-// carried verbatim, so a block can be written back byte-identically.
+// Markdown bullet grouping that keeps wrapped lines and sub-bullets with their bullet, with lines carried verbatim.
 
 /** A `YYYY-MM-DD` date. Global: use matchAll, match or replace, never test or exec. */
 export const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
@@ -24,11 +18,9 @@ function appendOther(blocks: Block[], line: string): void {
 /**
  * Group lines into bullet blocks and everything else.
  *
- * A bullet opens at a top-level `- ` line and absorbs every following line —
- * wrapped prose, sub-bullets, blank separators — until the next top-level
- * bullet or a heading. A `#`-prefixed line is a hard boundary: it closes the
- * open bullet and is never absorbed into one, which is what keeps a nested
- * `### Heading` inside a section from being swallowed by the bullet above it.
+ * A bullet opens at a top-level `- ` line and absorbs every following line
+ * until the next top-level bullet or a heading. A `#`-prefixed line is a hard
+ * boundary, so a nested `### Heading` is never swallowed by the bullet above it.
  *
  * Every input line lands in exactly one block, in order, so
  * `blocks.flatMap((b) => b.lines)` reproduces the input.

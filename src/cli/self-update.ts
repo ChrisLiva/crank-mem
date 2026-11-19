@@ -17,14 +17,6 @@ import {
 import { checkNow, recheckIfBehind, writeUpdateState } from "./updates.ts";
 import { cliVersion, newer, versionsDir } from "./version.ts";
 
-// `crank-mem self-update`: downloads the latest release (or `--to <tag>`),
-// makes it `current`, prunes versions neither it nor this process nor a live
-// daemon or dashboard runs, then repairs every registered project from the
-// new version.
-// `--check` checks for a release now; `--auto` and `--check-daily` only
-// record their settings in update.json.
-// `crank-mem rollback`: prepares the previous installed version (its packages
-// and dashboard stamp), makes it `current` and repairs every project from it.
 // Going back to an older version, by either command, first checks that no
 // registered store's schema is newer than it.
 

@@ -289,7 +289,7 @@ function prepareWriter(db: sqlite.DatabaseSync): Writer {
   };
 }
 
-/** `crank-mem graph-job <root>` (internal: the daemon runs it): refresh the project's code.db for up to 60 s. */
+/** `crank-mem graph-job <root>` (internal: the daemon runs it): refresh the project's code.db for `GRAPH_JOB_MS`. */
 export async function run(args: string[]): Promise<number> {
   const root = args[0];
   if (root === undefined) {

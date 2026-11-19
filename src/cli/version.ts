@@ -18,7 +18,6 @@ export function versionAt(root: string): string {
   return typeof version === "string" ? version : "0.0.0";
 }
 
-/** Version of the running copy, from package.json. */
 export function cliVersion(): string {
   return versionAt(REPO_ROOT);
 }

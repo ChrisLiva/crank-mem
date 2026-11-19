@@ -1,7 +1,5 @@
 import * as path from "node:path";
 
-// Token estimation: chars ÷ 3.5 for code, ÷ 4.0 for prose, ÷ 3.75 otherwise.
-
 const CODE_EXTENSIONS = new Set([
   ".ts",
   ".js",

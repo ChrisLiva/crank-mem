@@ -159,7 +159,7 @@ function releaseVersion(dir: string): string | null {
 /**
  * Downloads the latest release, or the one `tag` names, checks it against its `.sha256`
  * and unpacks it into `versions/<version>`, keeping a version dir already there.
- * Install.sh's contract; a failure leaves `versions/` as it was.
+ * A failure leaves `versions/` as it was.
  */
 export async function fetchRelease(
   tag: string | null,

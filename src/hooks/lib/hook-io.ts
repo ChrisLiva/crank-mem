@@ -118,7 +118,6 @@ export function isProjectFile(root: string, rel: string): boolean {
   }
 }
 
-/** Emit model-visible context via hookSpecificOutput (both agents). */
 export function emitAdditionalContext(hookEventName: string, context: string): void {
   process.stdout.write(
     JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: context } }),

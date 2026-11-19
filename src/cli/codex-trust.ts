@@ -73,12 +73,7 @@ function readHooksMap(hooksJsonPath: string): HooksMap | null {
   return isObj(hooks) ? (hooks as HooksMap) : null;
 }
 
-/**
- * Compute the [hooks.state] entries for the crank handlers in a hooks map.
- * The key's event segment is the snake_case label — the spelling codex looks
- * the entry up by (hooks/src/lib.rs hook_event_key_label), same as the one
- * that goes into the hash.
- */
+/** Compute the [hooks.state] entries for the crank handlers in a hooks map. */
 export function trustEntries(
   hooksJsonPath: string,
   hooks: HooksMap,

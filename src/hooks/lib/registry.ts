@@ -5,9 +5,6 @@ import { isInstalled, projectName } from "./owner.ts";
 import { crankHome, ensureCrankHome, writeJsonAtomic } from "./user-state.ts";
 
 // The per-user list of project roots, kept at <crank home>/projects.json.
-// `init`, `upgrade` and the session-start hook add a root and `uninstall`
-// removes it; the dashboard, `upgrade --all`, `self-install`,
-// `self-uninstall`, `self-update` and the daemon read it.
 // A registry that cannot be read or written never changes a command's outcome.
 
 export const REGISTRY_FILE = "projects.json";

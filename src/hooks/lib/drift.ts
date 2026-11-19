@@ -13,13 +13,7 @@ import { readJsonObject, type CrankConfig } from "./config.ts";
 // config.json and is read with `fs`, not imported, so the "hooks import
 // nothing outside src/hooks/" vendoring invariant holds.
 
-/**
- * One line naming both versions and the fix, or null when there is nothing to
- * say. Every failure mode — no `clone_root` (an install predating the field),
- * a `clone_root` that was moved or deleted, an unreadable or malformed package.json,
- * a missing `version` — returns null: drift reporting is a convenience, and a
- * hook that cannot read `clone_root` still has a working project memory.
- */
+/** One line naming both versions and the fix. Null when there is nothing to report; never throws. */
 export function driftNote(config: CrankConfig): string | null {
   if (!config.clone_root) return null;
   const toolVersion = readJsonObject(path.join(config.clone_root, "package.json"))?.version;

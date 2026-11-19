@@ -7,6 +7,9 @@ import { isObj, type CrankConfig } from "../hooks/lib/config.ts";
 // inverse. Merge adds missing entries and refreshes only command forms
 // crank-mem itself emitted; removal deletes exactly the entries whose
 // command references .crank/hooks/. Files are written as 2-space JSON.
+//
+// Every function here that takes `beforeWrite` calls it before any write, writes
+// only when something changed, and returns whether it wrote.
 
 export const CRANK_HOOK_MARKER = ".crank/hooks/";
 
@@ -119,9 +122,7 @@ function hookScript(command: string | undefined): string | undefined {
  * A group in a form crank-mem emitted is replaced in place by the current
  * one, and further copies are dropped. A command the user edited that runs
  * the same script counts as wired and stays as written. Events with no group
- * for their script are appended. Everything else is preserved. Writes only
- * when something changed, calling `beforeWrite` first; returns whether it
- * wrote.
+ * for their script are appended. Everything else is preserved.
  */
 export function mergeHooksIntoFile(
   file: string,
@@ -198,9 +199,8 @@ function withoutHandlers(
 /**
  * Remove every handler whose command references .crank/hooks/, keeping the
  * user's other handlers in the same group. Drops a group the removal emptied,
- * an event left with no group and an empty hooks object, calling `beforeWrite`
- * before it writes; returns false if nothing matched, the file does not exist or parsing
- * failed (leave it alone).
+ * an event left with no group and an empty hooks object. Returns false if
+ * nothing matched, the file does not exist or parsing failed (leave it alone).
  */
 export function removeCrankHooksFromFile(
   file: string,
@@ -249,10 +249,8 @@ const LEGACY_ALLOW_RULE = "Bash(crank-mem *)";
 /**
  * Put CRANK_ALLOW_RULES in a Claude settings file's permissions.allow,
  * creating the keys when missing: drops LEGACY_ALLOW_RULE, keeps every other
- * entry in place, and appends each missing rule in order. Writes only when the
- * array changed, calling `beforeWrite` first, and leaves a file that is not a
- * JSON object, or a foreign-shaped permissions/allow, alone. Returns whether it
- * wrote.
+ * entry in place, and appends each missing rule in order. Leaves a file that
+ * is not a JSON object, or a foreign-shaped permissions/allow, alone.
  */
 export function addAllowRule(file: string, beforeWrite?: (file: string) => void): boolean {
   const root: unknown = fs.existsSync(file) ? readJson(file) : {};
@@ -304,10 +302,7 @@ const IGNORE_BLOCK = `${IGNORE_COMMENT}\n${IGNORE_LINE}\n`;
 /** The block a legacy pre-rename install appended (non-dotted crank/). */
 export const LEGACY_IGNORE_BLOCK = `${IGNORE_COMMENT}\ncrank/\n`;
 
-/**
- * Append our ignore block if .crank/ isn't covered, calling `beforeWrite`
- * first. Creates the file if needed. Returns whether it wrote.
- */
+/** Append our ignore block if .crank/ isn't covered. Creates the file if needed. */
 export function addIgnoreLines(file: string, beforeWrite?: (file: string) => void): boolean {
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
   if (existing.split("\n").some((l) => l.trim() === IGNORE_LINE)) return false;
@@ -337,11 +332,10 @@ const CRANK_GITIGNORE =
   "/*\n!/.gitignore\n!/config.json\n!/cerebrum.md\n!/cerebrum-archive.md\n!/journal.md\n!/hooks/\n";
 
 /**
- * Write CRANK_GITIGNORE to .crank/.gitignore unless it is already there. An
- * existing file, which another tool sharing .crank/ or an older crank-mem may
- * have written, goes to `beforeWrite` first. A missing one is not reported, so
+ * Write CRANK_GITIGNORE to .crank/.gitignore unless it is already there. Only
+ * an existing file, which another tool sharing .crank/ or an older crank-mem
+ * may have written, reaches `beforeWrite`. A missing one is not reported, so
  * a restore never deletes the allowlist and exposes a kept .crank/ to git.
- * Returns whether it wrote.
  */
 export function ensureCrankGitignore(
   crankDir: string,
@@ -385,7 +379,7 @@ export function unignoreCerebrum(root: string, beforeStrip: (file: string) => vo
 // with a second `[features]` table, so only the removal remains.
 const CODEX_FEATURES_SNIPPET = "\n# crank-mem\n[features]\nhooks = true\n";
 
-/** Remove exactly the snippet older releases appended (if present), calling `beforeWrite` before it writes; true when it removed it. */
+/** Remove exactly the snippet older releases appended (if present). */
 export function removeCodexFeatures(file: string, beforeWrite?: (file: string) => void): boolean {
   if (!fs.existsSync(file)) return false;
   const content = fs.readFileSync(file, "utf-8");

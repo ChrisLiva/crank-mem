@@ -152,7 +152,7 @@ export function Segmented<T extends string | number>({
   );
 }
 
-/** j/k move `item` along `keys`, which are the list's rows in order; null keys (still loading) ignore them. */
+/** Moves `item` along `keys`, the list's rows in order, by the keys `useListKeys` handles; null keys (still loading) ignore them. */
 export function useListNav(
   keys: string[] | null,
   item: string | null,
@@ -171,8 +171,8 @@ export function useListNav(
 
 /**
  * Keeps `item` on one of `keys`, which are the list's rows in order: the first key when
- * `item` is missing or gone, null when the list is empty. j/k move it. While `keys` is
- * null (the list is still loading), `item` stays as it is.
+ * `item` is missing or gone, null when the list is empty. While `keys` is
+ * null (the list is still loading), `item` stays as it is. See `useListKeys` for the keys.
  */
 export function useSelection(
   keys: string[] | null,
@@ -187,7 +187,6 @@ export function useSelection(
   useListNav(keys, item, setItem);
 }
 
-/** The list-and-detail views' split: the list column, then the chosen row's detail. */
 export const SPLIT = "grid min-h-0 flex-1 md:grid-cols-[minmax(20rem,28rem)_1fr]";
 const LIST_COLUMN =
   "flex max-h-[70dvh] min-h-0 flex-col border-b bg-card md:max-h-none md:border-r md:border-b-0";
