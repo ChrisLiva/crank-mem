@@ -250,7 +250,7 @@ export function queryCodeDb<T>(root: string, sql: string, ...params: sqlite.SQLI
   }
 }
 
-/** Plant a WAL code.db at a user_version no crank-mem reads, so every hook and command must leave it alone. */
+/** Plant a WAL code.db at a user_version no crank-mem reads, which hooks leave alone and the CLI rebuilds. */
 export function plantCodeDb(root: string, state: "newer"): void {
   const file = path.join(root, ".crank", "code.db");
   fs.mkdirSync(path.dirname(file), { recursive: true });
