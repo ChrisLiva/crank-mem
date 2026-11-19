@@ -234,7 +234,7 @@ function untouchedLines(): string[] {
 
 /** The codex rows: wiring, whether root threads got the injection, and hook and project trust. */
 function codexLines(root: string, crankDir: string, codexHooks: string): string[] {
-  if (!hasCrankHooks(codexHooks)) return [`  codex:            not wired`];
+  if (!hasCrankHooks(codexHooks)) return [row("codex", "not wired")];
   // Codex logs nothing when a hook never runs, so read its own rollouts and
   // trust config to show whether the wiring is live.
   const since = installedAtMs(crankDir);
@@ -244,19 +244,31 @@ function codexLines(root: string, crankDir: string, codexHooks: string): string[
   const window = since === null ? "" : " since install";
   const lines = [
     gaps.roots === 0
-      ? `  codex sessions:   no root threads${window}`
-      : `  codex sessions:   ${gaps.missed} of ${gaps.roots} root threads${window} got no injection`,
-    `  codex hook trust: ${trust.current} of ${hashes} hashes current` +
-      `${trust.stale ? `, ${trust.stale} stale` : ""}${trust.missing ? `, ${trust.missing} missing` : ""}`,
+      ? row("codex sessions", `no root threads${window}`)
+      : row(
+          "codex sessions",
+          `${gaps.missed} of ${gaps.roots} root threads${window} got no injection`,
+        ),
+    row(
+      "codex hook trust",
+      `${trust.current} of ${hashes} hashes current` +
+        `${trust.stale ? `, ${trust.stale} stale` : ""}${trust.missing ? `, ${trust.missing} missing` : ""}`,
+    ),
   ];
   if (trust.projectTrustLevel === null) {
     // Codex may resolve trust from a parent directory; no probe has tested that (ADR 0002).
     lines.push(
-      `  codex project:    no exact-path trust_level in ${userCodexConfigPath()}; a parent directory's entry may apply`,
+      row(
+        "codex project",
+        `no exact-path trust_level in ${userCodexConfigPath()}; a parent directory's entry may apply`,
+      ),
     );
   } else if (trust.projectTrustLevel !== "trusted") {
     lines.push(
-      `  codex project:    trust_level = "${trust.projectTrustLevel}", so codex loads no .codex/ hooks here`,
+      row(
+        "codex project",
+        `trust_level = "${trust.projectTrustLevel}", so codex loads no .codex/ hooks here`,
+      ),
     );
   }
   if (trust.stale || trust.missing) lines.push(...CODEX_REVIEW_HINT);

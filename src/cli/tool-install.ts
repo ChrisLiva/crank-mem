@@ -212,7 +212,11 @@ export function pruneVersions(keep: string[]): string[] {
   const daemon = daemonAlive() ? readDaemonState()?.version : undefined;
   const kept = new Set(typeof daemon === "string" ? [...keep, daemon] : keep);
   const dashboard = readJsonObject(path.join(crankHome(), TOKEN_FILE));
-  if (typeof dashboard?.version === "string" && pidAlive(dashboard.pid as number)) {
+  if (
+    typeof dashboard?.version === "string" &&
+    typeof dashboard?.pid === "number" &&
+    pidAlive(dashboard.pid)
+  ) {
     kept.add(dashboard.version);
   }
   let names: string[];

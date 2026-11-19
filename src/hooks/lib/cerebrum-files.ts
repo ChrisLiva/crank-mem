@@ -20,7 +20,9 @@ export const PRUNE_TOKEN_LIMIT = 3000;
 // entry can be undone. No manifest.json, so `uninstall --restore` never
 // mistakes this dir for an init/upgrade backup (cli/backups.ts);
 // `uninstall --delete-crank` removes it by name.
-export const BACKUP_DIR = path.join("backups", "cerebrum");
+export const BACKUPS_DIR = "backups";
+export const MANIFEST_FILE = "manifest.json";
+export const BACKUP_DIR = path.join(BACKUPS_DIR, "cerebrum");
 export const CEREBRUM_FILE = "cerebrum.md";
 // Where superseded entries go; never injected.
 export const ARCHIVE_FILE = "cerebrum-archive.md";
@@ -109,7 +111,7 @@ function isAuditBackup(dir: string): boolean {
 
 /** A backup dir is crank-mem's when it holds the manifest newBackupDir writes or is the audit skill's copy of the memory files. Never throws. */
 export function isCrankBackup(dir: string): boolean {
-  return fs.existsSync(path.join(dir, "manifest.json")) || isAuditBackup(dir);
+  return fs.existsSync(path.join(dir, MANIFEST_FILE)) || isAuditBackup(dir);
 }
 
 /**
@@ -118,7 +120,7 @@ export function isCrankBackup(dir: string): boolean {
  * audit backup exists. Never throws.
  */
 export function lastAuditMs(crankDir: string): number | null {
-  const base = path.join(crankDir, "backups");
+  const base = path.join(crankDir, BACKUPS_DIR);
   let newest: number | null = null;
   try {
     for (const d of fs.readdirSync(base, { withFileTypes: true })) {
@@ -135,11 +137,11 @@ export function lastAuditMs(crankDir: string): number | null {
 
 /** Names of the .crank/backups/ dirs that hold the manifest init and upgrade write, oldest first. Empty on any error. Never throws. */
 export function manifestDirs(crankDir: string): string[] {
-  const base = path.join(crankDir, "backups");
+  const base = path.join(crankDir, BACKUPS_DIR);
   try {
     return fs
       .readdirSync(base)
-      .filter((d) => fs.existsSync(path.join(base, d, "manifest.json")))
+      .filter((d) => fs.existsSync(path.join(base, d, MANIFEST_FILE)))
       .sort();
   } catch {
     return [];

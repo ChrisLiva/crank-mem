@@ -31,7 +31,6 @@ function runGit(
   args: string[],
   timeoutMs: number,
 ): { stdout: string } | { error: string } {
-  if (timeoutMs <= 0) return { error: "budget spent" };
   const res = spawnSync("git", ["--no-optional-locks", ...args], {
     cwd: rootDir,
     encoding: "utf-8",

@@ -1,14 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type * as sqlite from "node:sqlite";
-import { fileStamp } from "./cerebrum-files.ts";
+import { BACKUPS_DIR, fileStamp } from "./cerebrum-files.ts";
 
 // memory.db's upkeep: the snapshot folder beside the store and its file names, the daily
 // pass (snapshot, then the store's stale delete, then the trim), the snapshot before a
 // migration, and saving the current store before a restore.
 
 /** Snapshots of the store, relative to the folder that holds it. */
-export const SNAPSHOT_DIR = path.join("backups", "memory");
+export const SNAPSHOT_DIR = path.join(BACKUPS_DIR, "memory");
 
 /** How often the maintenance pass snapshots the store, and how long a stale-flagged row survives it. */
 const MAINTAIN_EVERY_MS = 24 * 3_600_000;

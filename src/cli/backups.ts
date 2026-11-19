@@ -1,6 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CEREBRUM_FILE, fileStamp, manifestDirs } from "../hooks/lib/cerebrum-files.ts";
+import {
+  BACKUPS_DIR,
+  CEREBRUM_FILE,
+  MANIFEST_FILE,
+  fileStamp,
+  manifestDirs,
+} from "../hooks/lib/cerebrum-files.ts";
 import { errorMessage, isObj } from "../hooks/lib/config.ts";
 import { repoRelative } from "../hooks/lib/hook-io.ts";
 
@@ -23,21 +29,21 @@ interface Manifest {
 
 export function newBackupDir(crankDir: string): string {
   const stamp = fileStamp();
-  const dir = path.join(crankDir, "backups", stamp);
+  const dir = path.join(crankDir, BACKUPS_DIR, stamp);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
-    path.join(dir, "manifest.json"),
+    path.join(dir, MANIFEST_FILE),
     JSON.stringify({ createdAt: stamp, entries: [] }, null, 2),
   );
   return dir;
 }
 
 function loadManifest(backupDir: string): Manifest {
-  return JSON.parse(fs.readFileSync(path.join(backupDir, "manifest.json"), "utf-8"));
+  return JSON.parse(fs.readFileSync(path.join(backupDir, MANIFEST_FILE), "utf-8"));
 }
 
 function saveManifest(backupDir: string, m: Manifest): void {
-  fs.writeFileSync(path.join(backupDir, "manifest.json"), JSON.stringify(m, null, 2));
+  fs.writeFileSync(path.join(backupDir, MANIFEST_FILE), JSON.stringify(m, null, 2));
 }
 
 /** Snapshot a file before modification (records absence too). Idempotent per path. */
@@ -110,8 +116,8 @@ function readInstallRecord(
 ): { record: InstallRecord } | { manifest: string; detail: string } {
   const record: InstallRecord = new Map();
   for (const d of manifestDirs(crankDir)) {
-    const dir = path.join(crankDir, "backups", d);
-    const manifest = path.join(dir, "manifest.json");
+    const dir = path.join(crankDir, BACKUPS_DIR, d);
+    const manifest = path.join(dir, MANIFEST_FILE);
     const entries = readEntries(manifest);
     if (!Array.isArray(entries)) return { manifest, detail: entries.detail };
     for (const e of entries) {

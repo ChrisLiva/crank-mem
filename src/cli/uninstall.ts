@@ -10,7 +10,7 @@ import {
   LEGACY_IGNORE_BLOCK,
 } from "./settings.ts";
 import { crankTrust, removeTrustEntries, userCodexConfigPath } from "./codex-trust.ts";
-import { CRANK_DIR, CONFIG_FILE, LOCAL_CONFIG_FILE } from "../hooks/lib/config.ts";
+import { CONFIG_FILE, LOCAL_CONFIG_FILE } from "../hooks/lib/config.ts";
 import { CODE_DB } from "../hooks/lib/code-db.ts";
 import {
   MARKER_FILE,
@@ -18,10 +18,12 @@ import {
   CEREBRUM_FILE,
   ARCHIVE_FILE,
   BACKUP_DIR,
+  BACKUPS_DIR,
   isCrankBackup,
   JOURNAL_FILE,
 } from "../hooks/lib/cerebrum-files.ts";
 import { LOG_FILE } from "../hooks/lib/debug.ts";
+import { isInstalled } from "../hooks/lib/owner.ts";
 import { MEMORY_FILE } from "../hooks/lib/memory.ts";
 import { SNAPSHOT_DIR } from "../hooks/lib/store-upkeep.ts";
 import { USAGE_FILE, USAGE_LOCK_FILE, USAGE_ROTATED_FILE } from "../hooks/lib/usage.ts";
@@ -45,7 +47,7 @@ export async function run(args: string[]): Promise<number> {
   // A leftover pre-rename install (only crank/, no .crank/) can't be opened as
   // a project — sweep it and stop, so the new CLI can clean up after itself.
   const cwd = process.cwd();
-  if (!fs.existsSync(path.join(cwd, CRANK_DIR, "config.json")) && legacyPresent(cwd)) {
+  if (!isInstalled(cwd) && legacyPresent(cwd)) {
     const swept = print(sweepLegacy(cwd));
     console.log("crank-mem: removed legacy crank/ install.");
     return swept.failed ? 1 : 0;
@@ -162,7 +164,7 @@ function printDataDir(crankDir: string, deleteCrank: boolean): void {
  * that merely happens to be named crank/ is never mistaken for ours.
  */
 function legacyPresent(root: string): boolean {
-  return fs.existsSync(path.join(root, "crank", "config.json"));
+  return fs.existsSync(path.join(root, "crank", CONFIG_FILE));
 }
 
 /**
@@ -241,12 +243,12 @@ function deleteOwnedFiles(crankDir: string): string[] {
   for (const name of readdirOrEmpty(crankDir)) {
     if (name.endsWith(".tmp")) fs.rmSync(path.join(crankDir, name), { force: true });
   }
-  const backups = path.join(crankDir, "backups");
+  const backups = path.join(crankDir, BACKUPS_DIR);
   for (const name of readdirOrEmpty(backups)) {
     const dir = path.join(backups, name);
     if (isCrankBackup(dir)) fs.rmSync(dir, { recursive: true, force: true });
   }
-  removeEmptyDirs(crankDir, ["backups"]);
+  removeEmptyDirs(crankDir, [BACKUPS_DIR]);
   const left = readdirOrEmpty(crankDir).filter((name) => name !== ".gitignore");
   if (left.length === 0) fs.rmSync(crankDir, { recursive: true, force: true });
   return left;

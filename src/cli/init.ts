@@ -17,6 +17,7 @@ import {
   type CodexChoice,
   type CrankConfig,
 } from "../hooks/lib/config.ts";
+import { isInstalled } from "../hooks/lib/owner.ts";
 import { unusedName } from "../hooks/lib/registry.ts";
 import { startParsing, writeFileFacts } from "./scan.ts";
 
@@ -113,7 +114,7 @@ function installAll(
     console.error(`crank-mem: ${errorMessage(err)}`);
     // uninstall needs .crank/config.json; before it exists nothing outside
     // .crank/ has been touched yet, so the honest hint is just to delete it.
-    if (fs.existsSync(path.join(crankDir, "config.json"))) {
+    if (isInstalled(root)) {
       console.error("init failed partway — run `crank-mem uninstall --restore` to roll back.");
     } else {
       console.error("init failed before wiring anything — delete .crank/ and retry.");
@@ -129,7 +130,7 @@ export async function run(args: string[]): Promise<number> {
   const root = process.cwd();
   const crankDir = path.join(root, CRANK_DIR);
 
-  if (fs.existsSync(path.join(crankDir, "config.json"))) {
+  if (isInstalled(root)) {
     console.error(
       "crank-mem: already initialized here — use `crank-mem upgrade` or `crank-mem uninstall`.",
     );

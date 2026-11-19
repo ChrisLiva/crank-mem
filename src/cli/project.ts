@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { loadConfig, CRANK_DIR, type CrankConfig } from "../hooks/lib/config.ts";
+import { loadConfig, CRANK_DIR, CONFIG_FILE, type CrankConfig } from "../hooks/lib/config.ts";
+import { isInstalled } from "../hooks/lib/owner.ts";
 import { findProjectRoot } from "../hooks/lib/hook-io.ts";
 import type { StoreMigration } from "../hooks/lib/memory.ts";
 
@@ -18,8 +19,8 @@ export interface OpenedProject {
 export function openProject(): OpenedProject | null {
   const root = process.cwd();
   const crankDir = path.join(root, CRANK_DIR);
-  if (!fs.existsSync(path.join(crankDir, "config.json"))) {
-    if (fs.existsSync(path.join(root, "crank", "config.json"))) {
+  if (!isInstalled(root)) {
+    if (fs.existsSync(path.join(root, "crank", CONFIG_FILE))) {
       console.error("crank-mem: found a legacy crank/ install — this version uses .crank/.");
       console.error("Run `crank-mem uninstall` to remove it, then `crank-mem init` again.");
     } else {
