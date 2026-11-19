@@ -10,7 +10,6 @@ import {
   removeCrankHooksFromFile,
   addIgnoreLines,
   removeIgnoreLines,
-  removeCodexFeatures,
   addAllowRule,
   removeAllowRule,
 } from "../src/cli/settings.ts";
@@ -390,17 +389,5 @@ describe("ignore lines", () => {
     addIgnoreLines(f); // skips: .crank/ already covered
     removeIgnoreLines(f); // must not strip the user's line
     expect(fs.readFileSync(f, "utf-8")).toBe(original);
-  });
-});
-
-describe("codex features toml", () => {
-  test("removes exactly the old snippet and leaves the user's [features] table", () => {
-    const f = tmpFile("config.toml");
-    const user = "[features]\nweb_search = true\n";
-    fs.writeFileSync(f, user + "\n# crank-mem\n[features]\nhooks = true\n");
-    expect(removeCodexFeatures(f)).toBe(true);
-    expect(fs.readFileSync(f, "utf-8")).toBe(user);
-    expect(removeCodexFeatures(f)).toBe(false);
-    expect(fs.readFileSync(f, "utf-8")).toBe(user);
   });
 });

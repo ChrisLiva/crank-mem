@@ -145,33 +145,22 @@ describe("walkProject in a git repo", () => {
     }
   }
 
-  test("a git listing that outlasts the deadline keeps code.db's rows and reports partial", () => {
+  test("a slow git listing is waited for with no deadline, and past a deadline keeps code.db's rows and reports partial", () => {
     const root = makeRepo({ ".gitignore": "ignored.ts\n", "a.ts": "const a = 1;" });
     git(root, "add", ".");
     fs.writeFileSync(path.join(root, "ignored.ts"), "const i = 1;");
     const config = defaultConfig();
     const db = openFacts(root);
     try {
-      refreshFileFacts(root, config, db, Infinity);
-      const before = filesIn(db);
-      expect(before).toContain("a.ts");
-      const result = withSlowLsFiles(() => refreshFileFacts(root, config, db, Date.now() + 1000));
-      expect(result).toEqual({ changed: 0, added: 0, removed: 0, partial: true, listed: false });
-      expect(filesIn(db)).toEqual(before);
-    } finally {
-      db.close();
-    }
-  }, 20_000);
-
-  test("with no deadline a slow git listing is waited for, so ignored files stay out", () => {
-    const root = makeRepo({ ".gitignore": "ignored.ts\n", "a.ts": "const a = 1;" });
-    git(root, "add", ".");
-    fs.writeFileSync(path.join(root, "ignored.ts"), "const i = 1;");
-    const db = openFacts(root);
-    try {
-      withSlowLsFiles(() => refreshFileFacts(root, defaultConfig(), db, Infinity));
-      expect(filesIn(db)).toContain("a.ts");
-      expect(filesIn(db)).not.toContain("ignored.ts");
+      withSlowLsFiles(() => {
+        refreshFileFacts(root, config, db, Infinity);
+        const before = filesIn(db);
+        expect(before).toContain("a.ts");
+        expect(before).not.toContain("ignored.ts");
+        const result = refreshFileFacts(root, config, db, Date.now() + 1000);
+        expect(result).toEqual({ changed: 0, added: 0, removed: 0, partial: true, listed: false });
+        expect(filesIn(db)).toEqual(before);
+      });
     } finally {
       db.close();
     }
