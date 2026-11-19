@@ -313,13 +313,11 @@ describe("usage capture: the file-history cap", () => {
     const run = postRead(root, claudePostBash(root, `cat ${files.join(" ")}`, TRANSCRIPT));
     expect(run.status).toBe(0);
     const [line] = usageLines(root);
-    const shown = line!.shown.map((s: { path: string }) => s.path);
-    expect(shown.length + line!.cut.length).toBe(6);
-    expect(line!.cut.length).toBeGreaterThanOrEqual(1);
-    expect(shown).toEqual(files.slice(0, shown.length));
-    expect(line!.cut).toEqual(files.slice(shown.length));
-    expect(line!.bytes).toBeLessThanOrEqual(1536);
-    expect(line!.bytes).toBe(Buffer.byteLength(hookContext(run), "utf-8"));
+    expect(line!.shown).toEqual([{ path: "f1.ts", ids: [5, 4, 3, 2, 1] }]);
+    expect(line!.cut).toEqual(["f2.ts", "f3.ts", "f4.ts", "f5.ts", "f6.ts"]);
+    // f1.ts's section alone: a 50-byte header and 5 lines of 144 bytes, joined by newlines.
+    expect(line!.bytes).toBe(775);
+    expect(Buffer.byteLength(hookContext(run), "utf-8")).toBe(775);
 
     const paths = Array.from({ length: 150 }, (_, i) => `p${i}.ts`);
     const wide = makeCrankProject(Object.fromEntries(paths.map((p) => [p, "x\n"])));

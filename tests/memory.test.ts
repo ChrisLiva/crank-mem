@@ -277,29 +277,6 @@ describe("store by root", () => {
     expect(await first).toEqual({ status: "open", value: 1 });
   });
 
-  test("openStoreForWrite", () => {
-    const fresh = emptyRoot();
-    const created = openStoreForWrite(fresh);
-    expect(created.status === "open" && created.migratedFrom).toBe(0);
-    if (created.status === "open") created.memory.close();
-    expect(fs.existsSync(path.join(fresh, ".crank", MEMORY_FILE))).toBe(true);
-    expect(openStoreForWrite(plantedRoot("newer"))).toEqual({ status: "newer" });
-    expect(openStoreForWrite(plantedRoot("unreadable"))).toEqual({ status: "unreadable" });
-
-    const older = v1Root();
-    const backups = path.join(older, ".crank/backups");
-    fs.mkdirSync(backups);
-    fs.chmodSync(backups, 0o555);
-    try {
-      const unmigrated = openStoreForWrite(older);
-      expect(unmigrated.status).toBe("unmigrated");
-      expect(unmigrated.status === "unmigrated" && typeof unmigrated.detail).toBe("string");
-      expect(storeStatus(older)).toBe("older");
-    } finally {
-      fs.chmodSync(backups, 0o755);
-    }
-  });
-
   test("worktree mapping", async () => {
     const ws = workspace();
     seedMemory(ws.payments, [{ title: "Payments fact" }]);

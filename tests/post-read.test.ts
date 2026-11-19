@@ -87,28 +87,6 @@ describe("post-read file history", () => {
     );
     expect(viaUnfold).toBe(viaRead);
   }, 20_000);
-
-  test("sections stop at 1,536 bytes", () => {
-    const root = makeCrankProject({ "src/a.ts": "a\n", "src/b.ts": "b\n" });
-    const seedMs = Date.now();
-    const long = (f: string) => (i: number) => `${f}${i} `.padEnd(200, "x");
-    seedMemory(
-      root,
-      Array.from({ length: 20 }, (_, i) => ({ title: long("a")(i), filesRead: ["src/a.ts"] })),
-    );
-    seedMemory(
-      root,
-      Array.from({ length: 20 }, (_, i) => ({ title: long("b")(i), filesRead: ["src/b.ts"] })),
-    );
-    for (const f of ["src/a.ts", "src/b.ts"]) setMtime(path.join(root, f), seedMs - HOUR);
-    const ctx = hookContext(
-      run(root, claudePostBash(root, "cat src/a.ts src/b.ts", TRANSCRIPT)),
-      "PostToolUse",
-    );
-    expect(ctx).toContain("History of src/a.ts (open one: `crank-mem get <id>`):");
-    expect(ctx).not.toContain("History of src/b.ts");
-    expect(Buffer.byteLength(ctx)).toBeLessThanOrEqual(1536);
-  });
 });
 
 describe("post-read git history", () => {
@@ -446,18 +424,6 @@ describe("post-read Used by", () => {
     expect(read().stdout).toBe("");
   });
 
-  test("a file with no history still shows it, and a file with no callers shows none", () => {
-    const root = graphed({ "src/a.ts": caller(["helper"]) });
-    expect(fs.existsSync(path.join(root, ".crank/memory.db"))).toBe(false);
-    const lib = run(root, claudePostRead(root, path.join(root, "src/lib.ts"), TRANSCRIPT));
-    expect(hookContext(lib, "PostToolUse")).toBe(
-      "Used by (crank-mem impact src/lib.ts):\n- src/a.ts (1 call)",
-    );
-    expect(run(root, claudePostRead(root, path.join(root, "src/a.ts"), TRANSCRIPT)).stdout).toBe(
-      "",
-    );
-  });
-
   test("a file touched after its parse shows none, and a store that is gone leaves the history alone", () => {
     const root = graphed({ "src/a.ts": caller(["helper"]) }, 2);
     const file = path.join(root, "src/lib.ts");
@@ -622,10 +588,12 @@ describe("post-read journey: init to Used by", () => {
 
       const read = () =>
         hook(HOOK, claudePostRead(root, path.join(root, "src/lib.ts"), TRANSCRIPT));
+      expect(fs.existsSync(path.join(root, ".crank/memory.db"))).toBe(false);
       expect(hookContext(read(), "PostToolUse")).toBe(
         "Used by (crank-mem impact src/lib.ts):\n- src/c.ts (1 call)",
       );
       expect(read().stdout).toBe("");
+      expect(hook(HOOK, claudePostRead(root, file, TRANSCRIPT)).stdout).toBe("");
 
       const impact = runCli(root, ["impact", "helper"], env);
       expect(impact.status).toBe(0);

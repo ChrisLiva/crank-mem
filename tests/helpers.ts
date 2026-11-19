@@ -278,7 +278,7 @@ export function enableDebugConfig(root: string): void {
 }
 
 /** One .crank/debug.log line: what `flushDebug` and `runAdvisoryHook` write. */
-export type DebugRecord = {
+type DebugRecord = {
   hook: string;
   ok: boolean;
   ms: number;

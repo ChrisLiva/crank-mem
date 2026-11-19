@@ -52,19 +52,6 @@ describe("loadConfig sanitization", () => {
     expect(loadConfig(onDir).digest).toBe(true);
   });
 
-  test("the retired token budget is dropped, not carried through", () => {
-    const dir = dirWithConfig(
-      JSON.stringify({ injection_budget_tokens: 5000, my_own_key: "kept" }),
-    );
-    const config = loadConfig(dir);
-    expect(config).not.toHaveProperty("injection_budget_tokens");
-    // unknown keys still survive
-    expect(config).toMatchObject({
-      my_own_key: "kept",
-      injection_budget_bytes: defaultConfig().injection_budget_bytes,
-    });
-  });
-
   test("zero, negative and non-finite numbers rejected", () => {
     const dir = dirWithConfig(
       JSON.stringify({ injection_budget_bytes: -1, max_file_size_bytes: 0 }),
@@ -91,12 +78,16 @@ describe("loadConfig sanitization", () => {
     expect(loadConfig(dirWithConfig(`["a","b"]`))).toEqual(defaultConfig());
   });
 
-  test("unknown user keys survive a load → save round-trip, and the retired max_files does not", () => {
-    const dir = dirWithConfig(JSON.stringify({ max_files: 42, my_note: "keep me" }));
+  test("unknown user keys survive a load → save round-trip, and the retired max_files and token budget do not", () => {
+    const dir = dirWithConfig(
+      JSON.stringify({ max_files: 42, injection_budget_tokens: 5000, my_note: "keep me" }),
+    );
     saveConfig(dir, loadConfig(dir));
     const written = JSON.parse(fs.readFileSync(path.join(dir, CONFIG_FILE), "utf-8"));
     expect(written.my_note).toBe("keep me");
     expect("max_files" in written).toBe(false);
+    expect("injection_budget_tokens" in written).toBe(false);
+    expect(written.injection_budget_bytes).toBe(8192);
   });
 });
 

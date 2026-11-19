@@ -10,7 +10,6 @@ import {
   hookContext,
   queryCodeDb,
   readDebugLog,
-  type DebugRecord,
 } from "./helpers.ts";
 import {
   claudeSessionStart,
@@ -147,7 +146,7 @@ describe("debug logging (black-box)", () => {
     const noOps = (root: string) =>
       readDebugLog(root)[0]!.events.find((e) => e.event === "no-write-ops");
 
-    test("a write that produces nothing to index records its reason: outside-root with the directory, no-path, owner-root, apply_patch skips and unhandled-tool", () => {
+    test("a write that produces nothing to index records its reason and never opens the store: outside-root with the directory, no-path, owner-root, crank-internal, apply_patch skips and unhandled-tool", () => {
       const root = makeCrankProject({ "a.ts": "const a = 1;" });
       const outside = path.join(os.tmpdir(), "elsewhere", ".env");
       enableDebugConfig(root);
@@ -164,9 +163,18 @@ describe("debug logging (black-box)", () => {
       const reasonOf = (payload: (root: string) => object) => {
         const project = makeCrankProject({ "a.ts": "const a = 1;" });
         enableDebugConfig(project);
-        expect(runHook(POST_WRITE, JSON.stringify(payload(project))).status).toBe(0);
+        const run = runHook(POST_WRITE, JSON.stringify(payload(project)));
+        expect(run.status).toBe(0);
+        expect(run.stdout).toBe("");
+        expect(fs.existsSync(path.join(project, ".crank/code.db"))).toBe(false);
+        const events = readDebugLog(project)[0]!.events.map((e) => String(e.event));
+        expect(events.filter((e) => e.startsWith("graph") || e === "reindex")).toEqual([]);
         return noOps(project);
       };
+      expect(reasonOf((p: string) => claudePostWrite(p, ".crank/cerebrum.md"))).toMatchObject({
+        tool: "Write",
+        reason: "crank-internal",
+      });
       expect(
         reasonOf((p: string) => ({
           ...claudePostWrite(p, "a.ts"),
@@ -197,31 +205,6 @@ describe("debug logging (black-box)", () => {
         tool: "apply_patch",
         reason: "no-path",
       });
-    });
-
-    test("a write under .crank/: crank-internal, and the store is never opened", () => {
-      const root = makeCrankProject({ "a.ts": "const a = 1;" });
-      enableDebugConfig(root);
-      // A held store would stall any writer — reaching it at all is the failure.
-      runHook(SESSION_START, JSON.stringify(claudeSessionStart(root)));
-      const release = holdCodeDb(root);
-      let events: DebugRecord["events"];
-      try {
-        const run = runHook(
-          POST_WRITE,
-          JSON.stringify(claudePostWrite(root, ".crank/cerebrum.md")),
-        );
-        expect(run.status).toBe(0);
-        expect(run.stdout).toBe("");
-        events = readDebugLog(root)[1]!.events;
-      } finally {
-        release();
-      }
-      expect(events.find((e) => e.event === "no-write-ops")).toMatchObject({
-        reason: "crank-internal",
-      });
-      expect(events.some((e) => String(e.event).startsWith("graph"))).toBe(false);
-      expect(events.some((e) => e.event === "reindex")).toBe(false);
     });
   });
 

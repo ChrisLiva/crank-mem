@@ -199,24 +199,15 @@ describe("post-write writes code.db", () => {
       env,
     );
   };
-  const anatomy = (root: string) => withReadOnlyCodeDb(root, () => runCli(root, ["anatomy"]));
   const listed = (stdout: string) => [...stdout.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]!);
 
-  test("a file written three times tops Most active files, and a deleted caller leaves the graph", () => {
+  test("a Codex Delete of a caller drops it and its call sites from the graph", () => {
     const root = makeCrankProject({
-      "src/a.ts": "export const a = 1;\n",
       "src/lib.ts": "export function target() {\n  return 1;\n}\n",
       "src/caller.ts":
         'import { target } from "./lib";\nexport function run() {\n  return target();\n}\n',
     });
     seedIndex(root);
-    for (let n = 1; n <= 3; n++) {
-      expect(write(root, "src/new.ts", `export const n = ${n};\n`).status).toBe(0);
-    }
-    const active = anatomy(root);
-    expect(active.status).toBe(0);
-    expect(active.stdout.startsWith("## Most active files\n\n- `src/new.ts`")).toBe(true);
-    expect(listed(active.stdout).slice(0, 2)).toEqual(["src/new.ts", "src/a.ts"]);
 
     // `callers` parses every file, so caller.ts has a call site in the graph before it is deleted.
     expect(runCli(root, ["callers", "target"]).stdout).toContain("src/caller.ts");

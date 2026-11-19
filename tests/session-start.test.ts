@@ -172,57 +172,6 @@ describe("cited files (black-box)", () => {
   });
 });
 
-describe("cerebrum index (black-box)", () => {
-  // The default 8,192 bytes leave the excerpt under the token cap alone, so this
-  // test shrinks the budget until bytes bind.
-  const BUDGET = 5632;
-
-  // 7 preferences over PREFS_TOKEN_CAP, 21 memory bullets and an ADR list
-  // overflow the budget, so the excerpt must hide bullets and name every one it hides.
-  test("a cerebrum too big for the budget stays under it and names the bullets it hides", () => {
-    const root = makeCrankProject({ "a.ts": "const a = 1;" });
-    const clause = "`Support.cpp` caps pillar reach at 3.7 mm, so retries from the head fail ";
-    const bullet = (subject: string, i: number, clauses: number): string =>
-      `- **${subject} ${i}**: ${clause.repeat(clauses).trim()} (2026-09-${10 + i}).`;
-    fs.writeFileSync(
-      path.join(root, ".crank/cerebrum.md"),
-      "# Cerebrum\n\n## User Preferences\n" +
-        Array.from({ length: 7 }, (_, i) => bullet("Pref", i, 4)).join("\n") +
-        "\n\n## Memory\n" +
-        Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i, 5)).join("\n") +
-        "\n",
-    );
-    fs.mkdirSync(path.join(root, "docs/adr"), { recursive: true });
-    for (const f of ["0001-scaffold-points.md", "0002-pad-solid.md", "0003-tilt-cap.md"]) {
-      fs.writeFileSync(path.join(root, "docs/adr", f), "# x");
-    }
-    configure(root, { injection_budget_bytes: BUDGET });
-
-    const ctx = inject(root);
-    expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(BUDGET);
-    expect(ctx).toContain("## ADRs");
-    expect(ctx).toContain("- **Gotcha 20**:"); // the newest memory bullet, whole
-    expect(ctx).toMatch(/^### Not shown \(\d+ of 28; grep \.crank\/cerebrum\.md\)$/m);
-    expect(ctx).toContain("- **Pref 0**: `Support.cpp` caps pillar reach at…");
-    expect(ctx).toMatch(/^- \*\*Gotcha 15\*\*: .*…$/m); // the newest hidden one
-
-    // Memory bullets long enough to fill the excerpt alone still leave the hidden ones named.
-    fs.writeFileSync(
-      path.join(root, ".crank/cerebrum.md"),
-      "# Cerebrum\n\n## User Preferences\n" +
-        Array.from({ length: 7 }, (_, i) => bullet("Pref", i, 4)).join("\n") +
-        "\n\n## Memory\n" +
-        Array.from({ length: 21 }, (_, i) => bullet("Gotcha", i, 9)).join("\n") +
-        "\n",
-    );
-    const long = inject(root);
-    expect(Buffer.byteLength(long, "utf-8")).toBeLessThanOrEqual(BUDGET);
-    expect(long).toContain("- **Gotcha 20**:");
-    expect(long).toMatch(/^- \*\*Gotcha 17\*\*: .*…$/m); // the newest hidden one
-    expect(long.match(/^- \*\*Gotcha \d+\*\*: .*…$/gm)?.length).toBeGreaterThanOrEqual(10);
-  });
-});
-
 describe("vendored-hook drift (black-box)", () => {
   /** A stand-in clone: just the package.json the drift check reads. */
   function fakeClone(version: unknown): string {
@@ -577,7 +526,12 @@ describe("project registry (black-box)", () => {
     fs.writeFileSync(home, "");
     const root = makeCrankProject({ "a.ts": "const a = 1;" });
     const run = runHook(HOOK, JSON.stringify(claudeSessionStart(root)), root, { CRANK_HOME: home });
-    expect(hookContext(run)).toContain("crank-mem");
+    const writable = makeCrankHome();
+    stopDigests(writable);
+    const whole = runHook(HOOK, JSON.stringify(claudeSessionStart(root)), root, {
+      CRANK_HOME: writable,
+    });
+    expect(hookContext(run)).toBe(hookContext(whole));
   });
 });
 

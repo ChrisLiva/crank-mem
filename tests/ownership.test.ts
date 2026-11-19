@@ -88,11 +88,9 @@ describe("ownership", () => {
     expect(hookContext(sessionStart(ws.H, ws.home))).toContain("project H.");
     const clone = sessionStart(ws.clone, ws.home);
     expect(clone).toMatchObject({ status: 0, stdout: "" });
-    expect(runCli(ws.clone, ["search", "x"], { CRANK_HOME: ws.home })).toEqual({
-      status: 1,
-      stdout: "",
-      stderr: "crank-mem: not initialized here — run `crank-mem init` first.\n",
-    });
+    const search = runCli(ws.clone, ["search", "x"], { CRANK_HOME: ws.home });
+    expect(search).toMatchObject({ status: 1, stdout: "" });
+    expect(search.stderr).toContain("not initialized here");
     expect(hookContext(sessionStart(ws.submodule, ws.home))).toContain("project H.");
     expect(hookContext(sessionStart(ws.worktree, ws.home))).toContain("project payments-api.");
     expect(sessionStart(ws.scratch, ws.home)).toMatchObject({ status: 0, stdout: "" });

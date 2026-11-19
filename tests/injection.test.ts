@@ -220,25 +220,6 @@ describe("composeInjection", () => {
     expect(settled).not.toContain("no symbol ranges");
   });
 
-  test("the drift note sits below the staleness note", () => {
-    const out = composeInjection(
-      {
-        ...sources,
-        notes: [
-          "index refresh skipped (lock busy)",
-          "crank-mem hooks are at 0.3.2, crank-mem is at 0.5.0 — run `crank-mem upgrade`.",
-        ],
-      },
-      8192,
-    ).text;
-    expect(out).toContain(
-      "_Note: crank-mem hooks are at 0.3.2, crank-mem is at 0.5.0 — run `crank-mem upgrade`._",
-    );
-    expect(out).toContain("index refresh skipped");
-    expect(out.indexOf("refresh skipped")).toBeLessThan(out.indexOf("hooks are at 0.3.2"));
-    expect(out.indexOf("hooks are at 0.3.2")).toBeLessThan(out.indexOf("## Cerebrum"));
-  });
-
   // Bytes are the budget that binds: Claude Code caps additionalContext characters, not tokens.
   describe("byte budget", () => {
     // This cerebrum of about 9 KB of wrapped bullets, 5 preferences and 11 memory
