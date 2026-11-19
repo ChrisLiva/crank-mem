@@ -8,7 +8,11 @@ export function transaction<T>(db: sqlite.DatabaseSync, fn: () => T): T {
     db.exec("COMMIT");
     return result;
   } catch (err) {
-    db.exec("ROLLBACK");
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      /* no open transaction */
+    }
     throw err;
   }
 }

@@ -3,7 +3,7 @@ import type * as sqlite from "node:sqlite";
 import { ISO_DATE } from "./bullets.ts";
 import type { DigestInput, Memory, Position, SessionKey } from "./memory.ts";
 import { one, position } from "./memory-read.ts";
-import { transaction } from "./memory-schema.ts";
+import { transaction } from "./transaction.ts";
 import { dailyUpkeep } from "./store-upkeep.ts";
 
 // The store's writes, each taking the open `db` first; memory.ts → createMemory wires them.

@@ -1,4 +1,5 @@
 import type * as sqlite from "node:sqlite";
+import { transaction } from "./transaction.ts";
 
 // memory.db's schema: one forward step per version, applied by `migrate`.
 
@@ -86,20 +87,4 @@ export function migrate(db: sqlite.DatabaseSync): number | null | "newer" {
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     return v;
   });
-}
-
-export function transaction<T>(db: sqlite.DatabaseSync, fn: () => T): T {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const result = fn();
-    db.exec("COMMIT");
-    return result;
-  } catch (err) {
-    try {
-      db.exec("ROLLBACK");
-    } catch {
-      /* no open transaction */
-    }
-    throw err;
-  }
 }
