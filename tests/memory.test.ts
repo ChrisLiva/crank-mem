@@ -86,7 +86,7 @@ function v1Root(): string {
 }
 
 describe("openMemory", () => {
-  test("a writer reports the version it migrated from, and snapshots only a version-1 store", () => {
+  test("a writer reports the version it migrated from, and snapshots a migrated store but not a new one", () => {
     const SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-v1\.db$/;
     const fresh = tmpFile();
     const created = openMemory(fresh, "write");
