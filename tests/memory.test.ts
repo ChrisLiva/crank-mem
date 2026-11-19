@@ -315,11 +315,12 @@ describe("store by root", () => {
     expect(fs.existsSync(path.join(ws.worktree, ".crank"))).toBe(false);
   });
 
-  // Never called: it holds the compile-time check that readStoreSync refuses an async reader.
-  function asyncReaderDoesNotCompile(): void {
-    // @ts-expect-error an async reader would outlive the store
-    readStoreSync("", async (m) => m.recent(1));
-  }
+  test("readStoreSync refuses an async reader at compile time", () => {
+    if (Date.now() < 0) {
+      // @ts-expect-error an async reader would outlive the store
+      readStoreSync("", async (m) => m.recent(1));
+    }
+  });
 });
 
 describe("appendDigest", () => {
