@@ -250,21 +250,13 @@ type Target = { root: string; path: string } & (
  * read it. Null, after printing why, when no installed project owns the file.
  */
 async function readTarget(file: string): Promise<Target | null> {
-  const owner = ownerOf(path.resolve(process.cwd(), file));
-  if (owner.kind === "unowned") {
-    console.error(`crank-mem: ${file} is outside every installed project.`);
-    return null;
-  }
-  const at = { root: owner.root, path: toPosix(owner.rel) };
+  const resolved = resolveTarget(file);
+  if (resolved === null || "outcome" in resolved) return resolved;
+  const { root, path: rel, real } = resolved;
   const refuse = (reason: string, outcome: Exclude<CodeOutcome, "ok">): Target => {
     console.error(`crank-mem: ${reason}`);
-    return { ...at, outcome };
+    return { root, path: rel, outcome };
   };
-  const cannotRead = (e: unknown): Target =>
-    refuse(`cannot read ${file} (${(e as NodeJS.ErrnoException).code}).`, "refused");
-  const within = owner.kind === "worktree" ? owner.top : owner.root;
-  const real = checkedPath(file, within, refuse, cannotRead);
-  if (typeof real !== "string") return real;
   const grammar = grammarFor(file);
   if (grammar === null) {
     const ext = path.extname(path.basename(file)).toLowerCase();
@@ -277,40 +269,53 @@ async function readTarget(file: string): Promise<Target | null> {
   try {
     text = fs.readFileSync(real, "utf8");
   } catch (e) {
-    return cannotRead(e);
+    return refuse(cannotReadLine(file, e), "refused");
   }
   const symbols = await codeSymbols(text, grammar);
   if (symbols === null) return refuse(NOT_INSTALLED, "no-reader");
-  return { ...at, outcome: "ok", text, symbols };
+  return { root, path: rel, outcome: "ok", text, symbols };
 }
 
+const cannotReadLine = (file: string, e: unknown): string =>
+  `cannot read ${file} (${(e as NodeJS.ErrnoException).code}).`;
+
 /**
- * `file`'s real path once it passes the existence, outside (real path under `within`'s) and
- * sensitive checks, in that order, or the refusal the first failing check took.
+ * The project that owns `file`, its path inside it and, once it passes the existence, outside
+ * (real path under the project's) and sensitive checks, in that order, its real path; otherwise
+ * the refusal the first failing check took, after printing why. Null, after printing why, when no
+ * installed project owns the file.
  */
-export function checkedPath(
+export function resolveTarget(
   file: string,
-  within: string,
-  refuse: (reason: string, outcome: Exclude<CodeOutcome, "ok">) => Target,
-  cannotRead: (e: unknown) => Target,
-): string | Target {
-  const outsideLine = `${file} is outside this project.`;
+):
+  | { root: string; path: string; real: string }
+  | { root: string; path: string; outcome: Exclude<CodeOutcome, "ok"> }
+  | null {
   const abs = path.resolve(process.cwd(), file);
-  const realRoot = fs.realpathSync(within);
-  const inside = (p: string) => p === realRoot || p.startsWith(realRoot + path.sep);
+  const owner = ownerOf(abs);
+  if (owner.kind === "unowned") {
+    console.error(`crank-mem: ${file} is outside every installed project.`);
+    return null;
+  }
+  const at = { root: owner.root, path: toPosix(owner.rel) };
+  const refuse = (reason: string, outcome: Exclude<CodeOutcome, "ok">) => {
+    console.error(`crank-mem: ${reason}`);
+    return { ...at, outcome };
+  };
+  const realRoot = fs.realpathSync(owner.kind === "worktree" ? owner.top : owner.root);
   let real: string;
   try {
     real = fs.realpathSync(abs);
   } catch (e) {
     return (e as NodeJS.ErrnoException).code === "ENOENT"
       ? refuse(`no file ${file}.`, "not-found")
-      : cannotRead(e);
+      : refuse(cannotReadLine(file, e), "refused");
   }
-  if (!inside(real)) return refuse(outsideLine, "refused");
-  if (isSensitiveFile(path.basename(abs)) || isSensitiveFile(path.basename(real))) {
+  if (real !== realRoot && !real.startsWith(realRoot + path.sep))
+    return refuse(`${file} is outside this project.`, "refused");
+  if (isSensitiveFile(path.basename(abs)) || isSensitiveFile(path.basename(real)))
     return refuse(`${file} is a sensitive file; crank-mem does not read it.`, "refused");
-  }
-  return real;
+  return { ...at, real };
 }
 
 const HEAD_CAP = 160;

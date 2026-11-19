@@ -26,8 +26,6 @@ import {
   type FileRow,
 } from "../hooks/lib/code-db.ts";
 import { CRANK_DIR, loadConfig } from "../hooks/lib/config.ts";
-import { toPosix } from "../hooks/lib/indexable.ts";
-import { ownerOf } from "../hooks/lib/owner.ts";
 import { parseArgs, stringFlag } from "./args.ts";
 import {
   cliActor,
@@ -36,7 +34,7 @@ import {
   type GraphUsage,
   type UsageEvent,
 } from "../hooks/lib/usage.ts";
-import { CAP, checkedPath } from "./code.ts";
+import { CAP, resolveTarget } from "./code.ts";
 import { refreshGraph } from "./code-parse.ts";
 import { COMMANDS } from "./commands.ts";
 
@@ -61,7 +59,7 @@ export async function anatomy(args: string[]): Promise<number> {
     rest[0],
     started,
     (db, scope) => {
-      const rows = filesUnder(db, scope.prefix, from);
+      const rows = filesUnder(db, scope.path, from);
       const pending = pendingPaths(db);
       const lead = rest.length === 0 && from === undefined ? mostActive(db) : "";
       const page = anatomyPage(rows, pending, rest[0] ?? "", pending.size, symbolLines(db), lead);
@@ -97,7 +95,7 @@ async function serve(
   answer: (db: sqlite.DatabaseSync, scope: Scope) => Answer,
   event: (usage: GraphUsage) => UsageEvent,
 ): Promise<number> {
-  const scope = commandScope(target ?? ".");
+  const scope = resolveTarget(target ?? ".");
   if (scope === null) return 1;
   const finish = (result: Answer, pending: number): number => {
     process.stdout.write(result.text);
@@ -105,7 +103,7 @@ async function serve(
       scope.root,
       cliActor(),
       event({
-        path: target === undefined ? null : scope.prefix,
+        path: target === undefined ? null : scope.path,
         matches: result.matches,
         chars: result.text.length,
         capped: result.capped,
@@ -116,7 +114,7 @@ async function serve(
     );
     return result.outcome === "ok" ? 0 : 1;
   };
-  if (scope.refused !== null) return finish(refusal(scope.refused), 0);
+  if ("outcome" in scope) return finish(refusal(scope.outcome), 0);
   const store = await refreshedStore(scope.root, started + COMMAND_REFRESH_MS);
   if (store === null) return finish(refusal("refused"), 0);
   const { db, fresh } = store;
@@ -131,29 +129,7 @@ async function serve(
   }
 }
 
-type Scope = { root: string; prefix: string; refused: Exclude<CodeOutcome, "ok"> | null };
-
-/** The project that owns `target` and its path inside it, or null after printing that no project does. */
-function commandScope(target: string): Scope | null {
-  const owner = ownerOf(path.resolve(process.cwd(), target));
-  if (owner.kind === "unowned") {
-    console.error(`crank-mem: ${target} is outside every installed project.`);
-    return null;
-  }
-  const at = { root: owner.root, prefix: toPosix(owner.rel) };
-  const refuse = (reason: string, outcome: Exclude<CodeOutcome, "ok">) => {
-    console.error(`crank-mem: ${reason}`);
-    return { root: owner.root, path: at.prefix, outcome };
-  };
-  const within = owner.kind === "worktree" ? owner.top : owner.root;
-  const real = checkedPath(target, within, refuse, (e) =>
-    refuse(`cannot read ${target} (${(e as NodeJS.ErrnoException).code}).`, "refused"),
-  );
-  return {
-    ...at,
-    refused: typeof real === "string" || real.outcome === "ok" ? null : real.outcome,
-  };
-}
+type Scope = { root: string; path: string };
 
 /** What a command prints last when another process held `code.db` busy and the refresh was skipped. */
 const NOT_FRESH_LINE = "(code.db busy; answer may be stale)\n";
@@ -281,7 +257,7 @@ async function symbolCommand(
     file,
     started,
     (db, scope) => {
-      const set = chosenSymbol(db, symbol, file === undefined ? null : scope.prefix, file);
+      const set = chosenSymbol(db, symbol, file === undefined ? null : scope.path, file);
       if (!Array.isArray(set)) return set;
       const done = report(db, scope.root, set);
       return {
@@ -491,9 +467,9 @@ export async function impact(args: string[]): Promise<number> {
     started,
     (db, scope) => {
       const answer =
-        lone !== undefined && isIndexedFile(db, scope.prefix)
-          ? fileImpact(db, scope.prefix, depth)
-          : symbolImpact(db, rest, scope.prefix, depth);
+        lone !== undefined && isIndexedFile(db, scope.path)
+          ? fileImpact(db, scope.path, depth)
+          : symbolImpact(db, rest, scope.path, depth);
       return answer.outcome === "ok" ? { ...answer, text: answer.text + pendingLine(db) } : answer;
     },
     (usage) => ({ channel: "impact", symbol: lone === undefined ? rest.at(-1)! : null, ...usage }),
