@@ -221,6 +221,30 @@ describe("digest job (black-box)", () => {
     expect(getOne(old.root, "scanner")).toContain("files read: src/a.ts\n");
   });
 
+  test("a session that changes directory keeps each relative path under the directory it was written in", () => {
+    const root = digestProject({}, temps);
+    const [id] = seedMemory(root, [
+      { title: "Pkg row", narrative: "About b.", filesRead: ["pkg/b.ts"] },
+    ]);
+    const at = (line: string, cwd: string) => JSON.stringify({ ...JSON.parse(line), cwd });
+    // The session starts at the root, reads `b.ts` from pkg/, and stops in docs/.
+    const transcript =
+      [
+        at(userRecord("cd-0", "2026-01-02T00:00:00.000Z", "read these files ".repeat(150)), root),
+        at(readRecord("cd-1", "2026-01-02T00:00:01.000Z", "b.ts"), path.join(root, "pkg")),
+        at(userRecord("cd-2", "2026-01-02T00:00:02.000Z", "done"), path.join(root, "docs")),
+      ].join("\n") + "\n";
+    const { fake, job } = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], {
+      cwd: path.join(root, "docs"),
+      transcript,
+    });
+    expect(job.status).toBe(0);
+    expect(fake.calls()[0]!.stdin).toContain(
+      `[EXISTING OBSERVATIONS]\n#${id} discovery Pkg row: About b.\n`,
+    );
+    expect(getOne(root, "scanner")).toContain("files read: src/a.ts\n");
+  });
+
   test("a job killed before commit stores nothing and the entry reruns", async () => {
     const ok = { lines: okStream(SAMPLE_DIGEST) };
     const j = journey(digestProject({}, temps), [{ ...ok, hold: true }, ok], { skipJob: true });

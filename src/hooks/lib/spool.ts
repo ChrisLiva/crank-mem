@@ -17,7 +17,7 @@ import {
 // write it; the digest job reads it, and parks an entry it cannot finish
 // under spool/parked/.
 
-/** `cwd` is the session's working directory. */
+/** `cwd` is the directory the session was in when the hook wrote the entry. */
 export type SpoolEntry = {
   transcriptPath: string;
   projectRoot: string;

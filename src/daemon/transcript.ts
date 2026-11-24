@@ -5,13 +5,18 @@ import type { Position } from "../hooks/lib/memory.ts";
 import { shellReadPaths } from "../hooks/lib/shell-reads.ts";
 import { redact, stripBlocks } from "./redact.ts";
 
-/** `paths`: raw path strings the delta's tool calls name, each once, in first-seen order. */
+/**
+ * `paths`: the paths the delta's tool calls name, each once, in first-seen order; absolute when the call's
+ * record carries its `cwd`, else as written. `cwd`: the directory the session started in, or null when no
+ * record carries one.
+ */
 export type Distilled = {
   text: string;
   next: Position | null;
   truncated: boolean;
   records: number;
   paths: string[];
+  cwd: string | null;
 };
 
 const INPUT_CAP = 500;
@@ -61,7 +66,15 @@ export function distill(file: string, after: Position | null, maxChars: number):
     if (kept.truncated) break;
   }
   const { parts, truncated } = kept;
-  return { text: parts.join(BLOCK_SEP), next, truncated, records, paths: [...paths] };
+  const cwd = all.find((r) => typeof r.cwd === "string")?.cwd;
+  return {
+    text: parts.join(BLOCK_SEP),
+    next,
+    truncated,
+    records,
+    paths: [...paths],
+    cwd: typeof cwd === "string" ? cwd : null,
+  };
 }
 
 type Kept = { parts: string[]; length: number; truncated: boolean };
@@ -88,7 +101,8 @@ function toolPaths(r: Rec): string[] {
     for (const v of [file_path, p, notebook_path]) if (typeof v === "string") out.push(v);
     if (b.name === "Bash" && typeof command === "string") out.push(...shellReadPaths(command));
   }
-  return out;
+  const cwd = r.cwd;
+  return typeof cwd === "string" ? out.map((p) => path.resolve(cwd, p)) : out;
 }
 
 function readRecords(file: string): Rec[] {

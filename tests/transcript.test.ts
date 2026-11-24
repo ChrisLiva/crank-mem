@@ -130,7 +130,7 @@ describe("after", () => {
   });
 
   test("after the last record, or in an empty file, gives nothing", () => {
-    const nothing = { text: "", next: null, truncated: false, records: 0, paths: [] };
+    const nothing = { text: "", next: null, truncated: false, records: 0, paths: [], cwd: null };
     expect(distill(FIXTURE, pos(29), 400_000)).toEqual(nothing);
     const file = path.join(tempDir(), "empty.jsonl");
     fs.writeFileSync(file, "");
@@ -148,6 +148,7 @@ describe("maxChars", () => {
       truncated: true,
       records: 2,
       paths: [],
+      cwd: null,
     });
   });
 

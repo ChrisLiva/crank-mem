@@ -91,7 +91,10 @@ async function digest(
     settleEntry(stem, entry.updatedAt, "delete");
     return 0;
   }
-  const { context, shown } = await digestContext(memory, entry, d.paths);
+  // A session's directory changes as it runs, so the transcript's start directory is the base for the
+  // model's relative paths; the entry's `cwd` is only where the session last stopped.
+  const at: SpoolEntry = { ...entry, cwd: d.cwd ?? entry.cwd };
+  const { context, shown } = await digestContext(memory, at, d.paths);
   const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem), context), {
     timeoutMs,
   });
@@ -99,7 +102,7 @@ async function digest(
   if (r.kind === "stopped") return 0;
   const session: SessionKey = { id: stem, agent: "claude", transcriptPath: entry.transcriptPath };
   if (r.kind === "rejected") return rejected(memory, session, entry);
-  const routed = route(stored(r.output), entry, shown, ownerOf);
+  const routed = route(stored(r.output), at, shown, ownerOf);
   const base = { session, next: d.next, model: r.model };
   const { written, held } = writeShares(routed.others, {
     ...base,
