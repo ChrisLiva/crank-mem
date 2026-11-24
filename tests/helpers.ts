@@ -36,6 +36,13 @@ export const ALLOW_RULES = [
   "Bash(crank-mem anatomy *)",
 ];
 
+// Set on import, not in the preload: a probe script, or a `bun test` started outside the repo root,
+// loads no preload, and its hooks would write the user's real ~/.crank.
+export const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "crank-test-"));
+process.env.TMPDIR = TEST_ROOT;
+process.env.CRANK_HOME = fs.mkdtempSync(path.join(TEST_ROOT, "crank-home-"));
+process.env.CODEX_HOME = fs.mkdtempSync(path.join(TEST_ROOT, "crank-codexhome-"));
+
 // Every child that inherits process.env checks for a release against a closed local port, never
 // GitHub, unless its test passes a release server.
 process.env.CRANK_RELEASE_URL ??= "http://127.0.0.1:9";
