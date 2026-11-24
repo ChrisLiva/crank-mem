@@ -200,25 +200,14 @@ describe("digest job (black-box)", () => {
 
   test("a session started in a subdirectory stores its relative paths under that subdirectory", () => {
     const root = digestProject({}, temps);
-    fs.mkdirSync(path.join(root, "pkg"));
-    expect(
-      journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], {
-        cwd: path.join(root, "pkg"),
-        hooks: true,
-      }).job.status,
-    ).toBe(0);
+    const transcript = readingTranscript([], path.join(root, "pkg"));
+    expect(journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], { transcript }).job.status).toBe(0);
     expect(getOne(root, "scanner")).toContain("files read: pkg/src/a.ts\n");
 
-    // An entry written before entries carried cwd falls back to the project root.
-    const old = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }], {
-      skipJob: true,
-      hooks: true,
-    });
-    const file = path.join(old.home, "spool", "s1.json");
-    const { cwd: _, ...entry } = JSON.parse(fs.readFileSync(file, "utf8"));
-    fs.writeFileSync(file, JSON.stringify(entry));
-    expect(rerun(old).status).toBe(0);
-    expect(getOne(old.root, "scanner")).toContain("files read: src/a.ts\n");
+    // A transcript that records no directory resolves from the project root.
+    const bare = journey(digestProject({}, temps), [{ lines: okStream(SAMPLE_DIGEST) }]);
+    expect(bare.job.status).toBe(0);
+    expect(getOne(bare.root, "scanner")).toContain("files read: src/a.ts\n");
   });
 
   test("a session that changes directory keeps each relative path under the directory it was written in", () => {
@@ -226,7 +215,6 @@ describe("digest job (black-box)", () => {
     const [id] = seedMemory(root, [
       { title: "Pkg row", narrative: "About b.", filesRead: ["pkg/b.ts"] },
     ]);
-    const at = (line: string, cwd: string) => JSON.stringify({ ...JSON.parse(line), cwd });
     // The session starts at the root, reads `b.ts` from pkg/, and stops in docs/.
     const transcript =
       [
@@ -235,7 +223,6 @@ describe("digest job (black-box)", () => {
         at(userRecord("cd-2", "2026-01-02T00:00:02.000Z", "done"), path.join(root, "docs")),
       ].join("\n") + "\n";
     const { fake, job } = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], {
-      cwd: path.join(root, "docs"),
       transcript,
     });
     expect(job.status).toBe(0);
@@ -586,15 +573,20 @@ describe("digest context", () => {
 });
 
 /** A transcript past MIN_DELTA_CHARS that reads each of `files`, built as the digest-context exemplar builds its own. */
-function readingTranscript(files: string[]): string {
-  return (
-    [
-      userRecord("ws-0", "2026-01-02T00:00:00.000Z", "read these files ".repeat(150)),
-      ...files.map((p, i) =>
-        readRecord(`ws-${i + 1}`, `2026-01-02T00:00:${String(i + 1).padStart(2, "0")}.000Z`, p),
-      ),
-    ].join("\n") + "\n"
-  );
+/** A transcript record as written while the session was in `cwd`. */
+function at(line: string, cwd: string): string {
+  return JSON.stringify({ ...JSON.parse(line), cwd });
+}
+
+/** A transcript that reads `files` in order; with `cwd`, every record carries it as the session's directory. */
+function readingTranscript(files: string[], cwd?: string): string {
+  const records = [
+    userRecord("ws-0", "2026-01-02T00:00:00.000Z", "read these files ".repeat(150)),
+    ...files.map((p, i) =>
+      readRecord(`ws-${i + 1}`, `2026-01-02T00:00:${String(i + 1).padStart(2, "0")}.000Z`, p),
+    ),
+  ];
+  return records.map((r) => (cwd === undefined ? r : at(r, cwd))).join("\n") + "\n";
 }
 
 describe("digest context across projects", () => {
@@ -611,17 +603,19 @@ describe("digest context across projects", () => {
       { title: "Front b row", narrative: "About b.", filesRead: ["src/b.ts"] },
     ]);
     // The session runs in H/src, so the relative `h.ts` is H's src/h.ts.
-    const transcript = readingTranscript([
-      "h.ts",
-      path.join(H, "clones/u/x.ts"),
-      path.join(storefront, "src/b.ts"),
-      path.join(storefront, "src/a.ts"),
-      path.join(payments, "src/a.ts"),
-    ]);
+    const transcript = readingTranscript(
+      [
+        "h.ts",
+        path.join(H, "clones/u/x.ts"),
+        path.join(storefront, "src/b.ts"),
+        path.join(storefront, "src/a.ts"),
+        path.join(payments, "src/a.ts"),
+      ],
+      path.join(H, "src"),
+    );
     const scripted = { ...SAMPLE_DIGEST, stale: [{ id: `H#${hid}`, reason: "named" }] };
     const { fake, job } = journey(H, [{ lines: okStreamOf(scripted) }], {
       home: ws.home,
-      cwd: path.join(H, "src"),
       transcript,
     });
     expect(job.status).toBe(0);
@@ -644,7 +638,6 @@ describe("digest context across projects", () => {
 
     const rootOnly = journey(H, [{ lines: okStream(SAMPLE_DIGEST) }], {
       home: ws.home,
-      cwd: H,
       stem: "s2",
       transcript: readingTranscript([
         path.join(H, "src/h.ts"),
@@ -671,7 +664,6 @@ describe("digest context across projects", () => {
     for (const [stem, roots] of orders) {
       const { fake, job } = journey(H, [{ lines: okStream(SAMPLE_DIGEST) }], {
         home: ws.home,
-        cwd: H,
         stem,
         transcript: readingTranscript(roots.map((r) => path.join(r, "src/a.ts"))),
       });
@@ -699,7 +691,6 @@ describe("digest context across projects", () => {
     ]);
     const { fake, job } = journey(H, [{ lines: okStream(SAMPLE_DIGEST) }], {
       home: ws.home,
-      cwd: H,
       transcript,
     });
     expect(job.status).toBe(0);

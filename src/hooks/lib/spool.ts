@@ -17,11 +17,9 @@ import {
 // write it; the digest job reads it, and parks an entry it cannot finish
 // under spool/parked/.
 
-/** `cwd` is the directory the session was in when the hook wrote the entry. */
 export type SpoolEntry = {
   transcriptPath: string;
   projectRoot: string;
-  cwd: string;
   agent: "claude";
   ended: boolean;
   updatedAt: number;
@@ -55,12 +53,7 @@ export function transcriptStem(transcriptPath: unknown): string | null {
 }
 
 /** Write the entry for a transcript, replacing any parked copy so the session is digested again. */
-function writeSignal(
-  transcriptPath: string,
-  projectRoot: string,
-  ended: boolean,
-  cwd: string,
-): void {
+function writeSignal(transcriptPath: string, projectRoot: string, ended: boolean): void {
   const stem = transcriptStem(transcriptPath);
   if (!stem) return;
   ensureCrankHome();
@@ -68,7 +61,6 @@ function writeSignal(
   const entry: SpoolEntry = {
     transcriptPath,
     projectRoot,
-    cwd,
     agent: "claude",
     ended,
     updatedAt: Date.now(),
@@ -85,12 +77,7 @@ export function signalDigest(
 ): void {
   if (!config.digest || typeof payload.transcript_path !== "string") return;
   try {
-    writeSignal(
-      payload.transcript_path,
-      projectRoot,
-      ended,
-      typeof payload.cwd === "string" ? payload.cwd : projectRoot,
-    );
+    writeSignal(payload.transcript_path, projectRoot, ended);
     if (readStopState() === null) ensureDaemon(config);
   } catch (err) {
     debugEvent("signal-failed", { error: errorMessage(err) });
@@ -165,8 +152,6 @@ function readEntries(dir: string): SpoolItem[] {
     // Unparseable or vanished mid-read: skip it.
     const entry = readJsonObject(path.join(dir, name)) as SpoolEntry | null;
     if (!entry) continue;
-    // An entry written before entries carried cwd takes its project root.
-    if (typeof entry.cwd !== "string") entry.cwd = entry.projectRoot;
     items.push({ stem: name.slice(0, -EXT.length), entry });
   }
   return items;

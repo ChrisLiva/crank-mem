@@ -155,7 +155,7 @@ function proposalJourney(ws: Ws) {
       { lines: acceptFirst("Storefront bullet") },
       { lines: acceptFirst("Cross bullet") },
     ],
-    { home: ws.home, cwd: ws.H, transcript },
+    { home: ws.home, transcript },
   );
   return { ...j, sid: sid!, hid: hid! };
 }
@@ -438,7 +438,6 @@ describe("cross-repo memory", () => {
     ]);
     const { job, fake } = journey(ws.H, [{ lines: okStream(output) }], {
       home: ws.home,
-      cwd: ws.H,
       transcript,
     });
     expect(job.status).toBe(0);
@@ -456,7 +455,6 @@ describe("cross-repo memory", () => {
     ]);
     const { job } = journey(ws.H, [{ lines: okStream(output) }], {
       home: ws.home,
-      cwd: ws.H,
       transcript,
     });
     expect(job.status).toBe(0);
@@ -477,7 +475,7 @@ describe("cross-repo memory", () => {
     const { job, fake } = journey(
       ws.H,
       [{ lines: okStream(output) }, { lines: okStreamOf({ edits: [], proposals: [], stale: [] }) }],
-      { home: ws.home, cwd: ws.H, transcript },
+      { home: ws.home, transcript },
     );
     expect(job.status).toBe(0);
     const front = fake
@@ -492,7 +490,6 @@ describe("cross-repo memory", () => {
     const { transcript } = crossTranscript(ws);
     const j = journey(ws.H, [{ lines: okStream(crossDigest(ws)) }], {
       home: ws.home,
-      cwd: ws.H,
       transcript,
       skipJob: true,
     });
@@ -507,7 +504,6 @@ describe("cross-repo memory", () => {
     const { transcript } = crossTranscript(ws);
     const j = journey(ws.H, [{ lines: okStream(crossDigest(ws)) }], {
       home: ws.home,
-      cwd: ws.H,
       transcript,
       skipJob: true,
     });
@@ -547,7 +543,6 @@ describe("cross-repo memory", () => {
       try {
         const { job } = journey(ws.H, [{ lines: okStream(output) }], {
           home: ws.home,
-          cwd: ws.H,
           transcript,
         });
         const search = (root: string) =>
@@ -631,7 +626,6 @@ describe("cross-repo memory", () => {
       setUp(ws, last);
       const { job } = journey(ws.H, [{ lines: okStream(digest(ws)) }], {
         home: ws.home,
-        cwd: ws.H,
         transcript,
       });
       expect(job.status).toBe(0);

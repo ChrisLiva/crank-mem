@@ -460,14 +460,13 @@ export function spoolEntry(
   projectRoot: string,
   updatedAt: number,
   parked = false,
-  opts: { transcriptPath?: string; cwd?: string; ended?: boolean } = {},
+  opts: { transcriptPath?: string; ended?: boolean } = {},
 ): void {
   const dir = parked ? path.join(home, "spool", "parked") : path.join(home, "spool");
   fs.mkdirSync(dir, { recursive: true });
   const entry: SpoolEntry = {
     transcriptPath: opts.transcriptPath ?? `/t/${stem}.jsonl`,
     projectRoot,
-    cwd: opts.cwd ?? projectRoot,
     agent: "claude",
     ended: opts.ended ?? true,
     updatedAt,

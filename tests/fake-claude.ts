@@ -150,7 +150,6 @@ export function journey(
     timeoutMs?: number | string;
     home?: string;
     stem?: string;
-    cwd?: string;
     args?: string[];
     hooks?: true;
   } = {},
@@ -164,13 +163,12 @@ export function journey(
   if (opts.transcript === undefined) fs.copyFileSync(FIXTURE, transcript);
   else fs.writeFileSync(transcript, opts.transcript);
   const fake = fakeClaude(path.join(tmp, "bin"), scenarios);
-  const cwd = opts.cwd ?? root;
   if (opts.hooks) {
     const hookEnv = { ...fake.env, CRANK_HOME: home };
     expect(
       runHook(
         "src/hooks/stop.ts",
-        JSON.stringify({ ...claudeStop(cwd), transcript_path: transcript }),
+        JSON.stringify({ ...claudeStop(root), transcript_path: transcript }),
         root,
         hookEnv,
       ).status,
@@ -178,13 +176,13 @@ export function journey(
     expect(
       runHook(
         "src/hooks/session-end.ts",
-        JSON.stringify(claudeSessionEnd(cwd, transcript)),
+        JSON.stringify(claudeSessionEnd(root, transcript)),
         root,
         hookEnv,
       ).status,
     ).toBe(0);
   } else {
-    spoolEntry(home, stem, root, Date.now(), false, { transcriptPath: transcript, cwd });
+    spoolEntry(home, stem, root, Date.now(), false, { transcriptPath: transcript });
   }
   expect(spoolFiles(home)).toEqual([`${stem}.json`]);
   const j = { root, home, stem, transcript, fake };

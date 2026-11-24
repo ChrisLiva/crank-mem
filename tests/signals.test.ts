@@ -52,7 +52,6 @@ describe("digest signals (black-box)", () => {
     expect(entry).toMatchObject({
       transcriptPath: TRANSCRIPT,
       projectRoot: root,
-      cwd: root,
       agent: "claude",
       ended: false,
     });

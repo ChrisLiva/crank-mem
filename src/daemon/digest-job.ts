@@ -91,9 +91,8 @@ async function digest(
     settleEntry(stem, entry.updatedAt, "delete");
     return 0;
   }
-  // A session's directory changes as it runs, so the transcript's start directory is the base for the
-  // model's relative paths; the entry's `cwd` is only where the session last stopped.
-  const at: SpoolEntry = { ...entry, cwd: d.cwd ?? entry.cwd };
+  // The model's relative paths resolve against the directory the session started in.
+  const at: Session = { projectRoot: entry.projectRoot, cwd: d.cwd ?? entry.projectRoot };
   const { context, shown } = await digestContext(memory, at, d.paths);
   const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem), context), {
     timeoutMs,
@@ -187,9 +186,12 @@ async function consolidateQuietly(
   }
 }
 
+/** The session's project and the directory the session started in. */
+type Session = { projectRoot: string; cwd: string };
+
 /** The installed projects other than the session's that own a kept path of the delta, by name. */
 function otherProjects(
-  entry: SpoolEntry,
+  entry: Session,
   owned: Map<string, string[]>,
 ): { name: string; root: string }[] {
   return [...owned.keys()]
@@ -205,7 +207,7 @@ function otherProjects(
  */
 async function digestContext(
   memory: Memory,
-  entry: SpoolEntry,
+  entry: Session,
   paths: string[],
 ): Promise<{ context: DigestContext; shown: Map<string, Shown> }> {
   const md = readCerebrum(path.join(entry.projectRoot, CRANK_DIR));
