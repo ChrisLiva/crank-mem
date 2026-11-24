@@ -20,7 +20,7 @@ import { readStopState } from "../hooks/lib/user-state.ts";
 import type { Observation } from "../hooks/lib/wire.ts";
 import { ownerOf, projectName } from "../hooks/lib/owner.ts";
 import { digestRequest, type Digest, type DigestContext, type Shown } from "./digest-prompt.ts";
-import { route, type EntryShare, type Share } from "./digest-route.ts";
+import { route, type EntryShare, type Session, type Share } from "./digest-route.ts";
 import { EMBED_MODEL, embed } from "./embedder.ts";
 import { byCodeUnit } from "../hooks/lib/indexable.ts";
 import { CONSOLIDATE_EVERY_MS, consolidate } from "./consolidate.ts";
@@ -91,9 +91,12 @@ async function digest(
     settleEntry(stem, entry.updatedAt, "delete");
     return 0;
   }
-  // The model's relative paths resolve against the directory the session started in.
-  const at: Session = { projectRoot: entry.projectRoot, cwd: d.cwd ?? entry.projectRoot };
-  const { context, shown } = await digestContext(memory, at, d.paths);
+  const at: Session = {
+    projectRoot: entry.projectRoot,
+    cwd: d.cwd ?? entry.projectRoot,
+    paths: d.paths,
+  };
+  const { context, shown } = await digestContext(memory, at);
   const r = await askClaude(digestRequest(d.text, memory.latestSummary(stem), context), {
     timeoutMs,
   });
@@ -186,9 +189,6 @@ async function consolidateQuietly(
   }
 }
 
-/** The session's project and the directory the session started in. */
-type Session = { projectRoot: string; cwd: string };
-
 /** The installed projects other than the session's that own a kept path of the delta, by name. */
 function otherProjects(
   entry: Session,
@@ -208,11 +208,10 @@ function otherProjects(
 async function digestContext(
   memory: Memory,
   entry: Session,
-  paths: string[],
 ): Promise<{ context: DigestContext; shown: Map<string, Shown> }> {
   const md = readCerebrum(path.join(entry.projectRoot, CRANK_DIR));
   const cerebrum = md === null ? null : (splitPreamble(md).body?.trimEnd() ?? null);
-  const owned = ownedPaths(entry.cwd, paths);
+  const owned = ownedPaths(entry.cwd, entry.paths);
   const others = otherProjects(entry, owned);
   const projects =
     others.length === 0

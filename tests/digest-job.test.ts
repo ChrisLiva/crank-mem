@@ -215,21 +215,24 @@ describe("digest job (black-box)", () => {
     const [id] = seedMemory(root, [
       { title: "Pkg row", narrative: "About b.", filesRead: ["pkg/b.ts"] },
     ]);
-    // The session starts at the root, reads `b.ts` from pkg/, and stops in docs/.
+    // The session starts at the root, reads `b.ts` and `x.ts` from pkg/, then `x.ts` from docs/, and stops there.
+    const [pkg, docs] = [path.join(root, "pkg"), path.join(root, "docs")];
     const transcript =
       [
         at(userRecord("cd-0", "2026-01-02T00:00:00.000Z", "read these files ".repeat(150)), root),
-        at(readRecord("cd-1", "2026-01-02T00:00:01.000Z", "b.ts"), path.join(root, "pkg")),
-        at(userRecord("cd-2", "2026-01-02T00:00:02.000Z", "done"), path.join(root, "docs")),
+        at(readRecord("cd-1", "2026-01-02T00:00:01.000Z", "b.ts"), pkg),
+        at(readRecord("cd-2", "2026-01-02T00:00:02.000Z", "x.ts"), pkg),
+        at(readRecord("cd-3", "2026-01-02T00:00:03.000Z", "x.ts"), docs),
       ].join("\n") + "\n";
-    const { fake, job } = journey(root, [{ lines: okStream(SAMPLE_DIGEST) }], {
-      transcript,
-    });
+    // The model cites a path no call names, the bare name one call names, and the bare name two calls name.
+    const scripted = structuredClone(SAMPLE_DIGEST);
+    scripted.observations[1]!.files_read = ["src/a.ts", "b.ts", "x.ts"];
+    const { fake, job } = journey(root, [{ lines: okStreamOf(scripted) }], { transcript });
     expect(job.status).toBe(0);
     expect(fake.calls()[0]!.stdin).toContain(
       `[EXISTING OBSERVATIONS]\n#${id} discovery Pkg row: About b.\n`,
     );
-    expect(getOne(root, "scanner")).toContain("files read: src/a.ts\n");
+    expect(getOne(root, "scanner")).toContain("files read: pkg/b.ts, src/a.ts, x.ts\n");
   });
 
   test("a job killed before commit stores nothing and the entry reruns", async () => {

@@ -25,16 +25,34 @@ export type EntryShare = Share & { summary: DigestSummary; links: string[]; fall
 
 type Files = { read: Set<string>; modified: Set<string> };
 
+/** The session's project, the directory the session started in, and the paths its tool calls name. */
+export type Session = { projectRoot: string; cwd: string; paths: string[] };
+
+/**
+ * Where a path the model wrote lies. A relative one lies under the start directory when a tool call names that
+ * file, else at the one tool-call path it ends (a name copied from a command run after a `cd`), else under the
+ * start directory.
+ */
+function placed(p: string, session: Session): string {
+  const fromStart = path.resolve(session.cwd, p);
+  if (path.isAbsolute(p)) return fromStart;
+  const called = new Set(session.paths.map((t) => path.resolve(session.cwd, t)));
+  if (called.has(fromStart)) return fromStart;
+  const tail = path.sep + path.normalize(p);
+  const ending = [...called].filter((t) => t.endsWith(tail));
+  return ending.length === 1 ? ending[0]! : fromStart;
+}
+
 /** Each owning root's files among the observation's paths, roots in first-cited order, each list deduped. */
 function ownedFiles(
   o: Digest["observations"][number],
-  cwd: string,
+  session: Session,
   ownerOf: (p: string) => Owner,
 ): Map<string, Files> {
   const byRoot = new Map<string, Files>();
   const add = (paths: string[], kind: keyof Files) => {
     for (const p of paths) {
-      const owned = ownedPath(ownerOf(path.resolve(cwd, p)));
+      const owned = ownedPath(ownerOf(placed(p, session)));
       if (owned === null) continue;
       let files = byRoot.get(owned.root);
       if (files === undefined)
@@ -83,7 +101,7 @@ function shownRow(
  */
 function copiesByOwner(
   output: Digest,
-  entry: { projectRoot: string; cwd: string },
+  entry: Session,
   ownerOf: (p: string) => Owner,
   nameOf: (root: string) => string,
 ): { copies: Map<string, NewObservation[]>; links: Set<string>; fallbacks: Fallback[] } {
@@ -93,7 +111,7 @@ function copiesByOwner(
   const fallbacks: Fallback[] = [];
   for (const o of output.observations) {
     const base = { type: o.type, title: o.title, narrative: o.narrative, facts: o.facts };
-    const files = ownedFiles(o, entry.cwd, ownerOf);
+    const files = ownedFiles(o, entry, ownerOf);
     const unowned = { ...base, filesRead: [], filesModified: [] };
     if (files.size === 0) copies.get(root)!.push({ ...unowned, refs: [] });
     else if (!files.has(root))
@@ -120,7 +138,7 @@ function copiesByOwner(
  */
 export function route(
   output: Digest,
-  entry: { projectRoot: string; cwd: string },
+  entry: Session,
   shown: Map<string, Shown>,
   ownerOf: (p: string) => Owner,
 ): { entry: EntryShare; others: Share[] } {
